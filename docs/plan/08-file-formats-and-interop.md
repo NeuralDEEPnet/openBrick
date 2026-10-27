@@ -70,7 +70,7 @@ Instances are keyed by ULID; `part` is an LDraw id or a content hash of a custom
 
 ## 4. 3MF
 
-- Core 1.4.0 (ISO/IEC 25422:2025), Materials and Properties 1.2.1 (`basematerials` and `colorgroup`, per-triangle `p1 p2 p3`), Production 1.2 (UUIDs, optional `path` split). Units millimetres, Z-up.
+- Core 1.4.0 (3MF is ISO/IEC 25422:2025), Materials and Properties 1.2.1 (`basematerials` and `colorgroup`, per-triangle `p1 p2 p3`), Production 1.1.2 (text v1.2; UUIDs, optional `path` split). Units millimetres, Z-up.
 - Part designer: one object per colour role. Assembler: one object per part under a component object by default; `--fuse` unions same-colour groups.
 - Metadata namespace `openbrick:` with part id, version, content hash, fit profile id, generator and serial.
 - Writer: `lib3mf-core` 0.4.0 behind a thin trait (fallback `threemf2` 0.4.1 or our own zip+XML); every CI fixture is validated with `lib3mf` 2.5.0 and opened by OrcaSlicer CLI.

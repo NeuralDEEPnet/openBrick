@@ -99,14 +99,15 @@ These are starting values for `FitProfile`; the calibration coupon overrides the
 
 | Quantity | FDM 0.4 mm nozzle target | Resin (MSLA) | Notes |
 |----------|--------------------------|--------------|-------|
-| Printed stud OD | 4.75 to 4.85 mm | nominal x 1.009 to 1.011 scale | outer-contour offset minus 0.10 to minus 0.18 mm |
+| Printed stud OD | 4.75 to 4.85 mm (coupon sweeps 4.60 to 4.95 because contour compensation of minus 0.10 to minus 0.18 mm is baked into geometry) | nominal x 1.009 to 1.011 scale | outer-contour offset minus 0.10 to minus 0.18 mm |
 | Printed anti-stud bore | 4.90 to 5.00 mm | scale as above | hole offset plus 0.05 to plus 0.10 mm |
+| Tube OD and rib depth (the 2x2 pocket that grips a stud from below) | tube OD 6.40 to 6.65 mm and rib depth 0.2 to 0.5 mm, calibrated by the coupon pocket row; tube OD grows with the bore so the tube wall stays at least 0.7 mm | | fit-critical; this is what the pull test loads |
 | Horizontal Technic hole | nominal plus about 0.2 mm, polyhole or slight ellipse | | prints undersize and oval |
 | Pitch | 7.98 to 8.02 mm | | |
 | Plate height | 3.18 to 3.22 mm | | |
-| Walls | 0.8 or 1.2 mm (multiples of a 0.4 mm line) | 0.5 supported / 1.0 unsupported | 1.1 mm prints hollow on a 0.4 nozzle (Strathclyde) |
+| Walls | 0.8 or 1.2 mm (multiples of a 0.4 mm line) | 0.5 supported / 1.0 unsupported | 1.1 mm prints hollow on a 0.4 nozzle (Strathclyde); rib depth = 1.5 mm minus the printed wall (0.7 mm at 0.8 mm walls, 0.3 mm at 1.2 mm) so the pocket still grips |
 | Roof | at least 1.0 mm | | bridging over tubes |
-| Wall-to-roof fillet | 2 mm | | improved bridge anchoring 335 percent (Strathclyde) |
+| Wall-to-roof fillet | 2 mm on brick-height bodies; at most 0.3 mm on plate-height bodies | | improved bridge anchoring 335 percent (Strathclyde, 9.6 mm brick); a 2 mm fillet in a 2.2 mm plate cavity would stop the stud seating |
 | Stud-top and bottom-edge chamfer | 0.2 to 0.3 mm | | also absorbs elephant foot |
 | Elephant-foot compensation | about 0.2 mm | | PrusaSlicer recommendation for 0.4 nozzle |
 | Layer height | 0.16 to 0.2 mm (0.1 mm "detail" profile with 0.2 nozzle) | 0.05 | |
@@ -132,7 +133,7 @@ Early in M0 to M1, measure 20 to 30 samples each of: 2x4 brick, 1x2 plate, 1x2 T
 - `standards/dimensions-v1.json` (CC0): for every feature, `nominal_mm`, `ldraw_ldu`, `print_target_mm` by process, `confidence`, `source`. Semver; additive within a major.
 - `openbrick-units` loads it at build time (include_str) and exposes typed constants; a unit test asserts the derived relations (tube OD = 8 x sqrt 2 minus stud; pin = 8 minus stud; 5 plates = 2 studs).
 - Golden-mesh tests in `openbrick-part` generate a 2x4 brick, a 2x4 tile and a 1x2 Technic brick and assert volume, bounding box and feature counts against this table within 0.01 mm.
-- The calibration coupon test asserts that the sweep cells differ by exactly the step (0.05 mm) in the generated mesh.
+- The calibration coupon test asserts that the cells of each row differ by exactly that row's step (0.05 mm; 0.04 mm for the bar and clip row) in the generated mesh.
 
 ## 10. Sources
 

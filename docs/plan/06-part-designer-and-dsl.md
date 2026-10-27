@@ -48,9 +48,9 @@ We decided not to build an OpenSCAD-like language (D04). The brick vocabulary is
 
 - `meta` fields: `id` (reverse-DNS-ish, lower case), semver `version`, SPDX `license`, mandatory `credit`, `provenance` (so LDraw attribution travels with derived parts; see [12](12-legal-and-naming.md)).
 - `params`: typed, UI-bearing parameters (section 3).
-- `features`: an ordered list of brick-aware operations (section 4). Each has an `id`, an `op`, an `on` anchor (a face of a previous feature) and op-specific fields. Values may be literals with unit suffixes (`"0.6mm"`, `"2stud"`, `"1plate"`), references (`"$size"`), or small expressions (`"$length - 1"`).
+- `features`: an ordered list of brick-aware operations (section 4). Each has an `id`, an `op`, an `on` anchor (a face of a previous feature), an optional `if` expression (the feature is skipped when false), an optional `colorRole`, and op-specific fields. Values may be literals with unit suffixes (`"0.6mm"`, `"2stud"`, `"1plate"`), references (`"$size"`), or small expressions (`"$length - 1"`).
 - `snap`: `"derived"` (default) or an explicit connector list for exotic parts.
-- `print`: which face is up per mode, allowed process profiles, fit-critical feature ids, colour roles, extra rules.
+- `print`: which face is up per mode, allowed process profiles, fit-critical feature ids, colour roles, and `rules` (extra checks with an `onFail` action such as `shrink-or-bolder`).
 - `export`: formats and batch naming.
 
 ## 3. Parameters
@@ -88,10 +88,10 @@ All layout positions are integer LDU internally; `stud` and `plate` units conver
 | `hinge.finger` | click-hinge fingers | `count`, `side` | FGR |
 | `ball` / `socket` | 5.9 or 10.2 mm | `size` | GEN |
 | `relief.svg` | emboss, deboss or inlay of an SVG on a face | `src`, `mode`, `height`, `fit`, `minFeature`, `colorRole` | none |
-| `relief.text` | shaped text on a face | `text`, `font`, `mode`, `height`, `fit`, `minStroke` | none |
+| `relief.text` | shaped text on a face | `text`, `font`, `mode`, `height`, `fit`, `minStroke`, `colorRole` | none |
 | `relief.image` | traced raster (vtracer) | `src`, `threshold`, `posterize` | none |
 | `mosaic` | n x m 1x1 tiles coloured from an image, or a single plate with coloured studs | `size`, `palette`, `dither` | studs/tubes as per base |
-| `loop.keyring` | ring fused to a side with chamfer underneath | `side`, `holeDiameter`, `wall`, `fillet`, `offGrid: true` | none |
+| `loop.keyring` | ring fused to a side with chamfer underneath | `attachTo`, `side`, `holeDiameter`, `wall`, `thickness`, `fillet`, `offGrid: true` | none |
 | `cut.svg` / `cut.shape` | subtract an outline through the body | `src`, `depth` | none |
 | `round` | rounding tier: `chamfer`, `smooth`, `minkowski`, `sdf` | `radius`, `tier` | none |
 | `adapter.*` | bridges to other systems (e.g. 8 mm stud field on one face, Technic holes on another) | per adapter | as per faces |
@@ -108,7 +108,7 @@ Every feature knows its LDU footprint, which faces may touch the bed, which fiel
 
 **Process minimums (FDM 0.4):** stroke at least 0.8 mm (two lines), relief 0.4 to 1.0 mm (1.2 to 1.5 mm for standalone legibility), bold sans-serif, text on top or bottom faces, never on walls.
 
-**Three relief modes:** emboss (face-up print), deboss (face-up), inlay (face-down print; the artwork is a second 3MF object with colour role `accent` for a filament swap or multi-material unit).
+**Three relief modes:** emboss (face-up print), deboss (face-up; depth clamped so the cavity keeps 1.8 mm, which means 0.4 mm on plate-height parts), inlay (face-down print; for a single-extruder swap the `accent` object is the face slab minus the logo so the logo shows the body colour; for multi-material units the logo fill is its own object; see [05](05-3d-printing-pipeline.md#6-orientation-supports-hollow-roofs)).
 
 **Trademark guard (M5, after the Q16 spike):** uploaded artwork is checked against a blocklist (LEGO marks, minifigure silhouette) and rejected with an explanation ([12](12-legal-and-naming.md)); until the spike proves a false-positive rate under 1 percent the guard is a warning.
 
@@ -146,7 +146,7 @@ Every feature knows its LDU footprint, which faces may touch the bed, which fiel
 }
 ```
 
-Evaluation at 2x4 with `fdm-0.4`: body 15.8 x 31.8 x 3.2 mm (0.1 mm undersize per side), three tubes OD 6.514 / ID 4.8 plus edge pins at nominal, then the fit profile's offsets applied as 2D offsets; SVG opened at 0.8 mm and extruded 0.6 mm; derived snap: eight female sockets on the bottom; no male connectors (tile).
+Evaluation at 2x4 with `fdm-0.4`: body 15.8 x 31.8 x 3.2 mm (0.1 mm undersize per side), three tubes OD 6.514 / ID 4.8 at nominal (Ø3.18 pins appear only on 1-wide parts), then the fit profile's offsets applied as 2D offsets (bore, tube OD and rib depth from the pocket row); SVG opened at 0.8 mm and extruded 0.6 mm; in deboss mode the roof thickens locally under the artwork and the designer clamps depth to 0.4 mm so 1.8 mm of cavity remains; derived snap: eight female sockets on the bottom; no male connectors (tile).
 
 ## 8. Worked example: nameplate keychain
 
@@ -165,7 +165,7 @@ Evaluation at 2x4 with `fdm-0.4`: body 15.8 x 31.8 x 3.2 mm (0.1 mm undersize pe
     "ringHole": { "type": "length", "unit": "mm", "default": 5.0, "min": 3, "max": 8, "step": 0.5, "visibleWhen": "loop != 'none'" }
   },
   "features": [
-    { "id": "body",   "op": "body.brick", "size": ["$width", "$length"], "height": "plate" },
+    { "id": "body",   "op": "body.plate", "size": ["$width", "$length"] },
     { "id": "studs",  "op": "stud.field", "on": "body.top", "if": "$studsOnTop", "studType": "solid" },
     { "id": "bottom", "op": "tube.field", "on": "body.bottom", "fitCritical": true },
     { "id": "label",  "op": "relief.text", "on": "body.top", "if": "!$studsOnTop", "text": "$text", "font": "$font", "mode": "emboss", "height": "0.6mm",

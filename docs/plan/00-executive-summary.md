@@ -58,9 +58,9 @@ Why this and not the alternatives (full comparison in [03](03-tech-stack-decisio
 |----------|---------|---------------------------|
 | Module (stud pitch) | 8.0 mm = 20 LDU (measured 7.986 mm) | 7.98 to 8.02 mm |
 | Brick / plate height | 9.6 / 3.2 mm = 24 / 8 LDU | 3.18 to 3.22 mm per plate |
-| Stud diameter | 4.8 mm = 12 LDU (measured 4.87 to 4.90) | printed 4.75 to 4.85 mm |
+| Stud diameter | 4.8 mm = 12 LDU (measured 4.87 to 4.90) | printed 4.75 to 4.85 mm (coupon sweeps 4.60 to 4.95) |
 | Anti-stud (tube bore) | 4.8 mm | printed 4.90 to 5.00 mm |
-| Tube outer diameter (2-wide) | 6.514 mm (8 x sqrt 2 minus 4.8) | printed OD unchanged; the tube wall thins to about 0.78 mm after a plus 0.15 mm bore offset, so the profile quantises it up to 0.8 mm |
+| Tube outer diameter and ribs (the pocket that grips a stud) | 6.514 mm (8 x sqrt 2 minus 4.8); ribs 0.3 mm | calibrated by the coupon pocket row (OD 6.40 to 6.65, ribs 0.2 to 0.5); tube wall kept at least 0.7 mm |
 | Side wall / roof | 1.2 mm + 0.3 mm ribs / 1.0 mm | 0.8 or 1.2 mm / at least 1.0 mm |
 | Part undersize | 0.1 mm per side (n x 8 minus 0.2) | unchanged |
 | Minimum emboss stroke | n/a | 0.8 mm; relief 0.4 to 1.5 mm (0.4 to 1.0 recommended for logos) |
