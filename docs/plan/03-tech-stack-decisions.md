@@ -1,0 +1,96 @@
+# Tech stack decisions
+
+**Purpose.** The architecture decision record for OpenBrick3D. Section 1 is the table every issue and pull request can reference by ID. Section 2 explains the four candidate directions we evaluated and why the hybrid won. Sections 3 to 6 give the specifics (versions as of 2026-10-27, with links), the "coding tools" the team will use, and the output formats the product produces.
+
+## 1. Decision table
+
+| ID | Area | Decision | Alternatives considered | Why | Revisit when |
+|----|------|----------|-------------------------|-----|--------------|
+| D01 | Core language | Rust workspace for geometry, part evaluation, engine, print validation and IO; compiled native and to WASM. | TypeScript everywhere; Python core | One implementation of the logic reaches CLI, desktop, web and mobile; manifold-rust removes C++ from mobile builds; contributors from both web and systems worlds. | Never for the core; UI framework is separate (D12). |
+| D02 | Geometry kernel | Manifold 3.5.x behind a `Kernel` trait. Default `manifold-rust` 0.19.1 (pure Rust); hedge `manifold-csg` 0.4.1 (FFI to C++ Manifold 3.5.4) behind a feature flag; conformance corpus compares both plus `manifold-3d` WASM as oracle. | OCCT (B-rep), truck, csgrs, CGAL, OpenSCAD embedded, libfive/fidget | Guaranteed-manifold booleans are the property a print pipeline needs; adopted by Blender 4.5 LTS and OpenSCAD nightlies; deterministic since 3.5.0; 204 KB gzip WASM. CGAL and OpenSCAD are GPL; OCCT is 48.9 MB in WASM and LGPL-relinks on iOS. | manifold-rust fails the conformance corpus at M0 (then default to manifold-csg); csgrs 0.23 "certified booleans" appears on crates.io. |
+| D03 | Fillets, text, SVG | No B-rep fillets in v1. Chamfers via frustum caps and `scaleTop`; 2D round offsets (Clipper2 through Manifold CrossSection) for edge comfort; `SmoothOut` for cosmetic rounding; Minkowski with a low-poly sphere as a budgeted background job; `LevelSet` SDF for organic mode. Text: harfrust/rustybuzz shaping, kurbo flattening at 0.05 mm. SVG: usvg 0.49, fills only in v1. | OCCT fillets; lyon strokes in v1 | Bricks are prismatic; FDM prefers chamfers to fillets anyway; keeps mobile and web on one kernel. | Users ask for true fillets on keychain loops more than SDF mode satisfies (then OCCT service, D20). |
+| D04 | Part DSL | Declarative JSON document `openbrick/part@1` (meta, params, features, snap, print, export) on an integer-LDU grid; typed params modelled on Onshape FeatureScript; connectivity derived from features. | OpenSCAD-like language; TypeScript-only API; KCL | Bricks are a small closed vocabulary; merch needs reproducibility; data is sandbox-safe and hashable. | Never replace; extend with scripts (D05). |
+| D05 | Scripted parts | TypeScript scripts that emit the part document, run in an Extism 1.41 (QuickJS) WASM sandbox with no IO, fuel and memory caps, content-hash cached. Official generators in Rust via Extism Rust PDK. Ships in M5. | Scripts calling the kernel directly; eval in main thread | Determinism and mobile safety; scripts cannot hang the UI. | Community asks for per-vertex control (then a Rust/AssemblyScript host ABI). |
+| D06 | Connectivity model | Internal typed connectors (studM, studF, tubeF, pinM, pinF, axleM, axleF, barM, clipF, hingeFinger, ball, socket) serialised losslessly to `!LDCAD SNAP_*` metas on LDraw export; official-part connectors derived by scanning LDraw primitive references; data published CC BY 4.0, authored clean-room. | Ship LDCad shadow library (all rights reserved); Studio `.conn` (binary, unparsed) | Only open, text-based, battle-tested vocabulary; makes our parts snap in LDCad today. | Roland Melkert grants a licence for the shadow library (then import it as a seed). |
+| D07 | Assembler data model | Integer LDU positions (i32) in the LDraw frame (right-handed, minus-Y up), `Rot24` rotation index, tagged free pose for hinged parts; struct-of-arrays instance tables keyed by generation handles plus ULIDs; immutable content-addressed part catalog with baked LODs, occupancy masks, connectors, collision proxies. | Float scene graph; three.js Object3D per brick | Lattice makes snapping, collision, undo and sync cheap; ECS-lite scales to 100k. | Never. |
+| D08 | Spatial index and collision | Lattice spatial hash (Teschner) on 20x8x20 LDU cells plus a connector hash keyed on (quantised position, direction octant, type); occupancy-mask narrowphase (solid, stud, cavity classes); parry3d / three-mesh-bvh only for picking, culling and free-pose parts. | BVH only | Snap cost independent of model size. | Never. |
+| D09 | Undo and collaboration | Command log with inverse commands and drag coalescing from day one; persisted as autosave journal; ULID-addressed so it can replay into a CRDT. No CRDT in v1; benchmark Yjs 13.6.33, Loro 1.17.1, Automerge 3.5.0 on a 100k-instance document in M3. | CRDT from day one | Loro and Automerge WASM are 1.1 to 1.2 MB gzip; unmeasured at 100k entries. | Benchmark result in M3; prefer Loro with a Rust core. |
+| D10 | Renderer | three.js r186 `WebGPURenderer` with automatic WebGL2 fallback; WebGL2 is the floor; chunked `InstancedMesh` per (part, colour, LOD) over 32x32x32-stud cells; `BatchedMesh` only on WebGL2 (one draw per instance on the WebGPU backend as of r186); three LOD tiers; screen-space edges. Engine stays renderer-agnostic. | Babylon.js 9.32, PlayCanvas 2.23, wgpu/Bevy native, Godot | MIT, LDrawLoader exists, largest contributor pool, one API across shells. | WebGPU multi-draw lands in three.js; or Linux/Android webview rendering proves unfixable (then a wgpu native renderer, D11 watch list). |
+| D11 | Native renderer | Not in v1. Watch list: `openbrick-render` on wgpu 30 for CLI offscreen thumbnails and a Linux native window; Godot 4.7 LibGodot or Bevy 0.20 for a future play-mode client. | Build wgpu renderer now | Two renderers doubles work for a 2 to 4 person team. | After M3 benchmarks on WebKitGTK and Android WebView. |
+| D12 | UI framework | TypeScript. Framework chosen in M0 spike between React 19 and Svelte 5; default React for contributor familiarity. State in a small store that mirrors the core's command log. | Dioxus (Rust UI), egui | Web contributors; Tauri hosts either. | M0 spike result. |
+| D13 | Desktop shell | Tauri 2.12.x: DMG/.app, NSIS and MSI, AppImage, deb, rpm, MSIX for Microsoft Store, Flathub manifest; updater plugin (desktop only); Linux "safe rendering" flag sets the documented WebKitGTK env vars. | Electron 45 (100 MB+, no mobile) | Small binaries, Rust core in-process, same project builds mobile. | Tauri Linux WebView becomes a support burden (then an Electron build of the same bundle for Linux NVIDIA). |
+| D14 | Mobile strategy | PWA first (M4) as the zero-install and "install from a QR code" channel; Android via Tauri (APK on GitHub Releases, Play, Play-Services-free flavour for F-Droid and Obtainium) in M4; iOS via Tauri (TestFlight public link, App Store at 1.0) in M5; Capacitor 8 kept as fallback shell config. | React Native/Expo, Flutter | Same bundle everywhere; honest about iOS: no CLI install outside developer tooling. | Tauri mobile plugin gaps block file import/export (then small Swift/Kotlin plugins). |
+| D15 | CLI and install channels | Rust CLI `openbrick` released with `dist` 0.33.1 (curl pipe sh, PowerShell one-liner, `cargo binstall`, npm package for `npx`, Homebrew tap, MSI, CycloneDX SBOM, attestations); maturin `bin` wheel for `uv tool install` and `pipx`; scoop bucket and winget via komac in CI; Homebrew core/cask once notability thresholds are met. | npm-only CLI; Python-only CLI | Cheapest, most mature channel; gives contributors a real artifact in month one. | Never. |
+| D16 | Native file formats | `.obrick` = zip(model.json with semver schema, custom parts, thumbnail); `.obpart.json` for parts; `.obprofile.json` for fit and process profiles; `.obrun.json` for batch runs. Units LDU in model, mm in profiles. Migrations per schema version. | Single JSON file; binary format | Zip gives embedded assets; text inside keeps the README promise. | Never; versions evolve. |
+| D17 | LDraw interop | Lossless `.ldr`/`.mpd` round-trip for lattice poses (type-1 lines with integer LDU, 0 STEP, 0 ROTSTEP, 0 FILE, !DATA for embedded custom parts); own type-1 parser; library downloaded at first run with checksum (complete.zip is 140 MiB; crates.io caps at 10 MB), small CC0 starter set bundled; attribution screen in every client. | Vendor library in binaries; use LeoCAD code | Licence hygiene (CC BY attribution, no GPL code) and bundle size. | Never. |
+| D18 | Print output | Vanilla 3MF (Core 1.4.0, Materials 1.2.1 colour groups, Production 1.2 UUIDs) as canonical; fit profile and generator version embedded as metadata; per-part objects under one component by default with an explicit fuse option; STL legacy; Bambu/Orca project flavour as a version-pinned plugin later. Rust writer: `lib3mf-core` 0.4.0 behind a thin abstraction, fuzzed against `lib3mf` 2.5.0 in CI. | STL only; Bambu project 3MF as default | 3MF is ISO/IEC 25422:2025 with colours; vendor metadata drifts. | PrusaSlicer 3.0 and the 3MF Toolpath extension settle. |
+| D19 | Compensation strategy | Fit offsets are baked into geometry at export from a per-printer `FitProfile` (stud OD, tube ID, horizontal hole, first-layer chamfer, wall quantisation, optional XY scale); slicer settings are advisory hints only. Calibration coupon sweeps stud OD 4.70 to 4.95 mm and tube ID 4.80 to 5.05 mm in 0.05 mm steps, optional 0.02 mm fine pass. | Rely on slicer XY compensation | Slicers differ (Orca/Bambu split hole vs contour; Prusa has one knob); files are shared across slicers. | Never. |
+| D20 | STEP and B-rep | Not in v1. v2: compile the same part document to OCCT 8.0.1 out of process (build123d 0.13.0 in Python for CLI/CI, or cadrum 0.9.1 in Rust) for STEP export and true fillets; never in mobile binaries. | OCCT in v1 | Mesh kernel covers 95 percent of merch parts; LGPL and size. | Merch clients require STEP for moulding (then prioritise the service). |
+| D21 | Validation | Export is blocked on fit-critical failures (manifold, self-intersection, min wall, roof thickness, overhang under roof, feature outside calibrated window, min emboss stroke); warnings otherwise; every message carries rule id, value, threshold, fix. | Warn only | Printed clutch is the product promise. | Never. |
+| D22 | Licensing and governance | Code MIT; openBrick-native part definitions, palettes and profiles CC0 1.0 with a mandatory `credit` field as a norm (CC BY 4.0 opt-in); docs CC BY 4.0; imported LDraw parts keep their own CC BY headers in a separate tree; DCO 1.1 enforced by the GitHub DCO app; no CLA; a separate Trademark Policy for the name and logo. | CLA; GPL | Company needs no CLA under MIT; DCO is lighter for contributors. | Company plans a proprietary edition (then reconsider CLA). |
+| D23 | Naming | Project and app name **OpenBrick3D**; CLI binary `openbrick`; crates `openbrick-*`; npm `openbrick3d` and `@openbrick/*`; PyPI `openbrick3d`; GitHub org `openbrick3d`; domains `openbrick3d.com`, `openbrick3d.org`, `openbrick.dev`; Flatpak id `net.neuraldeep.OpenBrick3D`. Merch brand is a separate coined name after clearance. | Keep "openBrick" | `cwesson/openBrick` exists; "Open Bricks" is a German retail brand in exactly the merch category; `OpenBrick3D` had no conflicts and all handles were free on 2026-10-27. | Clearance search returns a conflict for OpenBrick3D too. |
+| D24 | Dev tooling | Cargo workspace plus pnpm workspace; `cargo xtask` for cross-cutting tasks; rustfmt, clippy (deny warnings), biome for TS; tests: unit, golden meshes with hash and volume tolerance, property tests for snapping (proptest), print-fit coupon tests, visual snapshots (Playwright), criterion and web benchmarks; GitHub Actions matrix; conventional commits; a CLAUDE.md with the conventions for AI-assisted work. | Nx/Turbo monorepo tooling | Minimal moving parts; both ecosystems' defaults. | Build times exceed 10 min on CI (then caching and sccache). |
+
+## 2. The four candidate directions
+
+We evaluated four complete directions against nine weighted criteria (printability fidelity 2.5, developer velocity 1.5, platform reach 1.5, CLI install 1.0, performance at scale 1.0, community appeal 1.0, longevity 1.0, merch fit 1.0, legal safety 0.5). The research is unanimous enough that the scoring is a summary rather than a close call.
+
+| Direction | Strengths | Decisive weaknesses | Verdict |
+|-----------|-----------|---------------------|---------|
+| **A. Rust core + Tauri 2 + TypeScript/three.js + PWA + dist CLI** | One logic implementation on every platform; pure-Rust kernel path for mobile; best CLI story; MIT ecosystem; contributors from web and Rust. | manifold-rust is young; Tauri webviews render unevenly on Linux and Android; two languages. | **Chosen.** Mitigations in D02, D10, D13. |
+| B. Web-first TypeScript (Manifold WASM, three.js, PWA, Capacitor, npm CLI) | Fastest first demo; one language; identical to A on the web. | CLI via Node is heavier and slower for batch runs; no path to a native mobile kernel or native renderer without rewriting geometry; WASM-only kernel on iOS memory ceilings unmeasured. | Grafted: its PWA-first mobile sequencing and worker architecture are in A. |
+| C. Game engine first (Bevy 0.20 or Godot 4.7) | Best play feel; native mobile exports; MultiMesh/indirect drawing at 1.6M cubes. | Godot web export is WebGL2-only, single-threaded, Safari-problematic, no C# on web; Bevy breaks every four months, no editor, example-level mobile; part-designer UI tooling is weaker; smaller contributor pool for a CAD-like tool. | Watch list (D11) for a play-mode client in year 2 to 3. |
+| D. CAD-first Python (build123d/OCCT, uv CLI, web viewer) | True B-rep, fillets, STEP; mature Python CAD community. | OCCT cannot reach browsers or mobile sanely (48.9 MB WASM wrapper unmaintained since 2023; LGPL relinking on iOS); two cores would be needed for the assembler; slower batch. | Grafted: OCCT as an out-of-process STEP and fillet service in v2 (D20); build123d for CI cross-checks. |
+
+## 3. Core stack with versions (2026-10-27)
+
+| Layer | Choice | Version / status | Source |
+|-------|--------|------------------|--------|
+| Language | Rust | 1.97 toolchain pinned; Tauri plugins need 1.90+ | rust-lang.org |
+| Kernel | Manifold | 3.5.4 (2026-09-25), Apache-2.0 | github.com/elalish/manifold |
+| Kernel (Rust) | manifold-rust / manifold-csg | 0.19.1 (2026-10-25) / 0.4.1 (2026-09-09) | crates.io |
+| 2D, fonts, SVG | usvg, kurbo, harfrust, rustybuzz, ttf-parser, lyon (v1.1 strokes) | 0.49.0 / 0.13.1 / 0.15.0 / 0.20.1 / 0.25.1 / 1.0.19 | crates.io |
+| Raster trace | vtracer (WASM) | 1.0.0-alpha.4, MIT/Apache | github.com/visioncortex/vtracer |
+| 3MF | lib3mf-core (Rust); lib3mf as CI oracle | 0.4.0 (2026-09-15) / 2.5.0 (2026-02-24) | crates.io, github.com/3MFConsortium |
+| ECS-lite | hecs or hand-rolled SoA | hecs 0.11.2 | crates.io |
+| Collision helpers | parry3d | 0.31.1 | crates.io |
+| Physics (play mode) | Rapier | rapier3d 0.36.1, rapier.js 0.21.0 | rapier.rs |
+| Sandbox | Extism | 1.41.0 (Rust), @extism/extism 2.0.0-rc13 | extism.org |
+| Renderer | three.js | r186 (2026-09-24) | threejs.org |
+| Picking/culling | three-mesh-bvh, @three.ez/batched-mesh-extensions | 0.9.16 / 0.0.12 | npm |
+| UI | TypeScript, React 19 (M0 spike vs Svelte 5), Vite | current | npm |
+| Desktop/mobile shell | Tauri | 2.12.x (core 2.12.5, CLI 2.12.4, bundler 2.10.4) | tauri.app |
+| PWA | Vite PWA plugin, OPFS, File System Access | Safari 26 WritableStream, Chrome 121+ Android WebGPU | webkit.org, chromestatus |
+| CLI release | dist, cargo-binstall, maturin | 0.33.1 / 1.26.1 / current | github.com/axodotdev/cargo-dist |
+| Package managers | pnpm, Cargo | pnpm 10, Node 22 | |
+| Catalog data | LDraw Parts Library; Rebrickable bulk CSV (names, colours, crosswalk) | Library update 2026-10, 17,116+ shapes, CC BY 2.0/4.0 | ldraw.org, rebrickable.com |
+
+## 4. Coding tools and conventions
+
+- **Editors:** any. The repo ships `.editorconfig`, `rust-analyzer` settings, and a VS Code recommended-extensions file.
+- **AI-assisted development:** a `CLAUDE.md` at the repo root states the conventions (integer LDU, no geometry in UI, every validator message has a rule id, golden tests for geometry changes, DCO sign-off, conventional commits). Reviews are human; AI drafts are welcome and must pass the same tests. See [10](10-repo-layout-and-dev-tooling.md).
+- **Formatting and lint:** rustfmt, clippy with `-D warnings`, biome for TypeScript, prettier for Markdown, markdownlint for docs, `cargo deny` for licence policy (allow MIT, Apache-2.0, BSD, CC0, Zlib, MPL-2.0 with care; deny GPL, AGPL, LGPL in client crates).
+- **Commits:** conventional commits (`feat(part): add clip feature`), `git commit -s` for DCO.
+- **Branching:** trunk-based; short-lived branches; release tags `v0.1.0`.
+
+## 5. Output formats the product produces
+
+| Format | Produced by | Notes |
+|--------|-------------|-------|
+| 3MF (Core 1.4.0, Materials 1.2.1, Production 1.2) | part designer, assembler whole-model, batch runs | canonical print output; metadata carries fit profile and generator version |
+| STL (binary) | designer, assembler | legacy; mm units; no colour |
+| LDraw `.dat` with `!LDCAD SNAP_*` | designer | custom parts for LDCad, LeoCAD, Studio import via MPD |
+| LDraw `.ldr` / `.mpd` | assembler | lossless for lattice poses; `!DATA` embeds custom parts |
+| glTF with `EXT_mesh_gpu_instancing` | assembler | one node per (part, colour); viewer and AR hand-off |
+| `.obrick`, `.obpart.json`, `.obprofile.json`, `.obrun.json` | all | native, text inside zip |
+| CSV manifest | batch runs | serial, params hash, plate, filename |
+| STEP | v2 service | OCCT out of process |
+| OpenSCAD `.scad` | importer only | geometry via OpenSCAD CLI out of process |
+
+## 6. Decisions deliberately deferred
+
+- UI framework (React vs Svelte): M0 spike, one week, measured by how fast the param panel and viewport bridge come together.
+- CRDT library: M3 benchmark.
+- Native renderer: after M3 webview benchmarks.
+- Resin and SLS profiles: experimental until a calibration dataset exists.
+- Hosting community uploads: a business decision with DSA obligations; the registry starts as a Git repository.
