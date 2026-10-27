@@ -1,0 +1,340 @@
+{
+  "summary": "The brick-compatible system is defined by one module, M = 8.0 mm (stud pitch), and a vertical unit of 1 plate = 3.2 mm (brick = 9.6 mm = 3 plates; 5 plates = 2 studs = 40 LDU). Every other dimension is derived from two numbers: the stud (Ø4.8 mm, nominal height 1.7 mm) and the module. The 1958 patent (US 3,005,282) defines the underside geometry by tangency, not by millimetres: the hollow tube under a 2-wide brick must touch the projected cross-sections of four studs (tube OD = 8√2 − 4.8 = 6.51 mm) and its bore equals the stud diameter (4.8 mm); the solid pin under a 1-wide brick must touch two studs (8 − 4.8 = 3.2 → the 3.18 mm 'bar' family that also drives clips, hollow studs and minifig hands). Parts are undersized 0.1 mm per side (a 1x1 is 7.8 mm; an n-stud length is 8n − 0.2 mm), which is what keeps adjacent bricks from jamming and absorbs cumulative pitch error (measured pitch is 7.986 ± 0.002 mm at 25 °C, not 8.000). Walls are ≈1.2 mm with ≈0.3 mm internal ribs (older references say 1.5 mm, which is the effective wall+rib dimension), roof ≈1.0 mm. Technic: pin hole Ø4.8 (measured ≈4.9) with a Ø6.2 × 0.9 mm counterbore for the pin collar, hole axis 5.8 mm above the brick bottom (LDraw models it at 5.6 mm); axles are a 4.8 mm cross with ≈1.8 mm arms (LDraw simplifies to 1.6 mm). Balls: 5.9 mm (towball/Mixel 'ball-shaft') and 10.2 mm (Technic/Bionicle/CCBS). Click hinges detent at 22.5° (16 positions).\n\nLDraw is the only open, versioned, machine-readable geometry corpus (CC BY 4.0, primitives still being updated as of 2026-09). Its conventions matter for .ldr compatibility: 1 LDU = 0.4 mm (measured 0.3993 mm), −Y is up, parts are centred on the top-most stud group with the top surface (bottom of studs) at y = 0, bodies extend to +24 LDU (brick) or +8 LDU (plate), studs rise to −4 LDU, tubes point +Y, and hinge parts put the origin at the rotation point. But LDraw is a rendering model, not a manufacturing model: stud height is 4 LDU (1.6 mm vs real 1.7–1.8), tube OD is 16 LDU (6.4 vs 6.51), Technic counterbore 16 LDU (6.4 vs 6.2), towball 16 LDU (6.4 vs 5.9), axle arms 4 LDU (1.6 vs ≈1.8), walls are usually 4 LDU (1.6 vs 1.2+ribs), and there are no fillets, ribs, logos or interference. openBrick must therefore treat LDraw as the interchange/visual layer and own a separate parametric 'print-true' geometry layer with explicit clutch (interference) parameters.\n\nClutch power is governed by a small, deliberate interference: real studs measure 4.87–4.90 mm against a 4.8 mm tube bore and wall-rib pocket (≈0.07–0.1 mm interference), and a 2019 CMM study found LEGO parts deviate from nominal by ≈32–41 µm with ≈4 µm roundness scatter, versus 124–160 µm for unbranded clones. LEGO's own cited tolerances are 10 µm for the moulding machines and up to 20 µm permitted on moulds, with ≈18 rejects per million; the widely repeated '0.002 mm' figure has no primary source and should not be used. For 3D printing, nothing in the nominal table survives contact with a nozzle: FDM needs stud targets of 4.75–4.85 mm and anti-stud bores of 4.90–5.00 mm, per-material offsets of ±0.04–0.18 mm (PELA's calibration tables), and resin needs ≈1 % scale compensation. The print pipeline should therefore be a calibration-driven offset system around a single canonical nominal model, not a fixed STL library.\n\nCompetitors (Gobricks, Cobi, Mega Construx, Qman, BlueBrixx OEMs) all sit on the same 8 mm grid and are stud-compatible, but no public caliper/CMM dataset exists for them; the documented deviations are qualitative and concentrated in secondary connectors: Cobi and Gobricks run tighter clutch than LEGO (LEGO is 'soft'), Mega is inconsistent (1-wide plates very tight, some slopes loose, sink marks), Qman uses its own ball-joint diameter, and Technic pins/axles/clips/hinges are where any brand mix shows up. Mega Bloks (preschool) and DUPLO (2× LEGO) are not interchangeable. The web-search budget for this run was exhausted before an official lego.com tolerance page, Gobricks measurements, and the 'Play well, print well' paper DOI could be verified; those are listed as open questions.",
+  "findings": [
+    {
+      "claim": "LDraw units: 1 LDU ≈ 0.4 mm (≈1/64 in); the official spec states 1 brick width = 20 LDU, brick height = 24 LDU, plate height = 8 LDU, stud diameter = 12 LDU, stud height = 4 LDU, and that these are approximations to be checked against real parts.",
+      "evidence": "LDraw File Format Specification 1.0.2: 'LDraw parts are measured in LDraw Units (LDU)'; 1 LDU ≈ 0.4 mm; derived-unit table quoted verbatim in the spec.",
+      "confidence": "verified",
+      "source_url": "https://ldraw.org/article/218"
+    },
+    {
+      "claim": "LDraw coordinate system: the spec calls it right-handed with −Y pointing up; studded parts are oriented with studs up (−y) and tubes down (+y); the part origin is centred on the top-most stud group with the bottom of the studs on the x-z plane (y = 0); hinge-like parts put the origin at the rotation point.",
+      "evidence": "LDraw.org Official Parts Library Specifications rev 2.4, Orientation/Origin section: 'the top studs point up (-y) and the bottom tubes point down (+y)'; 'the bottom of the studs should be at y=0'; 'the origin should be at the rotation point'. Forum posts describe the same system as left-handed when viewed +Y-up; the handedness label is a convention argument, the axis facts are not.",
+      "confidence": "verified",
+      "source_url": "https://ldraw.org/article/512.html"
+    },
+    {
+      "claim": "LDraw stud primitive stud.dat is a cylinder of radius 6 LDU (Ø12 LDU = 4.8 mm) extending 4 LDU (1.6 mm) in −y from y = 0; underside tube stud4.dat is a ring of outer radius 8 LDU (Ø6.4 mm) and inner radius 6 LDU (Ø4.8 mm); solid underside pin stud3.dat has radius 4 LDU (Ø3.2 mm); open stud stud2.dat has outer radius 6 and bore radius 4 LDU (Ø3.2 mm bore for a 3.18 bar). The unit primitive 4-4cyli.dat has radius 1 and spans y = 0..1.",
+      "evidence": "Raw primitive files read from library.ldraw.org: stud.dat lines '1 16 0 0 0 6 0 0 0 -4 0 0 0 6 4-4cyli.dat'; stud4.dat uses scale 8 and 6 plus 4-4ring3 scaled 2; stud3.dat scale 4; stud2.dat scales 6 and 4 with 4-4ring2 scaled 2; 4-4cyli.dat vertices lie on the unit circle with y ∈ {0,1}.",
+      "confidence": "verified",
+      "source_url": "https://library.ldraw.org/library/official/p/stud.dat"
+    },
+    {
+      "claim": "LDraw Technic peg hole (peghole.dat) models a Ø4.8 mm hole (r = 6 LDU) with a counterbore of r = 8 LDU (Ø6.4 mm) and depth 2 LDU (0.8 mm). In Technic Brick 1x2 (3700.dat) the hole axis is at y = 10 LDU, i.e. 4.0 mm below the top and 5.6 mm above the bottom; underside pin at y = 18, body 0..24.",
+      "evidence": "peghole.dat: '4-4edge scaled 8 at y=0 and y=2', '4-4edge scaled 6 at y=2', '4-4ring3 scaled 2 at y=2', inverted 4-4cyli scaled 8 with height 2. 3700.dat: '1 16 0 10 10 ... peghole.dat', '1 16 0 10 -10 ... peghole.dat', stud3a at (0,18,0), box3u2p at y=24.",
+      "confidence": "verified",
+      "source_url": "https://library.ldraw.org/library/official/parts/3700.dat"
+    },
+    {
+      "claim": "LDraw axle cross profile: overall half-width 6 LDU (Ø4.8 mm across the rounded tips, tips lie on an r = 6 arc), arm thickness 4 LDU (1.6 mm); the axle-hole primitive axl5hol9.dat uses arm half-thickness 2 LDU and tip half-width 5.6023 LDU with chamfer points (4,2)-(2.5,2.5)-(2,4), and axlehole.dat adds 'adapter rings' out to radius 6.",
+      "evidence": "axle.dat vertices such as (5.602, 0, 2) and (6, 0, 0); axl5hol9.dat line list verbatim: '2 24 5.6023 0 2 4 0 2', '2 24 4 0 2 2.5 0 2.5', '2 24 2.5 0 2.5 2 0 4', '2 24 2 0 4 2 0 5.6023'; axlehole.dat references 1-16chrd.dat scaled 6.",
+      "confidence": "verified",
+      "source_url": "https://library.ldraw.org/library/official/p/axl5hol9.dat"
+    },
+    {
+      "claim": "LDraw clip primitives (clip1..clip4) are 'designed to hold an 8 LDU diameter pole' (Ø3.2 mm); click-hinge primitives are placed 10 LDU below the top surface and 6 LDU off the side surface on bricks (2 LDU below the top on plates); clh4 ('Dual Finger - 4.5LDU') builds each finger from 9 copies rotated in 22.5° steps, matching the 16-position click hinge.",
+      "evidence": "Primitives Reference clip entries; clh4.dat header '!HELP place 10 Ldu below top surface and 6 Ldu off side surface', finger lines rotated by .9239/.3827 (22.5°) steps; clh1.dat geometry spans y = ±8.2 LDU and x = ±3.48 LDU (single finger ≈7 LDU ≈ 2.8 mm thick, disc ≈16.4 LDU ≈ 6.5 mm). Brick Architect: click hinges 'can only be positioned in 22½° increments'.",
+      "confidence": "verified",
+      "source_url": "https://library.ldraw.org/library/official/p/clh4.dat"
+    },
+    {
+      "claim": "LDraw is dimensionally approximate, not print-true: towball part 3184.dat models the 5.9 mm ball as an 8-8sphe scaled 8 (Ø16 LDU = 6.4 mm); axlesphe.dat is 'truncated to fit a 12.81 LDU radius sphere' (Ø10.25 mm, the Technic ball); stud height is 4 LDU (1.6 mm) versus 1.7–1.8 mm real; Technic hole at 5.6 mm vs 5.8 mm real; axle arms 1.6 mm vs ≈1.8 mm real.",
+      "evidence": "3184.dat line '1 16 0 4 -28 8 0 0 0 8 0 0 0 8 8-8sphe.dat'; Primitives Reference axlesphe entry; Cailliau: 'This is 5.8mm and the LDraw models use 5.6mm instead'; LDraw spec: dimensions are 'just that: approximations'.",
+      "confidence": "verified",
+      "source_url": "https://library.ldraw.org/library/official/parts/3184.dat"
+    },
+    {
+      "claim": "Measured stud pitch is 7.986 mm ± 2 µm at 25 °C (Robert Munafo, measured along a long wall of Technic beams); derived brick height 9.582 mm, plate 3.194 mm, 1 LDU = 0.3993 ± 0.0001 mm. Bricks are 'made a little smaller than this dimension would suggest'.",
+      "evidence": "LUGNET FAQ 'Build/dimensions' page, credited to Munafo, Poskanzer, Bliss, Dye; also lists Poskanzer approximations: stud Ø5, height 1.7, wall 1.5, underside cylinder OD 6.31, cylinder wall 0.657 mm.",
+      "confidence": "verified",
+      "source_url": "http://www.lugnet.com/~330/FAQ/Build/dimensions"
+    },
+    {
+      "claim": "Nominal design values: stud pitch 8.0 mm, stud Ø4.8 mm, stud height ≈1.7 mm (sources range 1.6–1.8), brick 9.6 mm, plate 3.2 mm, 1x1 width 7.8 mm, 2x4 brick 31.8 × 15.8 × 9.6 mm, i.e. 0.1 mm undersize per side. Micrometer surveys of 1960s–recent bricks give studs of 4.87–4.90 mm ('consistently around a tenth of a millimetre larger', possibly deliberate for clutch) and 2x4 bodies ≈15.9 × 31.9 mm.",
+      "evidence": "brickfact guidebook table and measured-values table (citing the Brighton Toy Museum micrometer survey, which returned HTTP 403 to direct fetch); patent figures quoted: 2x4 ≈ 3.2 × 1.6 × 0.96 cm with 0.48 cm studs; DUPLO 6.4 × 3.2 × 1.92 cm with 0.96 cm studs.",
+      "confidence": "verified",
+      "source_url": "https://brickfact.com/blog/guidebooks/lego-brick-dimensions"
+    },
+    {
+      "claim": "Robert Cailliau's dimension pages: pitch 'exactly 8mm', grid 8.0 × 9.6, plate 3.2, stud Ø4.8–4.9 ('4.9 fits the geometry better'), stud height 1.8 (1.9 over the embossed logo), one-knob brick 7.8 wide (n×8 − 0.2), Technic axle-hole centre 5.8 mm above base (LDraw 5.6), axle Ø4.8 turning freely in ≈4.90 mm bearing holes, 6.2 mm figure for the hole, bush/gear hub 7.8 (old) / 8.0 (new) mm, mould tolerance 'smaller than 0.01mm (10µ)' with some sources saying ≈5 µ.",
+      "evidence": "Fetched cailliau.org 'More Dimensions' page (the 'General Considerations' and 'zMeasurements' URLs returned 403/404 and could not be read directly); Eurobricks thread quotes the same source: 'The knob diameter: 4.8mm ... also the diameter of axles and holes', studs ≈4.9 and axles ≈4.75.",
+      "confidence": "verified",
+      "source_url": "https://www.cailliau.org/Alphabetical/L/Lego/Dimensions/More%20Dimensions/BBEditPreviewTemp.html"
+    },
+    {
+      "claim": "cfinke/LEGO.scad (MIT, © 2015 Christopher Finke) encodes: stud_spacing 8, stud_diameter 4.8, stud_height 1.8, block_height 9.6, plate 3.2, baseplate 1.3, roof 1.0, wall 1.2 with 0.7 × 0.27 mm splines (1.47 without), wall_play 0.1, stud_play 0.03, bar_play 0.01, pin_diameter 3.14, post OD ≈6.45 / post wall ≈0.83 / bore 4.8, hollow stud bore 3.20 (3.18 + 2×0.01), horizontal (Technic) hole 4.8 with 1.0 mm wall, centre 5.8 mm, bevel Ø6.2 × 0.9 deep, axle hole Ø5.0 with 2.0 mm slots, tile bottom gap 0.4.",
+      "evidence": "Raw LEGO.scad source read from GitHub; derived Thingiverse customizer lists LEGO-branch values 1.45 wall / 4.85 stud / 0.85 post wall / 3.1 hollow-stud bore; a Formlabs forum user found the original's walls 'off' and forked it (delooper/LEGO.scad).",
+      "confidence": "verified",
+      "source_url": "https://raw.githubusercontent.com/cfinke/LEGO.scad/master/LEGO.scad"
+    },
+    {
+      "claim": "PELA Blocks (CC BY-SA 4.0, Futurice/paulirotta) is calibration-first: knob radius = 2.57 + top_tweak, socket ring radius = ring thickness (0.8 fine / 1.2 large nozzle) + 2.75 + bottom_tweak, axle hole radius = 2.45 + axle_hole_tweak; per-material tweaks (mm) e.g. PLA −0.08/+0.04/+0.07, ABS fine −0.18/+0.16/+0.14, PET +0.04/+0.10/+0.04, Nylon −0.02/+0.15/+0.06, TPU95 −0.06/−0.02/−0.10; style.scad: block_width 8, block_height 8 (Technic) or 9.6, official_knob_height 1.8, PELA knob 2.9, top shell 1.0, side shell 1.0–1.2, skin 0.1, Technic counterbore inset r 3.1 (Ø6.2) × 0.95 deep, bearing sheath 0.9.",
+      "evidence": "material.scad and style.scad read from GitHub master; README calibration workflow (print beam, read top/bottom tweak, re-calibrate per material/nozzle/slicer); 2019 TUM poster: ten materials pre-calibrated, calibration matters more for knobs/sockets than Technic holes.",
+      "confidence": "verified",
+      "source_url": "https://raw.githubusercontent.com/paulirotta/PELA-blocks/master/material.scad"
+    },
+    {
+      "claim": "US 3,005,282 'Toy building brick' (G. K. Christiansen, Danish priority 28 Jan 1958, filed 28 Jul 1958, granted 24 Oct 1961, expired) defines the underside by tangency: 'each of the secondary projections touches the geometrically projected cross sections of four primary projections'; claim 2: 'the inside diameter of said tubular projection is equal to the diameter of said cylindrical projections'; tube height equals cavity depth; slits may increase clamping. The patent text contains no mm values and no percentage tolerance.",
+      "evidence": "Google Patents full text read (two pages). The '1 % compatibility tolerance' quoted by brickfact as a 'patent claim' was not found in US3005282; its origin is unverified.",
+      "confidence": "verified",
+      "source_url": "https://patents.google.com/patent/US3005282A"
+    },
+    {
+      "claim": "Derived from the patent constraints: tube OD = 8√2 − 4.8 = 6.514 mm (≈16.3 LDU), tube wall = (6.514 − 4.8)/2 = 0.857 mm, solid 1-wide pin = 8 − 4.8 = 3.2 mm, and the effective wall+rib thickness in a 2-wide brick = 7.9 − (4 + 2.4) = 1.5 mm (so a 1.2 mm wall needs ≈0.3 mm ribs to touch the stud). These match independent figures (cfinke 6.45/0.83, Thingiverse 0.85, New Elementary 'fractionally less than the distance between two studs', Bartneck commenter wall 1.2 + strut ≈0.3).",
+      "evidence": "Pure geometry from the tangency claims plus the 4.8 mm stud and 7.8 mm part width; cross-checked against the cited parameter files.",
+      "confidence": "inferred",
+      "source_url": "https://patents.google.com/patent/US3005282A"
+    },
+    {
+      "claim": "The 3.18 mm bar/clip family dates to 1978 (minifigure hand, 1x1 round brick with open stud 3062b, first bars on minifig accessories), clips from 1980 (4085); LEGO's official name for the element is '3.2 Shaft'; 1978 recesses are 'a slightly tight fit' for modern bars, so the standard was likely 'fractionally less than 3.18 mm' then and clutch has been retuned over the decades.",
+      "evidence": "New Elementary 'Bravo three one eight' and the Brothers Brick repost; '3.2 Shaft W/5.9 Ball' naming in the Ballshaft article.",
+      "confidence": "verified",
+      "source_url": "https://www.newelementary.com/2016/12/bravo-three-one-eight.html"
+    },
+    {
+      "claim": "Ball joints: the small ball is 5.9 mm (towball since 1970 on 3184; reintroduced 2014 with Mixels/Chima sockets that 'afford a tight push-fit'; older towbar sockets are looser) and the large Technic/Bionicle/CCBS ball is 10.2 mm.",
+      "evidence": "New Elementary Ballshaft article: '5.9mm diameter ball has been part of the LEGO System for many years'; '10.2mm Technic ball joints commonly used in Bionicle'.",
+      "confidence": "verified",
+      "source_url": "https://www.newelementary.com/2017/01/bar1l-with-towbar-22484-LEGO-part-design-ID.html"
+    },
+    {
+      "claim": "LEGO-cited tolerances: moulding machines 'have tolerances as small as 10 micrometres (0.01 mm)' (LEGO Company Profile 2010, p. 20); moulds 'are permitted a tolerance of up to twenty micrometres' (Develop3D 2008); 'about eighteen bricks out of every million fail' (Company Profile); ABS since 1963, injected at 232 °C, 25–150 t, ≈15 s cooling; DUPLO is 2× LEGO in each dimension.",
+      "evidence": "Wikipedia 'Lego' article with citations to the LEGO Group's Company Profile and Corbet 2008.",
+      "confidence": "verified",
+      "source_url": "https://en.wikipedia.org/wiki/Lego"
+    },
+    {
+      "claim": "The widely repeated '0.002 mm' (and 0.004 / 0.005 mm) mould-precision figure has no primary source: brickfact 'found no production tolerance for Lego's moulds in anything Lego publishes'; secondary sources disagree (0.002, 0.004, 0.005, 0.01, 0.02 mm). Hacker News (2025) commenters attribute LEGO's consistency more to design consistency than process, and note tolerance stacking across many studs is the real issue.",
+      "evidence": "Search results and fetched pages: brickfact, thewave.engineer (claims ±0.01 mm stud tolerance, 0.1–0.2 mm interference, uncited), gizmodo/brothers-brick 60th-anniversary coverage (0.004 mm claim), HN thread 47335237.",
+      "confidence": "verified",
+      "source_url": "https://news.ycombinator.com/item?id=47335237"
+    },
+    {
+      "claim": "Independent CMM study (Samir Lemeš, 'Comparison of similar injection moulded parts by a coordinate measuring machine', SN Applied Sciences 1:193, 2019): ZEISS CONTURA G2, uncertainty ≈±1.8 µm; LEGO bricks deviate from nominal by ≈32 µm (X) and 41 µm (Y) versus ≈160 µm and 124 µm for unbranded copies; LEGO roundness scatter ≈4 µm.",
+      "evidence": "Crossref metadata confirms title/author/journal/year; the numeric values come from the search-result abstract summary because the Springer page redirected to a bot-check and could not be read in full.",
+      "confidence": "likely",
+      "source_url": "https://link.springer.com/article/10.1007/s42452-019-0191-3"
+    },
+    {
+      "claim": "A 2024 paper ('Play well, print well: using LEGO bricks as an intuitive benchmarking tool for 3D printers') measured an original brick by CMM at ≈1.7 µm uncertainty and states there is no public official LEGO tolerance data.",
+      "evidence": "ResearchGate listing in search results; the page itself returned HTTP 402 and the DOI was not verified before the search budget ran out.",
+      "confidence": "likely",
+      "source_url": "https://www.researchgate.net/publication/380650746_Play_well_print_well_using_LEGO_bricks_as_an_intuitive_benchmarking_tool_for_3D_printers"
+    },
+    {
+      "claim": "FDM print targets (community guidance): stud Ø 4.75–4.85 mm, anti-stud/tube bore 4.90–5.00 mm, pitch 7.98–8.02, plate 3.18–3.22, wall 1.2–1.6; outer-wall XY compensation −0.08 to −0.18 mm depending on printer, hole compensation +0.05 to +0.10 mm; ≥3 walls, 0.16 mm layers, slow outer walls; shrinkage PLA 0.2–0.3 %, PETG 0.1–0.2 %, ABS 0.5–0.8 %, ASA 0.4–0.6 %; offsets do not transfer between materials. Resin: a Formlabs user needed ≈1.009–1.011 overall scale to compensate wash/cure shrinkage and still found printed studs looser in LEGO tubes than LEGO studs in printed tubes.",
+      "evidence": "meshy.ai tolerance guide (its '±0.01 mm factory tolerance' is uncited); Formlabs forum 'Experiments in exact printing - LEGO'.",
+      "confidence": "verified",
+      "source_url": "https://www.meshy.ai/blog/lego-compatible-3d-print-tolerances"
+    },
+    {
+      "claim": "Geometry ratios for the assembler: 1 brick = 3 plates; 2 studs = 5 plates = 40 LDU (6:5 brick ratio); odd stud counts need a half-plate (4 LDU = 1.6 mm) which brackets provide ('neck' brackets are ≈3 LDU); jumper/half-stud offsets are 10 LDU (4 mm); the first Technic bricks moved the pin hole up ≈0.2 mm, so Technic-hole SNOT is slightly out of system.",
+      "evidence": "Bill Ward, 'Brick Geometry' (Bricks by the Bay 2021) slide text extracted from the PDF: LDU conversion table, '2 studs = 2x20 = 40 LDU / 5 plates = 5x8 = 40 LDU', 'Bracket: 4 LDU (½ plate)', 'move the pin hole up a little bit (about 0.2mm)'.",
+      "confidence": "verified",
+      "source_url": "https://www.brickpile.com/wp-content/uploads/2022/06/brick-geometry-bbtb2021.pdf"
+    },
+    {
+      "claim": "Competitor deviations are documented only qualitatively: Gobricks is 'slightly tighter (higher clutch power)' and 'more rigid' than LEGO and supplies Mould King and others; Cobi uses 'slightly firmer clutch tuning' (German wiki ranks LEGO soft, Cobi strong, Gobricks/Panlos/Wange between); BlueBrixx OEM parts: 'a particular clip, hinge, bar, axle or Technic-style pin can be tighter or looser than its LEGO counterpart'; Mega Construx 1-wide plates are very hard to press on while some slopes are loose, with sink marks and raised injection rings; Mega Bloks preschool bricks do not fit DUPLO; Qman uses its own ball-joint diameter and its sockets break.",
+      "evidence": "lumibricks Gobricks review; morebybourn Cobi guide (also claims generic ±0.1 mm pitch, ±0.05 mm stud, 4.0–4.5 lb clutch pull, uncited); brickfact BlueBrixx and Mega articles; Mylenium's Brick Corner 'LEGO vs Mega' part 3 (2019); modellbau-wiki and noppensteinwelt via search summaries (pages returned 401/404 on fetch).",
+      "confidence": "likely",
+      "source_url": "https://myleniumsbrickcorner.wordpress.com/2019/01/24/lego-vs-mega-an-analysis-part-3/"
+    },
+    {
+      "claim": "No public caliper/CMM dataset for Gobricks, Cobi, Mega, Qman or BlueBrixx stud/tube/pin dimensions was found in 8+ searches; all brand comparisons found are marketing or hobby blogs.",
+      "evidence": "Searches for measured competitor dimensions (English and German) returned only qualitative comparisons; the CMM paper compares LEGO with 'unbranded' copies only.",
+      "confidence": "verified",
+      "source_url": "https://www.morebybourn.com/article/bricks-compatible-with-lego-cobi-bricks-lego-compatible-blocks"
+    },
+    {
+      "claim": "The 'anti-stud' is community vocabulary (Brick Architect, New Elementary) for any receiving feature that grips a stud: tube bores, 1-wide pins plus walls/ribs, hollow-stud undersides, minifig-hand C-curves. The anti-stud lattice is: tubes (Ø6.51/4.8) at the centres of every 2×2 stud square, solid Ø3.18 pins at the midpoints between studs on 1-wide parts, and wall ribs (≈0.3 mm) on the inside of the perimeter walls; tubes and pins reach the full cavity depth (brick: 9.6 − roof ≈ 8.6 mm; plate: 3.2 − roof ≈ 2.2 mm).",
+      "evidence": "New Elementary uses 'antistud' without a formal definition; Brick Architect clutch-test article refers to stud/anti-stud implements; lattice placement follows from the patent tangency rule and LDraw part files (stud4 at 2×2 centres, stud3 at midpoints, e.g. 3700.dat stud3a at (0,18,0)).",
+      "confidence": "inferred",
+      "source_url": "https://www.brothers-brick.com/2017/02/25/lego-3-18-mm-connection-analysis-new-elementary-guest-post/"
+    },
+    {
+      "claim": "LEGO's internal unit appears to be 1.6 mm (one 'LU' = 4 LDU; a stud is 3 LU, a module 5 LU) — Technic diagrams in LEGO units are converted by multiplying by 1.6.",
+      "evidence": "Eurobricks 'LEGO pin and axle standard' thread (DLuders, Blakbird): 'multiplying those values by 1.6 gives millimeters'; LUGNET FAQ lists LU values brick 6, plate 2, pitch 5 as 'I believe'.",
+      "confidence": "inferred",
+      "source_url": "https://www.eurobricks.com/forum/forums/topic/75308-lego-pin-and-axle-standard"
+    }
+  ],
+  "key_numbers": [
+    { "name": "Module / stud pitch (centre to centre)", "value": "8.0 mm = 20 LDU", "note": "Measured 7.986 ± 0.002 mm at 25 °C (Munafo/LUGNET). Everything else derives from M = 8." },
+    { "name": "Brick height (without studs)", "value": "9.6 mm = 24 LDU", "note": "= 3 plates = 1.2 × pitch (6:5). Measured 9.582 mm." },
+    { "name": "Plate height", "value": "3.2 mm = 8 LDU", "note": "= 0.4 × pitch. Measured 3.194 mm. 5 plates = 2 studs = 40 LDU." },
+    { "name": "Half-plate (bracket arm) / half-stud (jumper) offsets", "value": "1.6 mm = 4 LDU / 4.0 mm = 10 LDU", "note": "Neck brackets are ≈3 LDU (1.2 mm). Tiles are inset ≈½ plate." },
+    { "name": "Stud diameter", "value": "4.8 mm = 12 LDU (nominal); 4.87–4.90 mm measured", "note": "Nominal is also the tube bore and Technic hole. ≈+0.07–0.1 mm oversize on real parts is the clutch interference." },
+    { "name": "Stud height", "value": "1.7 mm nominal (1.6–1.8 mm by source); LDraw 4 LDU = 1.6 mm", "note": "cfinke/PELA use 1.8; Cailliau 1.8 (1.9 over the logo). Model 1.7–1.8 for print; keep 4 LDU in .ldr." },
+    { "name": "Part undersize (horizontal)", "value": "0.1 mm per side = 0.25 LDU; 1×1 = 7.8 mm; n studs = 8n − 0.2 mm", "note": "0.2 mm gap between adjacent bricks. No vertical undersize ('tolerances only work sideways')." },
+    { "name": "2×4 brick body", "value": "31.8 × 15.8 × 9.6 mm (79.5 × 39.5 × 24 LDU)", "note": "Measured ≈31.9 × 15.9 (micrometer survey). Patent figure 'about 3.2 × 1.6 × 0.96 cm'." },
+    { "name": "Side wall thickness", "value": "≈1.2 mm = 3 LDU (modern) + ≈0.3 mm ribs; 1.5 mm = 3.75 LDU effective", "note": "Older refs (LUGNET, meshy) give 1.5; cfinke 1.2 wall + 0.27 × 0.7 splines; LDraw walls usually 4 LDU (1.6)." },
+    { "name": "Top (roof) thickness", "value": "≈1.0 mm = 2.5 LDU", "note": "cfinke roof 1.0, PELA top shell 1.0; some sources 1.2. Cavity depth brick ≈8.6 mm, plate ≈2.2 mm." },
+    { "name": "Baseplate thickness", "value": "≈1.3 mm (cfinke)", "note": "Thin plates without underside tubes; verify by measurement." },
+    { "name": "Underside tube (2-wide) outer diameter", "value": "6.51 mm (8√2 − 4.8 = 6.514) ≈ 16.3 LDU; LDraw stud4 = 16 LDU (6.4 mm)", "note": "Patent: tube touches the projected cross-sections of 4 studs. cfinke 6.45; Poskanzer (1990s) 6.31." },
+    { "name": "Underside tube inner diameter (bore)", "value": "4.8 mm = 12 LDU", "note": "Patent claim 2: tube ID equals stud diameter. FDM target 4.90–5.00 mm." },
+    { "name": "Underside tube wall", "value": "≈0.857 mm (6.514 − 4.8)/2 ≈ 2.1 LDU", "note": "cfinke 0.83, Thingiverse LEGO-branch 0.85, LDraw 2 LDU (0.8)." },
+    { "name": "Solid pin under 1-wide bricks/plates", "value": "3.18 mm (≈3.2 = 8 − 4.8) ≈ 8 LDU; LDraw stud3 r = 4 LDU", "note": "'Fractionally less than the distance between two studs'. cfinke 3.14. Same diameter family as bars." },
+    { "name": "Bar diameter (3.18 family)", "value": "3.18 mm (LEGO name '3.2 Shaft') = 7.95 LDU; LDraw bars r = 4 LDU (Ø3.2)", "note": "Possibly slightly under 3.18 before 1978 retuning. Antenna, lightsaber blades, minifig accessories, towball shafts." },
+    { "name": "Hollow (open) stud bore / clip opening", "value": "≈3.2 mm = 8 LDU", "note": "cfinke 3.20 (= 3.18 + 2 × 0.01 play); LDraw stud2 bore r = 4; clips 'hold an 8 LDU diameter pole'." },
+    { "name": "Technic pin hole diameter", "value": "4.8 mm = 12 LDU nominal; ≈4.90 mm measured (Cailliau)", "note": "Same as the tube bore ('cylinders under a 2x2 are the same diameter as the Technic holes')." },
+    { "name": "Technic hole counterbore (pin collar seat)", "value": "Ø6.2 × 0.9 mm (≈15.5 × 2.25 LDU); LDraw peghole r = 8 LDU (Ø6.4) × 2 LDU (0.8)", "note": "cfinke bevel 6.2 × 0.9; PELA inset r 3.1 × 0.95; pin collar measured 0.9 mm long (Eurobricks)." },
+    { "name": "Technic hole axis height in a 1-high Technic brick", "value": "5.8 mm above bottom (Cailliau) = 3.8 mm below top; LDraw y = 10 LDU (4.0 mm below top = 5.6 mm above bottom)", "note": "Deliberately ≈0.2 mm above brick centre so studs fit beneath; Technic-hole SNOT is slightly off-system." },
+    { "name": "Technic hole pitch (beams/liftarms)", "value": "8.0 mm = 20 LDU", "note": "Holes on the same 8 mm grid; beams are one module wide (7.8 mm body)." },
+    { "name": "Technic pin shaft / collar", "value": "shaft Ø4.8 nominal (friction pins ≈4.85–4.9 effective); collar Ø6.2 × 0.9 mm", "note": "LDraw models pins at r = 6 LDU. Pin shaft dimensions are the weakest-sourced item here; measure." },
+    { "name": "Technic axle cross", "value": "4.8 mm across tips = 12 LDU; arm thickness ≈1.8 mm real (LDraw 4 LDU = 1.6 mm); measured ≈4.75 mm across", "note": "Tips lie on the Ø4.8 circle; axle turns in a ≈4.9 mm round hole. cfinke axle hole Ø5.0 with 2.0 mm slots." },
+    { "name": "Axle hole (cross) in bricks/bushes", "value": "≈4.8 mm envelope; LDraw axl5hol9 tip half-width 5.6 LDU + rings to 6 LDU, slot half-width 2 LDU", "note": "LDraw slot 1.6 mm; real slot ≈1.8–1.9 mm; PELA uses r 2.45 + material tweak." },
+    { "name": "Technic bush / gear hub length", "value": "8.0 mm (new, with 0.1 mm ridges) / 7.8 mm (old)", "note": "Cailliau; bearing faces need 4 × 8 + 0.2 mm spacing to avoid binding." },
+    { "name": "Small ball (towball / Mixel ball-shaft)", "value": "5.9 mm ≈ 14.75 LDU; LDraw 3184 models r = 8 LDU (6.4 mm)", "note": "Official name '3.2 Shaft W/5.9 Ball'. Mixel-era sockets (2014) are a tight push-fit; 1970s towbar sockets looser." },
+    { "name": "Large ball (Technic / Bionicle / CCBS)", "value": "10.2 mm ≈ 25.5 LDU; LDraw axlesphe fits a 12.81 LDU radius (Ø10.25 mm)", "note": "Qman uses a different ball diameter (brand-specific)." },
+    { "name": "Click hinge", "value": "22.5° detents (16 positions); dual fingers ≈4.5 LDU (1.8 mm) each; single finger ≈7 LDU (2.8 mm); finger disc Ø≈16.4 LDU (6.5 mm); axis 10 LDU (4 mm) below the top on brick sides, 2 LDU on plates, 6 LDU off the side face", "note": "Derived from LDraw clh primitives and placement rules; no measured public data." },
+    { "name": "Finger hinge (1978 style plate/brick hinges)", "value": "no public dimensional standard found", "note": "Use LDraw part geometry as the starting point and measure." },
+    { "name": "DUPLO scale", "value": "2× LEGO: pitch 16 mm, brick 19.2 mm, stud Ø9.6 mm (hollow)", "note": "Patent figure 6.4 × 3.2 × 1.92 cm / 0.96 cm studs; Mega Bloks preschool is NOT DUPLO-compatible." },
+    { "name": "LDraw unit", "value": "1 LDU = 0.4 mm nominal (≈1/64 in); 0.3993 ± 0.0001 mm measured", "note": "Spec says approximations; store openBrick geometry in mm and convert to LDU only at the file boundary." },
+    { "name": "LDraw conventions", "value": "−Y up; origin centred on top stud group with stud bases at y = 0; brick body y = 0..+24, plate 0..+8, studs 0..−4; tubes +Y; hinge origin at rotation point; type-1 matrices act on the referenced part's own origin", "note": "The spec calls the system right-handed with −Y up; renderers often flip Y and Z." },
+    { "name": "LEGO internal unit (LU)", "value": "1.6 mm = 4 LDU (inferred); module 5 LU, stud 3 LU", "note": "Technic diagrams in LEGO units × 1.6 = mm (Eurobricks)." },
+    { "name": "Mould / machine tolerance (LEGO-cited)", "value": "machines 10 µm (0.01 mm); moulds up to 20 µm permitted; ≈18 rejects per million", "note": "From LEGO Company Profile 2010 and Develop3D 2008 via Wikipedia. '0.002 mm' is unsourced folklore." },
+    { "name": "Measured LEGO deviation from nominal (CMM, 2019)", "value": "≈32 µm (X) / 41 µm (Y); roundness scatter ≈4 µm; clones 160 / 124 µm", "note": "Lemeš, SN Applied Sciences 1:193; ZEISS CONTURA G2, ±1.8 µm. Numbers from abstract summary (page bot-blocked)." },
+    { "name": "Stud–anti-stud interference (clutch)", "value": "≈0.05–0.10 mm diametral (4.87–4.90 stud vs 4.8 bore/rib pocket)", "note": "Governing dimensions: stud OD, tube bore, pin OD, rib height; wall flex supplies the spring. Thewave claims 0.1–0.2 (uncited)." },
+    { "name": "FDM print targets", "value": "stud 4.75–4.85; anti-stud bore 4.90–5.00; pitch 7.98–8.02; plate 3.18–3.22; wall 1.2–1.6 mm", "note": "XY comp −0.08…−0.18 mm outer, +0.05…+0.10 holes; ≥3 walls; 0.16 mm layers; re-calibrate per material." },
+    { "name": "PELA per-material tweaks (mm on radius)", "value": "PLA −0.08/+0.04/+0.07; ABS −0.18/+0.16/+0.14 (fine) or −0.06/0.00/+0.08 (large nozzle); PET +0.04/+0.10/+0.04; Nylon −0.02/+0.15/+0.06; TPU95 −0.06/−0.02/−0.10; PC −0.08/+0.12/+0.14", "note": "Order: knob / socket / axle hole. Base radii 2.57 / 2.75(+ring) / 2.45." },
+    { "name": "Resin (SLA) scale compensation", "value": "≈1.009–1.011 overall", "note": "Formlabs forum; printed studs still looser than LEGO studs in printed tubes." },
+    { "name": "Material shrinkage (FDM)", "value": "PLA 0.2–0.3 %; PETG 0.1–0.2 %; ABS 0.5–0.8 %; ASA 0.4–0.6 %", "note": "0.5 % of 8 mm = 0.04 mm — the same order as the clutch interference." },
+    { "name": "Thermal reference", "value": "pitch measured at 25 °C", "note": "ABS CTE ≈ 70–100 ppm/K → ≈0.015 mm over 20 K on one module (inferred)." }
+  ],
+  "options_compared": [
+    {
+      "option": "Adopt LDraw library geometry (parts + primitives) as the canonical dimensional source",
+      "pros": "Largest open part corpus (tens of thousands of parts), consistent LDU grid, part origin/orientation rules already standardised, CC BY 4.0, actively maintained (primitives updated 2026-09), native .ldr/.mpd compatibility, tooling (LDView, LeoCAD, Studio import).",
+      "cons": "Rendering model, not manufacturing: stud 1.6 mm tall, tube OD 6.4, counterbore 6.4 × 0.8, towball 6.4 (real 5.9), axle arms 1.6, walls 1.6, no ribs/fillets/logos/interference; many parts are low-res approximations. Printing LDraw meshes gives poor clutch.",
+      "fit_for_openbrick": "Use as interchange + visual + snap-metadata layer, not as print geometry.",
+      "license": "CC BY 4.0 (library and primitives)",
+      "status_2026": "Active; official library updates continue (e.g. 2026-09 primitive updates seen in clh1/clh4)."
+    },
+    {
+      "option": "Adopt cfinke/LEGO.scad parameter set as the base of the parametric part designer",
+      "pros": "Compact, complete nominal parameter list including play constants (wall 0.1, stud 0.03, bar 0.01), Technic hole/bevel, axle slot, baseplate, tiles; MIT licence; easy to port to any language.",
+      "cons": "2015 vintage, no explicit clutch interference (stud 4.8 into 4.8 bore + play), walls reported 'off' by at least one fork, no fillets, OpenSCAD-specific structure, no material calibration.",
+      "fit_for_openbrick": "Good seed for the nominal table; port the numbers, not the code.",
+      "license": "MIT (© 2015 Christopher Finke)",
+      "status_2026": "Mature/dormant; forks exist (delooper/LEGO.scad)."
+    },
+    {
+      "option": "Adopt PELA Blocks approach (calibrated tweak tables per material/nozzle)",
+      "pros": "Best-documented 3D-print calibration workflow; per-material tweak tables; Technic counterbore and bearing sheath modelled; practical FDM advice (nozzle ≤0.4, avoid PLA/carbon-filled for connectors).",
+      "cons": "CC BY-SA 4.0 (copyleft) — cannot be mixed into an MIT codebase without a clean-room re-derivation; PELA knobs are deliberately non-LEGO (2.9 mm tall with flexure, 2.57 base radius) and default to an 8 mm 'Technic' block height; many knobs/params.",
+      "fit_for_openbrick": "Copy the method (calibration coupon → tweak offsets), re-derive numbers independently.",
+      "license": "CC BY-SA 4.0",
+      "status_2026": "Maintained on GitHub master; no releases/versions."
+    },
+    {
+      "option": "Own 'openBrick Dimensional Standard' built from measured + derived values (Cailliau, LUGNET, micrometer/CMM studies, patent tangency math)",
+      "pros": "Most accurate; defensible (facts and geometry are not copyrightable); three columns per feature (nominal / LDraw / print-target) give the designer, assembler and print pipeline one source of truth; can be published CC0 and grown by community measurements.",
+      "cons": "Requires curation and an in-house measurement program (calipers/micrometer, ideally a CMM or µCT session); some items (pin shaft, axle arm, hinge fingers, ball sockets) are currently weakly sourced.",
+      "fit_for_openbrick": "Recommended core.",
+      "license": "CC0 for the data table (proposed)",
+      "status_2026": "To be created; all inputs are available today."
+    },
+    {
+      "option": "Pure geometric derivation from the 1958 patent constraints (tube = 8√2 − 4.8, pin = 8 − 4.8, bore = stud)",
+      "pros": "Two inputs (M = 8, stud = 4.8) regenerate the whole anti-stud lattice; elegant for a parametric kernel; patent is expired.",
+      "cons": "Yields zero interference by construction; must be augmented with explicit clutch offsets and per-side undersize; says nothing about Technic, bars, balls, hinges.",
+      "fit_for_openbrick": "Use as the generator for stud/anti-stud lattices inside the standard.",
+      "license": "n/a (expired patent, public domain text)",
+      "status_2026": "Patent expired; no IP constraint on the stud-and-tube coupling itself."
+    },
+    {
+      "option": "Treat competitor brands (Gobricks, Cobi, Mega, Qman) as separate dimensional targets",
+      "pros": "Would let the print pipeline emit 'clutch profiles' matching a user's existing collection.",
+      "cons": "No public measured data exists for any of them; differences are qualitative (Cobi/Gobricks tighter, Mega inconsistent, Qman ball joints proprietary); pins/axles/clips/balls are where incompatibilities live.",
+      "fit_for_openbrick": "Expose clutch as a user-tunable offset preset rather than brand-specific geometry until measured data exists.",
+      "license": "n/a",
+      "status_2026": "All on the 8 mm grid; 'compatible' ≠ identical tolerances."
+    }
+  ],
+  "recommendations": [
+    "Publish an 'openBrick Dimensional Standard v1' (CC0 data file, e.g. JSON/TOML) with, for every feature, three values: nominal design (mm), LDraw model (LDU) and print target (mm + per-material offset). Base it on M = 8.000 mm, plate = 3.200 mm, stud = Ø4.80 × 1.70–1.80 mm, part undersize 0.10 mm/side, wall 1.20 + 0.30 ribs, roof 1.00, tube Ø6.51/4.80, pin Ø3.18, bar Ø3.18 in Ø3.20 bores, Technic hole Ø4.80 with Ø6.2 × 0.9 counterbore at 5.8 mm, axle 4.8 cross with 1.8 arms, balls 5.9 / 10.2, click-hinge 22.5°.",
+    "Keep LDraw's conventions at the file boundary (−Y up, origin at the top stud plane, 20/24/8 LDU grid, hinge origin at the rotation point, matrices relative to the referenced part's origin) and tag every openBrick part with its LDraw/BrickLink/LEGO design IDs so the assembler can import/export .ldr/.mpd; but store geometry internally in millimetres (f64) and generate LDraw files by conversion, never the reverse.",
+    "Build the part designer around a parametric 'anti-stud lattice' generator: tubes at every 2×2 stud centre (Ø6.51/4.80), Ø3.18 pins at mid-points on 1-wide parts, ribs on inner walls, all to full cavity depth. Two numbers (module, stud) plus explicit offsets (undersize per side, stud oversize, rib engagement, tube-bore clearance) regenerate the whole family; expose those offsets as the 'clutch profile'.",
+    "Make the print pipeline calibration-driven, not STL-driven: ship a calibration coupon (studs at 4.75/4.80/4.85/4.90; anti-stud bores at 4.85–5.05; a Technic hole and axle hole; a 3.18 bar and clip), let the user record which fits, and store per-printer/material offsets (PELA-style top/bottom/axle tweaks, ±0.04–0.18 mm) that are applied to the nominal model at export. Add a global scale option (≈1.009–1.011) for resin.",
+    "Treat clutch as an engineering spec, not folklore: document interference ≈0.05–0.10 mm diametral on studs/tubes, wall-rib engagement ≈0.3 mm, and that walls (not studs) provide the spring; state tolerances honestly (LEGO: 10 µm machine / 20 µm mould / 18 ppm rejects; openBrick FDM target ±0.05 mm after calibration). Never print or market '0.002 mm'.",
+    "Run a small measurement program early (digital micrometer + calipers, 20–30 samples each of 2×4 brick, 1×2 plate, 1×2 Technic brick, 2L pin, 3L axle, 1×1 clip, towball, click-hinge brick) and, if possible, one CMM or µCT session; publish the raw data CC0. This resolves the open items (pin shaft, axle arm, counterbore 6.2 vs 6.4, hole height 5.8 vs 5.6, hinge fingers, ball sockets) and gives the project a citable dataset nobody else has.",
+    "Define compatibility classes in the UI and validator: Class A studs/anti-studs and bars/clips (robust across all brands); Class B Technic pins/axles/bushes (brand- and material-sensitive; warn when mixing); Class C ball joints and click hinges (brand-specific — Qman balls differ, Mixel vs towbar socket clutch differs); Class D DUPLO vs Mega Bloks (incompatible). Offer clutch presets 'soft (LEGO-like)', 'firm (Cobi/Gobricks-like)'.",
+    "Design the vertical grid for SNOT from day one: snapping in 8 LDU (plate) and 4 LDU (half-plate/bracket) steps, half-stud (10 LDU) jumper offsets, Technic hole axes at 5.8 mm (print) / 10 LDU (LDraw) and click-hinge axes 10 LDU below brick tops. Note the Technic brick hole is ≈0.2 mm above the system grid and flag such 'slightly illegal' connections in the assembler rather than silently forcing them.",
+    "Account for thermal and material effects in the print validator: shrinkage 0.1–0.8 % by material is the same magnitude as the clutch interference, so apply material-specific XY compensation and scale, and warn when a design relies on features smaller than ≈0.4 mm (ribs, stud-top fillets, logo emboss) that FDM cannot resolve.",
+    "Legal hygiene for the standard: the 1958 stud-and-tube patent is expired and dimensions are facts, so documenting them is fine; do not emboss 'LEGO' on studs, use 'brick-compatible' wording, and have counsel confirm the status of LEGO 3D trade-dress/trademark registrations before shipping a stock library of recognisable LEGO-design parts (open question below)."
+  ],
+  "open_questions": [
+    "Exact real Technic axle arm thickness and tip/fillet radii (≈1.8 mm is community lore; LDraw uses 1.6 mm) — needs caliper/CMM measurement.",
+    "Technic counterbore: Ø6.2 × 0.9 (cfinke/Cailliau/pin collar) vs LDraw Ø6.4 × 0.8; and hole axis 5.8 mm (Cailliau) vs 5.6 mm (LDraw) — measure on current-production Technic bricks and liftarms.",
+    "Technic pin shaft diameter, friction-ridge height and slot geometry for both friction and frictionless pins — no reliable public numbers found.",
+    "Does any LEGO patent actually contain the '1 % dimensional tolerance for compatibility' language brickfact attributes to a patent? It is not in US 3,005,282.",
+    "Ball-socket bore/interference for the 5.9 mm (Mixel-era vs 1970s towbar) and 10.2 mm CCBS sockets; Qman's actual ball diameter.",
+    "Finger-hinge (1978 style) and click-hinge finger diameters/thicknesses and detent tooth geometry — LDraw gives only approximations.",
+    "Stud-top edge fillet radius and logo emboss height (Cailliau: 1.9 mm over the logo vs 1.8 plain); hollow-stud bore for modern 'stud with hole' parts (3.2 vs 3.1).",
+    "Modern rib/spline geometry inside brick walls (cfinke 0.27 × 0.7 mm; a commenter measured ≈0.3 mm) and whether 2×N bricks now use slit tubes or cross-ribbed tubes (patent mentions slits).",
+    "An official lego.com page stating mould precision (the 0.004 mm / 18-per-million claims appear in press coverage) could not be verified before the search budget ran out; the LEGO Company Profile 2010 figures via Wikipedia are the best current citation.",
+    "DOI and full text of 'Play well, print well' (2024) and the full numeric tables of Lemeš 2019 (Springer page bot-blocked) should be retrieved for the standard's bibliography.",
+    "No public caliper dataset for Gobricks, Cobi, Mega Construx, Qman, BlueBrixx — decide whether openBrick funds its own cross-brand measurement.",
+    "Trademark / 3D trade-dress status of LEGO brick and minifigure shapes in the EU/US as it applies to distributing printable part files (legal review, outside this research scope)."
+  ],
+  "sources": [
+    "https://ldraw.org/article/218",
+    "https://ldraw.org/article/512.html",
+    "https://wiki.ldraw.org/wiki/Primitives_Reference",
+    "https://library.ldraw.org/library/official/p/stud.dat",
+    "https://library.ldraw.org/library/official/p/stud2.dat",
+    "https://library.ldraw.org/library/official/p/stud3.dat",
+    "https://library.ldraw.org/library/official/p/stud4.dat",
+    "https://library.ldraw.org/library/official/p/4-4cyli.dat",
+    "https://library.ldraw.org/library/official/p/peghole.dat",
+    "https://library.ldraw.org/library/official/p/npeghol7.dat",
+    "https://library.ldraw.org/library/official/p/axle.dat",
+    "https://library.ldraw.org/library/official/p/axlehole.dat",
+    "https://library.ldraw.org/library/official/p/axl5hol9.dat",
+    "https://library.ldraw.org/library/official/p/clh1.dat",
+    "https://library.ldraw.org/library/official/p/clh4.dat",
+    "https://library.ldraw.org/library/official/parts/3700.dat",
+    "https://library.ldraw.org/library/official/parts/3184.dat",
+    "https://library.ldraw.org/library/official/parts/30365.dat",
+    "https://library.ldraw.org/library/official/parts/2780.dat",
+    "http://www.lugnet.com/~330/FAQ/Build/dimensions",
+    "https://www.cailliau.org/Alphabetical/L/Lego/Dimensions/More%20Dimensions/BBEditPreviewTemp.html",
+    "https://brickfact.com/blog/guidebooks/lego-brick-dimensions",
+    "https://www.brightontoymuseum.co.uk/index/Lego_dimensions",
+    "https://www.bartneck.de/2019/04/21/lego-brick-dimensions-and-measurements/",
+    "https://orionrobots.co.uk/wiki/lego_specifications.html",
+    "https://en.wikipedia.org/wiki/Lego",
+    "https://patents.google.com/patent/US3005282A",
+    "https://raw.githubusercontent.com/cfinke/LEGO.scad/master/LEGO.scad",
+    "https://3dgo.app/models/thingiverse/3583229",
+    "https://raw.githubusercontent.com/paulirotta/PELA-blocks/master/README.md",
+    "https://raw.githubusercontent.com/paulirotta/PELA-blocks/master/style.scad",
+    "https://raw.githubusercontent.com/paulirotta/PELA-blocks/master/material.scad",
+    "https://www.ce.cit.tum.de/fileadmin/w00cgn/cm/mir-2019/mir-2019-posters/2019-houghton-poster-1.pdf",
+    "https://www.brickpile.com/wp-content/uploads/2022/06/brick-geometry-bbtb2021.pdf",
+    "https://www.eurobricks.com/forum/forums/topic/75308-lego-pin-and-axle-standard",
+    "https://www.newelementary.com/2016/12/bravo-three-one-eight.html",
+    "https://www.brothers-brick.com/2017/02/25/lego-3-18-mm-connection-analysis-new-elementary-guest-post/",
+    "https://www.newelementary.com/2017/01/bar1l-with-towbar-22484-LEGO-part-design-ID.html",
+    "https://brickarchitect.com/2021/lego-clutch-test-implements-bricks/",
+    "https://brickarchitect.com/parts/54672",
+    "https://link.springer.com/article/10.1007/s42452-019-0191-3",
+    "https://api.crossref.org/works/10.1007/s42452-019-0191-3",
+    "https://www.researchgate.net/publication/380650746_Play_well_print_well_using_LEGO_bricks_as_an_intuitive_benchmarking_tool_for_3D_printers",
+    "https://www.thewave.engineer/articles.html/productivity/legos-0002mm-specification-and-its-implications-for-manufacturing-r120/",
+    "https://news.ycombinator.com/item?id=47335237",
+    "https://www.meshy.ai/blog/lego-compatible-3d-print-tolerances",
+    "https://forum.formlabs.com/t/experiments-in-exact-printing-lego/25885",
+    "https://lumibricks.com/blogs/news/lego-vs-gobricks-review",
+    "https://www.lumibricks.com/blogs/news/lumibricks-compatible-with-other-brands",
+    "https://www.thebrickpost.com/?p=43635",
+    "https://brickfact.com/blog/bricks/bluebrixx-vs-lego",
+    "https://brickfact.com/blog/bricks/lego-vs-mega-bloks-the-big-comparison",
+    "https://www.morebybourn.com/article/bricks-compatible-with-lego-cobi-bricks-lego-compatible-blocks",
+    "https://myleniumsbrickcorner.wordpress.com/2019/01/24/lego-vs-mega-an-analysis-part-3/",
+    "https://hobbyscoop.com/lego-vs-mega-bloks-the-real-differences-2026/",
+    "https://www.modellbau-wiki.de/wiki/Klemmbausteine",
+    "https://noppensteinwelt.de/forum/index.php?thread/4234-klemmbausteine-des-grauens-schlechte-qualit%C3%A4t-m%C3%A4ngel-unvorteilhafte-designs-usw/",
+    "https://www.brothers-brick.com/2018/01/28/lego-celebrates-60-years-half-ton-brick-new-york-city-news/"
+  ]
+}

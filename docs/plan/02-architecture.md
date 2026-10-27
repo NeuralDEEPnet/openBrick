@@ -93,12 +93,12 @@ sequenceDiagram
   W->>P: parse + evaluate (usvg flatten 0.05 mm -> CrossSection -> open at minFeature -> extrude -> union)
   P-->>W: meshes by colour role, connectors, warnings (removed hairline area 3.1%)
   W-->>UI: transferable buffers
-  UI->>UI: three.js preview; removed areas shown red
+  UI->>UI: three.js preview, removed areas shown red
   U->>UI: Export 3MF
   UI->>W: validate(built, processProfile)
   W->>PR: manifold check, min wall 0.8 mm, roof >= 1.0 mm, overhang under roof, fit-critical features inside calibrated window
   PR-->>W: Report { blockers: [], warnings: [...] }
-  W->>IO: export_3mf (Core 1.4.0 + Materials colour groups + Production UUIDs; fit profile in metadata)
+  W->>IO: export_3mf (Core 1.4.0 + Materials colour groups + Production UUIDs, fit profile in metadata)
   IO-->>UI: logo-tile-2x4-0001.3mf
   UI->>U: save via File System Access / Tauri dialog
 ```
@@ -121,13 +121,13 @@ sequenceDiagram
   E-->>UI: best LatticePose + highlighted mates (< 2 ms)
   U->>UI: release
   UI->>E: apply(Place{ulid, part, pose, colour})
-  E-->>UI: inverse command appended to log; structure report (attached)
+  E-->>UI: inverse command appended to log, structure report (attached)
   U->>UI: Save
   UI->>IO: write_obrick(document) -> zip(model.json, custom parts, thumbnail)
   U->>UI: Share as .mpd
   UI->>IO: export_ldr (type-1 lines, integer LDU, 0 STEP, 0 FILE, !LDCAD SNAP metas for custom parts)
   U->>UI: Print whole model
-  UI->>IO: export_3mf(per-part objects under one component; optional fuse)
+  UI->>IO: export_3mf(per-part objects under one component, optional fuse)
 ```
 
 ## 6. Plugin and extension model

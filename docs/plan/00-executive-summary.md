@@ -10,7 +10,7 @@ OpenBrick3D is an open-source (MIT) tool for brick-compatible building, with thr
 2. **Assembler.** A snap-together builder for play and planning, handling 10k to 100k bricks, saving open text formats and round-tripping to the LDraw ecosystem.
 3. **Print pipeline.** A calibration-driven path from part to validated 3MF or STL, with per-printer fit profiles, so what comes off the printer actually clutches.
 
-We decided the print pipeline exists to make **new** parts, not to clone standard bricks. Brickset's 2026 consumer-printer test found printed standard bricks have clutch "nowhere near" moulded parts and are "not worth the time and effort" ([ecosystem research](../../docs/plan/13-risks-and-open-questions.md#sources)). The value is in parts nobody moulds.
+We decided the print pipeline exists to make **new** parts, not to clone standard bricks. Brickset's 2026 consumer-printer test found printed standard bricks have clutch "nowhere near" moulded parts and are "not worth the time and effort" (ecosystem research, see [13, sources](13-risks-and-open-questions.md#4-sources)). The value is in parts nobody moulds.
 
 ## Who it is for
 

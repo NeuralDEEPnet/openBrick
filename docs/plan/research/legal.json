@@ -1,0 +1,381 @@
+{
+  "summary": "Jurisdiction: neuraldeep.net identifies the operator as Neural Deep Network LTD, 'Based in Malta', company number C114166 (a Malta Business Registry 'C' number), correspondence address DiHubMT, Zone 3, Central Business District, Triq L-Intornjatur, Birkirkara CBD 3050, Malta, with 'Maltese law applies' in its Terms. A UK Companies House search for 'neural deep network' returns no exact match. openBrick is therefore an EU (Maltese) project: EU trade-mark law, the EU General Product Safety Regulation (GPSR, applies since 13 Dec 2024), Directive 2009/48/EC today and Regulation (EU) 2025/2509 from 1 Aug 2030 govern the home market; the UK and US are export markets (CE still recognised in Great Britain; CPSIA/ASTM F963-23 in the US).\n\nThe brick itself is free: the US stud-and-tube patent (US 3,005,282, issued 24 Oct 1961) and the last related patents expired in 1978 (Canada 1988). Every attempt to extend the monopoly through trademark law on the brick shape failed: Supreme Court of Canada, Kirkbi v Ritvik, 2005 SCC 65; CJEU C-48/09 P Lego Juris v OHIM, 14 Sept 2010 (shape 'necessary to obtain a technical result', cannot be saved by acquired distinctiveness); German BGH 2009. What is NOT free: (1) the LEGO word mark and red-square logo (never in a product/app name, domain, handle, icon, or embossed on studs); (2) the minifigure, which is a valid EU 3D mark (General Court 16 June 2015, Best-Lock; General Court T-297/22 BB Services v EUIPO-Lego Juris, 6 Dec 2023, EU:T:2023:780) and copyright-protected in the US (Lego v Zuru, D. Conn. 18-cv-2045, Fed. Cir. affirmed the minifigure injunction in 2020; 2nd Cir. remanded a later injunction in March 2025); (3) newer element shapes covered by registered Community designs for up to 25 years (Lego v Delta Sport, General Court T-515/19 of 24 Mar 2021 and T-537/22 of 24 Jan 2024 upheld Lego's brick design under the 'modular systems' exception). Design rule for the part designer: generate stud-and-tube geometry freely, never generate minifigure bodies/heads, never emboss LEGO on studs, and treat exact copies of LEGO elements released in the last 25 years as design-right risk. 'Compatible with LEGO® bricks' is permitted referential use (EU Art 14(1)(c) EUTMR / UK s.11(2)(c) TMA / US nominative fair use) if used as an adjective, once, plain text, with ®, with a disclaimer and no emphasis; the NZ Lego v Zuru ruling and LEGO's 2019 MyMiniFactory takedowns show that promotional emphasis or the logo crosses the line.\n\nLicensing: the LDraw Parts Library (Library Update 2026-10; complete.zip is 146,853,687 bytes) is now a mix of CC BY 2.0, CC BY 4.0 and dual-licensed files (3001.dat is 'Licensed under CC BY 4.0', 5306.dat 'CC BY 2.0 and CC BY 4.0'); new submissions since 23 Feb 2022 are CC BY 4.0. Shipping LDraw parts inside an MIT app is fine as data alongside code, provided you keep the file headers/CAreadme, show 'This software uses the LDraw Parts Library' with a link to ldraw.org prominently (an explicit LDraw.org request for any software package that lets users download the library), credit 'The LDraw Parts Library' (accepted by the SteerCo in lieu of a full author list), and flag modifications. Converting LDraw parts into your own compiled format is a Derivative Work, so the attribution duty follows the data. A Rust crate cannot carry the library at all: crates.io has a 10 MB .crate limit, so parts must be downloaded at runtime/installer or published as a separate data package. LeoCAD is GPLv2 (README: 'GNU Public License v2'): never copy its code into an MIT codebase; interoperate via .ldr/.mpd files or separate processes and reimplement from the LDraw spec. LDraw™ itself is a trademark of the Estate of James Jessiman.\n\nMerchandise: brick-compatible logo tiles, nameplates and keychains look like toys, and in the EU a product is a toy if play by under-14s is intended or reasonably foreseeable, so a '14+' sticker alone does not exempt them. Either run the print pipeline to toy standards (EN 71-1/-2/-3, CE, DoC, 10-year technical file, 36-month small-parts warning with hazard text, manufacturer name/address/email on product or packaging, GPSR distance-selling information; US: ASTM F963-23 for toys made after 20 Apr 2024, CPSC-accepted-lab testing, Children's Product Certificate and tracking label for products for 12-and-under, 16 CFR 1501/1500.19 small-parts rules) or position items unambiguously as adult promotional goods and still meet GPSR. Build the EU Digital Product Passport fields (unique product ID, economic-operator ID, CE, warnings via QR) into the order/product model now; it becomes mandatory on 1 Aug 2030. Naming: 'Open Bricks®' is a live German brand (Open Brick Source GmbH & Co. KG, Drolshagen, HRA 9476 Siegen) selling custom-branded building-block sets, i.e. exactly the merch pillar, and claims EUIPO registration; 'OpenBrick' (openbrick.co) is a Madrid real-estate tokenisation fintech backed by SIX/BME; openbrick.org/.com/.net are taken (2008/2018/2008), openbrick.app was registered 18 Oct 2025, and the GitHub user 'openbrick' exists. Free today: npm openbrick/open-brick/openbrick3d and the @openbrick scope, crates.io openbrick/open-brick, PyPI openbrick/open-brick/openbrick3d, GitHub openbrick3d, and the domains openbrick.dev, openbrick3d.com/.org, open-brick.org. Recommendation: keep 'OpenBrick3D' as the consistent open-source project name (grab the free handles now), do not use it as the commercial merch brand without a formal EU/UK/US clearance search against Open Bricks®, adopt DCO 1.1 (not a CLA), MIT for code, CC0 1.0 for openBrick-native part definitions with per-part provenance/attribution fields (CC BY 4.0 as the opt-in for contributors who want enforceable credit and for LDraw-derived parts), and ship the LEGO-Group disclaimer wording below in README, app metadata and product listings.",
+  "findings": [
+    {
+      "claim": "The operating company is Neural Deep Network LTD, a Maltese company (company number C114166), governed by Maltese law, based at DiHubMT, Central Business District, Birkirkara CBD 3050, Malta; there is no exact match on UK Companies House.",
+      "evidence": "neuraldeep.net footer: 'Neural Deep Network LTD', 'Based in Malta, working worldwide'; Terms page: 'company number C114166', 'Maltese law applies, without depriving consumers of mandatory protections'. Companies House search for 'neural deep network' returned 20 fuzzy results and no exact match. Malta Business Registry confirmation not retrievable from this environment (JS-only site).",
+      "confidence": "verified",
+      "source_url": "https://www.neuraldeep.net/terms"
+    },
+    {
+      "claim": "LEGO's brick patents are long expired: US 3,005,282 'toy building bricks' issued 24 Oct 1961; the last underlying brick patents expired in 1978; the last Canadian Kirkbi patents expired in 1988.",
+      "evidence": "Wikipedia 'Lego clone' IP history (US patent 3005282, 1961-10-24; 'the last underlying brick patents expired' 1978). Canadian sources on Kirkbi v Ritvik say the last Canadian patents expired in 1988.",
+      "confidence": "verified",
+      "source_url": "https://en.wikipedia.org/wiki/Lego_clone"
+    },
+    {
+      "claim": "Trademark law cannot be used to monopolise the stud-and-tube brick shape: Supreme Court of Canada, Kirkbi AG v Ritvik Holdings (Mega Bloks), 2005 SCC 65 (17 Nov 2005), unanimous; CJEU C-48/09 P Lego Juris v OHIM, 14 Sept 2010, upheld invalidation of the red 2x4 brick 3D mark under Art 7(1)(e)(ii) because all essential characteristics perform a technical function, and acquired distinctiveness cannot cure it.",
+      "evidence": "Smart & Biggar / DWW notes on the SCC decision (functional features belong to patent law); IPKat 'Lego brick hits a wall' (Sept 2010) and WTR summary of C-48/09 P; CJEU rejected the relevance of alternative shapes.",
+      "confidence": "verified",
+      "source_url": "https://ipkitten.blogspot.com/2010/09/lego-brick-hits-wall.html"
+    },
+    {
+      "claim": "The LEGO minifigure remains a valid EU 3D trade mark: filed 2000; upheld by the EU General Court on 16 June 2015 (Best-Lock cases); upheld again in T-297/22 BB Services GmbH v EUIPO - Lego Juris, 6 Dec 2023, EU:T:2023:780, rejecting Art 7(1)(e)(i) and (ii) attacks.",
+      "evidence": "WIPO Lex record of T-297/22 ('shape of a toy figure with a protrusion on its head', judgment 6 December 2023); Wikipedia Lego clone: '2000: Lego filed a three-dimensional trademark for its minifigures', 'June 16, 2015: ... upheld Lego's minifigure trademark'. Whether BB Services appealed to the Court of Justice could not be confirmed (Curia pages are JS-only).",
+      "confidence": "verified",
+      "source_url": "https://www.wipo.int/wipolex/en/judgments/details/3550"
+    },
+    {
+      "claim": "In the US the minifigure is protected by copyright: Lego A/S v Zuru Inc. (D. Conn., 18-cv-2045); the Federal Circuit affirmed the preliminary injunction on the minifigure copyright claim (2020) but vacated injunctions on Zuru's MAX Build More bricks for lack of irreparable harm; in March 2025 the Second Circuit sent a third injunction back for re-analysis.",
+      "evidence": "Loeb & Loeb (Jan 2020) and Finnegan (Sept 2020) case notes; Bloomberg Law, 'Lego's Minifigure Injunction Must Be Revisited, Second Cir. Says' (March 2025).",
+      "confidence": "verified",
+      "source_url": "https://www.finnegan.com/en/insights/blogs/incontestable/lego-blocks-out-zuru-in-copyright-dispute-over-minifigures.html"
+    },
+    {
+      "claim": "Newer LEGO element shapes can be protected by registered Community designs for up to 25 years even though they are modular: in Lego v Delta Sport the General Court (T-515/19, 24 Mar 2021) revived Lego's brick design under the Art 8(3) CDR 'modular systems' exception and in T-537/22 (24 Jan 2024) upheld the design again.",
+      "evidence": "Case numbers and dates from training knowledge; the Curia case pages could not be read from this environment (JS-only), so dates should be re-checked before quoting externally.",
+      "confidence": "inferred",
+      "source_url": "https://curia.europa.eu/juris/liste.jsf?language=en&num=T-537/22"
+    },
+    {
+      "claim": "LEGO's own Fair Play rules: use LEGO only as an adjective ('MODELS BUILT OF LEGO BRICKS', never 'LEGOs'), always with ®, in the same typeface as surrounding text, never in an Internet address, never the LEGO logo on an unofficial site, not 'unduly emphasized', and with the disclaimer 'LEGO® is a trademark of the LEGO Group of companies which does not sponsor, authorize or endorse this site'; a disclaimer 'will not serve to undo an improper trademark use'; 'In some countries, the LEGO Basic Brick is protected by a trademark registration'; the footer lists 'LEGO, the LEGO logo, the Minifigure, DUPLO ...' as trademarks.",
+      "evidence": "Verbatim quotes extracted from lego.com/legal/legal-notice/fair-play.",
+      "confidence": "verified",
+      "source_url": "https://www.lego.com/legal/legal-notice/fair-play"
+    },
+    {
+      "claim": "LEGO actively polices 3D-printing sites: in Oct 2019 it sent takedowns to MyMiniFactory and others combining trademark claims (LEGO word mark, red-square logo, Minifigure) with a copyright claim limited to the minifig design; the analysis is that LEGO-compatible brick geometry is not protectable, accessories photographed with a minifig are probably fine, and 'Lego-Compatible' labelling is unlikely to infringe because trademark is about source confusion; Fair Play 'does not define Lego's legal rights'.",
+      "evidence": "Michael Weinberg, 'Lego's IP Grab Bag', 10 Oct 2019: 'This notice actually combines both copyright and trademark claims'; 'trademark infringement is all about causing confusion in users'.",
+      "confidence": "verified",
+      "source_url": "https://michaelweinberg.org/blog/2019/10/10/lego-ip-grab-bag/"
+    },
+    {
+      "claim": "Compatibility claims that use the word LEGO can be found to breach 'honest practices' when they are promotional rather than informational: in New Zealand, Zuru's comparative advertising stating its products were compatible with Lego's was held to fall outside permitted comparative advertising, and Zuru agreed not to use the word 'Lego' in its compatibility statements pending a court ruling.",
+      "evidence": "Search summary of The Law Association NZ article 'Lego blocks Kiwi toymaker from using its trademark in advertising'; full judgment text not retrieved.",
+      "confidence": "likely",
+      "source_url": "https://www.thelawassociation.nz/lego-blocks-kiwi-toymaker-from-using-its-trademark-in-advertising/"
+    },
+    {
+      "claim": "Typical alt-brick vendor wording: Open Bricks® uses 'Note: LEGO® is a trademark of the LEGO® Group, which neither sponsors nor authorizes this product.'; COBI avoids the name entirely: 'blocks fully compatible with other leading brands'; LDraw.org uses 'LEGO® is a registered trademark of the Lego Group, which does not sponsor, endorse, or authorize this site.' and 'LDraw is a completely unofficial, community run free CAD system'.",
+      "evidence": "Verbatim text from openbricks.studio/en/, cobi.eu/en/ and ldraw.org legal-info.",
+      "confidence": "verified",
+      "source_url": "https://openbricks.studio/en/"
+    },
+    {
+      "claim": "The LDraw Parts Library is today a mix of CC BY 2.0, CC BY 4.0 and dual-licensed files. The classic 2x4 brick 3001.dat carries '0 !LICENSE Licensed under CC BY 4.0 : see CAreadme.txt'; 5306.dat carries 'Licensed under CC BY 2.0 and CC BY 4.0'. The new Contributor Agreement (SteerCo, 23 Feb 2022) releases new submissions under CC BY 4.0; authors who did not sign stay on CC BY 2.0.",
+      "evidence": "Part headers fetched directly from library.ldraw.org/library/official/parts/3001.dat and 5306.dat on 2026-10-27; forum thread 26089 'New LDraw.org Contributer's Agreement' (posts dated 2022-02-23): 'agrees to release the Work under the Creative Commons Attribution License 4.0 International License'; 'your submissions will continue to be covered under the CC BY 2.0 license'.",
+      "confidence": "verified",
+      "source_url": "https://forums.ldraw.org/thread-26089.html"
+    },
+    {
+      "claim": "LDraw attribution obligations: (1) name the creator, (2) URL for the work, (3) name the license, (4) URL for the license, (5) note whether the work has been modified; 'Items 1-4 are provided by either the file itself or this document. Item 5 is your responsibility if you have modified the work.' The SteerCo accepts an attribution to 'The LDraw Parts Library' in lieu of a full list of authors. Converting parts into another library 'must be considered a Derivative Work'. Any site that lets users download the library as part of a software package must 'prominently display a message stating that the LDraw Parts Library was used' with 'a link back to the main LDraw.org website' (suggested wording: 'This software uses the LDraw Parts Library').",
+      "evidence": "LDraw draft CAreadme (ldraw.org/draft-documents/careadme.txt-draft.html), legal-info page, and 'HTML Code to link to LDraw' page.",
+      "confidence": "verified",
+      "source_url": "https://ldraw.org/the-ldraw-organization/link-to-ldraw.html"
+    },
+    {
+      "claim": "LDraw complete.zip is 146,853,687 bytes (about 140 MiB), last modified 26 Oct 2026 (Library Update 2026-10, 253 files, 129 new parts). crates.io 'currently has a 10MB size limit on the .crate file' and publishes are permanent, so the LDraw library cannot be vendored into a Rust crate; it must be fetched at install/runtime or shipped as a separate download.",
+      "evidence": "HTTP HEAD on https://library.ldraw.org/library/updates/complete.zip (content-length 146853687); library.ldraw.org/updates?latest; Cargo Book 'Publishing on crates.io'.",
+      "confidence": "verified",
+      "source_url": "https://doc.rust-lang.org/cargo/reference/publishing.html"
+    },
+    {
+      "claim": "Shipping CC BY-licensed LDraw data next to MIT code is license-compatible: CC BY governs the part files as data, MIT governs the code; keep separate LICENSE files, keep every part's header lines, add a NOTICE/CREDITS file, show the LDraw credit in the About screen/README, and mark modified parts. Do not re-license LDraw parts as MIT or CC0.",
+      "evidence": "Follows from the CC BY terms quoted on the LDraw legal page ('You must give the original author credit', 'make clear to others the licence terms of this library') plus the Derivative Work language; no conflict with MIT's notice requirement.",
+      "confidence": "inferred",
+      "source_url": "https://www.ldraw.org/docs-main/licenses/legal-info.html"
+    },
+    {
+      "claim": "LeoCAD is GPL v2 (Debian records 'or later'); latest release line is 25.09 (Sept 2025). GPL code cannot be copied into an MIT codebase; interoperate through .ldr/.mpd files or a separate process, and implement the LDraw format from the public spec (LDraw.org site content is CC BY 4.0).",
+      "evidence": "LeoCAD README: 'available for free under the GNU Public License v2'; Debian copyright file and Alpine package metadata (GPL-2.0-or-later, 25.09).",
+      "confidence": "verified",
+      "source_url": "https://github.com/leozide/leocad"
+    },
+    {
+      "claim": "LDraw™ is a trademark owned and licensed by the Estate of James Jessiman, so 'LDraw' must not be part of openBrick's product or package names.",
+      "evidence": "ldraw.org legal-info: 'LDraw™ is a trademark owned and licensed by the Estate of James Jessiman'.",
+      "confidence": "verified",
+      "source_url": "https://ldraw.org/legal-info"
+    },
+    {
+      "claim": "EU toy law timeline: Regulation (EU) 2025/2509 on the safety of toys (repealing Directive 2009/48/EC) has been in force since 1 Jan 2026, applies generally from 1 Aug 2030, with transitional placing-on-market under the Directive until then; the Digital Product Passport (QR data carrier with unique product identifier, economic-operator ID, references to EU law, CE marking, allergenic-fragrance labelling) replaces the EU Declaration of Conformity and must exist before placing on the market; technical documentation kept 10 years; PFAS deliberately added are banned, CMR ban extended to endocrine disruptors and sensitisers; online marketplaces must show CE marking, warnings and the DPP link before purchase and non-compliant toys are 'illegal content' under the DSA.",
+      "evidence": "Noerr, 'New European Toy Safety Regulation 2025/2509 comes into force' and Bureau Veritas / Eurofins bulletins; EUR-Lex itself was unreadable from this environment.",
+      "confidence": "verified",
+      "source_url": "https://www.noerr.com/en/insights/new-european-toy-safety-regulation-2025-2509-comes-into-force-key-points-at-a-glance"
+    },
+    {
+      "claim": "Under Directive 2009/48/EC a 'toy' is a product designed or intended, whether or not exclusively, for use in play by children under 14; toys with small parts for ages 3+ must carry 'Warning. Not suitable for children under 36 months' (or 'under three years') plus the specific hazard (Annex V Part B); harmonised standards EN 71-1 (mechanical/physical incl. the small-parts cylinder), EN 71-2 (flammability), EN 71-3 (migration of elements) give presumption of conformity; CE marking plus EU DoC, technical file and manufacturer name/address on the toy or packaging are required.",
+      "evidence": "Directive text known from training; EUR-Lex HTML could not be fetched here, so wording should be checked against the consolidated Directive before use on packaging.",
+      "confidence": "likely",
+      "source_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02009L0048-20230420"
+    },
+    {
+      "claim": "The EU General Product Safety Regulation (EU) 2023/988 applies since 13 Dec 2024 to consumer products not (fully) covered by sector rules, i.e. to 'adult collectible' brick merchandise: manufacturer name, postal and electronic address and a product identifier on the product/packaging, an EU-established responsible economic operator (satisfied by the Maltese company for its own goods), distance-selling listings that show that information and warnings, and accident/recall reporting via the Safety Business Gateway.",
+      "evidence": "Noerr: 'Many toy-related rules already apply under the General Product Safety Regulation (EU) 2023/988 since 13 December 2024'; article-level detail from training knowledge (GPSR Arts 9, 16, 19, 52).",
+      "confidence": "likely",
+      "source_url": "https://eur-lex.europa.eu/eli/reg/2023/988/oj"
+    },
+    {
+      "claim": "Great Britain: the Toys (Safety) Regulations 2011 apply; regulation 39A (inserted by SI 2019/696, amended by SI 2024/696 from 1 Oct 2024) lets toys that meet the EU Directive and carry CE marking be placed on the GB market, with no end date; gov.uk guidance (updated 21 Aug 2026) confirms the UK 'continues to recognise the CE marking' for GB with no stated end date, UKCA remaining optional; the only deadline on that page (31 Dec 2027) concerns placing UKCA on labels/documents; Northern Ireland uses CE.",
+      "evidence": "legislation.gov.uk reg 39A (text up to date to 26 Oct 2026; 'Regs. 39A-39AB ... inserted (31.12.2020)'; change by S.I. 2024/696) and gov.uk 'Using the UKCA marking'.",
+      "confidence": "verified",
+      "source_url": "https://www.legislation.gov.uk/uksi/2011/1881/regulation/39A"
+    },
+    {
+      "claim": "United States: ASTM F963 is mandatory via 16 CFR part 1250; F963-23 applies to toys manufactured after 20 Apr 2024; toys 'designed or intended primarily for children 12 years of age or younger' need third-party testing at a CPSC-accepted laboratory, a Children's Product Certificate citing 16 CFR 1250 and the applicable F963 sections, and a permanent tracking label (15 U.S.C. 2063(a)(5)) on product and packaging; 16 CFR 1501 bans small parts in products for under-3s and 16 CFR 1500.19(b)(1) requires the choking-hazard label for toys for ages 3 to under 6 containing a small part; a small part is anything that fits entirely into the small-parts test cylinder.",
+      "evidence": "CPSC 'Toy Safety Business Guidance and Small Entity Compliance Guide' and CPSC small-parts guidance; govinfo text of 16 CFR 1500.19(b)(1). The exact label text ('WARNING: CHOKING HAZARD - Small parts. Not for children under 3 yrs.') is embedded as a graphic in the CFR and is quoted from training knowledge.",
+      "confidence": "verified",
+      "source_url": "https://www.cpsc.gov/Business--Manufacturing/Business-Education/Toy-Safety-Business-Guidance-and-Small-Entity-Compliance-Guide"
+    },
+    {
+      "claim": "US limits that matter for printed parts: total lead 100 ppm in accessible substrates (lead paint 90 ppm, 16 CFR 1303), eight phthalates capped at 0.1% in children's toys (16 CFR 1307); registered 'small batch manufacturers' (roughly USD 1.5M inflation-adjusted gross revenue and at most 7,500 units of a product in the prior year) get relief from some third-party testing but never for lead paint, small parts, or other listed hazards.",
+      "evidence": "CPSIA sections 101/108 and CPSC small-batch programme known from training; the CPSC small-batch page returned 403 from this environment, so thresholds must be re-checked.",
+      "confidence": "inferred",
+      "source_url": "https://www.cpsc.gov/Business--Manufacturing/Testing-Certification"
+    },
+    {
+      "claim": "Age-grading reality: brick-compatible logo tiles, nameplates and keychains will usually be judged toys (play by under-14s is reasonably foreseeable) regardless of a '14+' label, and single bricks, tiles and 1x1 studs are small parts; a credible 'adult collectible' position needs non-toy presentation (promotional/desk item, no play imagery), 'Not a toy. Not suitable for children under 14' marking, and still full GPSR compliance; FDM prints can also fail EN 71-1/F963 mechanical tests (sharp edges, layer separation under torque/tension), so children's-grade output should be a distinct, tested product line.",
+      "evidence": "Synthesis of the EU toy definition, EN 71-1/ASTM F963 small-parts and mechanical tests, and CPSC guidance that toys for 13+ are outside the testing/CPC regime; no single source.",
+      "confidence": "inferred",
+      "source_url": "https://www.cpsc.gov/toysafety"
+    },
+    {
+      "claim": "Printing customers' logos: the standard print-on-demand model has the customer warrant that it owns or is licensed to use every uploaded design, indemnify the printer, accept refusal/removal of infringing or hateful designs, and submit to a notice-and-takedown process (DMCA 512 for US traffic; DSA Art 16 notice-and-action for EU hosting); some services expressly forbid third-party corporate logos without proof of rights. openBrick's order terms must do the same, and the pipeline should hard-refuse LEGO logos/minifigures and well-known third-party marks.",
+      "evidence": "Printful Terms/IP Policy summaries (users keep ownership and are responsible for uploads), Printify policy update (sellers responsible for customer content), BYU and Tissus Print terms ('corporate logos' barred without rights).",
+      "confidence": "likely",
+      "source_url": "https://www.printful.com/policies/download/terms-of-service"
+    },
+    {
+      "claim": "Name conflicts: 'Open Bricks®' is a live brand of Open Brick Source GmbH & Co. KG (Hagener Str. 78, 57489 Drolshagen, Germany; HRA 9476 Siegen; VAT DE282321057) selling custom building-block sets, custom-printed bricks and 'Brick Buddies' figures to businesses, museums and clubs, i.e. the same market as the merch pillar; its site states 'Registered with EUIPO' and 'Original, protected design (EUIPO)'. 'OpenBrick' (openbrick.co, Madrid) is a real-estate tokenisation platform backed by SIX/BME (Nov 2024). 'Open Brick Source' is the same German group's brick brand.",
+      "evidence": "openbricks.studio/en/ and /en/imprint; SIX Group press release 27 Nov 2024; Crunchbase/Dealroom entries.",
+      "confidence": "verified",
+      "source_url": "https://openbricks.studio/en/imprint"
+    },
+    {
+      "claim": "Handle/domain availability on 2026-10-27: TAKEN - openbrick.org (registered 23 Jun 2008, GoDaddy), openbrick.com (10 Jan 2018, GoDaddy), openbrick.net (8 Aug 2008), openbrick.app (18 Oct 2025, Cloudflare), openbrick.co (fintech), openbricks.org, GitHub user 'openbrick' (hobby Arduino account, 3 repos). FREE - npm 'openbrick', 'open-brick', 'openbrick3d' and scope '@openbrick'; crates.io 'openbrick', 'open-brick'; PyPI 'openbrick', 'open-brick', 'openbrick3d'; GitHub 'openbrick3d'; domains openbrick.dev, openbrick3d.com, openbrick3d.org, open-brick.org (RDAP 404). openbrick.io resolves but its registration status could not be read.",
+      "evidence": "Direct registry API calls (registry.npmjs.org, crates.io/api, pypi.org/pypi), RDAP lookups via rdap.org, DNS resolution and GitHub profile fetches performed on 2026-10-27.",
+      "confidence": "verified",
+      "source_url": "https://registry.npmjs.org/openbrick"
+    },
+    {
+      "claim": "Formal trade-mark clearance for OPENBRICK / OPEN BRICKS in classes 9, 28, 35, 40, 42 could not be completed: TMview's API returned 503 and the UK IPO search returned 403 from this environment; the Open Bricks® claim of EUIPO registration therefore remains unverified but should be assumed real.",
+      "evidence": "HTTP 503 from tmdn.org/tmview/api and HTTP 403 from trademarks.ipo.gov.uk during this session.",
+      "confidence": "verified",
+      "source_url": "https://www.tmdn.org/tmview/"
+    },
+    {
+      "claim": "App stores: Apple Guideline 5.2.1 - 'Don't use protected third-party material such as trademarks ... without permission, and don't include misleading, false, or copycat representations, names, or metadata in your app bundle or developer name'; 4.1(c) bars using another developer's brand or product name in your icon or name; reviewers ask for documentary authorisation or removal. Google Play's Intellectual Property policy: 'We don't allow apps that infringe on others' trademarks' and suspension where use is 'likely to cause confusion'; Deceptive Behavior policy bars titles like 'X Official' and requires metadata to 'precisely reflect the app's functionality'. Neither bans a factual 'works with LEGO®-compatible bricks' sentence in the description, but 'LEGO' in the app name, icon, subtitle or keywords invites rejection.",
+      "evidence": "Apple App Store Review Guidelines 5.2.1, 4.1(c), 5.2.4; Google Play Policy Center IP policy (answer 9888072) and Deceptive Behavior policy (answer 9888077).",
+      "confidence": "verified",
+      "source_url": "https://developer.apple.com/app-store/review/guidelines/"
+    },
+    {
+      "claim": "DCO 1.1 is a four-clause attestation signed via 'Signed-off-by' (git commit -s), enforceable with the GitHub DCO app; CLAs are license grants (sometimes assignments) that mainly buy the right to relicense; projects such as Chef (2016) and GitLab (2017) moved from CLA to DCO to cut contributor friction.",
+      "evidence": "developercertificate.org (Version 1.1, clauses a-d); opensource.com / linux.com 'CLA vs DCO'; Beancount guide (13 Oct 2026).",
+      "confidence": "verified",
+      "source_url": "https://developercertificate.org/"
+    },
+    {
+      "claim": "For data/part libraries, CC BY creates 'attribution stacking' when many contributions are merged or converted, which is why data repositories (Dryad, CASRAI guidance) prefer CC0 and keep credit as a community norm; CC BY 4.0 is the choice when enforceable credit is required. Brick geometry is largely functional and weakly protectable anyway, which further favours CC0 for openBrick-native parts, with CC BY 4.0 reserved for LDraw-derived parts whose upstream licence must be preserved.",
+      "evidence": "Dryad blog 'Removing barriers to data reuse with CC0 licensing' (30 May 2023); CASRAI 'CC-BY, CC0 and when to use each'; OKFN od-discuss thread on stacking.",
+      "confidence": "verified",
+      "source_url": "https://blog.datadryad.org/2023/05/30/good-data-practices-removing-barriers-to-data-reuse-with-cc0-licensing/"
+    },
+    {
+      "claim": "Referential ('compatible with') use is a statutory defence in the EU and UK and a nominative-fair-use doctrine in the US: Art 14(1)(c) EUTMR 2017/1001 and Art 14(1)(c) Directive 2015/2436 (use 'necessary to indicate the intended purpose of a product or service, in particular as accessories or spare parts', subject to honest practices); UK Trade Marks Act 1994 s.11(2)(c); US New Kids on the Block v News America (9th Cir. 1992) three-factor test (product not readily identifiable without the mark, only so much of the mark as necessary, nothing suggesting sponsorship).",
+      "evidence": "Statutory and case references from training knowledge, consistent with the NZ Zuru ruling and Weinberg analysis gathered above; not fetched in this session.",
+      "confidence": "likely",
+      "source_url": "https://eur-lex.europa.eu/eli/reg/2017/1001/oj"
+    },
+    {
+      "claim": "Historic brick-compatible rivals that survived LEGO litigation and still trade: Mega Bloks (1991-), Cobi (1995-, Lego's suit dismissed 2001), Oxford (1996-), Qman (1994-), Sluban (2004-), BanBao (2010-), Best-Lock (1997-, won on brick shape in Germany 2009 but lost on the minifigure in the EU); Lepin was shut down and its originators ordered to pay CNY 30,000,000 (2021) for copying full sets and minifigures. The pattern: generic bricks are safe, copying sets, box art, minifigures and the LEGO name is not.",
+      "evidence": "Wikipedia 'Lego clone' table and litigation history.",
+      "confidence": "verified",
+      "source_url": "https://en.wikipedia.org/wiki/Lego_clone"
+    }
+  ],
+  "recommendations": [
+    "Disclaimer (README, About screen, website footer, store listings): 'OpenBrick3D is an independent, community-driven open-source project published by Neural Deep Network Ltd (Malta). It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group. LEGO®, the LEGO® logo and the Minifigure are trademarks of the LEGO Group of companies, which does not sponsor, authorize or endorse this project. Works with LEGO®-compatible bricks. LDraw™ is a trademark of the Estate of James Jessiman. This software uses the LDraw Parts Library (https://www.ldraw.org).' For physical merch add: 'Compatible with LEGO® bricks. Not a LEGO® product. LEGO® is a trademark of the LEGO Group, which does not sponsor, authorize or endorse this product.'",
+    "Trademark hygiene rules to encode in CONTRIBUTING.md and UI copy: write LEGO® once per page as an adjective in body text, never in headings, product names, package names, domains, handles, screenshots, icons or keywords; never render the LEGO logo or emboss any text on stud tops; never ship or generate minifigure heads/torsos/legs; name colours and parts by openBrick's own vocabulary with LDraw/BrickLink IDs as optional metadata fields.",
+    "Part designer guardrails: allow any stud-and-tube/anti-stud geometry (patents expired, shape marks invalid); block minifigure silhouettes and the LEGO logo in uploaded logos; show a design-right warning when a user reproduces a catalogued LEGO element first released within the last 25 years instead of a generic brick; keep an audit trail (who uploaded what, when) for notice-and-takedown.",
+    "Naming: use 'OpenBrick3D' consistently as the open-source project/app name and register the free handles this week (GitHub org openbrick3d, npm openbrick3d and @openbrick scope, crates.io openbrick, PyPI openbrick3d, domains openbrick3d.com/.org, openbrick.dev, open-brick.org). Do not launch a commercial merch brand called 'OpenBrick'/'Open Bricks' before a paid clearance search (EUIPO eSearch, UKIPO, USPTO, DPMA) against Open Bricks® (Open Brick Source GmbH & Co. KG) in classes 9, 28, 35, 40, 42; if the search confirms an EU class-28 mark, give the merch business a distinct coined brand and file an EUTM (classes 9, 42 now; 28 and 40 once merch starts; roughly EUR 850 for one class, +50 for the second, +150 each further class) plus a UK mark; keep the app-store names free of 'LEGO'.",
+    "Publish a Trademark Policy for the OpenBrick3D name and logo separate from the MIT licence (as Rust, Python and Mozilla do), so forks can use the code but not the brand.",
+    "Contribution governance: adopt DCO 1.1 (git commit -s, enforced by the GitHub DCO app) and an explicit inbound=outbound clause; do not use a CLA. State the three-tier licence policy in LICENSE-POLICY.md: code MIT; openBrick-native part definitions, palettes and print profiles CC0 1.0 with a required 'credit' field in each part file kept as a social norm; documentation CC BY 4.0; imported LDraw parts remain CC BY 2.0/4.0 under their own headers in a separate tree.",
+    "File-format design: give every part/asset a provenance block (source, author, license SPDX id, source URL, modified flag, history) so LDraw attribution items 1-5 travel with the data through conversion, export and 3D-printing pipelines; generate CREDITS.txt and the LDraw credit screen automatically from these fields.",
+    "LDraw distribution: do not vendor complete.zip (140 MiB) into crates, npm or app bundles (crates.io caps .crate at 10 MB); download the official library at first run/installer with a checksum, cache it, show 'This software uses the LDraw Parts Library' with a link, and ship only a small CC0 starter set in the binary. Never copy LeoCAD/LDView (GPLv2) code; implement the LDraw file format from the spec and integrate GPL tools only as external processes.",
+    "Merch and print pipeline: decide per SKU whether it is a toy (EU under-14 foreseeable play) or adult merchandise; for toys budget EN 71-1/-2/-3 (EU), ASTM F963-23 plus CPC and tracking label (US) per material/colour family, and generate the 36-month small-parts warning and US choking-hazard label automatically; for adult merch still meet GPSR (manufacturer name, Malta address, email, batch ID on product or packaging; listing information; Safety Business Gateway registration). Add Digital Product Passport fields (unique product identifier, economic-operator ID, CE, warnings, QR data carrier) to the product/order data model now so 2030 compliance is a configuration change, not a rewrite. For GB sales rely on CE under reg 39A and name a GB importer/fulfilment partner on packaging; for US sales for 12-and-under register as a CPSC small-batch manufacturer where eligible.",
+    "Order terms for customer logos: customer warranty of ownership/licence, indemnity, right to refuse or cancel, notice-and-takedown contact (DMCA agent registration for US; DSA Art 16 notice-and-action for EU), automatic refusal of LEGO marks/minifigures and a curated blocklist of well-known marks, retention of upload records for the limitation period, GDPR notice for uploaded artwork; make print-ready files the customer's property but keep a licence to produce and to show anonymised previews only with consent.",
+    "Contrarian/strategic options: (a) ask the LDraw SteerCo for a written confirmation that a converted binary part cache counts as a Derivative Work satisfied by the aggregate credit, and consider a donation/partnership; (b) become a contributor to LDraw under the CC BY 4.0 CA so openBrick-designed generic parts flow upstream; (c) keep an eye on the BB Services minifigure appeal and Lego v Zuru remand, since a loss for LEGO would widen what the designer may generate; (d) consider sourcing children's-grade output from injection-moulded or SLS/MJF service bureaus with existing EN 71 test reports rather than FDM prints."
+  ],
+  "sources": [
+    "https://www.neuraldeep.net/terms",
+    "https://neuraldeep.net",
+    "https://find-and-update.company-information.service.gov.uk/search/companies?q=neural+deep+network",
+    "https://www.lego.com/legal/legal-notice/fair-play",
+    "https://en.wikipedia.org/wiki/Lego_clone",
+    "https://www.smartbiggar.ca/insights/publication/lego-loses-trademark-battle-in-canada",
+    "https://www.dww.com/articles/lego-block-design-not-protected-by-trademark-canada",
+    "https://ipkitten.blogspot.com/2010/09/lego-brick-hits-wall.html",
+    "https://www.worldtrademarkreview.com/article/brick-held-consist-exclusively-of-shape-necessary-obtain-technical-result",
+    "https://www.wipo.int/wipolex/en/judgments/details/3550",
+    "https://www.jacobacci-law.com/news-and-publications/lexology-newsletter-the-lego-manikin-is-a-trademark...-with-a-dual-spirit",
+    "https://loeb.com/en/insights/publications/2020/01/lego-v-zuru-inc",
+    "https://www.finnegan.com/en/insights/blogs/incontestable/lego-blocks-out-zuru-in-copyright-dispute-over-minifigures.html",
+    "https://news.bloomberglaw.com/litigation/legos-minifigure-injunction-must-be-revisited-second-cir-says",
+    "https://www.thelawassociation.nz/lego-blocks-kiwi-toymaker-from-using-its-trademark-in-advertising/",
+    "https://michaelweinberg.org/blog/2019/10/10/lego-ip-grab-bag/",
+    "https://www.ldraw.org/docs-main/licenses/legal-info.html",
+    "https://ldraw.org/the-ldraw-organization/link-to-ldraw.html",
+    "https://www.ldraw.org/draft-documents/careadme.txt-draft.html",
+    "https://forums.ldraw.org/thread-26089.html",
+    "https://library.ldraw.org/updates?latest",
+    "https://library.ldraw.org/library/official/parts/3001.dat",
+    "https://library.ldraw.org/library/official/parts/5306.dat",
+    "https://github.com/leozide/leocad",
+    "https://metadata.ftp-master.debian.org/changelogs/main/l/leocad/stable_copyright",
+    "https://doc.rust-lang.org/cargo/reference/publishing.html",
+    "https://www.noerr.com/en/insights/new-european-toy-safety-regulation-2025-2509-comes-into-force-key-points-at-a-glance",
+    "https://www.cps.bureauveritas.com/newsroom/eu-toy-safety-regulation-20252509-published",
+    "https://oeil.europarl.europa.eu/oeil/en/document-summary?id=1874005",
+    "https://www.legislation.gov.uk/uksi/2011/1881/regulation/39A",
+    "https://www.gov.uk/guidance/using-the-ukca-marking",
+    "https://www.cpsc.gov/Business--Manufacturing/Business-Education/Toy-Safety-Business-Guidance-and-Small-Entity-Compliance-Guide",
+    "https://www.cpsc.gov/Business--Manufacturing/Business-Education/Business-Guidance/Small-Parts-for-Toys-and-Childrens-Products",
+    "https://www.govinfo.gov/content/pkg/CFR-2024-title16-vol2/xml/CFR-2024-title16-vol2-sec1500-19.xml",
+    "https://www.eurofins.com/toys-hardlines/resources/articles/astm-f963-23-compliance-navigating-us-toy-safety-standards/",
+    "https://www.printful.com/policies/download/terms-of-service",
+    "https://printify.com/policies/updates/",
+    "https://openbricks.studio/en/",
+    "https://openbricks.studio/en/imprint",
+    "https://www.six-group.com/en/newsroom/media-releases/2024/20241127-six-bme-openbrick.html",
+    "https://cobi.eu/en/",
+    "https://github.com/openbrick",
+    "https://registry.npmjs.org/openbrick",
+    "https://crates.io/api/v1/crates/openbrick",
+    "https://pypi.org/pypi/openbrick/json",
+    "https://rdap.org/domain/openbrick.org",
+    "https://developer.apple.com/app-store/review/guidelines/",
+    "https://support.google.com/googleplay/android-developer/answer/9888072",
+    "https://support.google.com/googleplay/android-developer/answer/9888077",
+    "https://developercertificate.org/",
+    "https://opensource.com/article/18/3/cla-vs-dco-whats-difference",
+    "https://beancount.io/blog/2026/10/13/cla-vs-dco-contributor-agreement-open-source-project-guide",
+    "https://blog.datadryad.org/2023/05/30/good-data-practices-removing-barriers-to-data-reuse-with-cc0-licensing/",
+    "https://casrai.org/news/licensing-research-data-cc-by-cc0-and-when-to-use-each"
+  ],
+  "key_numbers": [
+    {"name": "Company number (Malta)", "value": "C114166", "note": "Neural Deep Network LTD per neuraldeep.net/terms; Maltese law; MBR confirmation pending"},
+    {"name": "US brick patent", "value": "US 3,005,282, issued 24 Oct 1961", "note": "Last brick patents expired 1978 (Canada 1988)"},
+    {"name": "CJEU brick shape mark invalid", "value": "C-48/09 P, 14 Sept 2010", "note": "Art 7(1)(e)(ii): shape necessary for a technical result"},
+    {"name": "Minifigure EU 3D mark upheld", "value": "T-297/22, 6 Dec 2023 (and 16 June 2015)", "note": "BB Services v EUIPO-Lego Juris; Best-Lock 2015"},
+    {"name": "Lego v Delta Sport design cases", "value": "T-515/19 (24 Mar 2021), T-537/22 (24 Jan 2024)", "note": "Registered design for a brick upheld; dates from memory, re-verify"},
+    {"name": "LDraw complete.zip", "value": "146,853,687 bytes (about 140 MiB)", "note": "Library Update 2026-10, modified 26 Oct 2026"},
+    {"name": "crates.io .crate size limit", "value": "10 MB", "note": "Cargo Book; publishes are permanent"},
+    {"name": "LDraw CA change to CC BY 4.0", "value": "23 Feb 2022", "note": "Older parts stay CC BY 2.0 or dual; 3001.dat now CC BY 4.0"},
+    {"name": "LeoCAD licence / release", "value": "GPL v2 (or later per Debian) / 25.09", "note": "Do not copy code into MIT codebase"},
+    {"name": "EU Toy Safety Regulation 2025/2509", "value": "In force 1 Jan 2026; applies 1 Aug 2030", "note": "Digital Product Passport replaces DoC; PFAS ban"},
+    {"name": "EU GPSR 2023/988", "value": "Applies since 13 Dec 2024", "note": "Covers adult merch; responsible operator, listing info, recalls"},
+    {"name": "EU toy age threshold / small-parts warning", "value": "Under 14 / 'Not suitable for children under 36 months'", "note": "Directive 2009/48/EC Art 2 and Annex V Part B"},
+    {"name": "US ASTM F963-23 mandatory", "value": "Toys manufactured after 20 Apr 2024", "note": "16 CFR 1250; CPC + tracking label for 12-and-under"},
+    {"name": "US small-parts cylinder", "value": "1.25 in diameter x 2.25 in deep (31.7 x 57.1 mm)", "note": "16 CFR 1501.4 Figure 1; dimensions from memory"},
+    {"name": "UK CE recognition", "value": "No end date (reg 39A; gov.uk updated 21 Aug 2026)", "note": "UKCA optional; label-only UKCA allowed to 31 Dec 2027"},
+    {"name": "Taken domains", "value": "openbrick.org (2008), .com (2018), .net (2008), .app (18 Oct 2025), .co", "note": "Free: openbrick.dev, openbrick3d.com/.org, open-brick.org"},
+    {"name": "Open Bricks (R) owner", "value": "Open Brick Source GmbH & Co. KG, HRA 9476 Siegen, VAT DE282321057", "note": "Custom-branded brick sets; claims EUIPO registration"},
+    {"name": "DCO version", "value": "1.1", "note": "developercertificate.org; enforce with GitHub DCO app"},
+    {"name": "EUTM filing fee (indicative)", "value": "EUR 850 one class, +50 second, +150 each further", "note": "From memory; check EUIPO fee table"}
+  ],
+  "options_compared": [
+    {
+      "option": "Part-definition licence: CC0 1.0 (recommended default)",
+      "pros": "No attribution stacking when parts are merged, converted or exported; trivial for 3D-printing reuse; matches the weak protectability of functional brick geometry; kindest to contributors (nothing to get wrong)",
+      "cons": "No enforceable credit; cannot absorb LDraw-derived parts (CC BY) into the same tree",
+      "fit_for_openbrick": "Best for openBrick-native generic parts, palettes and print profiles; keep a mandatory 'credit' metadata field as a norm",
+      "license": "CC0-1.0",
+      "status_2026": "Widely used by data repositories (Dryad, Zenodo defaults)"
+    },
+    {
+      "option": "Part-definition licence: CC BY 4.0",
+      "pros": "Enforceable credit for designers; identical licence to new LDraw submissions so parts can flow both ways",
+      "cons": "Attribution duties travel through every derivative, export and print listing; mismatches with LDraw CC BY 2.0 files; stacking in compiled caches",
+      "fit_for_openbrick": "Use for the imported/LDraw-derived tree and as an opt-in for contributors who want credit; automate CREDITS generation",
+      "license": "CC-BY-4.0",
+      "status_2026": "LDraw CA since Feb 2022"
+    },
+    {
+      "option": "Part-definition licence: MIT",
+      "pros": "Single licence for the whole repo; developers understand it",
+      "cons": "Software licence applied to design data; its notice clause behaves like attribution anyway; unclear fit for physical printed objects; non-standard for CAD communities",
+      "fit_for_openbrick": "Not recommended for data; keep MIT for code only",
+      "license": "MIT",
+      "status_2026": "Code only"
+    },
+    {
+      "option": "Contributor governance: DCO 1.1",
+      "pros": "One-line sign-off, no paperwork, no central party, used by Linux, GitLab, Chef; aligned with 'be kind to contributors'",
+      "cons": "No right to relicense later; weaker evidence than a signed CLA if a contributor's employer disputes",
+      "fit_for_openbrick": "Recommended; MIT already allows every commercial use the company needs",
+      "license": "n/a",
+      "status_2026": "DCO 1.1 current; GitHub DCO app maintained"
+    },
+    {
+      "option": "Contributor governance: CLA (e.g., Apache-style ICLA/CCLA)",
+      "pros": "Explicit patent/copyright licence, option to relicense or dual-license commercially",
+      "cons": "Measurable drop in community contributions; perceived as a corporate land-grab for an MIT project; admin overhead for a 2-4 person team",
+      "fit_for_openbrick": "Only if the company plans a proprietary or source-available edition later; otherwise avoid",
+      "license": "n/a",
+      "status_2026": "Still common in corporate-backed projects"
+    },
+    {
+      "option": "Project name: keep 'openBrick'/'OpenBrick'",
+      "pros": "Already chosen; descriptive and friendly",
+      "cons": "Collides with Open Bricks® (same custom-brick merch market, Germany/EU), OpenBrick fintech (Spain), taken .org/.com/.net/.app domains and GitHub user; weak distinctiveness for trademark registration",
+      "fit_for_openbrick": "Acceptable for the open-source repo in the short term; risky as a merch brand in the EU",
+      "license": "n/a",
+      "status_2026": "Conflicts verified 2026-10-27"
+    },
+    {
+      "option": "Project name: 'OpenBrick3D' used consistently",
+      "pros": "GitHub, npm, crates, PyPI, .com/.org all free today; already in README; slightly more distinctive",
+      "cons": "Still contains 'Open Brick'; same class-28 objection risk from Open Bricks® for physical goods",
+      "fit_for_openbrick": "Recommended for the software; pair with a separate coined brand for merchandise after clearance",
+      "license": "n/a",
+      "status_2026": "Handles free as of 2026-10-27"
+    },
+    {
+      "option": "Merch compliance route: full toy compliance (EN 71 / ASTM F963 / CE / CPC)",
+      "pros": "Sells to the widest audience including kids and schools; defensible if a child is injured; fits 'Lego-like parts for people' positioning",
+      "cons": "Lab testing per material/colour family (hundreds to low thousands EUR each), small-parts warnings, DPP from 2030, tracking labels; FDM prints may fail mechanical tests",
+      "fit_for_openbrick": "Use for a curated, tested product line (few materials, few colours)",
+      "license": "n/a",
+      "status_2026": "EU Regulation 2025/2509 applies 1 Aug 2030; F963-23 since 20 Apr 2024"
+    },
+    {
+      "option": "Merch compliance route: adult promotional goods under GPSR only",
+      "pros": "No toy testing or CPC; faster launches for logo tiles and desk items",
+      "cons": "Regulators look at foreseeable use; brick-shaped goods are presumptively toys; GPSR still requires traceability info, listing details and recall readiness",
+      "fit_for_openbrick": "Viable for B2B promotional orders with explicit 'not a toy, not for under-14s' marking; not for consumer keychains aimed at families",
+      "license": "n/a",
+      "status_2026": "GPSR applies since 13 Dec 2024"
+    },
+    {
+      "option": "LDraw library integration: vendor vs download",
+      "pros": "Vendoring gives offline-first and deterministic builds",
+      "cons": "140 MiB library exceeds crates.io 10 MB and bloats mobile bundles; attribution and modification tracking still required",
+      "fit_for_openbrick": "Download-on-first-run with checksum and cache; ship a small CC0 starter set; keep LDraw tree separate with headers intact",
+      "license": "CC-BY-2.0 / CC-BY-4.0 (mixed)",
+      "status_2026": "Library Update 2026-10"
+    }
+  ],
+  "open_questions": [
+    "Confirm C114166 on the Malta Business Registry and whether the company is VAT-registered in Malta (affects EU distance-selling/OSS obligations for merch).",
+    "Run paid trade-mark clearance (EUIPO eSearch, TMview, UKIPO, USPTO, DPMA) for OPENBRICK / OPEN BRICK / OPEN BRICKS in classes 9, 28, 35, 40, 42, and identify the exact Open Bricks® EUIPO registration (mark type, classes, filing date).",
+    "Has BB Services appealed T-297/22 to the Court of Justice, and if so what is the status? (Curia pages were not readable from this environment.)",
+    "Verify the Lego v Delta Sport dates/outcomes (T-515/19, T-537/22) and whether any appeal is pending; map which currently catalogued LEGO elements still have live registered designs (filed after 2001).",
+    "Confirm exact EU warning wording and Annex I 'not toys' exclusions in Regulation 2025/2509 versus Directive 2009/48/EC, and the current CPSC small-batch manufacturer thresholds for 2026.",
+    "Is openbrick.io available or held (RDAP returned 404 but the host resolves)? Who holds openbrick.app (registered 18 Oct 2025) and openbrick.org (2008)?",
+    "Is an 'OpenBrick'/'Open Bricks' app already listed on the App Store or Google Play? (Store search was not possible here.)",
+    "Which FDM/SLS materials used by the print pipeline already have EN 71-3 and CPSIA lead/phthalate test reports from the filament vendor, to reduce per-SKU lab cost?",
+    "Does the company want the option of a proprietary/cloud edition later? That is the only scenario in which a CLA instead of DCO would be justified.",
+    "Will community part uploads be hosted by the company (DSA hosting-service obligations, notice-and-action, trader traceability if parts are sold) or only mirrored from GitHub?"
+  ]
+}

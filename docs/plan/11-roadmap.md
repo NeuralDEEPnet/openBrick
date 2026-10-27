@@ -26,21 +26,21 @@ We assume 2 to 4 engineers using AI-assisted coding, one of whom owns geometry a
 
 ```mermaid
 gantt
-  title OpenBrick3D roadmap (weeks)
-  dateFormat X
-  axisFormat %s
+  title OpenBrick3D roadmap (start assumed 2026-11-02)
+  dateFormat YYYY-MM-DD
+  axisFormat %b %Y
   section Foundations
-  M0 spikes and scaffold        :m0, 0, 3
+  M0 spikes and scaffold        :m0, 2026-11-02, 3w
   section Part designer and print
-  M1 part core and CLI alpha    :m1, 3, 9
-  M2 desktop designer (MVP)     :m2, 9, 16
+  M1 part core and CLI alpha    :m1, after m0, 6w
+  M2 desktop designer (MVP)     :m2, after m1, 7w
   section Assembler
-  M3 assembler alpha            :m3, 16, 24
+  M3 assembler alpha            :m3, after m2, 8w
   section Reach
-  M4 PWA, Android, batch        :m4, 24, 32
-  M5 iOS, community, play       :m5, 32, 42
+  M4 PWA, Android, batch        :m4, after m3, 8w
+  M5 iOS, community, play       :m5, after m4, 10w
   section Release
-  M6 1.0                        :m6, 42, 52
+  M6 1.0                        :m6, after m5, 10w
 ```
 
 ## Dependencies and sequencing rules

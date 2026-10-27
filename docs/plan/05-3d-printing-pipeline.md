@@ -27,7 +27,7 @@ Slicers disagree: OrcaSlicer and Bambu Studio split hole versus contour compensa
 flowchart LR
   A["Part document + params"] --> B["Evaluate (Manifold) with FitProfile offsets applied as 2D offsets before extrude/revolve"]
   B --> C["Validate against ProcessProfile"]
-  C -->|blockers| X["Export disabled; rule, value, threshold, fix"]
+  C -->|blockers| X["Export disabled, rule, value, threshold, fix"]
   C -->|ok| D["Orient (face-up rule) and chamfer first layer"]
   D --> E["Write 3MF (Core 1.4.0 + Materials + Production) with metadata, or STL"]
   E --> F["Optional: nest into plates, serials, manifest"]

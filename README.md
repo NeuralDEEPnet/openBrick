@@ -12,3 +12,7 @@ OpenBrick3D is a lightweight, cross-platform, open-source 3D design tool built f
 - **Custom Part Import:** Easily load standard 3D mesh formats (`.obj`, `.stl`, `.gltf`) or community-driven part libraries.
 - **Performance Optimized:** Built to handle thousands of individual instances with low memory overhead.
 - **Open Standards:** Save your designs in transparent, text-based file formats (`.json` or `.ldr` compatible).
+
+## 📐 Project plan
+
+The full planning record (architecture, stack decisions, brick geometry standard, 3D-printing pipeline, part-designer DSL, assembler engine, file formats, platforms, roadmap, legal) lives in [`docs/plan/`](docs/plan/README.md). Start with the [executive summary](docs/plan/00-executive-summary.md). The project name used consistently in the plan is **OpenBrick3D**; the CLI binary is `openbrick`.

@@ -1,0 +1,486 @@
+{
+  "summary": "Shipping openBrick as desktop + mobile + CLI from one repository is realistic in late 2026, but only if the repo is organised as a Rust core (geometry, stud/tube snapping, .json/.ldr formats, print validation) with three thin shells on top: a CLI, a Tauri 2 app that targets desktop and mobile from the same frontend, and the same frontend served as a PWA. The CLI channel is the cheapest and most mature. `dist` (cargo-dist, now active again upstream at axodotdev; the astral-sh fork was archived on 2025-12-19 and points back upstream) is at 0.33.1 (2026-10-21) and generates a GitHub Actions release pipeline that emits `curl | sh` and `irm | iex` installers, an npm package for `npx`, a Homebrew formula/tap, an MSI, CycloneDX SBOMs, GitHub artifact attestations and, since 0.33.0, Windows code signing through Azure Artifact Signing (x86_64 only). cargo-binstall 1.26.1 (2026-10-24) consumes those release artifacts automatically, and a maturin `bin` wheel adds `uv tool install` / `pipx install` for nearly free.\n\nDesktop GUI is well served by Tauri 2.12.x (core 2.12.5, CLI 2.12.4, bundler 2.10.4, all 2026-10-21): .app/DMG, NSIS/MSI, AppImage/deb/rpm, plus documented paths to Flathub, Snap, AUR, Mac App Store, Microsoft Store, Google Play and iOS App Store. The updater plugin is desktop-only and updates only AppImage, .app, NSIS and MSI. The unavoidable yearly cost is Apple's $99 Developer Program (Developer ID + notarization; Homebrew 5.0.0 removes un-notarized casks by September 2026 and Gatekeeper has no Control-click bypass since Sequoia). Windows is cheaper than folklore suggests: Microsoft now says EV certificates stopped bypassing SmartScreen in 2024 and recommends Azure Artifact Signing (~$9.99/month, organisations in US/CA/EU/UK and several other countries; individuals US/CA only), the Microsoft Store (free account since 2025, re-signs MSIX for free with no SmartScreen prompts) or, for open source, SignPath Foundation (free). OV certificates run $150-300/year plus a hardware token; EV $400+ and no longer justified. Linux needs no CA: Flathub and Snap sign for you, AppImage uses GPG plus Tauri's own updater signatures. GitHub Actions standard runners are free for public repositories, including macos-26 arm64 and windows-11-arm, which means iOS builds without owning a Mac.\n\nMobile is the hard, expensive, slow part and should be sequenced last. iOS outside the EU is App Store/TestFlight only (10,000 external testers, 90-day builds, Beta App Review for the first build in a group). Apple's EU web-distribution entitlement requires one million first annual installs or financial-standing proof (D&B score, audit, or a USD 1M letter of credit), so for openBrick the realistic EU alternative is an existing marketplace such as AltStore PAL; from 2026-10-01 the only fee is a 5% Core Technology Commission on paid digital goods, which a free OSS app never pays. Android costs $25 for Play (personal accounts must run a 12-tester, 14-day closed test first) and Google's developer verification ($25 full account, or a free 20-device limited account) starts enforcement on 2026-09-30 in Indonesia, Singapore and Thailand (Brazil announced earlier) and goes global in 2027; it applies even to sideloaded APKs on certified devices, while `adb install` stays exempt. \"Install a mobile app from the command line\" therefore realistically means: `adb install`, `xcrun devicectl` or `cargo tauri ios dev` on your own devices, `fastlane pilot` / `eas build --submit` into TestFlight, Obtainium or F-Droid tracking GitHub releases on Android, and a QR code that opens the PWA for Add to Home Screen (there is no CLI install for PWAs).\n\nThe contrarian architectural finding concerns rendering. WebGPU now ships by default in Safari 26 (macOS/iOS/iPadOS/visionOS 26), Chrome 113+ on Windows/macOS/ChromeOS, and Chrome 121+ on Android 12+, but Chrome on Linux only covers Intel Gen12+ (since 144) and NVIDIA on Wayland (since 147), the gpuweb status page lists no Linux WebKit port at all, and Tauri's own Linux guide warns that WebGL in WebKitGTK can silently fall back to software rendering with no way to detect it. A webview-only renderer therefore leaves Linux desktop, the natural home of open-source contributors, on the weakest path. Recommendation: keep the renderer in Rust on wgpu (which also compiles to WebGPU/WebGL2 for the web shells), so the CLI can render and validate offscreen, Linux can open a native window, and the Tauri/PWA shells reuse the same code. The PWA is a strong zero-install channel: Safari 26 added the File System WritableStream, iOS 26 opens every Home Screen site as a web app, and installed web apps get the same quota as the browser (15% of disk per origin in non-browser apps, 60% in browsers) with `persist()` granted heuristically to Home Screen apps.",
+  "findings": [
+    {
+      "claim": "dist (cargo-dist) is actively maintained upstream at axodotdev: 0.33.1 released 2026-10-21, 0.33.0 on 2026-09-10; the astral-sh/cargo-dist fork (based on 0.28.0) was archived on 2025-12-19 and its README redirects users back to axodotdev.",
+      "evidence": "GitHub releases page lists 0.33.1 (2026-10-21) with updated shell/PowerShell installer scripts, a release attestation JSON and `gh attestation verify` commands; the astral fork README says 'The upstream project is active again and contains the changes from this fork'.",
+      "confidence": "verified",
+      "source_url": "https://github.com/axodotdev/cargo-dist/releases"
+    },
+    {
+      "claim": "dist generates five installer types: shell (`curl | sh`), PowerShell (`irm | iex`), npm (an npm package that fetches and runs the binary, for `npx`), Homebrew formula (tap), and MSI. The first four are 'fetching' installers that download at install time; MSI is a single-platform 'bundling' installer that works offline. pkg (macOS) is not supported.",
+      "evidence": "Installer index page of the dist book lists exactly these five with fetching vs bundling strategies.",
+      "confidence": "verified",
+      "source_url": "https://axodotdev.github.io/cargo-dist/book/installers/index.html"
+    },
+    {
+      "claim": "dist 0.33.0 added Windows code signing of binaries and installers through Azure Artifact Signing, limited to x86_64 Windows targets (no aarch64-pc-windows-msvc, no non-Windows), and fixed `gh attestation` commands to include `--repo`.",
+      "evidence": "0.33.0 release notes on GitHub.",
+      "confidence": "verified",
+      "source_url": "https://github.com/axodotdev/cargo-dist/releases"
+    },
+    {
+      "claim": "dist's supply-chain features: GitHub artifact attestations, CycloneDX SBOM via cargo-cyclonedx shipped as bom.xml in tarballs, cargo-auditable embedding, OmniBOR artifact IDs. macOS codesigning, Linux codesigning and Sigstore signing are marked 'upcoming'.",
+      "evidence": "Supply-chain security section of the dist book.",
+      "confidence": "verified",
+      "source_url": "https://axodotdev.github.io/cargo-dist/book/supplychain-security/index.html"
+    },
+    {
+      "claim": "cargo-binstall is at v1.26.1 (2026-10-24; v1.26.0 on 2026-10-17). It resolves prebuilt binaries from crates.io metadata -> linked repository releases (overridable via package.metadata.binstall / --pkg-url template with {repo},{version},{name},{target},{archive-format}) -> quickinstall -> `cargo install` fallback; signature verification is 'initial and limited' with --only-signed.",
+      "evidence": "GitHub releases page and README.",
+      "confidence": "verified",
+      "source_url": "https://github.com/cargo-bins/cargo-binstall/releases"
+    },
+    {
+      "claim": "The esbuild/napi-rs npm pattern is: one small root package plus one package per platform listed in optionalDependencies with os/cpu/libc fields so npm installs only the matching binary; it breaks when a package manager is configured to skip optional deps (npm --no-optional). prebuild-install is the alternative that ships all binaries in one tarball.",
+      "evidence": "napi-rs CLI build docs and sharp issue #3750 citing esbuild as proof of the pattern.",
+      "confidence": "verified",
+      "source_url": "https://napi.rs/docs/cli/build"
+    },
+    {
+      "claim": "maturin's `bin` bindings package a Rust binary into a Python wheel as a script on PATH, which is what makes `uv tool install openbrick` and `pipx install openbrick` work with no Python code (ruff ships this way). `uv tool install` puts executables in a bin dir on PATH, `uvx` runs without installing, and both accept `git+https://` sources.",
+      "evidence": "maturin bindings guide and uv tools guide.",
+      "confidence": "verified",
+      "source_url": "https://www.maturin.rs/bindings"
+    },
+    {
+      "claim": "Tauri latest releases (2026-10-21): tauri core 2.12.5, tauri-cli 2.12.4, tauri-bundler 2.10.4, tauri-macos-sign 2.4.3. Recent changes are NSIS downgrade blocking, file-association registry quoting, zip v9 for RustSec advisories, and legacy iPhone Distribution certificate lookup.",
+      "evidence": "tauri-apps/tauri GitHub releases page.",
+      "confidence": "verified",
+      "source_url": "https://github.com/tauri-apps/tauri/releases"
+    },
+    {
+      "claim": "Tauri 2 documents distribution to: macOS .app, DMG, App Store; Windows installer (NSIS/MSI) and Microsoft Store; Linux deb, RPM, AppImage, Flatpak (Flathub), Snap, AUR; Android Google Play; iOS App Store; plus CrabNebula Cloud. 'Signing is required on most platforms'.",
+      "evidence": "Tauri v2 distribute index.",
+      "confidence": "verified",
+      "source_url": "https://v2.tauri.app/distribute/"
+    },
+    {
+      "claim": "Tauri's updater plugin is set up for desktop only (macOS/Windows/Linux), requires Rust >= 1.90, makes signing mandatory via `tauri signer generate` keys (TAURI_SIGNING_PRIVATE_KEY env; losing the key means no more updates to existing installs), and updates only AppImage (Linux), .app.tar.gz (macOS), NSIS .exe and MSI (Windows). deb/rpm/Flatpak/Snap and mobile are not updated by it.",
+      "evidence": "Tauri updater plugin docs.",
+      "confidence": "verified",
+      "source_url": "https://v2.tauri.app/plugin/updater/"
+    },
+    {
+      "claim": "Tauri iOS development requires the full Xcode app and is only available on macOS (no iOS builds on Linux/Windows); Android requires Android Studio with SDK Platform, Platform-Tools, NDK, Build-Tools and the four Rust Android targets. Linux needs webkit2gtk-4.1 dev packages.",
+      "evidence": "Tauri prerequisites page.",
+      "confidence": "verified",
+      "source_url": "https://v2.tauri.app/start/prerequisites/"
+    },
+    {
+      "claim": "Tauri on Linux renders via WebKitGTK; NVIDIA/DMABUF conflicts cause blank windows and resize crashes (workarounds: nvidia_drm.modeset=1, __NV_DISABLE_EXPLICIT_SYNC=1, WEBKIT_DISABLE_DMABUF_RENDERER=1, WEBKIT_DISABLE_COMPOSITING_MODE=1). WebGL2 context creation can succeed on a software rasterizer with no way to detect it (renderer string is masked), so Tauri recommends shipping a non-WebGL fallback and a user-facing renderer toggle on Linux.",
+      "evidence": "Tauri 'Linux Graphics Issues' debugging guide.",
+      "confidence": "verified",
+      "source_url": "https://v2.tauri.app/develop/debug/linux-graphics/"
+    },
+    {
+      "claim": "WebGPU default availability (gpuweb implementation status): Chromium on Windows x64/macOS/ChromeOS since 113; Android 12+ on ARM/Qualcomm/Intel GPUs since 121 (Imagination GPUs Android 16+ since 139); Linux only Intel Gen12+ since 144 and NVIDIA driver 535.183.01+ under Wayland since 147, everything else behind --enable-unsafe-webgpu; Windows ARM64 behind a flag. Safari/WebKit: enabled by default in macOS 26, iOS 26, iPadOS 26, visionOS 26. Firefox: Windows since 141, macOS 145/147, Linux Nightly only, Android behind a flag. No Linux WebKit port (WebKitGTK/WPE) is listed as shipping WebGPU.",
+      "evidence": "gpuweb wiki Implementation-Status table, cross-checked with Chrome 121 blog ('Android 12 and greater powered by Qualcomm and ARM GPUs').",
+      "confidence": "verified",
+      "source_url": "https://github.com/gpuweb/gpuweb/wiki/Implementation-Status"
+    },
+    {
+      "claim": "WebKitGTK 2.54.2 (stable, released 2026-10-23) does not ship WebGPU enabled by default; a Tauri app on Linux should assume WebGL2 (possibly software-rasterized) or use a native wgpu surface.",
+      "evidence": "webkitgtk.org news lists 2.54.2 (2026-10-23) with no WebGPU mention; the gpuweb status page lists only Safari for WebKit; WebKitGTK exposes experimental features only via webkit_settings_set_feature_enabled (since 2.42). Inference: nothing documents WebGPU as a default-on WebKitGTK feature.",
+      "confidence": "inferred",
+      "source_url": "https://webkitgtk.org/news.html"
+    },
+    {
+      "claim": "Safari 26.0 (iOS/iPadOS/macOS/visionOS 26) shipped WebGPU (with compute shaders, WGSL), added the File System WritableStream API (write directly to user files), and on iOS 26 every site added to the Home Screen opens as a web app by default with 'zero requirements for installability' (manifest still used for icons); SVG icons supported.",
+      "evidence": "WebKit blog 'WebKit in Safari 26.0'.",
+      "confidence": "verified",
+      "source_url": "https://webkit.org/blog/17333/webkit-in-safari-26-0/"
+    },
+    {
+      "claim": "WebKit storage policy (Safari 17+, still current): per-origin quota up to 60% of disk inside browser apps and 15% in other apps (e.g. WKWebView hosts); overall 80% / 20%; Home Screen web apps get the same quotas as the browser; data is best-effort unless StorageManager.persist() is granted, which WebKit grants heuristically to Home Screen web apps.",
+      "evidence": "WebKit blog 'Updates to Storage Policy'.",
+      "confidence": "verified",
+      "source_url": "https://webkit.org/blog/14403/updates-to-storage-policy/"
+    },
+    {
+      "claim": "Chrome storage: browser may use up to 80% of total disk, a single origin up to 60% (StorageManager always reports 60% of disk); Firefox 50% of free disk, 2GB per eTLD+1; OPFS is supported in every modern browser with a synchronous variant in workers. These are the practical offline-storage ceilings for an openBrick PWA holding part libraries and models.",
+      "evidence": "web.dev 'Storage for the web'.",
+      "confidence": "verified",
+      "source_url": "https://web.dev/articles/storage-for-the-web"
+    },
+    {
+      "claim": "Apple Developer Program costs 99 USD per membership year (fee waiver only for nonprofits, accredited educational institutions and government entities), is required for App Store distribution and provides the Apple-verified Developer ID; notarization is included at no extra fee. The free tier allows only on-device Xcode testing (3 devices, 7-day profiles).",
+      "evidence": "Apple 'What's included' and 'Compare memberships' pages; Apple engineer on developer forums confirms notarization has no additional fee.",
+      "confidence": "verified",
+      "source_url": "https://developer.apple.com/programs/whats-included/"
+    },
+    {
+      "claim": "TestFlight limits: up to 10,000 external testers (invited by email or public link), up to 100 internal App Store Connect users, builds expire after 90 days, and the first build added to an external group goes through Beta App Review.",
+      "evidence": "App Store Connect Help, TestFlight overview.",
+      "confidence": "verified",
+      "source_url": "https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview"
+    },
+    {
+      "claim": "Apple EU terms (DPLA updated 2026-08-18, unified terms effective 2026-10-01): the Core Technology Fee, Initial Acquisition Fee and Store Services Fee are replaced by a 5% Core Technology Commission on paid apps/digital goods sold via alternative marketplaces or Web Distribution (free apps with no digital sales pay nothing). Web Distribution requires Apple authorisation plus at least one of: moderate D&B financial-stability score, public listing, VC funding, licensed-accountant audit, approved fee-waiver entity, USD 1,000,000 stand-by letter of credit, or one million first annual installs worldwide. Notarization (security/privacy baseline review) applies to all iOS apps regardless of channel. iOS/iPadOS 27.2 brings an updated install flow for marketplaces and web apps.",
+      "evidence": "Apple 'Changes for apps in the European Union' support page; corroborated by iClarified and mjtsai coverage dated 2026-08-18.",
+      "confidence": "verified",
+      "source_url": "https://developer.apple.com/support/apps-in-the-eu/"
+    },
+    {
+      "claim": "Azure Artifact Signing (renamed from Trusted Signing; pricing unchanged): Basic $9.99/month for 5,000 signatures and 1 certificate profile of each type; Premium $99.99/month for 100,000 signatures and 10 profiles; $0.005 per extra signature. No hardware token; integrates with GitHub Actions. Microsoft Learn describes it as '~$9.99/month'.",
+      "evidence": "Microsoft Learn code-signing options page (ms.date 2026-08-29) and DevClass 2026-01-14 report; Azure pricing page shows the quota tiers.",
+      "confidence": "verified",
+      "source_url": "https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options"
+    },
+    {
+      "claim": "Artifact Signing Public Trust eligibility: organisations in the United States, Canada, EU, UK, Australia, New Zealand, Japan, South Korea, Singapore, Switzerland, Norway and Israel; individual developers only in the US or Canada (individual validation uses the Azure billing account's legal name + government ID via AU10TIX). Organisation identity validation takes 1-20 business days and needs a business identifier, a website on an owned domain and a monitored email on that domain.",
+      "evidence": "Artifact Signing quickstart (updated 2026-10-08).",
+      "confidence": "verified",
+      "source_url": "https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart"
+    },
+    {
+      "claim": "Microsoft's official position (2026): EV certificates no longer bypass SmartScreen ('that behavior was removed in 2024'); OV ($150-300/year, HSM/token required since June 2023) and Artifact Signing are 'functionally equivalent for SmartScreen purposes'; EV ($400+/year) is 'no longer recommended specifically for SmartScreen bypass'. Reputation accrues per publisher identity across consecutive releases, so new files show warnings until download history builds.",
+      "evidence": "Microsoft Learn 'Code signing options for Windows app developers' comparison table; SSL.com FAQ independently says OV and EV 'are treated equally since March 2024'.",
+      "confidence": "verified",
+      "source_url": "https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options"
+    },
+    {
+      "claim": "Microsoft Store developer accounts have no registration fee for either Individual or Company accounts when created via storedeveloper.microsoft.com (ID verification with government ID + selfie; companies verify via D-U-N-S or documents, 2-5 business days manual review). MSIX packages submitted to the Store are re-signed by Microsoft for free with no SmartScreen warnings; MSI/EXE installers submitted to the Store must already be Authenticode-signed with a Trusted Root Program CA certificate (self-signed rejected).",
+      "evidence": "Microsoft Learn 'Steps to open a Microsoft Store developer account' (updated 2026-07-17) and code-signing options page.",
+      "confidence": "verified",
+      "source_url": "https://learn.microsoft.com/en-us/windows/apps/publish/partner-center/open-a-developer-account"
+    },
+    {
+      "claim": "SignPath Foundation offers free code signing for open-source projects: the certificate is tied to the project (no personal ID), keys live in SignPath's HSM, and SignPath verifies the binary was built from the public repository before signing. Microsoft's own docs point OSS developers there.",
+      "evidence": "signpath.org front page; referenced in Microsoft Learn code-signing options.",
+      "confidence": "verified",
+      "source_url": "https://signpath.org/"
+    },
+    {
+      "claim": "Certum sells an 'Open Source Code Signing' set for EUR 69 (cryptoCertum card + USB reader, courier-activated, RSA 3072 minimum) issued to a natural person with the subject prefixed 'Open Source Developer'; it is a budget OV-class option for individuals outside the US/Canada who cannot use Artifact Signing. Validity period is not shown on the listing and availability text is contradictory (both 'out of stock' and 'in stock').",
+      "evidence": "Certum shop listing.",
+      "confidence": "verified",
+      "source_url": "https://shop.certum.eu/open-source-code-signing.html"
+    },
+    {
+      "claim": "Homebrew notability thresholds: a GitHub repo normally needs >= 30 forks, 30 watchers or 75 stars (>= 90 forks, 90 watchers or 225 stars for self-submission by the maintainer) and must be at least 30 days old. CLI-only open-source software belongs in homebrew/core (built from source); casks are for prebuilt GUI apps downloaded from the developer's official source.",
+      "evidence": "Homebrew Package Acceptance Policy and Acceptable Casks docs.",
+      "confidence": "verified",
+      "source_url": "https://docs.brew.sh/Package-Acceptance-Policy"
+    },
+    {
+      "claim": "Homebrew 5.0.0 (released 2025-11-12) deprecated casks that are not code-signed and notarized; `brew audit` checks both and such casks are removed from the official tap by September 2026 (e.g. CopyQ cask warned 'will be disabled on 2026-09-01'). Acceptable-Casks requires apps to pass Gatekeeper checks without disabling SIP/Gatekeeper. Casks requiring Rosetta 2 are being phased out with macOS 27/28.",
+      "evidence": "Workbrew summary of Homebrew 5.0.0, Homebrew Acceptable Casks page, CopyQ issue #3498.",
+      "confidence": "verified",
+      "source_url": "https://workbrew.com/blog/what-homebrew-5-0-0-means-for-your-mac-fleet"
+    },
+    {
+      "claim": "Windows community package managers: winget manifests are PRs to microsoft/winget-pkgs with automated validation plus human moderation (Microsoft reserves the right to refuse); Chocolatey community packages go through a moderation queue and are invisible in search until approved; Scoop buckets are plain git repos you own with no moderation, so a project bucket is live on day one.",
+      "evidence": "Microsoft Learn winget submission docs, Chocolatey moderation docs, The Register on winget moderation; Scoop characterisation from community packaging guides.",
+      "confidence": "likely",
+      "source_url": "https://learn.microsoft.com/en-us/windows/package-manager/package/repository"
+    },
+    {
+      "claim": "Flathub requirements: reverse-DNS app ID on a domain the project controls (net.neuraldeep.openBrick, or io.github.neuraldeepnet.openbrick), manifest named after the ID, builds run without network and entirely from source for source-available apps, no prebuilt binaries in the PR, valid MetaInfo + desktop file + 256px/SVG icon, no fees, case-by-case human review, and 'Flathub manifests must not contain AI-generated or AI-assisted content' (generative-AI content must be disclosed). Verification of the listing is via a .well-known file on the domain or the GitHub org login.",
+      "evidence": "Flathub app-author requirements and verification docs.",
+      "confidence": "verified",
+      "source_url": "https://docs.flathub.org/docs/for-app-authors/requirements"
+    },
+    {
+      "claim": "Snap Store publishing is free; 'Verified Account' badges require a forum request approved by at least two members of Canonical's policy-reviewers group and are aimed at institutions/companies. AppImage tooling: appimagetool now lives in its own repo, downloads the type2-runtime at build time, supports GPG signing (--sign, --sign-key, APPIMAGETOOL_SIGN_PASSPHRASE for CI) and recommends higher-level tools (linuxdeploy etc.) for most projects.",
+      "evidence": "Snapcraft forum 'Verified Accounts' thread; AppImage/appimagetool README.",
+      "confidence": "verified",
+      "source_url": "https://github.com/AppImage/appimagetool"
+    },
+    {
+      "claim": "GitHub-hosted runner images available now: ubuntu-26.04, ubuntu-24.04 (ubuntu-latest), ubuntu-22.04, each with -arm variants; macos-26 arm64 (= macos-latest), macos-26-intel/-large, macos-15 (arm64 and intel), macos-14 deprecated; xcode-27 preview; windows-2025 (= windows-latest, also windows-2025-vs2026), windows-2022, windows-11-arm and windows-11-vs2026-arm.",
+      "evidence": "actions/runner-images README table.",
+      "confidence": "verified",
+      "source_url": "https://github.com/actions/runner-images"
+    },
+    {
+      "claim": "GitHub Actions standard runners are free for public repositories (larger runners always billed). Private-repo rates: Linux 2-core x64 $0.006/min, Linux 2-core arm64 $0.005, Windows 2-core $0.010, macOS 3-4 core $0.062; GitHub Free includes 2,000 private minutes/month, Pro/Team 3,000.",
+      "evidence": "GitHub Docs 'About billing for GitHub Actions'.",
+      "confidence": "verified",
+      "source_url": "https://docs.github.com/en/billing/managing-billing-for-your-products/about-billing-for-github-actions"
+    },
+    {
+      "claim": "GitHub artifact attestations: actions/attest-build-provenance produces SLSA build provenance and actions/attest-sbom@v2 attaches an SBOM (e.g. from anchore/sbom-action); workflows need `id-token: write` and `attestations: write`; consumers verify with `gh attestation verify`.",
+      "evidence": "GitHub Docs 'Using artifact attestations to establish provenance for builds'.",
+      "confidence": "verified",
+      "source_url": "https://docs.github.com/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds"
+    },
+    {
+      "claim": "Android developer verification (Android Developer Console): full distribution account $25 one-time; limited distribution account free, no government ID, unlimited apps but max 20 devices; organisations need a D-U-N-S number (free, up to 28 days). Timeline: early access Nov 2025, open to all March 2026, enforcement 2026-09-30 for Indonesia, Singapore and Thailand (Brazil was in the original announcement), initially checking installs from Google Play, HONOR, OPPO, Samsung Galaxy Store, Transsion Palm Store, vivo V-Appstore and Xiaomi GetApps; global expansion to all apps on certified devices in 2027. ADB install/test on your own devices stays allowed; an 'advanced flow' with a one-time setup lets power users install apps from unverified developers after acknowledging risk.",
+      "evidence": "Google support 'Understanding Android developer verification' (fetched 2026-10-27) and 9to5Google 2025-08-25.",
+      "confidence": "verified",
+      "source_url": "https://support.google.com/android-developer-console/answer/16561738"
+    },
+    {
+      "claim": "Google Play Console registration is a US$25 one-time fee with identity verification (government ID + card in legal name; fee non-refundable if rejected). Personal accounts created after 2023-11-13 must run a closed test with at least 12 testers opted in continuously for 14 days before applying for production access; organisation accounts are exempt from that test.",
+      "evidence": "Google Play Console Help pages on registration and the closed-test requirement.",
+      "confidence": "verified",
+      "source_url": "https://support.google.com/googleplay/android-developer/answer/14151465"
+    },
+    {
+      "claim": "F-Droid inclusion: app must be FLOSS, built from public source with a fully FLOSS toolchain, no Google Play Services/Firebase/Crashlytics or tracking/ad libraries (a Play-free build flavour is acceptable), no self-downloading executables without opt-in, unique application ID, actively maintained for at least three months. Reproducible builds let F-Droid ship a binary carrying the developer's own signature (Obtainium's listing shows identical certificate hash on GitHub and F-Droid).",
+      "evidence": "F-Droid Inclusion Policy; Obtainium README.",
+      "confidence": "verified",
+      "source_url": "https://f-droid.org/docs/Inclusion_Policy/"
+    },
+    {
+      "claim": "Obtainium (GPL-3.0) installs and auto-updates Android apps straight from GitHub/GitLab/Codeberg releases, F-Droid, IzzyOnDroid and more, i.e. a GitHub Release with an APK is already an 'app store with updates' for Android power users.",
+      "evidence": "ImranR98/Obtainium README.",
+      "confidence": "verified",
+      "source_url": "https://github.com/ImranR98/Obtainium"
+    },
+    {
+      "claim": "Expo EAS (relevant only if the mobile shell is React Native instead of Tauri): Free plan 15 Android + 15 iOS cloud builds on a low-priority queue; Starter $19/month with $45 build credit; overage Android $1 (medium) / $2 (large) per build, iOS $2 / $4; local builds and expo-dev-client are free; TestFlight distribution still needs the $99 Apple membership.",
+      "evidence": "expo.dev/pricing.",
+      "confidence": "verified",
+      "source_url": "https://expo.dev/pricing"
+    },
+    {
+      "claim": "What 'install a mobile app from the command line' can realistically mean in 2026: (a) Android: `adb install app.apk` from a GitHub Release (exempt from developer-verification enforcement), `cargo tauri android dev/build --apk`, Obtainium/F-Droid tracking releases; (b) iOS: only your own devices via `cargo tauri ios dev` or `xcrun devicectl device install app` (needs macOS + Xcode + at least a free Apple account, 7-day profiles), or pushing to TestFlight via `fastlane pilot upload` / `eas build -p ios --submit` and letting testers tap a public link; (c) PWA: no CLI install exists; the closest is a CLI that serves the app on LAN and prints a QR code so the phone can 'Add to Home Screen' (zero requirements on iOS 26). There is no sanctioned way to sideload an arbitrary IPA from a CLI onto a stranger's iPhone outside the EU marketplace regime.",
+      "evidence": "Synthesis of Tauri prerequisites, Apple TestFlight/EU pages, Google developer-verification page and WebKit Safari 26 post.",
+      "confidence": "inferred",
+      "source_url": "https://support.google.com/android-developer-console/answer/16561738"
+    },
+    {
+      "claim": "Proposed install matrix (OS x channel x command), package IDs illustrative:\nWINDOWS | one-liner | powershell -ExecutionPolicy Bypass -c \"irm https://github.com/neuraldeepnet/openbrick/releases/latest/download/openbrick-installer.ps1 | iex\" (dist, signed via Artifact Signing/SignPath)\nWINDOWS | winget | winget install NeuralDeepNetwork.openBrick (PR to winget-pkgs via komac/wingetcreate in CI; also `winget install --source msstore openBrick` once on the Store)\nWINDOWS | Microsoft Store | MSIX from Tauri, re-signed by Microsoft, free\nWINDOWS | scoop | scoop bucket add openbrick https://github.com/neuraldeepnet/scoop-bucket && scoop install openbrick\nWINDOWS | chocolatey | choco install openbrick (moderated)\nWINDOWS | GUI installer | openBrick_x.y.z_x64-setup.exe (NSIS, updater) or .msi from GitHub Releases\nMACOS | one-liner | curl --proto '=https' --tlsv1.2 -LsSf https://github.com/neuraldeepnet/openbrick/releases/latest/download/openbrick-installer.sh | sh\nMACOS | Homebrew CLI | brew install neuraldeepnet/tap/openbrick (day 1) -> brew install openbrick (homebrew/core after 75 stars + 30 days)\nMACOS | Homebrew GUI | brew install --cask openbrick (must be Developer-ID signed + notarized)\nMACOS | DMG | openBrick_x.y.z_aarch64.dmg / universal from Releases (notarized), optional Mac App Store\nLINUX | one-liner | same curl | sh\nLINUX | Flathub | flatpak install flathub net.neuraldeep.openBrick\nLINUX | Snap | snap install openbrick\nLINUX | AppImage | curl -LO .../openBrick_x.y.z_amd64.AppImage && chmod +x (only Linux format with Tauri auto-update)\nLINUX | deb/rpm | sudo apt install ./openbrick_x.y.z_amd64.deb ; sudo dnf install ./openbrick-x.y.z.x86_64.rpm (apt/dnf repo with GPG key later)\nLINUX | AUR | yay -S openbrick-bin\nALL DESKTOP | cargo | cargo binstall openbrick (prebuilt) / cargo install openbrick (source)\nALL DESKTOP | npm | npx openbrick ... / npm i -g openbrick (dist npm installer or napi optionalDependencies)\nALL DESKTOP | python | uv tool install openbrick / uvx openbrick / pipx install openbrick (maturin bin wheel)\nALL DESKTOP | source | git clone ... && cargo build --release -p openbrick-cli ; pnpm i && pnpm tauri build\nANDROID | Play | https://play.google.com/store/apps/details?id=net.neuraldeep.openbrick\nANDROID | direct APK | adb install openbrick-x.y.z-arm64-v8a.apk (from GitHub Releases; developer verification needed for non-adb installs from 2027)\nANDROID | Obtainium | add source https://github.com/neuraldeepnet/openbrick\nANDROID | F-Droid | fdroidcl install net.neuraldeep.openbrick (requires Play-Services-free flavour, built from source)\nANDROID | dev | cargo tauri android dev / cargo tauri android build --apk\nIOS | App Store | App Store link ; TestFlight public link (<= 10,000 testers, 90 days)\nIOS | dev (own device) | cargo tauri ios dev ; xcrun devicectl device install app --device <udid> openBrick.app (macOS + Xcode only)\nIOS | CI to TestFlight | fastlane pilot upload ; eas build -p ios --profile preview --submit\nIOS (EU) | marketplace | listing on an alternative marketplace such as AltStore PAL (notarized build; 5% CTC only on paid digital goods)\nWEB/PWA (all) | browser | open https://app.openbrick.<domain> -> Install / Add to Home Screen ; dev: openbrick serve --qr to open on a phone",
+      "evidence": "Commands follow the documented installer outputs of dist, cargo-binstall, uv, Homebrew, Flathub, Snap, Tauri CLI, adb, Xcode devicectl, fastlane and EAS; package identifiers are proposals.",
+      "confidence": "inferred",
+      "source_url": "https://axodotdev.github.io/cargo-dist/book/installers/index.html"
+    },
+    {
+      "claim": "Reproducible builds: Rust CLI binaries can be made bit-for-bit reproducible with a pinned rust-toolchain.toml, committed Cargo.lock, --remap-path-prefix (or trim-paths), SOURCE_DATE_EPOCH and cargo-auditable; signed/notarized bundles (DMG, NSIS, MSI, notarization tickets, Tauri updater signatures) are inherently not reproducible, so GitHub attestations + SBOM are the practical verifiable-provenance substitute for GUI artifacts, while the CLI can additionally be rebuilt and diffed in CI (and, for Android, F-Droid can reproduce and ship the developer-signed APK).",
+      "evidence": "dist supply-chain docs (attestations, SBOM, cargo-auditable), F-Droid/Obtainium reproducible-build evidence; the non-reproducibility of signed bundles is inferred from how notarization and timestamped signatures work.",
+      "confidence": "inferred",
+      "source_url": "https://axodotdev.github.io/cargo-dist/book/supplychain-security/index.html"
+    },
+    {
+      "claim": "Yearly signing cost scenarios for openBrick: (A) minimum: Apple $99 + SignPath Foundation $0 + Microsoft Store MSIX $0 + Linux $0 = $99/year; (B) recommended if the company is eligible: Apple $99 + Azure Artifact Signing Basic $119.88 = ~$219/year; (C) traditional OV: Apple $99 + OV $150-300 + token = ~$250-400/year; (D) EV: $500+/year with no SmartScreen benefit. One-time: Google Play $25 (covers developer verification for Play developers; a non-Play Android Developer Console account is another $25 or free limited), Microsoft Store $0, D-U-N-S $0. Mobile store fees for a free app: $0 (Apple's 5% CTC applies only to paid digital goods).",
+      "evidence": "Computed from Apple, Microsoft, Google and SignPath prices verified above.",
+      "confidence": "inferred",
+      "source_url": "https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options"
+    },
+    {
+      "claim": "Tauri on iOS 26 uses WKWebView, whose engine ships WebGPU by default, so the iOS shell most likely gets WebGPU; Tauri on Android uses the device's Android System WebView, whose WebGPU status is not documented on the gpuweb page, so Android must be designed for WebGL2 fallback until confirmed.",
+      "evidence": "Tauri webview-versions reference (WKWebView on iOS, Android System WebView on Android, feature support tied to the provider's version) plus gpuweb status listing iOS 26 but no WebView entry.",
+      "confidence": "likely",
+      "source_url": "https://v2.tauri.app/reference/webview-versions/"
+    }
+  ],
+  "key_numbers": [
+    {"name": "dist (cargo-dist) latest", "value": "0.33.1 (2026-10-21)", "note": "Active upstream at axodotdev; astral fork archived 2025-12-19"},
+    {"name": "cargo-binstall latest", "value": "1.26.1 (2026-10-24)", "note": ""},
+    {"name": "Tauri latest", "value": "core 2.12.5 / CLI 2.12.4 / bundler 2.10.4 (2026-10-21)", "note": "updater desktop-only; Rust >= 1.90 for updater plugin"},
+    {"name": "WebKitGTK stable", "value": "2.54.2 (2026-10-23)", "note": "WebGPU not default-on (inferred)"},
+    {"name": "Apple Developer Program", "value": "$99/year", "note": "Required for Developer ID, notarization, TestFlight, App Store; waiver only for nonprofit/edu/gov"},
+    {"name": "Azure Artifact Signing Basic", "value": "$9.99/month (5,000 signatures), $0.005 per extra", "note": "Premium $99.99/month (100,000); orgs in US/CA/EU/UK/AU/NZ/JP/KR/SG/CH/NO/IL, individuals US/CA only"},
+    {"name": "OV code-signing certificate", "value": "$150-300/year + hardware token/HSM", "note": "Microsoft Learn figure; equivalent to Artifact Signing for SmartScreen"},
+    {"name": "EV code-signing certificate", "value": "$400+/year", "note": "No instant SmartScreen reputation since 2024; not recommended"},
+    {"name": "Certum Open Source Code Signing", "value": "EUR 69 (card + reader set)", "note": "Individual 'Open Source Developer' certificate; validity not shown"},
+    {"name": "SignPath Foundation OSS signing", "value": "$0", "note": "Project-bound certificate, keys in HSM, builds verified from repo"},
+    {"name": "Microsoft Store developer account", "value": "$0 (individual and company)", "note": "MSIX re-signed by Microsoft; MSI/EXE must be publisher-signed"},
+    {"name": "Google Play registration", "value": "$25 one-time", "note": "Personal accounts: 12 testers x 14 days closed test before production"},
+    {"name": "Android developer verification", "value": "$25 full / $0 limited (20 devices)", "note": "Enforced 2026-09-30 in ID/SG/TH (BR announced), global 2027; adb exempt"},
+    {"name": "TestFlight", "value": "10,000 external testers, 100 internal, 90-day builds", "note": "First build per external group goes to Beta App Review"},
+    {"name": "Apple EU Core Technology Commission", "value": "5% on paid digital goods, from 2026-10-01", "note": "Web Distribution needs 1M first annual installs or financial-standing proof"},
+    {"name": "Homebrew notability", "value": "30 forks / 30 watchers / 75 stars; self-submit 90 / 90 / 225; repo >= 30 days", "note": "Unsigned/un-notarized casks removed by Sept 2026 (Homebrew 5.0.0, 2025-11-12)"},
+    {"name": "GitHub Actions, public repo", "value": "$0 on standard runners incl. macos-26 arm64, windows-11-arm, ubuntu-24.04-arm", "note": "Private: Linux $0.006/min, Windows $0.010, macOS $0.062; 2,000 free min/month"},
+    {"name": "Expo EAS Free", "value": "15 Android + 15 iOS builds; Starter $19/month + $45 credit", "note": "iOS $2-4/build, Android $1-2/build overage"},
+    {"name": "WebGPU default-on", "value": "Chrome 113 desktop, 121 Android 12+, 144/147 Linux (Intel Gen12+/NVIDIA Wayland); Safari 26; Firefox 141 Windows", "note": "No Linux WebKit port listed"},
+    {"name": "Safari per-origin storage quota", "value": "60% of disk in browser apps, 15% in other apps; 80%/20% overall", "note": "Home Screen web apps get browser quotas; persist() granted heuristically"},
+    {"name": "Chrome per-origin storage quota", "value": "60% of disk per origin, 80% total", "note": "~300MB if 'clear on exit' enabled"},
+    {"name": "Yearly signing cost, minimum", "value": "$99 (Apple) + $0 (SignPath, Store MSIX, Flathub/Snap)", "note": "Scenario A"},
+    {"name": "Yearly signing cost, recommended", "value": "~$219 ($99 Apple + $119.88 Artifact Signing Basic)", "note": "Scenario B; requires company eligibility by country"},
+    {"name": "Yearly signing cost, traditional OV", "value": "~$250-400", "note": "Scenario C; plus one-time token"}
+  ],
+  "options_compared": [
+    {
+      "option": "dist (cargo-dist) + cargo-binstall for the CLI",
+      "license": "Apache-2.0 OR MIT (dist); Apache-2.0 OR MIT (cargo-binstall)",
+      "status_2026": "dist 0.33.1 (2026-10-21), active upstream after a 2025 maintenance scare; cargo-binstall 1.26.1 (2026-10-24)",
+      "pros": "One `dist init` yields release.yml, shell/PowerShell one-liners, npm/npx, Homebrew tap, MSI, SBOM, attestations, Azure Artifact Signing (x86_64 Windows); binstall users get prebuilt binaries automatically; proven by uv/ruff-class projects.",
+      "cons": "No winget/scoop/choco/Flatpak/deb/rpm generation; macOS/Linux signing still 'upcoming'; MSI only for CLI, not the Tauri GUI; a single vendor's maintenance history was shaky in 2025.",
+      "fit_for_openbrick": "Best fit for the CLI pillar; adopt on day one and keep CLI releases independent of GUI releases."
+    },
+    {
+      "option": "npm global package / npx (dist npm installer or napi-rs optionalDependencies)",
+      "license": "MIT (napi-rs)",
+      "status_2026": "Mature; esbuild/Tailwind Oxide/napi-rs v3 pattern is standard",
+      "pros": "Zero-friction for web developers (`npx openbrick export model.obk --stl`); same channel can expose the core as a Node native addon for plugins.",
+      "cons": "Fails under --no-optional / ignore-scripts policies; adds a JS packaging surface to maintain; npm supply-chain incidents in 2025-26 make attestations and provenance publishing mandatory.",
+      "fit_for_openbrick": "Secondary channel; use dist's npm installer for the CLI, napi-rs only if a Node binding is wanted for plugin authors."
+    },
+    {
+      "option": "uv tool install / pipx via maturin `bin` wheels",
+      "license": "Apache-2.0 OR MIT (maturin, uv)",
+      "status_2026": "Mature; `uv tool install` is the default Python CLI install path in 2026",
+      "pros": "Reaches the maker/3D-print community (OctoPrint, PrusaSlicer scripting are Python-heavy); platform wheels need no Python code; one CI job with maturin-action.",
+      "cons": "Another registry (PyPI) with its own trusted-publishing setup; wheel size x platforms; pipx users on old Python.",
+      "fit_for_openbrick": "Good low-cost addition once the CLI is stable; strong for print-pipeline scripting."
+    },
+    {
+      "option": "Tauri 2 (desktop + iOS + Android from one frontend)",
+      "license": "Apache-2.0 OR MIT",
+      "status_2026": "2.12.x stable; mobile stable since 2.0 (Oct 2024); updater desktop-only",
+      "pros": "Single codebase for 5 OS targets; Rust backend shares the core crate; small bundles; documented store paths; GPL-free; strong community.",
+      "cons": "Renderer quality depends on the system webview: WebKitGTK on Linux lacks WebGPU and has NVIDIA/DMABUF and silent software-WebGL issues; Android WebView WebGPU unconfirmed; iOS builds need macOS; no in-app updates on mobile or deb/rpm/Flatpak.",
+      "fit_for_openbrick": "Recommended shell, but pair it with a Rust/wgpu renderer so Linux and the CLI are not hostage to the webview."
+    },
+    {
+      "option": "Native Rust app (wgpu + winit, e.g. egui/iced/Bevy UI) without any webview",
+      "license": "Apache-2.0 OR MIT (wgpu, winit, egui)",
+      "status_2026": "wgpu mature on desktop and wasm; mobile windowing works but store packaging is manual",
+      "pros": "Identical renderer everywhere including the CLI (offscreen) and Linux; no WebKitGTK dependency; one static binary per platform; easiest reproducible builds.",
+      "cons": "UI toolkits are less polished than HTML/CSS for forms, palettes and i18n; mobile packaging/signing not generated for you; PWA would need a separate web UI.",
+      "fit_for_openbrick": "Use for the engine/renderer core and as the Linux-native fallback window; not as the primary UI shell in year one."
+    },
+    {
+      "option": "PWA (same frontend served from the web)",
+      "license": "n/a",
+      "status_2026": "Safari 26: WebGPU + File System WritableStream + every Home Screen site is a web app; Chrome Android WebGPU on Android 12+",
+      "pros": "Zero install, zero store fees, instant updates, works on iPad/Chromebooks, sidesteps Google developer verification and Apple review; OPFS gives large offline storage with persist().",
+      "cons": "No CLI install; no USB/serial to printers; WebGPU missing on many Linux/Android GPUs; Safari quota eviction without persist(); discoverability.",
+      "fit_for_openbrick": "First mobile channel (months 3-9) and the 'play with bricks' entry point; full mobile apps come later."
+    },
+    {
+      "option": "Expo / React Native mobile shell",
+      "license": "MIT",
+      "status_2026": "EAS Free 15+15 builds; Starter $19/month",
+      "pros": "Best-in-class mobile DX, OTA JS updates, dev builds on device via QR, fastlane-style submit built in.",
+      "cons": "Second UI codebase; Rust core would need JSI/UniFFI bindings; cloud build costs; weaker 3D story than a WebGPU canvas.",
+      "fit_for_openbrick": "Only if Tauri mobile proves inadequate; otherwise avoid the second codebase."
+    },
+    {
+      "option": "Windows signing: Microsoft Store MSIX (free re-sign) vs Azure Artifact Signing ($9.99/mo) vs SignPath Foundation ($0, OSS) vs OV ($150-300) vs EV ($400+)",
+      "license": "n/a",
+      "status_2026": "EV lost instant SmartScreen reputation in 2024; Store accounts free since 2025; Artifact Signing GA with country limits",
+      "pros": "Store MSIX: no cert, no SmartScreen; Artifact Signing: cheapest CI-native CA-backed signing; SignPath: free and project-bound; OV: worldwide.",
+      "cons": "Store: review + MSIX constraints; Artifact Signing: company must be in an eligible country and pass 1-20 day validation, dist only signs x86_64; SignPath: application and build-policy requirements; OV: token logistics, manual CI.",
+      "fit_for_openbrick": "Do all three free/cheap ones: Store MSIX for mainstream, SignPath first for GitHub releases, Artifact Signing as fallback; never buy EV."
+    },
+    {
+      "option": "Linux: Flathub vs Snap vs AppImage vs deb/rpm vs AUR",
+      "license": "n/a (Flatpak LGPL tooling, snapcraft GPL-3.0, appimagetool MIT)",
+      "status_2026": "Flathub is the default GUI channel on most desktops; Snap verified badge needs forum approval; appimagetool rehosted with type2-runtime",
+      "pros": "Flathub/Snap sign and host for free with built-in updates; AppImage is the only format Tauri auto-updates; deb/rpm are what Tauri emits natively; AUR -bin is trivial.",
+      "cons": "Flathub forbids AI-generated manifest content and builds offline from source; Snap sandbox/portals can complicate file export; AppImage needs GPG and no desktop integration; deb/rpm need your own apt/dnf repo for updates.",
+      "fit_for_openbrick": "Flathub first, AppImage for updater users, deb/rpm attached to releases, Snap and AUR community-maintained."
+    },
+    {
+      "option": "Android distribution: Google Play vs direct APK on GitHub (+ Obtainium) vs F-Droid",
+      "license": "n/a (Obtainium GPL-3.0)",
+      "status_2026": "Developer verification enforced from 2026-09-30 in first countries, global 2027; Play personal accounts need a 12x14 closed test",
+      "pros": "Play: reach and updates; GitHub APK: free, Obtainium auto-updates, adb always works; F-Droid: trust and reproducible builds with your own signature.",
+      "cons": "Play: review, verification, Play App Signing key decisions are irreversible; GitHub APK: from 2027 unverified-developer installs need the 'advanced flow'; F-Droid: no Play Services flavour and FLOSS toolchain only.",
+      "fit_for_openbrick": "Register as the company (D-U-N-S) now; publish APK on releases plus Play; design a Play-Services-free flavour so F-Droid is possible."
+    },
+    {
+      "option": "iOS distribution: App Store/TestFlight vs EU alternative marketplace vs PWA",
+      "license": "n/a",
+      "status_2026": "Unified EU terms 2026-10-01 (5% CTC); Web Distribution needs 1M installs or financial proof; notarization for all channels",
+      "pros": "App Store/TestFlight: only global path, public links for 10k testers; EU marketplace: sideload-like reach without Apple review beyond notarization; PWA: no gatekeeper at all.",
+      "cons": "$99/year, Beta App Review, 90-day TestFlight builds, Mac required to build (or free macos-26 runners); Web Distribution is unattainable for a new OSS project.",
+      "fit_for_openbrick": "PWA first, TestFlight public link for beta, App Store at 1.0; evaluate an AltStore PAL listing for EU afterwards."
+    },
+    {
+      "option": "Desktop package managers: Homebrew (core formula + cask) vs winget vs scoop vs chocolatey",
+      "license": "n/a (Homebrew BSD-2, winget MIT, scoop Unlicense, Chocolatey Apache-2.0)",
+      "status_2026": "Homebrew 5.0.0 requires notarized casks; winget has human moderation; scoop is self-serve",
+      "pros": "Homebrew tap and scoop bucket are live on day one with no review; homebrew/core and winget give discoverability once notability is met.",
+      "cons": "Homebrew notability (75 stars, 30 days) and cask notarization; winget PR moderation and no dist support; chocolatey moderation delays.",
+      "fit_for_openbrick": "Tap + scoop bucket at v0.1; winget via komac in CI at v0.2; homebrew/core and cask once stars/notarization allow."
+    }
+  ],
+  "recommendations": [
+    "Repo layout for one-repo delivery: a Cargo workspace (crates/openbrick-core for geometry, snapping, .json/.ldr, print validation; crates/openbrick-render on wgpu; crates/openbrick-cli) plus a pnpm workspace (apps/desktop = Tauri 2 shell that also builds iOS/Android; apps/web = the same frontend as a PWA; packages/wasm = core compiled to wasm for the PWA). Keep the renderer in Rust/wgpu so it runs natively (CLI offscreen renders, Linux native window) and in the browser (WebGPU with WebGL2 fallback) without two engines.",
+    "Phase 1 (first 3 months): ship only the CLI and core with `dist init` -> GitHub Releases with curl|sh, irm|iex, `cargo binstall`, npm/npx, Homebrew tap and MSI; add a maturin `bin` wheel for `uv tool install`/pipx; turn on GitHub attestations and CycloneDX SBOMs from the first tag. This gives contributors and makers a real artifact while the GUI is still forming.",
+    "Phase 2 (months 3-9): Tauri desktop via tauri-action in the same release.yml: notarized DMG/.app, signed NSIS (+MSI), AppImage with updater, deb/rpm attached; submit Flathub (net.neuraldeep.openBrick, human-written manifest in a separate flathub repo), Microsoft Store MSIX (free signing), scoop bucket and winget manifest (komac/wingetcreate job), Homebrew cask once 75 stars/30 days and notarization are in place. Publish the PWA at the same time as the first mobile channel.",
+    "Phase 3 (months 9-18): mobile. Android first (cheap, adb-friendly): APK on GitHub Releases + Play closed test -> production, with a Play-Services-free flavour so F-Droid and Obtainium work. iOS second: TestFlight public link for beta, App Store at 1.0, built on free macos-26 runners in the public repo so no team Mac is strictly required (one Mac is still advisable for debugging).",
+    "Buy the Apple Developer Program ($99/year) now in the company's name: identity verification, Developer ID and the notarization history take weeks to mature, and TestFlight, Homebrew cask (after Sept 2026) and Gatekeeper on Sequoia+ all require it.",
+    "Windows signing: apply to SignPath Foundation first (free, project-bound certificate); in parallel confirm Neural Deep Network LTD's country of registration, and if it is UK/EU/US/CA (or AU/NZ/JP/KR/SG/CH/NO/IL) open an Azure Artifact Signing Basic account (~$120/year) as the CI-native fallback that dist already supports. Publish the MSIX to the Microsoft Store for a zero-cost, zero-SmartScreen channel. Do not buy an EV certificate; sign every release with the same publisher identity so SmartScreen reputation carries over.",
+    "Treat WebGPU as progressive enhancement, not a baseline: require a WebGL2 path (or the native wgpu window on Linux), expose a renderer setting, and document the WEBKIT_DISABLE_DMABUF_RENDERER workaround. Budget a 'thousands of instances' performance test on WebGL2 since that is what Linux Tauri, many Android WebViews and Chrome-on-NVIDIA-X11 users will get.",
+    "Make the PWA the first mobile answer and the answer to 'install from the command line on a phone': `openbrick serve --qr` serves the web build on the LAN and prints a QR code; on iOS 26 any site added to the Home Screen is a web app, and OPFS + persist() gives durable offline storage. Export files through File System WritableStream (Safari 26) / showSaveFilePicker (Chromium).",
+    "Release cadence: tag-driven releases from main with semantic versions; CLI and desktop can release monthly, with nightly prereleases from main for contributors; mobile stores take every second desktop release to amortise review. Keep the Tauri updater channels (stable/beta) separate from store builds, and never ship the updater key outside CI secrets (loss = no more updates).",
+    "Reproducibility and supply chain: commit Cargo.lock and rust-toolchain.toml, set SOURCE_DATE_EPOCH from the commit, use --remap-path-prefix/trim-paths and cargo-auditable, rebuild the CLI twice in CI and diff; for signed GUI bundles rely on GitHub attestations and publish the `gh attestation verify` one-liner in the README. Aim for F-Droid reproducible builds on Android so the developer signature survives.",
+    "Android account strategy: register the Play developer account as the organisation (D-U-N-S takes up to 28 days, start now) to avoid the personal-account 12x14 closed-test rule, and decide before the first upload whether to enrol in Play App Signing (irreversible) versus keeping one key so GitHub/F-Droid/Play APKs are signature-compatible for Obtainium users.",
+    "CI matrix: ubuntu-24.04 + ubuntu-24.04-arm (CLI, deb/rpm/AppImage, Android via NDK), windows-2025 + windows-11-arm (CLI, NSIS/MSI/MSIX), macos-26 (arm64) + macos-26-intel or a universal binary (CLI, DMG, iOS). Use dist for the CLI jobs and tauri-action for GUI jobs in one release.yml; cache cargo and pnpm; keep secrets out of fork PR builds and provide a `cargo xtask dist --unsigned` so any contributor can produce every artifact locally.",
+    "iOS in the EU: do not plan on Apple Web Distribution (1M installs or financial-standing criteria); after the App Store launch evaluate an AltStore PAL listing, which only requires a notarized build and the unified terms, and as a free OSS app costs nothing under the 5% CTC.",
+    "Community and kindness: write the Flathub manifest, store listings and winget manifests by hand (Flathub bans AI-generated manifest content) and credit packagers in the README; keep the LEGO non-affiliation disclaimer in every store listing to avoid trademark rejections; publish a PACKAGING.md that says exactly which channels are maintainer-signed and which are community-owned (AUR, Nix, Scoop)."
+  ],
+  "open_questions": [
+    "In which country is Neural Deep Network LTD registered? This decides Azure Artifact Signing eligibility (organisations: US/CA/EU/UK/AU/NZ/JP/KR/SG/CH/NO/IL) and whether SignPath or an OV certificate is the fallback.",
+    "Does Android System WebView (what Tauri Android renders through) expose WebGPU by default on Android 12+ devices in 2026, or only Chrome? Needs a device test; determines whether Android gets the WebGPU or WebGL2 renderer.",
+    "When will WebKitGTK (and therefore Tauri on Linux) ship WebGPU enabled by default? Track Igalia/WebKitGTK release notes; until then Linux desktop needs the WebGL2 or native wgpu path.",
+    "How usable is Google's 'advanced flow' for installing apps from unverified developers once verification goes global in 2027, and does it break the GitHub-APK + Obtainium channel for ordinary users?",
+    "Will SignPath Foundation accept a company-backed, MIT-licensed project whose commits are AI-assisted, and what build-pipeline policies (no secrets, reproducible CI) does it impose?",
+    "Is a store-only update path acceptable for mobile (Tauri's updater is desktop-only), or does the PWA need to be the fast-moving mobile surface?",
+    "Play App Signing versus a single developer-held key: which signature strategy keeps GitHub, F-Droid and Play APKs mutually upgradeable for Obtainium users?",
+    "Naming: can the CLI (homebrew/core formula 'openbrick') and the GUI (cask 'openbrick') coexist without a token clash, or should the GUI be 'openbrick-desktop'?",
+    "Snap confinement: does STL/OBJ/GLTF export and printer-host integration work under strict confinement with portals, or will openBrick need classic confinement (manual review)?",
+    "Certum's EUR 69 Open Source certificate: what is its validity period and is it still issuable to UK/EU individuals in 2026 (listing showed contradictory stock status)?",
+    "Does the project want a Mac App Store listing in addition to notarized DMG + Homebrew cask, given sandboxing limits on file access and printer integration?"
+  ],
+  "sources": [
+    "https://github.com/axodotdev/cargo-dist/releases",
+    "https://github.com/axodotdev/cargo-dist",
+    "https://github.com/astral-sh/cargo-dist",
+    "https://axodotdev.github.io/cargo-dist/book/installers/index.html",
+    "https://axodotdev.github.io/cargo-dist/book/supplychain-security/index.html",
+    "https://github.com/cargo-bins/cargo-binstall/releases",
+    "https://github.com/cargo-bins/cargo-binstall",
+    "https://napi.rs/docs/cli/build",
+    "https://github.com/lovell/sharp/issues/3750",
+    "https://www.maturin.rs/bindings",
+    "https://docs.astral.sh/uv/guides/tools/",
+    "https://github.com/tauri-apps/tauri/releases",
+    "https://v2.tauri.app/distribute/",
+    "https://v2.tauri.app/plugin/updater/",
+    "https://v2.tauri.app/start/prerequisites/",
+    "https://v2.tauri.app/develop/debug/linux-graphics/",
+    "https://v2.tauri.app/reference/webview-versions/",
+    "https://github.com/gpuweb/gpuweb/wiki/Implementation-Status",
+    "https://developer.chrome.com/blog/new-in-webgpu-121",
+    "https://webkitgtk.org/news.html",
+    "https://webkitgtk.org/reference/webkitgtk/stable/method.Settings.set_feature_enabled.html",
+    "https://webkit.org/blog/17333/webkit-in-safari-26-0/",
+    "https://webkit.org/blog/14403/updates-to-storage-policy/",
+    "https://web.dev/articles/storage-for-the-web",
+    "https://developer.apple.com/programs/whats-included/",
+    "https://developer.apple.com/support/compare-memberships/",
+    "https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview",
+    "https://developer.apple.com/support/apps-in-the-eu/",
+    "https://www.iclarified.com/101814/apple-revises-eu-app-store-terms-replaces-core-technology-fee-with-5-commission",
+    "https://mjtsai.com/blog/2026/08/18/new-eu-app-store-terms-to-comply-with-dma/",
+    "https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options",
+    "https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart",
+    "https://learn.microsoft.com/en-us/azure/artifact-signing/overview",
+    "https://learn.microsoft.com/en-us/azure/artifact-signing/concept-trust-models",
+    "https://azure.microsoft.com/en-us/pricing/details/artifact-signing/",
+    "https://devclass.com/2026/01/14/code-signing-windows-apps-may-be-easier-and-more-secure-with-new-azure-artifact-service/",
+    "https://learn.microsoft.com/en-us/windows/apps/publish/partner-center/open-a-developer-account",
+    "https://signpath.org/",
+    "https://shop.certum.eu/open-source-code-signing.html",
+    "https://www.ssl.com/certificates/code-signing/",
+    "https://sectigostore.com/code-signing",
+    "https://docs.brew.sh/Package-Acceptance-Policy",
+    "https://docs.brew.sh/Acceptable-Casks",
+    "https://workbrew.com/blog/what-homebrew-5-0-0-means-for-your-mac-fleet",
+    "https://goodfirstissue.org/hluk/CopyQ/issues/3498",
+    "https://learn.microsoft.com/en-us/windows/package-manager/package/repository",
+    "https://docs.chocolatey.org/en-us/community-repository/moderation/",
+    "https://www.theregister.com/2021/06/02/microsoft_introduces_moderation_for_winget/",
+    "https://docs.flathub.org/docs/for-app-authors/requirements",
+    "https://docs.flathub.org/docs/for-app-authors/verification",
+    "https://forum.snapcraft.io/t/verified-accounts/34002",
+    "https://github.com/AppImage/appimagetool",
+    "https://github.com/actions/runner-images",
+    "https://docs.github.com/en/billing/managing-billing-for-your-products/about-billing-for-github-actions",
+    "https://docs.github.com/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds",
+    "https://support.google.com/android-developer-console/answer/16561738",
+    "https://9to5google.com/2025/08/25/android-apps-developer-verification/",
+    "https://support.google.com/googleplay/android-developer/answer/6112435",
+    "https://support.google.com/googleplay/android-developer/answer/14151465",
+    "https://f-droid.org/docs/Inclusion_Policy/",
+    "https://github.com/ImranR98/Obtainium",
+    "https://expo.dev/pricing"
+  ]
+}

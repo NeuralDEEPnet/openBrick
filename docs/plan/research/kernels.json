@@ -1,0 +1,455 @@
+{
+  "summary": "Recommendation: make Manifold (elalish/manifold, Apache-2.0, v3.5.4 released 2026-09-25) the primary geometry kernel for openBrick, and keep OpenCascade OCCT 8.0.x (LGPL-2.1 with exception) as an optional, out-of-process fallback used only for true parametric fillets and STEP export. Manifold is a mesh-based CSG kernel whose booleans are guaranteed to produce manifold (watertight) output, which is exactly the property a 3D-print pipeline needs; it is the engine Blender 4.5 LTS (July 2025) and OpenSCAD nightlies (default since 2025-08-17) adopted, it has first-party WASM/TypeScript (manifold-3d, 541 KB wasm / 204 KB gzip measured), Python (manifold3d 3.5.4) and C bindings, and since 3.5.0 (May 2026) it produces bit-identical results across architectures, which lets openBrick hash and cache community parts deterministically. For Rust there are two live routes: manifold-csg 0.4.1 (safe FFI over the C++ library, Apache-2.0/MIT, 2026-09-09) and manifold-rust 0.19.1 (a pure-Rust port of Manifold 3.5.0 sponsored by MatterHackers, 2026-10-25, 33 stars but all 730 upstream tests ported). A pure-Rust kernel removes the C++ toolchain from mobile and WASM builds entirely, so the suggested architecture is a Rust core behind a small kernel trait with manifold-rust as default and manifold-csg as the hedge; a TypeScript client would use manifold-3d directly.\n\nFillets, text and SVG are all handled with Manifold plus a 2D layer, not with 3D fillet operations. Brick geometry does not need a B-rep fillet: stud-top chamfers are a frustum cap (Cylinder with two radii, or Extrude with scaleTop) or a revolved 2D profile that already contains the chamfer arc; comfortable vertical edges on tiles, nameplates and keychains come from Clipper2 round offsets (inset-then-outset) on the CrossSection before extrusion; top/bottom edge rounding is available three ways in increasing cost: Extrude scaleTop chamfer (free, and better for FDM overhangs anyway), SmoothOut + RefineToTolerance (cosmetic small fillets), and MinkowskiSum with a low-poly sphere (exact rounding, added in 3.4.0, slow, run as a budgeted background job). An SDF route (Manifold::LevelSet over a smooth-min SDF) gives perfect fillets for organic merch shapes without taking a dependency on fidget or libfive. Text is font outline -> shaping (harfrust/rustybuzz in Rust, opentype.js 2.0 in JS, fontTools in Python) -> Bezier flattening (kurbo) -> CrossSection with NonZero fill -> Extrude, then union (emboss) or subtract (engrave). SVG is usvg 0.49 -> flattened paths with the file's fill rule -> CrossSection -> Extrude; stroke-to-outline via lyon or Clipper2 open-path offsetting is a v1.1 item.\n\nSTEP export is the one thing a mesh kernel cannot do well. The clean answer is a parametric 'recipe' intermediate representation for parts (the same thing the UI edits) that compiles to Manifold for interactive/print use and to OCCT for STEP and true fillets when asked. The Python route (build123d 0.13.0 on cadquery-ocp 8.0.1.1.0) is mature and fine for desktop/CLI/CI; the Rust route is cadrum 0.9.1 (MIT wrapper, prebuilt OCCT 8.0.1, native + wasm32 via Docker, has fillet/chamfer/STEP) or occt-wasm 5.1.0 (OCCT 8 inside wasmtime, 4.7 MB compressed, ~2x native). Do not build on opencascade.js (last npm release 2023-03-23, wraps OCCT 7.6.2, 48.9 MB wasm / 9.1 MB brotli), and keep OCCT off iOS where LGPL static-link relinking obligations bite. Rejects: CGAL (algorithms are GPL, incompatible with an MIT-distributed app without a GeometryFactory licence), OpenSCAD as an embedded kernel (GPL-2.0; fine as an isolated import/export sandbox, its 2026.10.25 WASM web build is only 3.35 MB), Fornjot (archived 2026-06-19), opencascade-rs (WIP, LGPL), csgrs (BSP-based 0.20.1 on crates.io; an unpublished 0.23 rewrite claims certified booleans, watch it), three-bvh-csg (experimental, not guaranteed manifold, its README points to Manifold), JSCAD (MIT, V3 still alpha 3.0.7-alpha.0, own engine; useful as API inspiration only), and GPU SDF meshing libraries (sdf2mesh 0.1.0, last commit Jan 2025) which are not ready to plan around.",
+  "findings": [
+    {
+      "claim": "Manifold's latest release is v3.5.4 (2026-09-25); 3.5.x shipped cross-platform determinism, ray casting, boolean progress/cancellation (ExecutionContext) and a WASM CSP fix; 3.4.0 (2026-02/03) added MinkowskiSum/MinkowskiDifference and removed MeshIO from the public API.",
+      "evidence": "GitHub releases page lists v3.5.4 (25 Sep), v3.5.0 (23 May, determinism, ExecutionContext), v3.4.0 (27 Feb, Minkowski, MeshIO removal); npm 'time' field confirms 3.4.0 published 2026-03-14, 3.5.0 2026-05-23, 3.5.4 2026-09-25.",
+      "confidence": "verified",
+      "source_url": "https://github.com/elalish/manifold/releases"
+    },
+    {
+      "claim": "Manifold is Apache-2.0, guarantees manifold output from booleans, supports vertex properties, Smooth/Refine, LevelSet (SDF) meshing, and has C, WASM/JS (manifold-3d), Python (manifold3d), Rust (manifold-csg, manifold-rust), Java, C#, Julia, OCaml, Swift and Clojure bindings; WASM builds are serial-only and parallel WASM is 'not recommended'.",
+      "evidence": "README: 'primary goal is reliability: guaranteed manifold output without caveats or edge cases'; bindings list; 2.4k stars; note that parallel WASM may cause memory corruption.",
+      "confidence": "verified",
+      "source_url": "https://github.com/elalish/manifold"
+    },
+    {
+      "claim": "The manifold-3d 3.5.4 npm package ships a 541,470-byte manifold.wasm (203,834 bytes gzip -9) plus an 82 KB manifold.js glue file; the 1.73 MB worker.bundled.js is the ManifoldCAD worker and is not needed by the core.",
+      "evidence": "Measured locally on 2026-10-27 with npm pack manifold-3d@3.5.4, tar extraction and gzip -9; package.json license Apache-2.0.",
+      "confidence": "verified",
+      "source_url": "https://www.npmjs.com/package/manifold-3d"
+    },
+    {
+      "claim": "Manifold has no fillet/chamfer operation; edge rounding is achieved via SmoothOut (minSharpAngle default 52.5 deg, minSmoothness > 0 gives 'a small fillet on these sharp edges') + RefineToTolerance, via MinkowskiSum (dilation, cost grows with the product of face counts), via Extrude scaleTop/Cylinder with two radii for chamfers, or via LevelSet over an SDF.",
+      "evidence": "Manifold C++ class docs describe Smooth, SmoothOut, RefineToTolerance, MinkowskiSum/Difference, Extrude (scaleTop, {0,0} forms a cone), Cylinder(circularSegments, two radii), LevelSet (marching tetrahedra on body-centred grid); fillets/chamfers are not documented as operations.",
+      "confidence": "verified",
+      "source_url": "https://manifoldcad.org/docs/html/classmanifold_1_1_manifold.html"
+    },
+    {
+      "claim": "Manifold's 2D CrossSection is built on Clipper2 (Boost Software License 1.0) and provides boolean union by default, fill rules, offsetting (round joins) and extrude(height, nDivisions, twist, scaleTop); this is the mechanism for rounded corners, print calibration offsets and font/SVG polygon ingestion.",
+      "evidence": "manifold-3d CrossSection docs: constructor takes closed contours + fill rule, 'uses the Clipper2 library for polygon clipping (boolean) and offsetting'; Clipper2 repo lists BSL-1.0, 2.5k stars, intersection/union/difference/XOR plus offsetting.",
+      "confidence": "verified",
+      "source_url": "https://manifoldcad.org/jsdocs/classes/manifold_encapsulated_types.CrossSection.html"
+    },
+    {
+      "claim": "manifold-csg 0.4.1 (2026-09-09, Apache-2.0 OR MIT, zmerlynn) is a safe Rust binding over C++ Manifold covering booleans, CrossSection + Clipper2 offset, extrude/revolve, hull, Minkowski, refine/smooth, LevelSet, warp, f64 MeshGL64; it builds Manifold from source (git+cmake+C++) or links a prebuilt install; wasm32-unknown-emscripten is tested, wasm32-unknown-unknown is 'provisional' (needs LLVM 20+, exceptions abort); mobile is not mentioned.",
+      "evidence": "docs.rs crate page for manifold-csg 0.4.1; manifold3d 0.4.1 on crates.io is a facade that re-exports manifold-csg.",
+      "confidence": "verified",
+      "source_url": "https://docs.rs/crate/manifold-csg/latest"
+    },
+    {
+      "claim": "manifold-rust 0.19.1 (2026-10-25, Apache-2.0, Lars Brubaker, sponsored by MatterHackers) is a pure-Rust port of Manifold v3.5.0 claiming all 18 engine phases and all upstream tests ported (730 passing in release), performance within a few percent of sequential C++ (sphere-sphere 2M tris 2.57 s vs 2.61 s), an optional rayon 'parallel' feature (native only, bit-identical), a WASM demo, a C FFI and a second 'robust' boolean engine; it has only 33 stars and performance/corpus claims are self-reported.",
+      "evidence": "docs.rs and GitHub README; release history 0.9.0 (July 2026) to 0.19.1; documented divergences in docs/CPP_DIVERGENCES.md; Thingi10K sweep with 0 NotClosed failures; 120 s Cancelled budget on heavily self-intersecting meshes.",
+      "confidence": "verified",
+      "source_url": "https://github.com/larsbrubaker/manifold-rust"
+    },
+    {
+      "claim": "manifold3d 3.5.4 is on PyPI (Python 3.14 wheels since 3.4.1); trimesh 5.2.0, cadquery-ocp 8.0.1.1.0, build123d 0.13.0 and cadquery 2.8.0 are the current PyPI versions.",
+      "evidence": "pip index versions run on the dev box on 2026-10-27; Manifold 3.4.1 release notes mention Python 3.14 wheel builds.",
+      "confidence": "verified",
+      "source_url": "https://pypi.org/project/manifold3d/"
+    },
+    {
+      "claim": "OCCT 8.0.0 was released 2026-05-07 (C++17 baseline, BRepGraph, stream-based thread-safe STEP I/O with ~20% smaller files, ARM64 on macOS/Windows, VTK off by default) and 8.0.1 followed on 2026-07-30; OCCT is LGPL-2.1 with the OCCT_LGPL_EXCEPTION or a commercial licence; 3.1k stars.",
+      "evidence": "occt3d.com 8.0.0 release post; Wikipedia version table lists 8.0.1 / 30 July 2026; GitHub README states LGPL-2.1 with exception file and commercial alternative.",
+      "confidence": "verified",
+      "source_url": "https://occt3d.com/dev/content/open-cascade-technology-800-release/index.html"
+    },
+    {
+      "claim": "OCCT's official build guide covers Windows (VS2019+/MinGW), Linux (GCC 8+/Clang 7+), macOS (Xcode 11+), Android (NDK r19+, API 21+, cross-compile walkthrough) and WebAssembly (Emscripten SDK 3.0+, listed only in system requirements); iOS is not covered on that page.",
+      "evidence": "OCCT 'Building OCCT' documentation page (redirected to occt3d.com).",
+      "confidence": "verified",
+      "source_url": "https://occt3d.com/dev/doc/overview/html/build_upgrade__building_occt.html"
+    },
+    {
+      "claim": "OCCT's BRepFilletAPI_MakeFillet has long-standing robustness issues: failures when the radius exceeds adjacent edge length, IsDone()==true with visibly wrong geometry, sensitivity to model scale/units and to construction history, and ordering-dependent workarounds; most tracker entries are still open.",
+      "evidence": "OCCT Mantis tracker issues 28596, 33849, 30208, 31229, 31764, 26778, 27007, 22727 and a FreeCAD tracker thread describe these cases.",
+      "confidence": "verified",
+      "source_url": "https://tracker.dev.opencascade.org/view.php?id=33849"
+    },
+    {
+      "claim": "opencascade.js is stale: last npm release 1.1.1 on 2023-03-23 (beta tags up to 2023-03-23), README wraps OCCT 7.6.2, LGPL-2.1, 942 stars; its full build is 48.9 MB wasm (9.1 MB brotli) and a custom build is 7.1 MB (2.4 MB compressed), with -sDISABLE_EXCEPTION_CATCHING=1 cutting ~45%.",
+      "evidence": "npm view opencascade.js time (2026-10-27); GitHub README badge; ocjs.org file-size page.",
+      "confidence": "verified",
+      "source_url": "https://ocjs.org/docs/getting-started/file-size"
+    },
+    {
+      "claim": "cadrum 0.9.1 (2026-10-21, MIT wrapper over prebuilt headless OCCT 8.0.1, LGPL-2.1 for OCCT) offers booleans, fillet_edges, chamfer_edges, sweeps/lofts, STEP read/write, BRep, STL/glb/SVG/PNG export, prebuilt binaries for x86_64/aarch64 Linux, x86_64 Windows, x86_64/aarch64 macOS, and wasm32-unknown-unknown via a wasi-sdk Docker image; docs say distributors must let end users relink OCCT; only 42% documented; Android/iOS not mentioned.",
+      "evidence": "docs.rs cadrum page.",
+      "confidence": "verified",
+      "source_url": "https://docs.rs/cadrum"
+    },
+    {
+      "claim": "occt-wasm 5.1.0 (2026-10-25, MIT/Apache wrapper, embedded OCCT V8 binary LGPL-2.1-only) runs OCCT inside wasmtime with no C++ toolchain: fuse/cut/common, fillet, chamfer, shell, offset, draft, sweeps/lofts, STEP/STL import-export, glTF export, 170+ methods; 4.7 MB compressed / 21-22 MB loaded, 128 MiB linear memory, compute within ~2x of native; not for browsers (separate npm package).",
+      "evidence": "docs.rs occt-wasm page.",
+      "confidence": "verified",
+      "source_url": "https://docs.rs/crate/occt-wasm/latest"
+    },
+    {
+      "claim": "opencascade-rs (bschwind) is LGPL-2.1, 271 stars, 'a major work in progress' maintained in spare time; fillets, chamfers, STEP and STL are listed as goals, WASM is not available; occt-sys 7.8.1 and the opencascade crate 0.3.0 are its published pieces.",
+      "evidence": "GitHub README; cargo search on 2026-10-27.",
+      "confidence": "verified",
+      "source_url": "https://github.com/bschwind/opencascade-rs"
+    },
+    {
+      "claim": "truck (ricosjp) is an actively maintained Apache-2.0 Rust B-rep/NURBS kernel (1.7k stars, commits through 2026-10-26 including STEP conic output fixes) with truck-shapeops 0.4.0 (booleans on solids), truck-stepio 0.3.0 (STEP read/write) and truck-js; no fillet support is documented.",
+      "evidence": "GitHub repo and commits page; cargo search versions.",
+      "confidence": "verified",
+      "source_url": "https://github.com/ricosjp/truck/commits/master"
+    },
+    {
+      "claim": "Fornjot was archived by its owner on 2026-06-19 with a notice that the project has been shut down and its goals were never reached.",
+      "evidence": "GitHub repository banner reported in search results.",
+      "confidence": "verified",
+      "source_url": "https://github.com/hannobraun/fornjot"
+    },
+    {
+      "claim": "csgrs on crates.io is 0.20.1 (2025-07-24, MIT), a BSP-tree CSG library (CSG.js translation) with TrueType/Hershey text, 2D offset, SDF meshing, STL/DXF, WASM feature and fillets only on the roadmap; the GitHub README now references an unpublished 0.23.0 (Rust 1.95+) built on a 'Hypermesh' crate claiming certified solid booleans with exact predicates, SVG import and more export formats.",
+      "evidence": "docs.rs csgrs 0.20.1 page; cargo search returns 0.20.1; GitHub README quick start cites 0.23.0 and 11,392 commits.",
+      "confidence": "verified",
+      "source_url": "https://github.com/timschmidt/csgrs"
+    },
+    {
+      "claim": "OpenSCAD's Manifold backend became the default in development snapshots on 2025-08-17 (CGAL still selectable via --backend=cgal); the last stable release on the GitHub releases page is still 2021.01; nightlies are at 2026.10.25 with WebAssembly web/node packages (web zip 3,353,867 bytes, node zip 4,717,697 bytes); OpenSCAD is GPL-2.0 (COPYING 'Version 2, June 1991' with a CGAL linking exception).",
+      "evidence": "OpenSCAD mailing-list announcement; GitHub releases page shows 2021.01 as Latest; files.openscad.org/snapshots listing; COPYING file.",
+      "confidence": "verified",
+      "source_url": "https://files.openscad.org/snapshots/"
+    },
+    {
+      "claim": "openscad-wasm (GPL-2.0, 432 stars) is a full headless port of OpenSCAD to an ES6 WASM module that passes --enable=manifold; openscad-playground moved to the openscad GitHub organisation and defaults to Manifold.",
+      "evidence": "openscad-wasm README; openscad-playground repository.",
+      "confidence": "verified",
+      "source_url": "https://github.com/openscad/openscad-wasm"
+    },
+    {
+      "claim": "Blender 4.5 LTS (July 2025) added a 'Manifold' boolean solver based on the Manifold library in both the Boolean modifier and Geometry Nodes; it only works on manifold meshes.",
+      "evidence": "Blender 4.5 manual Boolean Modifier page and all3dp coverage.",
+      "confidence": "verified",
+      "source_url": "https://docs.blender.org/manual/en/4.5/modeling/modifiers/generate/booleans.html"
+    },
+    {
+      "claim": "CGAL is dual-licensed: kernel/support libraries LGPL-3+, most algorithms (including mesh booleans) GPL-3+, commercial licences via GeometryFactory; CGAL 6.2 (2026-06-11) split Polygon Mesh Processing into packages including a dedicated 'Boolean Operations On Meshes' package; 6.2.1 shipped 2026-09-04.",
+      "evidence": "cgal.org license page; GitHub releases page.",
+      "confidence": "verified",
+      "source_url": "https://www.cgal.org/license.html"
+    },
+    {
+      "claim": "JSCAD (MIT, 3.3k stars) publishes @jscad/modeling 2.13.0 (stable, 2026-02 added Minkowski) and V3 alphas up to 3.0.7-alpha.0 (2026-08-02); V3 uses its own geometry engine (no Manifold mention) and is volunteer maintained.",
+      "evidence": "npm view @jscad/modeling time; JSCAD forum V3 alpha posts; GitHub README.",
+      "confidence": "verified",
+      "source_url": "https://github.com/jscad/OpenJSCAD.org"
+    },
+    {
+      "claim": "three-bvh-csg 0.0.18 (2026-02-17) remains 'experimental, in progress'; input must be watertight and output 'may not be correctly completely two-manifold'; its README points to Manifold for robust CAD-style operations.",
+      "evidence": "npm view three-bvh-csg time; README.",
+      "confidence": "verified",
+      "source_url": "https://github.com/gkjohnson/three-bvh-csg"
+    },
+    {
+      "claim": "fidget 0.5.1 (2026-09-27, MPL-2.0, 510 stars) is a 'personal-scale experimental project' with JIT on x86_64/aarch64 (interpreter on wasm32), Manifold Dual Contouring meshing 'much less battle-tested than libfive', an optional fidget-wgpu crate, and a maintainer who tells serious users to 'expect to fork it'.",
+      "evidence": "docs.rs fidget 0.5.1 page; GitHub README.",
+      "confidence": "verified",
+      "source_url": "https://github.com/mkeeter/fidget"
+    },
+    {
+      "claim": "libfive core, stdlib and Python bindings are MPL-2.0 (Studio and Guile bindings GPL-2+), 1.7k stars; recent commits (Oct 2026) are Qt 6.11/MSVC/Eigen 5 build fixes rather than feature work.",
+      "evidence": "GitHub README and commits page.",
+      "confidence": "verified",
+      "source_url": "https://github.com/libfive/libfive/commits/master"
+    },
+    {
+      "claim": "GPU SDF meshing has no production-ready library: sdf2mesh is 0.1.0 with last commit January 2025; other hits are demos, forum WIPs and a Blender add-on.",
+      "evidence": "docs.rs sdf2mesh; Codeberg repo; Babylon.js forum threads.",
+      "confidence": "verified",
+      "source_url": "https://docs.rs/crate/sdf2mesh/latest"
+    },
+    {
+      "claim": "The 2D/font/SVG toolchain for a Rust core is current: usvg 0.49.0, ttf-parser 0.25.1, harfrust 0.15.0, rustybuzz 0.20.1, kurbo 0.13.1, lyon 1.0.19; for JS, opentype.js 2.0.0 shipped 2026-05-06 and fontkit 2.0.4 is available.",
+      "evidence": "cargo search and npm view run on the dev box 2026-10-27.",
+      "confidence": "verified",
+      "source_url": "https://crates.io/crates/usvg"
+    },
+    {
+      "claim": "A mesh kernel is sufficient for brick-compatible parts: stud chamfers, tube walls, tile edges and keychain loops are all extrude/revolve/offset constructions, so true B-rep fillets are only needed for engineering STEP handoff, not for printable brick geometry.",
+      "evidence": "Inference from Manifold's Extrude(scaleTop), Cylinder(two radii), Revolve and CrossSection offset capabilities versus the LEGO-style feature set in the README/brief.",
+      "confidence": "inferred",
+      "source_url": "https://manifoldcad.org/docs/html/classmanifold_1_1_manifold.html"
+    },
+    {
+      "claim": "Shipping OCCT inside an iOS app is a licensing hazard: LGPL-2.1 static linking requires letting users relink, which cadrum's own docs flag; keep OCCT desktop/server-side or dynamically linked.",
+      "evidence": "cadrum docs state distributors must comply with LGPL 2.1 and end users must be able to rebuild and relink OCCT; OCCT README lists LGPL-2.1 with exception.",
+      "confidence": "inferred",
+      "source_url": "https://docs.rs/cadrum"
+    },
+    {
+      "claim": "Manifold 3.5.0's cross-platform determinism makes content-addressed caching and reproducible community part hashes feasible across desktop, mobile and WASM builds of the same kernel version; manifold-rust additionally documents divergences from C++ output, so mixing the two implementations in one hash space needs its own cross-check harness.",
+      "evidence": "Manifold 3.5.0 release notes (determinism check in CI); manifold-rust docs/CPP_DIVERGENCES.md.",
+      "confidence": "inferred",
+      "source_url": "https://github.com/elalish/manifold/releases"
+    }
+  ],
+  "options_compared": [
+    {
+      "option": "Manifold (C++ core; manifold-3d WASM/TS; manifold3d Python)",
+      "license": "Apache-2.0 (Clipper2 inside is BSL-1.0)",
+      "status_2026": "v3.5.4 2026-09-25; 2.4k stars; adopted by Blender 4.5 LTS and OpenSCAD nightlies; releases roughly monthly",
+      "pros": "Guaranteed-manifold booleans; tiny WASM (541 KB / 204 KB gzip); TS, Python, C, Swift, C# bindings; CrossSection+Clipper2 offsets; Extrude/Revolve/Hull/Minkowski/LevelSet/Smooth; cross-platform determinism; 3MF/glTF tooling in npm package",
+      "cons": "No B-rep, no parametric fillet/chamfer op, no STEP; Minkowski slow; WASM single-threaded; C++17 toolchain needed for native builds",
+      "fit_for_openbrick": "Primary kernel. Covers assembler, part designer and print pipeline needs; chamfers/roundings via profile, scaleTop, offset, SmoothOut or Minkowski."
+    },
+    {
+      "option": "manifold-rust (pure-Rust port of Manifold 3.5.0)",
+      "license": "Apache-2.0",
+      "status_2026": "0.19.1 2026-10-25; 33 stars; 310 commits since July 2026; MatterHackers-sponsored",
+      "pros": "No C++ toolchain: builds for wasm32-unknown-unknown, iOS/Android Rust targets, CLI from one crate; all upstream tests ported; perf parity with sequential C++; extra 'robust' engine; C FFI",
+      "cons": "Very young and single-maintainer; self-reported benchmarks; documented divergences from C++ output; 50% doc coverage; parallel only native",
+      "fit_for_openbrick": "Default implementation behind a kernel trait for a Rust core; hedge with manifold-csg. Needs an in-house conformance corpus (brick parts + Thingi10K subset)."
+    },
+    {
+      "option": "manifold-csg / manifold3d (Rust FFI over C++ Manifold)",
+      "license": "Apache-2.0 OR MIT",
+      "status_2026": "0.4.1 2026-09-09; tracks upstream Manifold; listed in Manifold README",
+      "pros": "Full upstream behaviour and bug fixes; f64 MeshGL64; CrossSection offsets, Minkowski, LevelSet, smooth/refine; emscripten target tested",
+      "cons": "Builds Manifold from source (git, cmake, C++); wasm32-unknown-unknown provisional (LLVM 20+, no exceptions); mobile untested; pre-1.0 API churn with migration guides",
+      "fit_for_openbrick": "Fallback Rust binding; same trait as manifold-rust so either can be swapped per platform."
+    },
+    {
+      "option": "OpenCascade OCCT 8.0.x via Python (build123d 0.13.0 / cadquery-ocp 8.0.1.1.0)",
+      "license": "LGPL-2.1 with exception (OCCT); Apache-2.0 (build123d)",
+      "status_2026": "OCCT 8.0.0 2026-05-07, 8.0.1 2026-07-30; build123d actively released; OCP wheels now at 8.0.1",
+      "pros": "True B-rep: parametric fillets/chamfers, STEP read/write (faster, smaller in 8.0), lofts, shells; mature Python API; 3.1k stars, commercial backing",
+      "cons": "Fillet robustness issues documented in tracker; huge WASM (48.9 MB full via opencascade.js, stale); LGPL relink obligations on mobile; heavy dependency surface; OCP wheel yanks have happened",
+      "fit_for_openbrick": "Fallback kernel for STEP export and 'true fillet' mode, invoked as a separate process/service from the same parametric recipe; desktop/CLI/CI only."
+    },
+    {
+      "option": "cadrum (Rust, prebuilt headless OCCT 8.0.1)",
+      "license": "MIT wrapper + LGPL-2.1 OCCT",
+      "status_2026": "0.9.1 2026-10-21; single maintainer (lzpel); 42% documented",
+      "pros": "No system OCCT or C++ setup on Linux/Windows/macOS prebuilt targets; fillet_edges/chamfer_edges, booleans, STEP, STL/glb export; wasm32 build via Docker",
+      "cons": "Young, thin docs; Android/iOS not covered; LGPL relink duty; sweep orientation caveats",
+      "fit_for_openbrick": "Best Rust-native route to OCCT if the core is Rust and STEP/fillets are needed on desktop."
+    },
+    {
+      "option": "occt-wasm (OCCT 8 inside wasmtime, Rust)",
+      "license": "MIT/Apache wrapper + LGPL-2.1-only binary",
+      "status_2026": "5.1.0 2026-10-25; 13 versions since 1.5.0",
+      "pros": "Zero C++ toolchain; fillet/chamfer/shell/offset/STEP/STL/glTF; sandboxed; ~2x native",
+      "cons": "4.7 MB compressed, 21-22 MB loaded, 128 MiB memory; not for browsers; kernel state undefined after errors",
+      "fit_for_openbrick": "Alternative OCCT fallback for CLI/server STEP export without compiling OCCT."
+    },
+    {
+      "option": "opencascade.js (OCCT in browser via Emscripten)",
+      "license": "LGPL-2.1",
+      "status_2026": "npm 1.1.1 2023-03-23; wraps OCCT 7.6.2; 942 stars; effectively unmaintained",
+      "pros": "Only turnkey browser OCCT; custom builds down to 7.1 MB (2.4 MB compressed)",
+      "cons": "Stale OCCT, no releases since 2023, 48.9 MB full build, slow compile on load",
+      "fit_for_openbrick": "Avoid; if browser STEP is ever needed, build OCCT 8 with Emscripten yourself or use a server."
+    },
+    {
+      "option": "opencascade-rs (bschwind)",
+      "license": "LGPL-2.1",
+      "status_2026": "WIP, 271 stars, spare-time maintainer; occt-sys 7.8.1",
+      "pros": "cxx-based, idiomatic goals, WGPU viewer experiment",
+      "cons": "Fillets/STEP/STL still goals; no WASM; LGPL on the Rust crate itself",
+      "fit_for_openbrick": "Not suitable."
+    },
+    {
+      "option": "truck (Rust B-rep/NURBS)",
+      "license": "Apache-2.0",
+      "status_2026": "Active (commits 2026-10-26); truck-modeling 0.6.0, truck-shapeops 0.4.0, truck-stepio 0.3.0; 1.7k stars",
+      "pros": "Pure Rust B-rep with STEP I/O and WebGPU rendering; permissive licence; could give STEP export without OCCT",
+      "cons": "Booleans less mature than Manifold/OCCT; no fillets; small team; limited docs/tutorials",
+      "fit_for_openbrick": "Watch-list for a permissive STEP writer (v2); not a primary kernel."
+    },
+    {
+      "option": "Fornjot",
+      "license": "Zero-Clause BSD historically",
+      "status_2026": "Archived 2026-06-19, shut down",
+      "pros": "None now",
+      "cons": "Dead",
+      "fit_for_openbrick": "Exclude."
+    },
+    {
+      "option": "csgrs (Rust CSG)",
+      "license": "MIT",
+      "status_2026": "crates.io 0.20.1 2025-07-24; GitHub README references unpublished 0.23.0 rewrite with 'certified' booleans; 261 stars",
+      "pros": "Pure Rust, OpenSCAD-like API, TrueType/Hershey text, 2D offsets, SDF meshing, STL/DXF, WASM feature, Bevy/Parry integration",
+      "cons": "Published version is BSP-based (robustness/T-junction todos); no fillets; rewrite unverified and unpublished; one maintainer",
+      "fit_for_openbrick": "Not primary; re-evaluate if 0.23 lands on crates.io with independent robustness evidence."
+    },
+    {
+      "option": "OpenSCAD 2025/2026 nightlies with Manifold backend (+ openscad-wasm / openscad-playground)",
+      "license": "GPL-2.0 (with CGAL exception)",
+      "status_2026": "Manifold default in nightlies since 2025-08-17; nightly 2026.10.25; last stable 2021.01; WASM web zip 3.35 MB",
+      "pros": "Huge community (10.5k stars), text() and SVG import built in, offset(), small WASM, proven Manifold integration",
+      "cons": "GPL-2.0 would infect an MIT app if linked; language-only interface; no stable release in 5 years; no STEP",
+      "fit_for_openbrick": "Use only as an isolated import/export sandbox (separate process or worker, separately distributed) for .scad interoperability with the maker community."
+    },
+    {
+      "option": "JSCAD (@jscad/modeling)",
+      "license": "MIT",
+      "status_2026": "2.13.0 stable; 3.0.7-alpha.0 2026-08-02; 3.3k stars; volunteer maintained",
+      "pros": "Pure JS, MIT, extrusions/text/SVG/3MF serializers, OpenSCAD-like API",
+      "cons": "Own boolean engine without manifold guarantees; V3 alpha for 2+ years; slower than Manifold",
+      "fit_for_openbrick": "API design reference and 3MF/SVG serializer code to borrow (MIT), not a kernel."
+    },
+    {
+      "option": "CGAL (Polygon Mesh Processing / Boolean Operations On Meshes)",
+      "license": "GPL-3+ for algorithms, LGPL-3+ for kernel; commercial via GeometryFactory",
+      "status_2026": "6.2 2026-06-11, 6.2.1 2026-09-04; exact corefinement booleans; autorefine + snap rounding",
+      "pros": "Exact arithmetic, gold-standard robustness, Nef polyhedra, Minkowski",
+      "cons": "GPL incompatible with MIT distribution; slow; large WASM; OpenSCAD itself moved to Manifold for speed",
+      "fit_for_openbrick": "Exclude from product; acceptable only in offline GPL tooling."
+    },
+    {
+      "option": "libfive (implicit/F-rep)",
+      "license": "MPL-2.0 core; GPL-2+ Studio/Guile",
+      "status_2026": "1.7k stars; Oct 2026 build-fix commits; alpha per libfive.com",
+      "pros": "Feature-preserving manifold meshing of SDFs; smooth-min fillets are trivial; C API, Python bindings",
+      "cons": "C++/Eigen/Boost stack; meshing resolution-bound; not a mesh-boolean kernel; small WASM story",
+      "fit_for_openbrick": "Not needed: Manifold::LevelSet covers SDF meshing for organic merch mode."
+    },
+    {
+      "option": "fidget (implicit, Rust)",
+      "license": "MPL-2.0",
+      "status_2026": "0.5.1 2026-09-27; 510 stars; 'expect to fork it'",
+      "pros": "Fast JIT SDF evaluation, interval arithmetic, Rust-native, wasm interpreter mode, wgpu crate",
+      "cons": "Experimental, personal-scale, meshing less battle-tested than libfive; no JIT on wasm32",
+      "fit_for_openbrick": "Optional R&D for a GPU/SDF sculpt mode; do not put on the critical path."
+    },
+    {
+      "option": "Blender 4.5+/5.x geometry nodes (Manifold boolean solver) as offline path",
+      "license": "GPL-2+ (separate application)",
+      "status_2026": "4.5 LTS July 2025 ships Manifold solver",
+      "pros": "Free batch/offline modelling and rendering with the same boolean engine; bpy scripting for marketing renders",
+      "cons": "Not embeddable; GPL; heavyweight",
+      "fit_for_openbrick": "Offline asset/marketing pipeline and QA cross-check only."
+    },
+    {
+      "option": "three-bvh-csg (three.js)",
+      "license": "MIT",
+      "status_2026": "0.0.18 2026-02-17; experimental",
+      "pros": "Works directly on three.js BufferGeometry; fast for previews",
+      "cons": "Not guaranteed two-manifold; README defers to Manifold",
+      "fit_for_openbrick": "Exclude for print output; manifold-3d already outputs three.js-friendly MeshGL."
+    },
+    {
+      "option": "GPU SDF meshing (sdf2mesh, WebGPU dual contouring demos)",
+      "license": "varies",
+      "status_2026": "sdf2mesh 0.1.0 last commit Jan 2025; otherwise demos/forum WIPs",
+      "pros": "Potentially 3x+ faster isosurfacing on GPU",
+      "cons": "No maintained library; wgpu/WebGPU availability on mobile uneven",
+      "fit_for_openbrick": "Not a 2027 dependency; revisit in 2028."
+    }
+  ],
+  "recommendations": [
+    "Adopt Manifold 3.5.x as the primary kernel. If the core is Rust (recommended for desktop+mobile+CLI from one codebase), define a small Kernel trait and ship manifold-rust as default with manifold-csg behind a feature flag; if the core is TypeScript, use manifold-3d directly. Pin the kernel version per file-format version so hashes stay reproducible.",
+    "Model brick features so no 3D fillet op is needed: studs = Cylinder + frustum chamfer cap (or Revolve of a chamfered profile); tubes/walls = extruded CrossSections; tile/keychain edge comfort = Clipper2 round inset/outset on the 2D profile; bottom-edge chamfers via Extrude scaleTop (prints better than fillets on FDM).",
+    "Offer three rounding tiers in the part designer with explicit cost: (1) chamfer (instant), (2) SmoothOut+RefineToTolerance cosmetic fillet (fast), (3) MinkowskiSum with an 8-16 segment sphere (background job with time budget, part size limits). Add an SDF 'organic' mode built on Manifold::LevelSet with smooth-min fillets for logo blobs and keychains.",
+    "Text pipeline: bundle OFL fonts; shape with harfrust/rustybuzz (Rust) or opentype.js 2.0 (JS); flatten Beziers with kurbo at a tolerance derived from nozzle width (e.g. 0.05 mm); build CrossSection with NonZero fill; Extrude; union for emboss, subtract for engrave; run a 2D thin-feature check (offset -r then +r) against the printer profile's minimum feature size before export.",
+    "SVG pipeline: usvg 0.49 -> flattened subpaths with the SVG fill rule -> CrossSection -> Extrude; v1 supports fills only, strokes via lyon stroke tessellation or Clipper2 open-path offsetting in v1.1; reject or auto-fix self-intersections through CrossSection's union-on-construct.",
+    "Make the part definition a parametric recipe IR (JSON) that the UI edits and the kernel compiles. Compile to Manifold for interactive/print output; compile the same recipe to OCCT (build123d in Python for CLI/CI, cadrum or occt-wasm for a Rust binary) only when the user requests STEP or true parametric fillets. This keeps STEP a v2 feature without architectural debt.",
+    "Keep OCCT out of the mobile binaries (LGPL relink obligations, size). Mobile and web get Manifold only; STEP export on mobile can be served by a CLI/server job.",
+    "Do not link GPL code (OpenSCAD, CGAL) into the MIT app. If .scad interoperability matters to the maker community, run openscad-wasm (3.35 MB) in an isolated worker/process distributed as a separate GPL component.",
+    "Standardise tessellation: set Manifold Defaults (circular segments / min angle / min edge) per export profile, use a fixed segment count for studs/tubes (e.g. 48-64 at 4.8 mm stud diameter) so stud-tube booleans are stable, and apply printer calibration as 2D offsets on the CrossSection before extrusion/revolve (stud radius +/- 0.02-0.08 mm per profile).",
+    "Build a conformance corpus early: every brick primitive, a few hundred community merch parts, and a Thingi10K subset; run it on manifold-rust, manifold-csg/manifold-3d and (for STEP parts) OCCT in CI, asserting watertightness, volume agreement and hash determinism. This is the insurance policy for the pure-Rust bet.",
+    "Export 3MF as the first-class print format (manifold-3d already depends on @jscadui/3mf-export; keep colours/material per mesh), with STL/OBJ/glTF secondary; treat STEP as engineering handoff only.",
+    "Watch-list for 2027: manifold-rust maturity and star growth, csgrs 0.23 'certified booleans' publication, truck-stepio as a permissive STEP writer, OCCT 8.x Emscripten builds, OpenSCAD's first stable release since 2021.01."
+  ],
+  "key_numbers": [
+    { "name": "manifold-3d 3.5.4 manifold.wasm size", "value": "541,470 bytes raw; 203,834 bytes gzip -9", "note": "Measured locally 2026-10-27 from npm tarball; manifold.js glue 82,371 bytes" },
+    { "name": "Manifold latest release", "value": "v3.5.4 on 2026-09-25", "note": "3.4.0 added Minkowski (npm 2026-03-14); 3.5.0 added determinism (2026-05-23)" },
+    { "name": "Manifold GitHub stars", "value": "2.4k", "note": "Apache-2.0" },
+    { "name": "OpenSCAD WASM nightly 2026.10.25", "value": "web zip 3,353,867 bytes; node zip 4,717,697 bytes", "note": "GPL-2.0; Manifold default in nightlies since 2025-08-17; last stable 2021.01" },
+    { "name": "opencascade.js full build", "value": "48.9 MB wasm, 9.1 MB brotli; custom build 7.1 MB / 2.4 MB", "note": "npm 1.1.1 last published 2023-03-23, wraps OCCT 7.6.2" },
+    { "name": "occt-wasm 5.1.0 module", "value": "4.7 MB compressed, 21-22 MB loaded, 128 MiB linear memory, ~2x native", "note": "wasmtime-hosted OCCT 8; not for browsers" },
+    { "name": "OCCT releases", "value": "8.0.0 on 2026-05-07; 8.0.1 on 2026-07-30", "note": "C++17 baseline; STEP files ~20% smaller; 3.1k stars; LGPL-2.1 + exception" },
+    { "name": "manifold-rust", "value": "0.19.1 on 2026-10-25; 33 stars; 730 tests pass in release", "note": "sphere-sphere 2M tris: 2.57 s Rust vs 2.61 s C++ (self-reported)" },
+    { "name": "manifold-csg", "value": "0.4.1 on 2026-09-09", "note": "Apache-2.0 OR MIT; MSRV 1.85; emscripten tested, wasm32-unknown-unknown provisional" },
+    { "name": "Python stack", "value": "manifold3d 3.5.4; cadquery-ocp 8.0.1.1.0; build123d 0.13.0; cadquery 2.8.0; trimesh 5.2.0", "note": "pip index versions 2026-10-27" },
+    { "name": "Rust 2D/font/SVG crates", "value": "usvg 0.49.0; ttf-parser 0.25.1; harfrust 0.15.0; rustybuzz 0.20.1; kurbo 0.13.1; lyon 1.0.19", "note": "cargo search 2026-10-27" },
+    { "name": "JS font/CSG packages", "value": "opentype.js 2.0.0 (2026-05-06); fontkit 2.0.4; @jscad/modeling 2.13.0 and 3.0.7-alpha.0 (2026-08-02); three-bvh-csg 0.0.18 (2026-02-17)", "note": "npm view 2026-10-27" },
+    { "name": "Other Rust kernels", "value": "truck-modeling 0.6.0 / truck-shapeops 0.4.0 / truck-stepio 0.3.0; cadrum 0.9.1 (2026-10-21); csgrs 0.20.1 (2025-07-24); fidget 0.5.1 (2026-09-27); occt-sys 7.8.1", "note": "Fornjot archived 2026-06-19" },
+    { "name": "CGAL releases", "value": "6.2 on 2026-06-11; 6.2.1 on 2026-09-04", "note": "GPL-3+ algorithms, LGPL-3+ kernel" },
+    { "name": "Manifold SmoothOut default minSharpAngle", "value": "52.5 degrees", "note": "edges sharper than this stay sharp unless minSmoothness > 0" },
+    { "name": "Blender Manifold solver", "value": "Blender 4.5 LTS, July 2025", "note": "Boolean modifier and Geometry Nodes; manifold inputs only" }
+  ],
+  "open_questions": [
+    "Is STEP export required in v1 or can it be a v2 CLI/server feature? This decides whether OCCT (via build123d, cadrum or occt-wasm) is in the desktop build from day one.",
+    "Will the client core be Rust (Tauri/egui/Bevy) or TypeScript (Electron/Capacitor)? Rust unlocks manifold-rust for mobile without C++; TS keeps everything on manifold-3d WASM. Other research topics (client stack) should settle this.",
+    "How close is manifold-rust's output to C++ Manifold on brick-style geometry? The project documents deliberate divergences; openBrick needs its own conformance harness before mixing implementations in one content-hash space.",
+    "Which iOS kernel path: Rust (manifold-rust/manifold-csg compiled for aarch64-apple-ios) or the Swift binding listed in Manifold's README? Nothing verified about either on iOS in this pass.",
+    "Minkowski rounding performance on realistic merch parts (10k-100k triangles) is unmeasured; a benchmark decides whether it is a foreground feature or a background job.",
+    "OpenSCAD has had no stable release since 2021.01 as far as the GitHub releases page shows; confirm whether the project plans a 2026 stable, which affects how to position .scad interoperability.",
+    "csgrs 0.23.0 'certified solid booleans' on a 'Hypermesh' crate is referenced on GitHub but not on crates.io; needs independent verification before it is considered.",
+    "Font licensing and embedding: which OFL fonts to bundle, and whether user-uploaded fonts are permitted in shared community parts.",
+    "Stroke-to-outline for SVG: lyon stroke tessellation versus Clipper2 open-path offsetting through Manifold's CrossSection API (which currently exposes polygon offsets only).",
+    "Web search budget was exhausted during this pass; OCCT iOS build support, JSCAD V3's internal engine and the ManifoldCAD text example were not confirmed and are marked inferred or absent."
+  ],
+  "sources": [
+    "https://github.com/elalish/manifold",
+    "https://github.com/elalish/manifold/releases",
+    "https://www.npmjs.com/package/manifold-3d",
+    "https://manifoldcad.org/docs/html/classmanifold_1_1_manifold.html",
+    "https://manifoldcad.org/jsdocs/classes/manifold_encapsulated_types.CrossSection.html",
+    "https://manifoldcad.org/jsdocs/documents/Using_Manifold.html",
+    "https://docs.rs/crate/manifold-csg/latest",
+    "https://docs.rs/manifold3d",
+    "https://docs.rs/crate/manifold-rust/latest",
+    "https://github.com/larsbrubaker/manifold-rust",
+    "https://rust-digger.code-maven.com/crates/manifold-rs",
+    "https://pypi.org/project/manifold3d/",
+    "https://github.com/AngusJohnson/Clipper2",
+    "https://occt3d.com/dev/content/open-cascade-technology-800-release/index.html",
+    "https://occt3d.com/dev/doc/overview/html/build_upgrade__building_occt.html",
+    "https://github.com/Open-Cascade-SAS/OCCT",
+    "https://en.wikipedia.org/wiki/Open_Cascade_Technology",
+    "https://dev.opencascade.org/content/occt-800-planned-q1-2026-performance-stability-and-support-services",
+    "https://tracker.dev.opencascade.org/view.php?id=33849",
+    "https://tracker.dev.opencascade.org/view.php?id=28596",
+    "https://tracker.freecad.org/view.php?id=3142",
+    "https://github.com/donalffons/opencascade.js",
+    "https://ocjs.org/docs/getting-started/file-size",
+    "https://ocjs.org/docs/about",
+    "https://docs.rs/cadrum",
+    "https://docs.rs/crate/occt-wasm/latest",
+    "https://github.com/bschwind/opencascade-rs",
+    "https://pypi.org/project/cadquery-ocp/7.7.2.1",
+    "https://github.com/Olliroxx/ocp-build-system",
+    "https://build123d.readthedocs.io/en/v0.10.0/external.html",
+    "https://github.com/ricosjp/truck",
+    "https://github.com/ricosjp/truck/commits/master",
+    "https://github.com/hannobraun/fornjot",
+    "https://docs.rs/crate/csgrs/latest",
+    "https://github.com/timschmidt/csgrs",
+    "https://docs.rs/crate/fidget/latest",
+    "https://github.com/mkeeter/fidget",
+    "https://mattkeeter.com/projects/fidget",
+    "https://github.com/libfive/libfive",
+    "https://github.com/libfive/libfive/commits/master",
+    "https://libfive.com/download",
+    "https://lists.openscad.org/empathy/thread/TMJEJCZINIJNYJX2YF7IDNBAPQY66KIF",
+    "https://lists.openscad.org/empathy/thread/D6KV3ZLXHLBHSITSQ5GPUZUKHURU4ABE",
+    "https://github.com/openscad/openscad/releases",
+    "https://github.com/openscad/openscad",
+    "https://raw.githubusercontent.com/openscad/openscad/master/COPYING",
+    "https://openscad.org/downloads.html",
+    "https://files.openscad.org/snapshots/",
+    "https://github.com/openscad/openscad-wasm",
+    "https://github.com/openscad/openscad-playground",
+    "https://docs.blender.org/manual/en/4.5/modeling/modifiers/generate/booleans.html",
+    "https://all3dp.com/4/new-blender-4-5-offers-powerful-mesh-curve-point%e2%80%91cloud-enhancements-for-3d-modelers/",
+    "https://www.cgal.org/license.html",
+    "https://github.com/CGAL/cgal/releases",
+    "https://github.com/jscad/OpenJSCAD.org",
+    "https://openjscad.nodebb.com/post/1484",
+    "https://security.snyk.io/package/npm/jscad",
+    "https://github.com/gkjohnson/three-bvh-csg",
+    "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.18/README.md",
+    "https://docs.rs/crate/sdf2mesh/latest",
+    "https://codeberg.org/WilstonOreo/sdf2mesh",
+    "https://forum.babylonjs.com/t/webgpu-realtime-metaballs-sdf-tessellation/57409",
+    "https://crates.io/crates/usvg",
+    "https://www.npmjs.com/package/opentype.js"
+  ]
+}
