@@ -22,7 +22,7 @@
 | macOS 13+ arm64, x64 | 1 | Tauri (WKWebView) | WebGPU (Safari 26 engine) | DMG, notarised |
 | Linux x64, arm64 | 1 | Tauri (WebKitGTK 2.54) | WebGL2 only; "safe rendering" flag | AppImage, deb, rpm, Flathub |
 | CLI on all three | 1 | native | n/a | dist |
-| Web (PWA) | 2 | browser | WebGPU where present, WebGL2 floor | Chrome 113+, Safari 26, Firefox 141+ |
+| Web (PWA) | 2 | browser | WebGPU where present, WebGL2 floor | Chrome 113+, Safari 26, Firefox 141+ on Windows and 147+ on macOS (WebGL2 on Linux Firefox) |
 | Android 7.0+ (minSdk 24) | 2 | Tauri (System WebView) | WebGPU on Chrome 121+ Android 12+ (System WebView: device test); WebGL2 floor | APK, Play |
 | iOS 15+ (16+ recommended) | 2 | Tauri (WKWebView) | WebGPU status in WKWebView: device test | TestFlight, App Store |
 | iPadOS | 2 | as iOS | | |
@@ -36,14 +36,14 @@ Tier 1 means CI-built, signed, tested on every release. Tier 2 means CI-built an
 | macOS, Linux | shell installer (dist) | `curl -fsSL https://openbrick3d.org/install.sh \| sh` | M1 |
 | Windows | PowerShell installer (dist) | `irm https://openbrick3d.org/install.ps1 \| iex` | M1 |
 | any with Rust | cargo-binstall | `cargo binstall openbrick` (prebuilt) or `cargo install openbrick` (build) | M1 |
-| any with Node | npm | `npx openbrick3d --help` or `npm i -g openbrick3d` | M1 |
-| any with Python | uv / pipx | `uv tool install openbrick3d` or `pipx install openbrick3d` | M1 |
-| macOS, Linux | Homebrew tap | `brew install openbrick3d/tap/openbrick` | M1; core formula and cask once 75 stars / 30 days and notarisation |
-| Windows | scoop | `scoop bucket add openbrick3d https://github.com/openbrick3d/scoop-bucket; scoop install openbrick` | M1 |
-| Windows | winget | `winget install OpenBrick3D.OpenBrick3D` (komac in CI) | M2 |
-| Windows | Microsoft Store | MSIX, free re-signing, no SmartScreen prompt | M2 |
-| macOS | DMG | download, drag; notarised | M2 |
-| Linux | Flathub | `flatpak install flathub net.neuraldeep.OpenBrick3D` | M2 |
+| any with Node | npm | `npx openbrick3d --help` or `npm i -g openbrick3d` | M2 |
+| any with Python | uv / pipx | `uv tool install openbrick3d` or `pipx install openbrick3d` | M2 |
+| macOS, Linux | Homebrew tap | `brew install openbrick3d/tap/openbrick` | M2; core formula and cask once the repo is 30 days old, notarised, and has 225 stars for self-submission (75 if a third party submits) |
+| Windows | scoop | `scoop bucket add openbrick3d https://github.com/openbrick3d/scoop-bucket; scoop install openbrick` | M2 |
+| Windows | winget | `winget install OpenBrick3D.OpenBrick3D` (komac in CI) | M4 |
+| Windows | Microsoft Store | MSIX, free re-signing, no SmartScreen prompt | M4 |
+| macOS | DMG | download, drag; unsigned in M2, notarised from M4 | M2 |
+| Linux | Flathub | `flatpak install flathub net.neuraldeep.OpenBrick3D` | M4 (offline-source manifest and human review) |
 | Linux | AppImage / deb / rpm | GitHub Releases assets; AppImage has the updater | M2 |
 | Linux | AUR, Nix, Snap | community-maintained; listed in PACKAGING.md | community |
 | Web | PWA | open `https://app.openbrick3d.org`, "Add to Home Screen"; or `openbrick serve --qr` on a laptop and scan | M4 |
@@ -81,7 +81,8 @@ Tauri updater plugin: desktop only (AppImage, `.app`, NSIS, MSI). Channels `stab
 
 - Same bundle as desktop; service worker for offline; OPFS with `navigator.storage.persist()` for documents (Home Screen web apps get browser-level quotas: Safari 60 percent of disk per origin in browsers, 15 percent in other apps; Chrome 60 percent).
 - Export through File System Access (`showSaveFilePicker` on Chromium) and the File System WritableStream in Safari 26; share sheet on mobile.
-- `openbrick serve --qr` serves the web build on the LAN and prints a QR code, which is the "install on your phone from the terminal" story.
+- `openbrick serve --qr` serves the web build on the LAN with a random token in the URL and prints a QR code, which is the "install on your phone from the terminal" story.
+- **Your data is yours:** "Export all documents" writes every `.obrick`, part and profile to a folder or zip; the desktop app also keeps an automatic rolling backup of `.obrick` files in a user folder, because PWA storage is best-effort unless `persist()` is granted.
 - Hosted at `app.openbrick3d.org` with COOP/COEP headers so WASM threads can be enabled later.
 
 ## 7. Release process and cadence
@@ -109,3 +110,4 @@ Commit `Cargo.lock` and `rust-toolchain.toml`; set `SOURCE_DATE_EPOCH` from the 
 | GitHub Actions (public repo) | $0 incl. macos-26 arm64, windows-11-arm, ubuntu-24.04-arm | yes |
 | Domains (openbrick3d.com/.org, openbrick.dev) | about $60 / year | yes |
 | Total recurring | about $160 to $280 / year | |
+| One-time hardware for M0: six harness devices (Iris Xe laptop, Radeon 780M laptop, base M-series Mac, Pixel 8a or 9a, Galaxy A5x, iPhone 16e) and two reference printers (one Prusa-class, one Bambu-class) | about $4,000 to $6,000, partly already owned | yes for the benchmarks and the print-fit tests |

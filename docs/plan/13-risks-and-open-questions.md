@@ -8,11 +8,11 @@ Likelihood and impact: L = low, M = medium, H = high.
 
 | ID | Risk | L | I | Mitigation | Owner | Trigger to act |
 |----|------|---|---|------------|-------|----------------|
-| R01 | manifold-rust (0.19.1, 33 stars) diverges from C++ Manifold or stalls | M | H | Kernel trait; manifold-csg behind a flag; conformance corpus (brick primitives, 200 merch parts, Thingi10K subset) in CI comparing both with manifold-3d as oracle | geometry lead | corpus failure or 3 months without upstream commits |
+| R01 | manifold-rust (0.19.1, 33 stars) diverges from C++ Manifold or stalls | M | H | Kernel trait; manifold-csg hedge for CLI and desktop; manifold-3d WASM hedge for web and mobile; conformance corpus (brick primitives and a Thingi10K subset at M0, merch parts added as they are designed) in CI comparing all three; 2-week contingency on M2 | geometry lead | corpus failure or 3 months without upstream commits |
 | R02 | Webview rendering on Linux (WebKitGTK, no WebGPU, software fallback on NVIDIA) and Android System WebView is too weak | M | M | WebGL2 floor; "safe rendering" flag; week-1 device harness; Electron build for Linux as escape hatch; wgpu renderer on the watch list | shells lead | harness shows under 30 fps at 10k on a reference device |
 | R03 | Name conflict (cwesson/openBrick; Open Bricks® retail brand; OpenBrick fintech) | H | M | OpenBrick3D everywhere; register handles now; paid clearance; separate coined merch brand | founder | clearance search result |
 | R04 | Users skip calibration and get poor clutch, then blame the tool | H | H | first-run wizard; `FIT.MISSING` blocker for fit-critical features; crowd-sourced fit-profile dataset as a starting point; pull-test protocol in docs | print lead | support tickets about clutch |
-| R05 | Scope exceeds a 2 to 4 person team | M | H | MVP is one journey; milestones have demo criteria; checkpoints at M2 and M4 reprioritise; community contributions from M1 | founder | M2 slips more than 3 weeks |
+| R05 | Scope exceeds a three-person team | M | H | MVP is one journey and M1 and M2 hold only what it uses; milestones have demo criteria and a definition of done; checkpoints at M2 and M4 reprioritise; community contributions from M1 | founder | M2 slips more than 3 weeks |
 | R06 | Tauri mobile plugin gaps (fs, share sheets) and store review delays | M | M | small Swift and Kotlin plugins budgeted in M4 and M5; PWA first; TestFlight before App Store | shells lead | plugin untested on target OS |
 | R07 | LDraw connectivity cannot be derived for enough parts | M | M | M0 spike on 200 parts; hand-author the top 500 in the SNAP vocabulary with contributors; ask for a shadow-library licence | engine lead | spike under 70 percent |
 | R08 | 3MF vendor drift (Bambu/Orca metadata, PrusaSlicer 3.0) breaks "opens with colours" | M | L | vanilla 3MF canonical; vendor flavours as version-pinned plugins; CI opens fixtures in OrcaSlicer CLI | io lead | a slicer release changes behaviour |
@@ -30,31 +30,32 @@ Likelihood and impact: L = low, M = medium, H = high.
 |----|----------|---------------------|-------------------|-----------|
 | Q01 | Is manifold-rust close enough to C++ Manifold on brick geometry? | Run the conformance corpus on manifold-rust, manifold-csg and manifold-3d; compare hashes, volumes, watertightness | 100 percent watertight, volumes within 0.1 percent, hashes stable across runs | M0 |
 | Q02 | React or Svelte for the UI? | One-week spike: param panel plus viewport bridge in each | faster to working panel with manipulators; contributor familiarity tie-break to React | M0 |
-| Q03 | Does Android System WebView and WKWebView on iOS 26 expose WebGPU by default? | Device test in Tauri and Capacitor shells on a Pixel 8a, Galaxy A5x, iPhone 16e | `navigator.gpu` present and renders the harness | M0 |
+| Q03 | Does Android System WebView and WKWebView on iOS 26 expose WebGPU by default, and does Tauri mobile pass basic file import and export? | Device test in the Tauri shell on a Pixel 8a, Galaxy A5x, iPhone 16e | `navigator.gpu` present and renders the harness; file round-trip works (else Capacitor per D14) | M0 |
 | Q04 | How many LDraw parts get usable connectors from primitive scanning? | Scan 200 common parts; compare against hand-authored expectations | at least 70 percent fully correct, 90 percent partially | M0 |
 | Q05 | Default fit intent: "fits genuine bricks" or "fits itself"? | Dog-food the coupon on three printers and three materials; collect pull tests | choose the intent that passes 9 of 10 with the fewest recalibrations | M1 |
 | Q06 | Which 3MF colour representation survives Orca, Bambu Studio, PrusaSlicer and Cura round-trips? | Export fixtures; open in each; record what is kept | per-object colours kept in all four | M1 |
-| Q07 | Rust-to-webview IPC cost for large meshes in Tauri? | Measure custom protocol vs channel vs WASM-side generation at 100k triangles | interactive (under 100 ms transfer) | M2 |
+| Q07 | Rust-to-webview IPC cost for large meshes in Tauri? | Measure custom protocol vs channel vs WASM-side generation at 100k triangles | interactive (under 100 ms transfer) | M3a |
 | Q08 | Is STEP needed before 1.0? | Ask the first five merch clients; count requests | fewer than 2 of 5 ask: keep v2 | M2 |
-| Q09 | CRDT: Yjs, Loro or Automerge, and is 100k entities viable on a phone? | Load a 100k-instance document in each; measure load, memory, update size on a Pixel 8a | load under 3 s, memory under 300 MB | M3 |
-| Q10 | Native wgpu renderer: needed? | Compare webview harness results against a minimal wgpu instancing demo on Linux and Android | webview within 30 percent of native at 100k with LOD: no | M3 |
+| Q09 | CRDT: Yjs, Loro or Automerge, and is 100k entities viable on a phone? | Load a 100k-instance document in each; measure load, memory, update size on a Pixel 8a | load under 3 s, memory under 300 MB | M3b |
+| Q10 | Native wgpu renderer: needed? | Compare webview harness results against a minimal wgpu instancing demo on Linux and Android | webview within 30 percent of native at 100k with LOD: no | M3b |
 | Q11 | Will Roland Melkert license LDCad shadow data? Will the LDraw SteerCo confirm aggregate credit for caches? | Write to both; post the connectivity proposal on forums.ldraw.org | written answers | M1 |
 | Q12 | Resin and SLS: can we promise fit? | Run the coupon sweep on an MSLA printer with tough resin and via an MJF bureau; collect data | a repeatable fit profile exists | M5 |
 | Q13 | Horizontal Technic holes: polyhole or ellipse by default? | Print both on three printers; measure roundness and pin fit | the strategy with the smaller spread | M1 |
 | Q14 | Exact Technic dimensions (axle arm, counterbore 6.2 vs 6.4, hole axis 5.8 vs 5.6, pin shaft)? | Measurement program (20 to 30 samples each; CMM session if available) | published CSV; spec rows upgraded from L or I to V | M1 |
-| Q15 | Should mirrored placements be allowed in the assembler? | Survey LDraw corpus for mirrored type-1 lines; test physical buildability on symmetric parts | allow with a warning for asymmetric parts | M3 |
+| Q15 | Should mirrored placements be allowed in the assembler? | Survey LDraw corpus for mirrored type-1 lines; test physical buildability on symmetric parts | allow with a warning for asymmetric parts | M3a |
+| Q16 | How is the trademark guard matched, and what is its false-positive budget? | Spike: perceptual hash and silhouette matching on a labelled set of 500 logos including the blocked marks | recall over 95 percent on the blocked set with under 1 percent false positives; otherwise the guard is a warning, not a blocker | M5 |
 
 ## 3. Assumptions log
 
 | ID | Assumption | Where used | Revisit |
 |----|------------|------------|---------|
-| A01 | 2 to 4 engineers with AI assistance; community from M1 | roadmap | M2 checkpoint |
+| A01 | three engineers with AI assistance (two adds 30 percent to every milestone); community from M1 | roadmap | M2 checkpoint |
 | A02 | FDM with a 0.4 mm nozzle is the primary process | print pipeline | when resin data exists |
 | A03 | Merchandise value is in parts that do not exist, not catalogue clones | vision, roadmap | if customers ask for catalogue reproduction |
 | A04 | The company is registered in Malta (C114166) | legal, signing eligibility | registry confirmation |
 | A05 | Desktop users accept a 140 MiB first-run library download | catalog | user feedback |
 | A06 | Performance numbers for laptops and phones are FLOPS-scaled inferences from one RTX 5070 Ti benchmark | engine, budgets | week-1 harness |
-| A07 | Tauri 2.12 mobile is stable enough for Android in M4 and iOS in M5 | platforms | M0 device tests |
+| A07 | Tauri 2.12 mobile is stable enough for Android in M4 and iOS in M5; Capacitor only if the M0 device tests fail | platforms | M0 device tests |
 | A08 | Stud nominal 4.8 mm (measured 4.87 to 4.90); sources disagree (LUGNET says 5.0 nominal) | geometry | measurement program |
 | A09 | Hosting of community uploads is not needed before 1.0 | legal, roadmap | founder decision |
 | A10 | Rebrickable's no-AI-training clause does not affect planned features (none train on their data) | ecosystem | if AI-assisted design features are planned |

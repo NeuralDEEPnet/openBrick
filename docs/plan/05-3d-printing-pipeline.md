@@ -79,8 +79,8 @@ Two documents, both JSON, both versioned, both shareable in the community datase
   "slicer": "PrusaSlicer 2.9.6",
   "intent": "fits-genuine-bricks",
   "offsetsMm": {
-    "studDiameter": -0.12,
-    "tubeInnerDiameter": 0.08,
+    "studDiameter": 0.00,
+    "tubeInnerDiameter": 0.15,
     "pinDiameter": -0.10,
     "horizontalHoleDiameter": 0.20,
     "axleHole": 0.06,
@@ -91,7 +91,7 @@ Two documents, both JSON, both versioned, both shareable in the community datase
   },
   "calibration": {
     "couponVersion": 1,
-    "chosenCells": { "stud": 4.80, "tube": 4.95, "technicH": 5.00 },
+    "chosenCells": { "stud": 4.80, "tube": 4.95, "technicH": 5.00, "pin": 4.70, "axle": 4.86, "bar": 3.14, "clip": 3.22 },
     "date": "2026-11-12",
     "pullTestN": 2.7
   },
@@ -113,7 +113,7 @@ Rules: part files never contain printer offsets; fit-critical features are liste
 | Axle holes | envelope 4.75 to 5.00 mm | 0.05 mm |
 | Bar and clip pair | Ø3.14 to 3.26 bar; 3.14 to 3.30 clip | 0.04 mm |
 
-Each cell has an embossed label (relief 0.6 mm, stroke 0.8 mm). The user prints it, pushes genuine bricks and pins onto each cell, and records the best fit in the wizard (tap the cell, or `openbrick calibrate record --stud 4.80 --tube 4.95 ...`). The wizard writes the `FitProfile` with offsets = chosen minus nominal. An optional fine pass regenerates a coupon in 0.02 mm steps around the chosen cells; 0.01 mm steps are below FDM repeatability and are not offered.
+Each cell has an embossed label (relief 0.6 mm, stroke 0.8 mm). The user prints it, pushes genuine bricks and pins onto each cell, and records the best fit in the wizard (tap the cell, or `openbrick calibrate record --stud 4.80 --tube 4.95 ...`). The wizard writes the `FitProfile` with offsets = chosen cell minus nominal (in the example above: stud 4.80 minus 4.80 = 0.00; tube 4.95 minus 4.80 = plus 0.15; pin 4.70 minus 4.80 = minus 0.10). An optional fine pass regenerates a coupon in 0.02 mm steps around the chosen cells; 0.01 mm steps are below FDM repeatability and are not offered.
 
 First-run: the desktop app and PWA show the wizard before the first export. "Skip for now" is allowed for non-fit-critical parts (a mosaic with no studs) and blocked otherwise.
 
@@ -137,7 +137,7 @@ Every rule has an id, severity, threshold source and a fix hint. Blockers disabl
 | `FIT.MISSING` | fit-critical feature present and no calibrated FitProfile | | blocker |
 | `CLUTCH.RISK` | stud or tube geometry falls outside 4.70 to 4.95 / 4.80 to 5.05 after offsets | | warning |
 | `ORIENT.FACE` | the declared "up" face is flat and has no studs when inlay mode | | blocker |
-| `TRADEMARK.LOGO` | uploaded artwork matches the blocklist (LEGO marks, minifigure silhouette) | | blocker (see [12](12-legal-and-naming.md)) |
+| `TRADEMARK.LOGO` | uploaded artwork matches the blocklist (LEGO marks, minifigure silhouette) | | warning until the Q16 spike passes; then blocker (see [12](12-legal-and-naming.md)) |
 | `SIZE.BED` | part fits the bed in the chosen orientation | bed size | blocker |
 | `TOLERANCE.STACK` | n-stud length is 8n minus 0.2 within ±0.05 | | warning |
 

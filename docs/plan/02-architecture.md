@@ -64,7 +64,8 @@ Rules that keep the layers honest:
 | `openbrick-engine` | Instance tables (SoA), part catalog handle, lattice spatial hash, connector hash, occupancy-mask collision, connection graph with union-find and articulation points, command log with inverse commands, step/submodel model, instruction step generation. | `Document`, `Command`, `apply(&mut Document, Command) -> Inverse`, `snap_query(&Document, part, cursor_pose) -> Vec<SnapCandidate>`, `collides(...)`, `structure_report(...)`. |
 | `openbrick-catalog` | Packed LDraw subset (downloaded, cached, checksummed), own type-1 line parser, primitive scanning to derive connectors, LOD baking, occupancy masks, colour table from LDConfig.ldr, Rebrickable ID crosswalk loader. | `Catalog::open(cache_dir)`, `Catalog::part(id) -> PartRecord { lods, mask, connectors, aabb }`, `Catalog::ensure_downloaded(progress)`. |
 | `openbrick-io` | `.obrick` zip container, `.obpart.json`, `.obprofile.json`, LDraw `.ldr`/`.mpd` import/export (lossless for lattice poses), 3MF writer (Core 1.4.0, Materials 1.2.1, Production 1.2), STL, glTF with `EXT_mesh_gpu_instancing`, mesh import sanitiser. | `read_obrick`, `write_obrick`, `export_3mf(&[Built], &Options)`, `export_ldr(&Document)`, `import_mesh(bytes) -> Result<Mesh, ImportError>`. |
-| `openbrick-cli` | `openbrick build | calibrate | validate | convert | serve | catalog | run`. Uses the core natively; no rendering in v1. | subcommands documented in [05](05-3d-printing-pipeline.md) and [09](09-platforms-and-distribution.md). |
+| `openbrick` (crate `crates/openbrick`, binary `openbrick`) | `openbrick build, calibrate, validate, convert, serve, catalog, run`. Uses the core natively; no rendering in v1. | subcommands documented in [05](05-3d-printing-pipeline.md) and [09](09-platforms-and-distribution.md). |
+| `openbrick-wasm` | wasm-bindgen facade over the core with a JSON and typed-array API; the artefact consumed by `packages/core-wasm`. | `evaluate_part`, `validate`, `snap_query`, `apply_command`, `export_3mf`. |
 | `packages/core-wasm` | wasm-bindgen build of the core with a JSON/typed-array API; runs in a Web Worker. | `evaluatePart(doc, params, profile) -> { meshes, connectors, warnings }`, `snapQuery(...)`, `applyCommand(...)`. |
 | `packages/viewport` | three.js scene: chunked instancing per (part, colour, LOD), picking via three-mesh-bvh, screen-space edges, ghost part for drags. | `Viewport.setDocument(doc)`, `Viewport.onPick`, `Viewport.setBackend('webgpu' | 'webgl2')`. |
 | `packages/ui` | Panels and wizards; no geometry code. | React components (or the framework chosen in M0; see D12). |
@@ -74,8 +75,8 @@ Rules that keep the layers honest:
 ## 3. The WASM boundary and threading
 
 - **Browser and mobile webviews:** the core runs in a dedicated Web Worker as WASM. The UI thread never blocks on geometry. Messages carry JSON for small payloads and transferable `ArrayBuffer`s for meshes and instance tables. Rust `Vec<f32>` mesh buffers are handed to three.js as `BufferAttribute`s without copying where the platform allows.
-- **Desktop (Tauri):** the same WASM worker path is the default so desktop and web behave identically. Native Tauri commands are used for file access, the LDraw cache download, batch runs and anything that benefits from native threads (Minkowski rounding, large mosaics, 3MF plate nesting). Large buffers cross the IPC through a custom protocol handler (`openbrick://mesh/<id>`) rather than JSON.
-- **Determinism:** Manifold 3.5+ is bit-identical across architectures; the core content-hashes a normalised part document plus params plus fit profile plus kernel version, so the same inputs produce the same mesh hash on CLI, desktop and web. Hashes key the part registry and the batch-run cache.
+- **Desktop (Tauri):** through M2 the desktop app uses only the WASM worker plus Tauri file dialogs, so desktop and web behave identically and there is one code path to debug. From M3a, native Tauri commands are added for the LDraw cache download, batch runs and work that benefits from native threads (Minkowski rounding, large mosaics, plate nesting); the IPC path for large buffers (custom protocol vs channel vs WASM-side generation) is measured in M3a (Q07) before any geometry crosses it.
+- **Determinism:** Manifold 3.5+ is bit-identical across architectures. The core content-hashes a normalised part document plus params plus fit profile plus the kernel id and version, so the same inputs produce the same mesh hash on CLI, desktop and web **when built with the same kernel implementation**. A build on the `manifold-csg` or `manifold-3d` hedge produces distinct hashes and may not publish to the part registry. Hashes key the registry and the batch-run cache.
 - **Threads in Rust:** rayon for batch evaluation in the CLI and Tauri; single-threaded in WASM in v1 (wasm threads need cross-origin isolation headers; revisit when the PWA is hosted with COOP/COEP).
 
 ## 4. Data flow: design a logo tile, validate, export 3MF
@@ -137,12 +138,25 @@ sequenceDiagram
 - **Exporters:** 3MF flavours are plugins behind one interface: vanilla (default), Bambu/Orca project flavour (version-pinned, reverse-engineered metadata), PrusaSlicer hints.
 - **Process profiles and fit profiles:** plain JSON files in a user directory and in the shared dataset repo; the app merges them.
 
-## 7. Errors, logging, telemetry stance
+## 7. Errors, logging, telemetry, security, accessibility, localisation
 
 - Core functions return typed errors (`thiserror`), never panic on user input; fuzzed importers (cargo-fuzz) for LDraw, SVG, mesh and 3MF readers.
 - Every validator failure carries `rule_id`, a one-line explanation, the measured value, the threshold and a fix hint. The UI renders these verbatim.
 - Logging: `tracing` in Rust, forwarded to the UI console in dev builds and to a local rotating log file in release builds.
 - **Telemetry: none by default.** An opt-in, anonymous "send a bug report" bundle includes renderer backend, GPU string, OS, app version and the failing command log, nothing else. No analytics SDKs in the client.
+
+**Threat model and rules.**
+
+- Zip containers (`.obrick`, `.obpack`, `.obpart` zips): entry-name whitelist, no absolute paths or `..`, 200 MB inflate cap, 10,000 entries cap; readers are fuzzed.
+- Run documents (`.obrun.json`): `rowsFrom` and artwork columns resolve only inside the run document's own folder; the desktop app shows a consent dialog listing the files a shared run will read before it runs.
+- SVG: parsed by usvg only (no scripts, no external references); the UI renders artwork previews from our own tessellation, never by injecting the SVG into the DOM; a strict CSP on the web shell.
+- `openbrick serve --qr`: binds to the LAN with a random token in the QR URL, read-only serving of the PWA, no remote file access, stops on exit.
+- Scripted parts: the Extism sandbox has no capabilities (D05); scripts are content-hashed and the registry shows the hash.
+- Secrets: none in the client; updater and signing keys only in CI with named custodians (see [12](12-legal-and-naming.md#7-contributor-governance-dco-and-maintainers)).
+
+**Accessibility.** WCAG 2.1 AA for the UI: full keyboard operation of the designer (param panel, export, calibration wizard) and of assembler placement (arrow keys nudge on the lattice, R rotates); screen-reader labels on every control; validation and structure flags use icons and text, never colour alone (the red and orange mesh highlights in [06](06-part-designer-and-dsl.md) are paired with a list and hatching); respect reduced-motion; minimum 4.5:1 contrast in light and dark themes. Audited in M5.
+
+**Localisation.** All UI strings in ICU message files; RTL-safe layout; number and unit formatting per locale (decimal commas); CJK-capable OFL fonts in `fonts/` for text relief; community translations via a PO-style workflow. First locales: English, German, Spanish, French (M5).
 
 ## 8. Performance budgets
 

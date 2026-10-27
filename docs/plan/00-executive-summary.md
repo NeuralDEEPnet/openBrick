@@ -50,7 +50,7 @@ Why this and not the alternatives (full comparison in [03](03-tech-stack-decisio
 
 ## The MVP
 
-**End of M2, week 16:** on desktop (and from the CLI) a user prints the calibration coupon, records which stud and socket sizes fit, designs a 2x4 logo tile from an SVG, sees validation pass, exports a 3MF, prints it, and it clutches onto standard bricks. That one journey proves all three pillars' plumbing. The assembler alpha follows in M3 (week 24), PWA and Android in M4 (week 32), iOS in M5 (week 42), 1.0 in M6 (week 52). See [11](11-roadmap.md).
+**End of M2, week 17 with three engineers (about week 22 with two):** on desktop (and from the CLI) a user prints the calibration coupon, records which stud and socket sizes fit, designs a 2x4 logo tile from an SVG, sees validation pass, exports a 3MF, prints it, and it clutches onto standard bricks. That one journey proves all three pillars' plumbing. The assembler follows in M3a and M3b (week 27), PWA, Android and merch batches in M4 (week 35), iOS in M5 (week 45), 1.0 in M6 (week 56). See [11](11-roadmap.md).
 
 ## Canonical numbers (short form)
 
@@ -60,10 +60,10 @@ Why this and not the alternatives (full comparison in [03](03-tech-stack-decisio
 | Brick / plate height | 9.6 / 3.2 mm = 24 / 8 LDU | 3.18 to 3.22 mm per plate |
 | Stud diameter | 4.8 mm = 12 LDU (measured 4.87 to 4.90) | printed 4.75 to 4.85 mm |
 | Anti-stud (tube bore) | 4.8 mm | printed 4.90 to 5.00 mm |
-| Tube outer diameter (2-wide) | 6.51 mm (8 x sqrt 2 minus 4.8) | same, wall 0.8 mm quantised |
+| Tube outer diameter (2-wide) | 6.514 mm (8 x sqrt 2 minus 4.8) | printed OD unchanged; the tube wall thins to about 0.78 mm after a plus 0.15 mm bore offset, so the profile quantises it up to 0.8 mm |
 | Side wall / roof | 1.2 mm + 0.3 mm ribs / 1.0 mm | 0.8 or 1.2 mm / at least 1.0 mm |
 | Part undersize | 0.1 mm per side (n x 8 minus 0.2) | unchanged |
-| Minimum emboss stroke | n/a | 0.8 mm, relief 0.4 to 1.0 mm |
+| Minimum emboss stroke | n/a | 0.8 mm; relief 0.4 to 1.5 mm (0.4 to 1.0 recommended for logos) |
 | Clutch reference | 2.5 to 3 N to separate two 2x4 bricks | pull-test target |
 
 Full tables with sources are in [04](04-brick-geometry-spec.md) and [05](05-3d-printing-pipeline.md).
@@ -74,11 +74,11 @@ Full tables with sources are in [04](04-brick-geometry-spec.md) and [05](05-3d-p
 
 ## Top five risks
 
-1. **manifold-rust is young** (0.19.1, 33 stars). Mitigation: kernel trait, manifold-csg hedge, conformance corpus in CI from M0.
+1. **manifold-rust is young** (0.19.1, 33 stars). Mitigation: kernel trait; manifold-csg hedge for CLI and desktop; manifold-3d (WASM) hedge for web and mobile; conformance corpus in CI from M0; a 2-week contingency on M2.
 2. **Mobile webviews render on the weakest path** (no WebGPU in WebKitGTK, uneven Android WebView). Mitigation: WebGL2 is the floor; device benchmark harness in week 1; native wgpu renderer on the watch list.
 3. **Name collision.** `cwesson/openBrick` on GitHub and the German retail brand "Open Bricks" (Open Brick Source GmbH & Co. KG). Mitigation: project name is **OpenBrick3D** everywhere; merch brand is a separate coined name after a paid clearance search.
 4. **Printed clutch depends on calibration people may skip.** Mitigation: first-run coupon wizard; batch export refuses to run without a calibrated profile for fit-critical features.
-5. **Scope for a 2 to 4 person team.** Mitigation: MVP is one journey; assembler, mobile and scripting are sequenced behind it, each with a demo criterion.
+5. **Scope for a small team.** Mitigation: MVP is one journey and M1 and M2 contain only what that journey uses; assembler, mobile and scripting are sequenced behind it, each with a demo criterion and a definition of done.
 
 ## Top five open questions
 

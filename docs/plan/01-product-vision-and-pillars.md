@@ -43,8 +43,8 @@ A brick-compatible design tool that is open, print-true and playful. Anyone can 
 ### Dev, print-farm operator
 
 1. Installs the CLI: `curl -fsSL https://openbrick3d.org/install.sh | sh`.
-2. Runs `openbrick calibrate coupon --profile fdm-0.4 > coupon.3mf`, prints it, records the best-fitting cells with `openbrick calibrate record`.
-3. Runs `openbrick build run.json --profile my-mk4s-petg --out plates/` nightly from a script.
+2. Runs `openbrick calibrate coupon --process fdm-0.4 --out coupon.3mf`, prints it, records the best-fitting cells with `openbrick calibrate record`.
+3. Runs `openbrick run customers.obrun.json --out plates/` nightly from a script (the run document names the fit profile).
 4. Re-runs are deterministic: same inputs, identical plates.
 
 ### Noor, hobbyist builder
@@ -76,12 +76,12 @@ A brick-compatible design tool that is open, print-true and playful. Anyone can 
 
 ## Success metrics
 
-| Metric | MVP (week 16) | 1.0 (week 52) |
+| Metric | MVP (week 17) | 1.0 (week 56) |
 |--------|---------------|---------------|
 | Printed logo tiles that pass the pull test on the first calibrated print | 9 of 10 | 19 of 20 |
 | Time from SVG to validated 3MF on desktop | under 5 min | under 2 min |
 | Assembler instances at 60 fps on an Iris Xe laptop | n/a | 100k with LOD |
-| Install channels live | CLI on 3 OSes | desktop stores, PWA, Android, iOS |
+| Install channels live | CLI on 3 OSes plus unsigned desktop installers on 3 OSes | desktop stores, PWA, Android, iOS |
 | Community parts in the extended registry | n/a | 200 |
 | External contributors with merged PRs | 3 | 25 |
 | Fit profiles contributed to the shared dataset | 5 printers | 100 printers |

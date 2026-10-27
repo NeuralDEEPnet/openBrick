@@ -110,7 +110,7 @@ Every feature knows its LDU footprint, which faces may touch the bed, which fiel
 
 **Three relief modes:** emboss (face-up print), deboss (face-up), inlay (face-down print; the artwork is a second 3MF object with colour role `accent` for a filament swap or multi-material unit).
 
-**Trademark guard:** uploaded artwork is checked against a blocklist (LEGO marks, minifigure silhouette) and rejected with an explanation ([12](12-legal-and-naming.md)).
+**Trademark guard (M5, after the Q16 spike):** uploaded artwork is checked against a blocklist (LEGO marks, minifigure silhouette) and rejected with an explanation ([12](12-legal-and-naming.md)); until the spike proves a false-positive rate under 1 percent the guard is a warning.
 
 ## 6. Connectivity derivation and LDraw export
 
@@ -213,7 +213,7 @@ See [05](05-3d-printing-pipeline.md#8-batch-print-plates): run document, CSV row
 
 ## 13. Validation feedback loop
 
-Validation runs after every evaluation (debounced). Blockers show in the panel and on the mesh (red faces for thin features, orange for overhangs). Each message: rule id, measured value, threshold, fix hint, and where possible a one-click fix ("make bolder", "raise relief to 0.4 mm", "remove hairlines"). Export is disabled until blockers clear. Fit-critical blockers link to the calibration wizard.
+Validation runs after every evaluation (debounced). Blockers show in the panel and on the mesh (hatched red faces for thin features, dotted orange for overhangs, always paired with the list entry so colour is never the only cue). Each message: rule id, measured value, threshold, fix hint, and where possible a one-click fix ("make bolder", "raise relief to 0.4 mm", "remove hairlines"). Export is disabled until blockers clear. Fit-critical blockers link to the calibration wizard.
 
 ## 14. OpenSCAD customizer import
 

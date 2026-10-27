@@ -74,9 +74,11 @@ Checks run on 2026-10-27:
 
 Attribution obligations built into the product: every client has an attribution screen listing "This software uses the LDraw Parts Library" with a link, plus creator and licence of any derived part; `CREDITS.txt` is generated from the provenance blocks; converted binary caches are derivative works and carry the same credit. Ask the LDraw SteerCo for written confirmation that an aggregate credit satisfies attribution for a converted cache, and consider a donation or partnership.
 
-## 7. Contributor governance: DCO
+## 7. Contributor governance: DCO and maintainers
 
 Developer Certificate of Origin 1.1 (`git commit -s`), enforced by the GitHub DCO app; an explicit inbound-equals-outbound clause in `CONTRIBUTING.md`; **no CLA** (MIT already permits every commercial use the company needs; a CLA would be justified only if a proprietary edition were planned). `LICENSE-POLICY.md` states the three-tier policy above.
+
+`GOVERNANCE.md`: at least two maintainers with release rights at all times; technical decisions recorded as ADRs in [03](03-tech-stack-decisions.md); named custodians for the updater and signing keys with an offline backup held by a second person; a code of conduct with a named contact. `SECURITY.md`: private disclosure address, 90-day coordinated disclosure, credit for reporters, and the statement that the client sends no telemetry.
 
 ## 8. Part designer guard rails
 

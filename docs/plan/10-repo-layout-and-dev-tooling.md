@@ -23,6 +23,8 @@ openBrick/
   LICENSE                       # MIT (code)
   LICENSE-POLICY.md             # code MIT; parts/profiles CC0; docs CC BY 4.0; LDraw tree CC BY
   TRADEMARK.md                  # OpenBrick3D name and logo policy
+  GOVERNANCE.md                 # maintainers, decisions by ADR, key custodians
+  SECURITY.md                   # disclosure policy (90 days), contact
   CONTRIBUTING.md               # DCO, conventions, review culture
   CODE_OF_CONDUCT.md
   PACKAGING.md                  # which channels are maintainer-signed vs community
@@ -38,7 +40,7 @@ openBrick/
     openbrick-engine/           # instances, hashes, snapping, collision, graph, commands
     openbrick-catalog/          # LDraw pack, parser, primitive scanning, LOD baking
     openbrick-io/               # .obrick, LDraw, 3MF, STL, glTF, mesh import
-    openbrick-cli/              # the `openbrick` binary
+    openbrick/                  # the `openbrick` CLI crate and binary (crates.io: openbrick)
     openbrick-wasm/             # wasm-bindgen facade over the core
     xtask/                      # cargo xtask: check, dist, bench, corpus
   packages/

@@ -102,7 +102,7 @@ Rotation handling: the user's current rotation is tried first, then the other th
 
 - Command pattern with explicit inverse commands: Place, Remove, Move, Recolour, Regroup, ReorderStep, SetSubmodel; drags coalesce into one transaction.
 - The command log is persisted as a journal for autosave and crash recovery; commands address instances by ULID so the same log can later replay into a CRDT.
-- No CRDT in v1 (D09). M3 benchmark: load a 100k-instance document into Yjs 13.6.33 (300 KB JS), Loro 1.17.1 (1.20 MB gzip WASM) and Automerge 3.5.0 (1.14 MB gzip WASM); measure load time, memory and update size on a phone. Loro's MovableTree and MovableList map onto submodels and steps; preferred with a Rust core if the numbers hold.
+- No CRDT in v1 (D09). M3b benchmark: load a 100k-instance document into Yjs 13.6.33 (300 KB JS), Loro 1.17.1 (1.20 MB gzip WASM) and Automerge 3.5.0 (1.14 MB gzip WASM); measure load time, memory and update size on a phone. Loro's MovableTree and MovableList map onto submodels and steps; preferred with a Rust core if the numbers hold.
 
 ## 9. Rendering
 
