@@ -1,0 +1,23 @@
+[package]
+name = "openbrick"
+description = "OpenBrick3D command-line tool: build, validate, calibrate, convert, serve"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "openbrick"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+serde_json = { workspace = true }
+openbrick-units = { workspace = true }
+openbrick-part = { workspace = true }
+openbrick-print = { workspace = true }
+openbrick-io = { workspace = true }
+
+[lints]
+workspace = true

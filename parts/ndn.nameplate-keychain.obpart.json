@@ -1,0 +1,30 @@
+{
+  "openbrick": "1.0",
+  "id": "ndn.nameplate-keychain",
+  "version": "1.0.0",
+  "name": "Nameplate keychain",
+  "license": "CC0-1.0",
+  "credit": { "author": "Neural Deep Network", "url": "https://neuraldeep.net" },
+  "provenance": { "source": "original", "modified": false, "history": [] },
+  "params": {
+    "text":   { "type": "string", "default": "OPENBRICK3D", "maxLength": 14, "group": "Text" },
+    "font":   { "type": "font", "default": "Inter:Bold", "bundledOnly": true, "group": "Text" },
+    "length": { "type": "int", "unit": "stud", "default": 8, "min": 4, "max": 16, "group": "Size", "manipulator": "x" },
+    "width":  { "type": "int", "unit": "stud", "default": 2, "options": [1, 2], "group": "Size" },
+    "studsOnTop": { "type": "bool", "default": false, "group": "Size" },
+    "loop":   { "type": "enum", "default": "left", "options": ["none", "left", "right"], "group": "Keychain" },
+    "ringHole": { "type": "length", "unit": "mm", "default": 5.0, "min": 3, "max": 8, "step": 0.5, "visibleWhen": "loop != 'none'" }
+  },
+  "features": [
+    { "id": "body",   "op": "body.plate", "size": ["$width", "$length"] },
+    { "id": "studs",  "op": "stud.field", "on": "body.top", "if": "$studsOnTop", "studType": "solid" },
+    { "id": "bottom", "op": "tube.field", "on": "body.bottom", "fitCritical": true },
+    { "id": "label",  "op": "relief.text", "on": "body.top", "if": "!$studsOnTop", "text": "$text", "font": "$font", "mode": "emboss", "height": "0.6mm",
+      "fit": { "box": "face", "margin": "1.2mm", "shrinkToFit": true, "minCapHeight": "4mm" }, "minStroke": "profile.minFeature", "colorRole": "accent" },
+    { "id": "ring",   "op": "loop.keyring", "if": "$loop != 'none'", "attachTo": "body", "side": "$loop", "holeDiameter": "$ringHole", "wall": "2.4mm", "thickness": "plate", "fillet": "1mm", "offGrid": true }
+  ],
+  "snap": "derived",
+  "print": { "up": "top", "profiles": ["fdm-0.4", "fdm-0.2"], "fitCritical": ["bottom"],
+             "rules": [ { "feature": "label", "check": "strokeWidth >= profile.minFeature", "onFail": "shrink-or-bolder" } ] },
+  "export": { "formats": ["3mf", "stl", "ldr"], "batch": { "rowsFrom": "csv:names.csv", "map": { "text": "name" }, "filename": "{id}-{text|slug}-{serial:03}" } }
+}

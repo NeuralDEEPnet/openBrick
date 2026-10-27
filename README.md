@@ -1,18 +1,66 @@
-# openBrick
-OpenBrick3D is a lightweight, cross-platform, open-source 3D design tool built for creating modular brick models. It provides an intuitive interface for snapping bricks together, managing colors, and planning complex custom builds.
+# OpenBrick3D
 
+**OpenBrick3D** (repository `openBrick`) is an open-source, brick-compatible part designer, assembler and 3D-print pipeline for desktop, mobile and the command line. Design parts that snap onto the bricks you already own, print them with real clutch, and build with them on a PC, a phone, or from a terminal.
 
+> **Disclaimer.** OpenBrick3D is an independent, community-driven open-source project published by Neural Deep Network Ltd (Malta). It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group. LEGO®, the LEGO® logo and the Minifigure are trademarks of the LEGO Group of companies, which does not sponsor, authorize or endorse this project. Works with LEGO®-compatible bricks. LDraw™ is a trademark of the Estate of James Jessiman. This software uses the LDraw Parts Library (https://www.ldraw.org).
 
-> ⚠️ **Disclaimer:** This project is an independent, community-driven tool. It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group or any other toy manufacturer.
+**Status:** planning complete, scaffold in place (milestone M0). Nothing is installable yet. The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
 
-## ✨ Features
+## Three pillars, one core
 
-- **Intuitive Snapping System:** Precise stud-and-tube grid alignment for effortless assembly.
-- **Dynamic Color Palettes:** Customize your creations with standardized, open-ended color groups.
-- **Custom Part Import:** Easily load standard 3D mesh formats (`.obj`, `.stl`, `.gltf`) or community-driven part libraries.
-- **Performance Optimized:** Built to handle thousands of individual instances with low memory overhead.
-- **Open Standards:** Save your designs in transparent, text-based file formats (`.json` or `.ldr` compatible).
+| Pillar | What it does | Where it lives |
+|--------|--------------|----------------|
+| **Part designer** | Parametric, print-first parts that do not exist in any catalogue: logo tiles, nameplates, keychains, mosaics, adapters. Artwork from SVG, raster or text. Connectivity is derived from features, so designed parts snap in the assembler and in LDCad. | `crates/openbrick-part`, `parts/` |
+| **Assembler** | Snap bricks on an integer-LDU lattice with the 24 lattice rotations; 10k to 100k instances; open text formats with lossless LDraw round-trip. | `crates/openbrick-engine`, `crates/openbrick-catalog` |
+| **Print pipeline** | Per-printer fit profiles written by a calibration coupon, compensation baked into geometry, a validator that blocks unprintable fit-critical parts, vanilla 3MF with colours. | `crates/openbrick-print`, `profiles/`, `standards/` |
 
-## 📐 Project plan
+## Features (planned, see the roadmap for milestones)
 
-The full planning record (architecture, stack decisions, brick geometry standard, 3D-printing pipeline, part-designer DSL, assembler engine, file formats, platforms, roadmap, legal) lives in [`docs/plan/`](docs/plan/README.md). Start with the [executive summary](docs/plan/00-executive-summary.md). The project name used consistently in the plan is **OpenBrick3D**; the CLI binary is `openbrick`.
+- Stud-and-tube snapping with Technic, bar, clip, hinge and ball connectors.
+- Dynamic colour palettes keyed to LDraw colour codes.
+- Custom part import (`.stl`, `.obj`, `.gltf`, `.3mf`) with sanitising and connector tagging.
+- Thousands of instances with chunked GPU instancing and three LOD tiers.
+- Open formats: `.obrick` (JSON in a zip), `.obpart.json`, `.obprofile.json`, `.obrun.json`, and `.ldr`/`.mpd` compatibility.
+- Vanilla 3MF, STL, glTF export; STEP via an optional service later.
+
+## Repository layout
+
+```
+crates/        Rust workspace: units, geom, part, print, engine, catalog, io, openbrick (CLI), openbrick-wasm, xtask
+packages/      TypeScript packages (core-wasm, viewport, ui, state) — scaffolded in M2
+apps/          desktop (Tauri 2) and web (PWA) shells — scaffolded in M2
+standards/     Dimensional Standard v1 (CC0) and measurement data
+profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla) and example fit profiles
+parts/         openBrick-native part documents (CC0)
+schemas/       JSON Schemas for every document kind
+docs/plan/     the full planning record
+```
+
+## Building (M0)
+
+```
+cargo xtask check      # fmt, clippy, tests, data validation
+cargo run -p openbrick -- standard   # print the Dimensional Standard
+```
+
+Requires Rust 1.90 or newer (`rust-toolchain.toml` pins the version). Node 22 and pnpm are needed from M2.
+
+## Install (planned)
+
+| Channel | Command | Milestone |
+|---------|---------|-----------|
+| Shell installer | `curl -fsSL https://openbrick3d.org/install.sh \| sh` | M1 |
+| PowerShell | `irm https://openbrick3d.org/install.ps1 \| iex` | M1 |
+| cargo-binstall | `cargo binstall openbrick` | M1 |
+| npm, uv, Homebrew tap, scoop | see [docs/plan/09](docs/plan/09-platforms-and-distribution.md) | M2 |
+| Desktop stores, Flathub, winget | | M4 |
+| PWA, Android | `openbrick serve --qr` and scan | M4 |
+| iOS | TestFlight, then App Store | M5, M6 |
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) (DCO sign-off, conventions, review culture), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [GOVERNANCE.md](GOVERNANCE.md). Good first issues: a feature op with a golden test, a fit profile for your printer, a part document, a translation. We review kindly and explain the rule we are applying.
+
+## Licences
+
+Code is MIT ([LICENSE](LICENSE)). Part definitions, profiles and the Dimensional Standard are CC0 1.0 with a credit norm; documentation is CC BY 4.0; imported LDraw parts keep their own CC BY headers. See [LICENSE-POLICY.md](LICENSE-POLICY.md) and [TRADEMARK.md](TRADEMARK.md).

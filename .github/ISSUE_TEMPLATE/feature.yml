@@ -1,0 +1,11 @@
+name: Feature or idea
+description: Propose something, however odd
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes: { label: The idea }
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Who benefits and how }
+  - type: input
+    attributes: { label: Related plan decision or document, placeholder: "D04, docs/plan/06" }

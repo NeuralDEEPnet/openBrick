@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo run -q -p xtask -- data
+      - run: cargo run -q -p openbrick -- check parts/ndn.logo-tile.obpart.json
+      - run: cargo run -q -p openbrick -- check parts/ndn.nameplate-keychain.obpart.json
+
+  test-cross:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, windows-2025, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo run -q -p openbrick -- standard
+
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check plan links
+        run: |
+          python3 - <<'EOF'
+          import re,os,glob,sys
+          bad=0
+          for f in glob.glob('docs/plan/*.md'):
+              for m in re.finditer(r'\]\(([^)]+)\)', open(f).read()):
+                  t=m.group(1)
+                  if t.startswith(('http','#')): continue
+                  p=os.path.join(os.path.dirname(f), t.split('#')[0])
+                  if not os.path.exists(p): print('broken', f, t); bad+=1
+          sys.exit(1 if bad else 0)
+          EOF

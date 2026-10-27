@@ -1,0 +1,11 @@
+{
+  "name": "openbrick3d-workspace",
+  "private": true,
+  "version": "0.0.1",
+  "description": "OpenBrick3D monorepo (TypeScript packages and apps are scaffolded from milestone M2)",
+  "license": "MIT",
+  "engines": { "node": ">=22", "pnpm": ">=10" },
+  "scripts": {
+    "test": "echo \"TypeScript packages arrive in M2\" && exit 0"
+  }
+}

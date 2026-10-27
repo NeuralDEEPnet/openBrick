@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/openbrick-units",
+  "crates/openbrick-geom",
+  "crates/openbrick-part",
+  "crates/openbrick-print",
+  "crates/openbrick-engine",
+  "crates/openbrick-catalog",
+  "crates/openbrick-io",
+  "crates/openbrick",
+  "crates/openbrick-wasm",
+  "crates/xtask",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/NeuralDEEPnet/openBrick"
+authors = ["OpenBrick3D contributors"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+openbrick-units = { path = "crates/openbrick-units" }
+openbrick-geom = { path = "crates/openbrick-geom" }
+openbrick-part = { path = "crates/openbrick-part" }
+openbrick-print = { path = "crates/openbrick-print" }
+openbrick-engine = { path = "crates/openbrick-engine" }
+openbrick-catalog = { path = "crates/openbrick-catalog" }
+openbrick-io = { path = "crates/openbrick-io" }
+
+[workspace.lints.clippy]
+all = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,16 @@
+[package]
+name = "openbrick-engine"
+description = "Assembler engine: instance tables, lattice hashes, snapping, collision, connection graph, commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+openbrick-units = { workspace = true }
+
+[lints]
+workspace = true
