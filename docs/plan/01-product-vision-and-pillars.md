@@ -28,7 +28,7 @@ A brick-compatible design tool that is open, print-true and playful. Anyone can 
 - Fit profiles per printer, material and nozzle: stud, tube, horizontal-hole and first-layer offsets, wall quantisation to line width.
 - A calibration coupon generator and a first-run wizard that writes the profile from what fit.
 - A validator that blocks, not just warns, on fit-critical failures: manifoldness, minimum walls and features, overhangs under the roof, features outside the calibrated window.
-- Vanilla 3MF (Core 1.4.0, Materials 1.2.1, Production 1.2) with per-object colours as the canonical output; STL as legacy; STEP in v2.
+- Vanilla 3MF (Core 1.4.0, Materials 1.2.1, Production 1.1.2) with per-object colours as the canonical output; STL as legacy; STEP in v2.
 
 ## Personas and journeys
 
