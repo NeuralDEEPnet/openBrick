@@ -1,0 +1,496 @@
+{
+  "summary": "The brick-CAD ecosystem has one open foundation worth building on and several closed or copyleft layers to route around. The LDraw Parts Library (17,116 unique shapes as of the 2026-08 update, plus a 2026-10 update with 129 new parts) is dual-licensed CC BY 2.0 / CC BY 4.0 per file, explicitly permits commercial use, and its 1.0.2 file spec plus the MPD extension (0 FILE / 0 NOFILE / base64 !DATA) already gives openBrick a complete open text container for models, embedded custom parts and textures. Everything else of value is either GPL (LeoCAD v26.09, LDView 4.7, LPub3D 2.4.9, Blender ImportLDraw), proprietary freeware owned by the LEGO Group (BrickLink Studio 2.26.9 and its .io format and PartDesigner), closed freeware with a non-commercial clause (LDCad 1.6d/1.7b2b and its all-rights-reserved connectivity shadow library), browser-only SaaS (Mecabricks), or NC/SA-licensed OpenSCAD generators (MachineBlocks CC BY-NC-SA, PELA CC BY-SA, cwesson/openBrick CC BY-NC-SA). The permissively licensed, reusable pieces are: three.js LDrawLoader (MIT), Evan Bacon's `ldr` renderer (MIT, v0.34.11 released 2026-10-25, GPU-instanced parts packs, build steps, !TEXMAP/!DATA, USDZ AR export, phone triangle budgets), weldr (Rust, Apache-2.0/MIT LDraw parser with glTF export, last commit May 2024), cfinke/LEGO.scad (MIT, active July 2026) for print geometry rules, partcad-ldraw (Apache-2.0) for an LDraw-mesh-to-OpenCASCADE-solid approach, and Rebrickable's API and bulk CSV downloads (commercial use allowed, attribution appreciated, no scraping, no AI training).\n\nFour gaps are unowned. (1) There is no open, machine-readable connectivity dataset: LDCad's SNAP metas are a de-facto syntax spec but the data (offLibShadow.csl) is 'Copyright Roland Melkert, all rights reserved', and Studio's connectivity is proprietary. (2) There is no home for printable custom parts: LDraw.org explicitly refuses virtual-only and print-on-demand parts (Oct 2024 policy thread), and Studio custom parts live only in a local CustomParts folder with no STL export. (3) There is no open-source mobile or installable-from-CLI brick builder; LDD was retired in 2022, Build with Chrome in 2017, and Mecabricks is closed. (4) Print-first parametric design with per-printer/material calibration exists only as OpenSCAD scripts (PELA's tweak-beam method, LEGO.scad's stud_rescale) or closed web toys (PrintPal Brick Builder, whose defaults are a 5.00 mm stud and 130% scale), never as a validated pipeline with manifold checks, 3MF color output and a calibration profile system.\n\nTwo contrarian findings should shape the roadmap. First, Brickset's 2026 consumer-printer test concluded printed standard bricks have clutch 'nowhere near' injection-molded parts and are 'not worth the time and effort'; the value of a print pipeline is in parts that do not exist (logo tiles, nameplates, adapters, alt-system bridges, rare pieces), which aligns with the merchandise pillar and argues against trying to reproduce the catalog. Second, alt-brick manufacturers (Gobricks, CaDA, Cobi, BlueBrixx, Open Bricks) are structurally excluded from LDraw ('clone' parts made 'in lieu of' official ones are out of scope), so an openBrick extended-parts registry can serve a community LDraw will not.\n\nNaming needs attention before launch: a GitHub project literally named openBrick (cwesson/openBrick, OpenSCAD snap-block library, CC BY-NC-SA, 9 stars, commits 2017-2025) exists, and 'Open Bricks' is a German compatible-brick brand (Open Brick Source, founded 2019) sold at retail, which is a plausible trademark conflict in the EU. 'OpenBrick3D' had no hits, and the npm, crates.io and PyPI names openbrick/open-brick/openbrick3d were all unregistered on 2026-10-27. Finally, follow LEGO's Fair Play rules (LEGO as adjective with ®, never the logo, never in a domain, use the exact disclaimer already in the README), avoid minifigure shapes (3D trademark upheld by the ECJ in 2015), and do not lead marketing with 'LEGO compatible' while the ZURU litigation is live; the basic brick shape itself is unprotectable (patents expired 1978; ECJ 2010 ruled the 8-stud brick shape functional, not a trademark).",
+  "findings": [
+    {
+      "claim": "LDraw Parts Library files are dual-licensed CC BY 2.0 and CC BY 4.0 (per-file !LICENSE header), commercial use is explicitly permitted, attribution requires creator, work URL, license name, license URL and a modification note; model files that merely reference official parts are not derivative works.",
+      "evidence": "CAreadme draft: 'To make commercial use of the CA approved LDraw Parts Library'; header forms '0 !LICENSE Licensed under CC BY 2.0 and CC BY 4.0 : see CAreadme.txt' and '0 !LICENSE Licensed under CC BY 4.0'; 'Model files that only reference official parts, without including their source code' are not derivatives.",
+      "confidence": "verified",
+      "source_url": "https://www.ldraw.org/draft-documents/careadme.txt-draft.html"
+    },
+    {
+      "claim": "LDraw library size: 16,873 unique shapes after the 2026-06 update (83 new parts), 17,116 after 2026-08 (144 new parts); the 2026-10 update ('Latest release') adds 186 new files including 129 parts, 55 subparts, 1 primitive and 1 TEXMAP image. Roughly 17,250+ unique shapes today is an estimate.",
+      "evidence": "2026-06 announcement: 'This update adds 123 new files... including 83 new parts... 16873 unique shapes or patterned parts'; 2026-08 search result: 17116; library.ldraw.org/updates?latest: 'New parts: 129, New subparts: 55, New primitives: 1'.",
+      "confidence": "verified",
+      "source_url": "https://library.ldraw.org/updates?latest"
+    },
+    {
+      "claim": "As of 2023 about 74.8% of parts were CC BY 4.0 and 376 of the most-used parts (e.g. 3623 Plate 1x3) plus core primitives (4-4cyli.dat, rect.dat) were still CC BY 2.0 only; Debian treats CC BY 2.0 as non-free and ships an 'ldraw-parts-free' package (2502+dfsg-2). The 2026 split is unknown.",
+      "evidence": "Forum thread 'towards a usable CC-BY-4.0 parts library' (2023-05-15): '74.8% of all parts are now licensed under CC-BY-4.0', '376 parts are still licensed under CC-BY-2.0'; PureOS package listing 'ldraw-parts-free - 2502+dfsg-2'.",
+      "confidence": "verified",
+      "source_url": "https://forums.ldraw.org/post-50570.html"
+    },
+    {
+      "claim": "LDraw File Format 1.0.2 (29-Apr-2012): UTF-8 text, line types 0-5, right-handed with -Y up, 1 LDU = 0.4 mm, stud pitch 20 LDU, brick height 24 LDU, plate 8 LDU, stud diameter 12 LDU and height 4 LDU; colour 16 = current, 24 = edge; colours in ldconfig.ldr; hi-res primitives in p/48, subparts in parts/s.",
+      "evidence": "ldraw.org/article/218: 'Revision: 1.0.2, 29-Apr-2012'; '-Y is up'; brick width 20 LDU, height 24 LDU, plate 8 LDU, stud diameter 12 LDU, stud height 4 LDU.",
+      "confidence": "verified",
+      "source_url": "https://ldraw.org/article/218.html"
+    },
+    {
+      "claim": "MPD extension: a single file holds blocks separated by '0 FILE <name>' (optional '0 NOFILE'), first block is the main model, blocks can reference each other by name with no namespace rules, and '0 !DATA <filename>' embeds base64 binaries (e.g. PNG for !TEXMAP) in '0 !:' lines of at most 80 chars.",
+      "evidence": "ldraw.org/article/47: 'A MPD file consists out of blocks of LDraw code separated by 0 FILE or 0 !DATA statements'; 'there are no clear scoping or namespace rules on MPD files'; 'No other LDraw statements may be used inside a !DATA block.'",
+      "confidence": "verified",
+      "source_url": "https://www.ldraw.org/article/47.html"
+    },
+    {
+      "claim": "LDraw.org will not accept virtual-only or print-on-demand parts into the official library; custom 3D-printed parts must live in a personal library and are untracked. Third-party parts made 'in conjunction with' official offerings are in scope; clone parts made 'in lieu of' official offerings are not.",
+      "evidence": "Oct 2024 policy thread, admin Orion Pobursky: 'No. Virtual only files are not eligible for inclusion.' and 'Print on demand parts are not something I feel are appropriate for the library.'",
+      "confidence": "verified",
+      "source_url": "https://forums.ldraw.org/post-55141.html"
+    },
+    {
+      "claim": "LDCad is closed source, 'completely free for personal (non commercial) and educational use', Windows + Linux (GTK2) only, stable 1.6d (5 Apr 2020), 1.7 Beta 2b (15 Mar 2026, adds glTF 2 export, !DATA textures, animations). The author says he would open-source or donate the code to LDraw.org only if he loses interest.",
+      "evidence": "Download page: 'Version: 1.7 Beta 2b, released on 15 March 2026'; 'Version: 1.6d, released on 05 April 2020'; 'LDCad is completely free for personal (non commercial) and educational use.' FAQ: closed source is 'mainly a personal choice'.",
+      "confidence": "verified",
+      "source_url": "http://www.melkert.net/LDCad/download"
+    },
+    {
+      "claim": "LDCad SNAP meta syntax (0 !LDCAD SNAP_CLEAR / SNAP_INCL / SNAP_CYL / SNAP_CLP / SNAP_FGR / SNAP_GEN / SNAP_SPH with gender, caps, secs, pos, ori, grid, center, slide, scale, mirror, group, ID) is fully documented and is the de-facto connectivity standard; the data lives in a shadow library (offLibShadow.csl, a renamed zip mirroring the LDraw tree) that is 'Copyright Roland Melkert 2011-2017, all rights reserved' with no reuse license stated.",
+      "evidence": "melkert.net/LDCad/tech/meta lists all SNAP metas and parameters, e.g. SNAP_CYL 'secs: blocks of shapeVariant radius length', variants R/A/S/_L/L_; tech/shadowLib: shadow files 'add !LDCAD snap metas to the in-memory official data'; example from forum: '0 !LDCAD SNAP_CYL [gender=F] [caps=one] [secs=R 6 20] [pos=0 24 0] [grid=C 10 C 2 20 20]'.",
+      "confidence": "verified",
+      "source_url": "http://www.melkert.net/LDCad/tech/meta"
+    },
+    {
+      "claim": "LeoCAD is GPL-2.0, C++/Qt, Windows/Linux/macOS desktop only, 2.9k GitHub stars, latest release v26.09 on 20 Sep 2026 (previous v25.09, 2 Sep 2025); no mobile or web builds.",
+      "evidence": "GitHub page: '2.9k stars', README 'available for free under the GNU Public License v2', 'works on the Windows, Linux and macOS Operating Systems'; releases page: 'LeoCAD 26.09 (v26.09) released 20 Sep'.",
+      "confidence": "verified",
+      "source_url": "https://github.com/leozide/leocad/releases"
+    },
+    {
+      "claim": "LDView is GPL-2.0 (the GitHub page text additionally says 'You may choose either license (GPLv2 or MIT)', unverified against the LICENSE file), 117 stars, latest release 4.7 on 23 Feb 2026; LPub3D (instructions) is GPL-3.0, 203 stars, latest v2.4.9 on 9 Jan 2025 with a continuous build in Mar 2025.",
+      "evidence": "tcobbs/ldview page: '117 stars', license GPL-2.0, 'LDView 4.7 (v4.7) released 23 Feb'; trevorsandy/lpub3d: '203 stars', 'GNU Public License version 3.0 (GPLv3)', 'LPub3D 09.01.2025 (v2.4.9)'.",
+      "confidence": "verified",
+      "source_url": "https://github.com/tcobbs/ldview/releases"
+    },
+    {
+      "claim": "BrickLink Studio is proprietary freeware from BrickLink (owned by the LEGO Group), Windows + macOS, latest v2.26.9_1 (30 Sep 2026); it replaced LDD as the official tool in Jan 2022; it imports .io/.ldr/.mpd/.lxf/.lxfml, .obj/.stl as sculptures, images as mosaics; exports .ldr/.mpd, LXFML, POV-Ray, Collada .dae, CSV/TSV parts list, BrickLink XML and Sketchfab, but no STL/OBJ/3D-print export. Studio initially used the LDraw library without attribution until LDraw.org intervened.",
+      "evidence": "Wikipedia infobox 'v2.26.9_1, September 30, 2026', license 'Proprietary'; Studio help 'Exporting to other formats' lists LDraw, LXFML, POV-Ray, Collada, Parts List, Wanted List XML, Sketchfab; 'Import formats' lists .io, .ldr, .mpd, .lxf, .lxfml, .obj, .stl, .png.",
+      "confidence": "verified",
+      "source_url": "https://studiohelp.bricklink.com/hc/en-us/articles/6502197862679-Exporting-to-other-formats"
+    },
+    {
+      "claim": "Studio's PartDesigner is a Windows/macOS desktop companion that creates custom parts plus connectivity info and decals (PNG, ~100 px per stud), imports .obj/.dat/.ldr, stores results in a local CustomParts folder, and has no documented STL export or sharing hub.",
+      "evidence": "Help: 'PartDesigner is a desktop application that allows you to create parts and connectivity info to use in Studio'; 'Choose a 3D file from your computer (in .obj, .dat, or .ldr formats)'; forum: copying the CustomParts folder is how users move parts between machines.",
+      "confidence": "verified",
+      "source_url": "https://studiohelp.bricklink.com/hc/en-us/articles/5872512112663-What-is-PartDesigner"
+    },
+    {
+      "claim": "The .io format is Studio's own undocumented container; Blender's ImportLDraw (GPL-2.0+, 379 stars, last commit 6 Oct 2026, Blender 4.0-5.1) 'Opens BrickLink Studio models (.io files) directly', so the format is readable in practice (it wraps LDraw-style content), but there is no public spec.",
+      "evidence": "TobyLobster/ImportLDraw page: '379 stars', 'licensed under the GPLv2 or any later version', 'Opens BrickLink Studio models (.io files) directly'.",
+      "confidence": "likely",
+      "source_url": "https://github.com/TobyLobster/ImportLDraw"
+    },
+    {
+      "claim": "Rebrickable terms: 'The Rebrickable API may be used for any purpose, including commercial'; attribution 'highly appreciated' but not required; 'Under no circumstances are you allowed to use automation tools to download data'; 'No Rebrickable content may be used in the training of AI models'; the full catalog is offered on the Downloads page (Cloudflare-protected, JS required). Terms effective 9 Jul 2026 per tracker capture.",
+      "evidence": "Rebrickable ToS sections 5.1-5.3 as captured by tostracker; rebrickable.com/api says 'need to extract high volumes of data please use the Downloads page instead'.",
+      "confidence": "verified",
+      "source_url": "https://tostracker.app/document/rebrickablecom-tos"
+    },
+    {
+      "claim": "BrickLink catalog data is restricted: a 2013 ToS amendment forbade using 'any content or data you receive from or which is displayed on the Site' with 'any third party', BrickLink sent Brick Owl a cease-and-desist, and BrickStore's README states 'All data from www.bricklink.com is owned by BrickLink'. The current API terms page could not be fetched (HTTP 405).",
+      "evidence": "New Elementary 2013 article on the ToS change; The Brick Fan 'brick owl hit cease desist letter bricklink'; rgriebl/brickstore README.",
+      "confidence": "likely",
+      "source_url": "https://www.newelementary.com/2013/09/bricks-inc.html?m=1"
+    },
+    {
+      "claim": "three.js ships an MIT LDrawLoader addon (three 0.186.1 current) supporting sub-file references, !COLOUR, BFC, conditional lines (WebGL and WebGPU materials), building steps in the official example, and a packing script to bundle a model with dependencies; the parts library is not bundled and unpacked loading is 'not optimal for web environment'.",
+      "evidence": "threejs.org LDrawLoader docs: setPartsLibraryPath, preloadMaterials, setFileMap, 'The official parts library is not included due to its large size', packing tool section; example webgl_loader_ldraw has 'Building step' control.",
+      "confidence": "verified",
+      "source_url": "https://threejs.org/docs/pages/LDrawLoader.html"
+    },
+    {
+      "claim": "npm package `ldr` (MIT, Evan Bacon, v0.34.11 published 2026-10-25, peer dep three) is the most capable permissive web renderer found: ahead-of-time binary parts packs (zstd/gzip), GPU instancing, hidden stud/underside culling, LOD, BFC single-sided faces, indexed edges; spec-compliant reader for .ldr/.mpd/.dat incl. MPD-embedded parts, !DATA, !TEXMAP (planar/cylindrical/spherical), STEP/ROTSTEP; build-steps API; toUSDZ() for iOS AR Quick Look; triangle/byte budgets with a low-detail tier for phones. Benchmark: 394,950 bricks from 205 ms to 29 ms per frame on an M4 Pro. Adoption is tiny (14 weekly downloads) and the GitHub page returned 404 during research.",
+      "evidence": "npm registry README: 'Render 100,000-brick LEGO (LDraw) models in three.js at interactive frame rates'; 'Spec-compliant LDraw reader... BFC, STEP/ROTSTEP, !TEXMAP and !DATA'; 'toUSDZ(instances, pack, ...) builds a USDZ in the browser'; 'Code: MIT (c) Evan Bacon'; demo site lego.bacon.md links github.com/EvanBacon/ldr and uses 'Technic connections from the LDCad shadow library'.",
+      "confidence": "verified",
+      "source_url": "https://www.npmjs.com/package/ldr"
+    },
+    {
+      "claim": "Other JS/TS prior art: LasseD/buildinginstructions.js (Unlicense/public domain, 149 stars, last commit 23 Oct 2026, three.js instruction renderer), ldraw-core-viewer (MIT, 1 star, single commit, React+Monaco editor), npm `ldraw` (2015) and `ldr-stepper` (2016) are stale; `blockgame-mcp` (2026) is an AI block-design MCP server.",
+      "evidence": "GitHub: '149 stars', 'buildinginstructions.js is in the Public Domain', commits 'Oct 23, 2026'; npm search results for 'ldraw'.",
+      "confidence": "verified",
+      "source_url": "https://github.com/LasseD/buildinginstructions.js"
+    },
+    {
+      "claim": "Rust prior art: weldr (djeedai/weldr) is an Apache-2.0/MIT dual-licensed LDraw parser (nom-based) with glTF 2.0 export, crate 0.3.1 (Dec 2020), 17 stars, last commit 11 May 2024; ldr-rs 0.1.0 (Dec 2025, 29 downloads) is embryonic. No Rust brick CAD application exists.",
+      "evidence": "GitHub: 'Apache-2.0, MIT licenses found', '17 stars', 'Use bytemuck for slice cast (#36)' May 11, 2024; crates.io: weldr 0.3.1 updated 2020-12-12, ldr-rs 0.1.0 2025-12-27.",
+      "confidence": "verified",
+      "source_url": "https://github.com/djeedai/weldr"
+    },
+    {
+      "claim": "Python prior art: pyldraw 0.8.2 (license not declared on PyPI), `ldraw` 0.11 is GPL-3 (avoid), `rebrickable` 1.1.0 is a typed async Rebrickable v3 client with an 'LDraw bridge' (daily catalog of 12 datasets, ~18 MB compressed).",
+      "evidence": "PyPI JSON: ldraw 0.11 'GNU General Public License version 3'; rebrickable 1.1.0 'Typed asynchronous Rebrickable catalog, API v3, and LDraw bridge'.",
+      "confidence": "verified",
+      "source_url": "https://pypi.org/project/rebrickable/"
+    },
+    {
+      "claim": "partcad/partcad-ldraw (Apache-2.0 code, 2 stars, 97 commits) exposes the LDraw library as parametric parts by fetching .dat files on demand, resolving sub-parts, meshing and converting the closed mesh to OpenCASCADE solids with axis remap (x, -z, -y) * 0.4 mm; parts stay under their per-file CC licenses.",
+      "evidence": "README: 'fetches the part's .dat, recursively resolves its sub-parts, meshes the triangles/quads, and returns the shape'; '(x, -z, -y) * 0.4 millimetres'; 'LDraw parts are not bundled'.",
+      "confidence": "verified",
+      "source_url": "https://github.com/partcad/partcad-ldraw"
+    },
+    {
+      "claim": "cfinke/LEGO.scad is MIT, 394 stars, actively maintained (last commit 18 Jul 2026), OpenSCAD; generates bricks, tiles, wings, slopes, curves, baseplates, round bricks/tiles, Technic axle holes (round/cross), stud types solid/hollow/open, with stud_rescale and reinforcement options for FDM fit.",
+      "evidence": "GitHub: '394 stars', 'MIT license', commits 'Jul 18, 2026'; README 'Depending on the resolution of your printer, you may not be able to print pieces that fit exactly', stud_rescale.",
+      "confidence": "verified",
+      "source_url": "https://github.com/cfinke/LEGO.scad"
+    },
+    {
+      "claim": "PELA Blocks (paulirotta/PELA-blocks) is CC BY-SA 4.0, 118 stars, stale since 28 Sep 2020; its calibration method (print a beam, test-fit knobs/sockets/axle holes against real bricks, record top_tweak/bottom_tweak/axle_hole_tweak in material.scad; ~10 pre-calibrated materials) and material advice (PET/co-polymers good, PLA and carbon-filled less suitable, TPU variants for pegs) is the best documented print-calibration approach found.",
+      "evidence": "GitHub: '118 stars', CC BY-SA badge, commits 'Sep 28, 2020'; calibration steps and example values -0.08 knob, 0.04 socket, 0.06 Technic hole; TUM poster 'Optional (10 materials are pre-calibrated)'.",
+      "confidence": "verified",
+      "source_url": "https://github.com/paulirotta/PELA-blocks"
+    },
+    {
+      "claim": "MachineBlocks (pks5/machineblocks) is CC BY-NC-SA 4.0 (non-commercial), 73 stars, 682 commits, OpenSCAD toolkit with 3MF/STL output, calibration tool and an API for new bricks; uBrick (maox/UBrick) is GPL-3, 12 stars, v0.9.2, Blender 3.0+, generates manifold bricks (1.2 mm walls, anti-stud tubes, ribs, zero booleans) with F9 tolerance tuning tested on Prusa MK3 PETG; Bricker (Blender voxel-to-brick add-on) is a paid GPL add-on on Superhive Market (1,000+ sales) whose GitHub repo was not reachable.",
+      "evidence": "machineblocks page: 'Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International', '73 stars'; UBrick page: '12 stars', GPL v3, 'Fully manifold mesh (0 open edges)'; Superhive listing 'License GPL'.",
+      "confidence": "verified",
+      "source_url": "https://github.com/pks5/machineblocks"
+    },
+    {
+      "claim": "A project literally named openBrick already exists on GitHub: cwesson/openBrick, 'Open source library for 3D printing snap-together toy building blocks' in OpenSCAD, CC BY-NC-SA 4.0, 9 stars, 2 forks, 6 commits from 27 Nov 2017 to 5 Jan 2025. No project named OpenBrick3D was found. npm 'openbrick', 'open-brick', 'openbrick3d', crates 'openbrick', 'open-brick' and PyPI 'openbrick', 'open-brick' were all unregistered on 2026-10-27.",
+      "evidence": "GitHub page '9 stars', LICENSE file 'Attribution-NonCommercial-ShareAlike 4.0 International', commits 'Jan 5, 2025' and 'Nov 27, 2017'; registry probes returned 404 / 'does not exist'.",
+      "confidence": "verified",
+      "source_url": "https://github.com/cwesson/openBrick"
+    },
+    {
+      "claim": "'Open Bricks' is an existing German compatible-brick brand under Open Brick Source (founded 2019 by Dr. Stefan Reissner), sold at retail (Kaufland baseplates 32x32 and 50x50), creating a plausible EU trademark/confusion risk for a product branded 'OpenBrick'. Registration status was not checked at DPMA/EUIPO.",
+      "evidence": "Faire brand page: 'Open Brick Source was founded in 2019 by Dr. Stefan Reissner', Open Bricks listed first; Kaufland listings 'OPEN BRICKS Open Bricks Baseplate 50x50 light grey'.",
+      "confidence": "likely",
+      "source_url": "https://www.kaufland.at/product/450549664/"
+    },
+    {
+      "claim": "Legal baseline: the last LEGO brick patents expired in 1978; the ECJ (2010) held the 8-stud brick shape 'merely performs a technical function [and] cannot be registered as a trademark'; the Supreme Court of Canada (2005) let Mega Bloks sell in Canada; the German Federal Court denied shape protection in the Best-Lock case; but the ECJ upheld the minifigure 3D trademark (16 Jun 2015). LEGO is still litigating ZURU over 'LEGO brick compatible' packaging in New Zealand (Court of Appeal Dec 2025, Supreme Court remand 2026).",
+      "evidence": "Wikipedia 'Lego clone': 'The last underlying patents of the brick design expired in 1978'; 2010 ECJ quote; 'On June 16, 2015, European Court of Justice upheld Lego's figure trademark'; Brick Fanatics on ZURU case.",
+      "confidence": "verified",
+      "source_url": "https://en.wikipedia.org/wiki/Lego_clone"
+    },
+    {
+      "claim": "LEGO Fair Play rules for unofficial sites: use LEGO only as an adjective with ® each time, never use the logo, never put LEGO in an internet address, and use the disclaimer 'LEGO® is a trademark of the LEGO Group of companies which does not sponsor, authorize or endorse this site'; a disclaimer 'will not serve to undo an improper trademark use'. The README's existing disclaimer matches this guidance.",
+      "evidence": "lego.com Fair Play page quotes: 'should always be used as an adjective, not as a noun', 'the LEGO logo NEVER be used on an unofficial web site', 'should not be incorporated into an Internet address'.",
+      "confidence": "verified",
+      "source_url": "https://www.lego.com/en-us/legal/notices-and-policies/fair-play"
+    },
+    {
+      "claim": "Consumer FDM printing of standard bricks is marginal: Brickset's test (0.2 mm nozzle/0.1 mm layers: 2 h for four bricks; 0.4/0.2: 36 min) found clutch 'nowhere near as good as that of real bricks' and concluded printing is worthwhile mainly for non-existent parts (custom Technic beams, rare track). Real 1x1 brick is about 7.84 x 7.84 x 9.58 mm; measured stud pitch 7.986 mm; nominal 8 mm pitch, 9.6 mm brick, 3.2 mm plate, 0.1 mm side gap per side, no vertical gap.",
+      "evidence": "Brickset article 128767 quotes; LUGNET FAQ 'stud pitch at 7.986 mm'; worldbricks SNOT basics on the 0.1 mm allowance; brickfact dimensions guide.",
+      "confidence": "verified",
+      "source_url": "https://brickset.com/article/128767/can-you-make-compatible-bricks-with-consumer-3d-printers"
+    },
+    {
+      "claim": "Printable-part sources: Printables hosts a 2,000+ part LEGO-compatible STL collection (model 260284, page blocked during research), printabrick.org is archived but downloadable as a zip, printablebricks.com returned HTTP 403; MecaBricks STL exports are 'fairly low resolution' for printing. None are LDraw-ID-aligned, calibrated, or openly licensed in a verifiable way.",
+      "evidence": "Brickset article: 'Design files came from STL libraries (a 2,000+ part Printables collection), MecaBricks, and MachineBlocks'; search result on printabrick.org archive.",
+      "confidence": "likely",
+      "source_url": "https://www.printables.com/model/260284-lego-bricks"
+    },
+    {
+      "claim": "Closed web/desktop competitors: Mecabricks (browser, closed, free tier plus 2024 premium with extended export, STL/OBJ/Collada export for registered users, no LDraw export, Blender add-on); PrintPal 3D Brick Builder (free, in-browser, STL per brick plus PDF booklet, closed source, defaults stud 5.00 mm, wall 1.5 mm, clutch ridge 0.24 mm, scale 130%); Tinkercad Brick mode is a visualization only. LDD was discontinued (2022) and Build with Chrome retired (2017).",
+      "evidence": "PrintPal page: 'Stud diameter: 5.00 mm by default', 'Default scale: 130%', 'Free Forever'; schieb.de guide on Mecabricks premium since 2024; Rebrickable help: 'you cannot export Mecabricks files into Ldraw compatible file types'; Wikipedia list of Lego CAD programs.",
+      "confidence": "verified",
+      "source_url": "https://printpal.io/tools/brick-builder"
+    },
+    {
+      "claim": "No open-source mobile (iOS/Android) brick builder exists; the only multi-platform open project touching mobile is BrickStore (GPL-3, 174 stars, inventory tool, Windows/macOS/Linux/iOS/Android). Gobricks (Chinese, founded 2017 per a retailer, tighter clutch than LEGO) and CaDA, Cobi, Mould King, BlueBrixx, Qman, Sluban are the main alt-brick brands; their unique parts are excluded from LDraw by policy.",
+      "evidence": "rgriebl/brickstore README 'multi-platform (Windows, macOS and Linux as well as iOS and Android)'; Lumibricks Gobricks review; LDraw policy thread on clone bricks.",
+      "confidence": "likely",
+      "source_url": "https://github.com/rgriebl/brickstore"
+    },
+    {
+      "claim": "brickarchitect.com (Tom Alphin) is a reference, not a data source: its parts guide catalogues 'nearly 2500 current parts' (book) plus retired parts online, with 'Use of this content without permission is prohibited'.",
+      "evidence": "brickarchitect.com homepage text.",
+      "confidence": "verified",
+      "source_url": "https://brickarchitect.com/"
+    }
+  ],
+  "key_numbers": [
+    {
+      "name": "LDraw unique shapes (2026-08 update)",
+      "value": "17,116",
+      "note": "2026-06: 16,873; 2026-10 update adds 129 parts + 55 subparts + 1 primitive"
+    },
+    {
+      "name": "LDraw CC BY 4.0 share (2023)",
+      "value": "74.8%",
+      "note": "376 top-used parts still CC BY 2.0 only in 2023; 2026 split unknown"
+    },
+    {
+      "name": "LDU to mm",
+      "value": "1 LDU = 0.4 mm",
+      "note": "stud pitch 20 LDU (8 mm), brick 24 LDU (9.6 mm), plate 8 LDU (3.2 mm), stud dia 12 LDU (4.8 mm)"
+    },
+    {
+      "name": "Measured stud pitch",
+      "value": "7.986 mm",
+      "note": "LUGNET measured; nominal 8.0 mm; 0.1 mm side allowance per side; real 1x1 ~7.84 x 7.84 x 9.58 mm"
+    },
+    {
+      "name": "LeoCAD",
+      "value": "GPL-2.0, 2.9k stars, v26.09 (2026-09-20)",
+      "note": "desktop only, C++/Qt"
+    },
+    {
+      "name": "LDCad",
+      "value": "closed source, 1.6d stable (2020-04-05), 1.7 Beta 2b (2026-03-15)",
+      "note": "free for personal non-commercial and educational use; Windows + Linux only"
+    },
+    {
+      "name": "BrickLink Studio",
+      "value": "v2.26.9_1 (2026-09-30), proprietary freeware",
+      "note": "Windows + macOS; .io format; no STL export"
+    },
+    {
+      "name": "LDView / LPub3D",
+      "value": "4.7 (2026-02-23, GPL-2) / 2.4.9 (2025-01-09, GPL-3)",
+      "note": "117 / 203 stars"
+    },
+    {
+      "name": "ldr npm renderer",
+      "value": "MIT, v0.34.11 (2026-10-25)",
+      "note": "394,950 bricks: 205 ms to 29 ms per frame (M4 Pro); USDZ export; 14 weekly downloads"
+    },
+    {
+      "name": "three.js",
+      "value": "0.186.1 (2026-09-24) with MIT LDrawLoader addon",
+      "note": "WebGL and WebGPU conditional-line materials"
+    },
+    {
+      "name": "weldr (Rust)",
+      "value": "Apache-2.0/MIT, 0.3.1, 17 stars",
+      "note": "last commit 2024-05-11; glTF export"
+    },
+    {
+      "name": "cfinke/LEGO.scad",
+      "value": "MIT, 394 stars",
+      "note": "last commit 2026-07-18"
+    },
+    {
+      "name": "PELA Blocks",
+      "value": "CC BY-SA 4.0, 118 stars",
+      "note": "stale since 2020-09-28; calibration beam method"
+    },
+    {
+      "name": "MachineBlocks",
+      "value": "CC BY-NC-SA 4.0, 73 stars, 682 commits",
+      "note": "non-commercial; avoid copying"
+    },
+    {
+      "name": "cwesson/openBrick (name conflict)",
+      "value": "CC BY-NC-SA 4.0, 9 stars, 6 commits (2017-2025)",
+      "note": "OpenSCAD snap-block library with the same name"
+    },
+    {
+      "name": "ImportLDraw (Blender)",
+      "value": "GPL-2.0+, 379 stars, last commit 2026-10-06",
+      "note": "opens Studio .io directly"
+    },
+    {
+      "name": "buildinginstructions.js",
+      "value": "Unlicense, 149 stars, last commit 2026-10-23",
+      "note": "three.js instructions renderer"
+    },
+    {
+      "name": "Brickset FDM test",
+      "value": "4 bricks: 2 h (0.2 mm nozzle) vs 36 min (0.4 mm)",
+      "note": "clutch 'nowhere near' real bricks"
+    },
+    {
+      "name": "Package names free on 2026-10-27",
+      "value": "npm openbrick/open-brick/openbrick3d, crates openbrick/open-brick, PyPI openbrick/open-brick",
+      "note": "all unregistered; register promptly"
+    },
+    {
+      "name": "Brick patents expired",
+      "value": "1978",
+      "note": "ECJ 2010: brick shape functional, not a trademark; minifigure trademark upheld 2015"
+    }
+  ],
+  "options_compared": [
+    {
+      "option": "LDraw Parts Library + file spec (LDR/DAT/MPD, !DATA, !TEXMAP)",
+      "license": "CC BY 2.0 / CC BY 4.0 per file (library); spec is an open document",
+      "status_2026": "Active; monthly-ish updates (2026-06, 07, 08, 10); 17,116+ unique shapes",
+      "pros": "Only open, commercial-use geometry + ID space; MPD already embeds custom parts and textures; every tool imports/exports it; Rebrickable maps IDs",
+      "cons": "Mesh-only (no solids), Y-down, mixed CC BY 2.0 remnants (Debian non-free), refuses print-on-demand parts, no connectivity data, large (complete.zip must be packed for web)",
+      "fit_for_openbrick": "Adopt as canonical part geometry and ID namespace; ship packed parts with an attribution screen; make the openBrick JSON format a 1:1 superset of MPD"
+    },
+    {
+      "option": "LDCad SNAP metas + shadow library",
+      "license": "Closed-source app, free for personal non-commercial/educational use; shadow data 'all rights reserved'",
+      "status_2026": "1.7 Beta 2b (Mar 2026); stable 1.6d (2020); Windows/Linux only",
+      "pros": "Only existing machine-readable connectivity syntax; widely understood; Studio, Blender and ldr demos already consume it",
+      "cons": "Data is not openly licensed; app is closed; no macOS; author-dependent",
+      "fit_for_openbrick": "Implement a SNAP-syntax-compatible parser (syntax is a public spec) but author connectivity data clean-room under CC BY 4.0, or ask Roland Melkert for an explicit license; publish the result as an open dataset"
+    },
+    {
+      "option": "LeoCAD / LDView / LPub3D (GPL desktop stack)",
+      "license": "GPL-2.0 / GPL-2.0 (MIT alt claimed) / GPL-3.0",
+      "status_2026": "All active: LeoCAD 26.09 (Sep 2026), LDView 4.7 (Feb 2026), LPub3D 2.4.9 (Jan 2025)",
+      "pros": "Mature UX patterns (snap, minifig wizard, instructions, POV-Ray), proven LDraw parsing edge cases",
+      "cons": "GPL contamination if code is copied into an MIT codebase; C++/Qt desktop only; no mobile",
+      "fit_for_openbrick": "Reference for behaviour and test cases only; never copy code; optionally interoperate via LDR/MPD and document LPub3D as the instructions path"
+    },
+    {
+      "option": "BrickLink Studio 2 + PartDesigner + .io",
+      "license": "Proprietary freeware (LEGO Group)",
+      "status_2026": "v2.26.9_1 (Sep 2026); official LEGO tool since LDD retirement (2022)",
+      "pros": "Market default; LDraw import/export; custom parts with connectivity and decals; mosaic import; BrickLink pricing",
+      "cons": "Closed .io format, no STL export, custom parts local-only, Windows/macOS only, catalog data owned by BrickLink",
+      "fit_for_openbrick": "Interoperate via .ldr/.mpd export; treat .io as import-only (via a reader like ImportLDraw's, re-implemented clean-room); position openBrick as the open, printable, mobile complement"
+    },
+    {
+      "option": "Mecabricks (web SaaS)",
+      "license": "Proprietary, free tier + premium (2024)",
+      "status_2026": "Active; Blender add-on; no LDraw export",
+      "pros": "Proof that browser brick building works at scale; renders; parts catalog",
+      "cons": "Closed, no LDraw export, low-res STL for printing, no self-hosting",
+      "fit_for_openbrick": "Competitor benchmark only; nothing reusable"
+    },
+    {
+      "option": "three.js LDrawLoader + `ldr` renderer",
+      "license": "MIT / MIT",
+      "status_2026": "three 0.186.1 (Sep 2026); ldr 0.34.11 (Oct 25 2026)",
+      "pros": "Permissive; ldr proves 100k+ brick scenes at 60 fps, build steps, !TEXMAP/!DATA, USDZ AR, phone budgets; LDrawLoader is maintained inside three.js",
+      "cons": "LDrawLoader slow unpacked and lacks TEXMAP (inferred); ldr is a one-person project with ~14 weekly downloads and a 404 GitHub page at research time",
+      "fit_for_openbrick": "Primary web/mobile rendering path: adopt parts-pack + instancing architecture (fork/vendor ldr under MIT, or reimplement the same design); use LDrawLoader for simple cases"
+    },
+    {
+      "option": "weldr / ldr-rs (Rust LDraw parsers)",
+      "license": "Apache-2.0 + MIT / unknown",
+      "status_2026": "weldr last commit May 2024, crate 0.3.1 (2020); ldr-rs 0.1.0 (Dec 2025)",
+      "pros": "Permissive nom-based parser with glTF export; a starting point for a Rust/WASM core shared by desktop, CLI and mobile",
+      "cons": "Lightly maintained, no MPD/!DATA/TEXMAP breadth, no connectivity",
+      "fit_for_openbrick": "Fork or depend on weldr for a Rust core if Rust is chosen; expect to own it"
+    },
+    {
+      "option": "OpenSCAD print generators: LEGO.scad (MIT), PELA (CC BY-SA), MachineBlocks (CC BY-NC-SA), cwesson/openBrick (CC BY-NC-SA), uBrick Blender (GPL-3)",
+      "license": "Mixed: MIT / BY-SA / BY-NC-SA / BY-NC-SA / GPL-3",
+      "status_2026": "LEGO.scad active (Jul 2026); PELA stale (2020); MachineBlocks active; uBrick new (Mar 2026)",
+      "pros": "Encoded print know-how: stud rescale, wall 1.2 mm, anti-stud tubes, ribs, manifold-first meshing, calibration beams, material presets",
+      "cons": "OpenSCAD/Blender-bound, no GUI/mobile, NC/SA licenses block reuse in a commercial MIT product, no LDraw alignment",
+      "fit_for_openbrick": "Reuse LEGO.scad logic (MIT) and PELA's calibration workflow as a method (not its files); write the parametric kernel in-house with manifold output and per-printer profiles; never copy NC/SA or GPL geometry"
+    },
+    {
+      "option": "partcad-ldraw (LDraw mesh to OpenCASCADE solids)",
+      "license": "Apache-2.0",
+      "status_2026": "Active (97 commits), 2 stars",
+      "pros": "Demonstrates turning LDraw meshes into B-rep solids suitable for boolean ops and print validation; correct axis/scale mapping",
+      "cons": "Python/OpenCASCADE dependency is heavy for mobile; tiny project",
+      "fit_for_openbrick": "Borrow the approach for the desktop/CLI print pipeline (validate and union LDraw-derived shells) rather than the mobile client"
+    },
+    {
+      "option": "Rebrickable API + Downloads vs BrickLink catalog",
+      "license": "Rebrickable: commercial OK, attribution appreciated, no scraping, no AI training; BrickLink: restricted/owned",
+      "status_2026": "Rebrickable ToS effective Jul 2026; BrickLink API page unreachable",
+      "pros": "Rebrickable offers full CSV catalog, part relationships and LDraw/BrickLink ID mappings, images usable on external sites",
+      "cons": "Cloudflare-gated downloads; AI-training clause may matter for future features; BrickLink data effectively off-limits",
+      "fit_for_openbrick": "Use Rebrickable bulk CSVs for names, colors, categories and ID crosswalks with attribution; do not ingest BrickLink catalog data"
+    }
+  ],
+  "open_questions": [
+    "What is the 2026 share of LDraw parts still under CC BY 2.0 only, and does the project need to exclude them to be packaged by Debian-style distributions (ldraw-parts-free approach)?",
+    "Does LDView really offer an MIT alternative to GPLv2 (claim seen on the GitHub page text, not verified in the LICENSE file)?",
+    "Will Roland Melkert grant an explicit license to reuse or redistribute LDCad shadow-library snap data, or should openBrick author a clean-room CC BY 4.0 connectivity dataset from day one?",
+    "What are BrickLink's current API terms (store-owner only? commercial restrictions?) - the page returned HTTP 405 to all fetches.",
+    "What license and rate limits apply to Rebrickable's bulk Downloads (page is JS/Cloudflare gated), and does the 'no AI training' clause affect any planned AI-assisted design features?",
+    "Trademark status of 'Open Bricks' / 'Open Brick Source' at DPMA and EUIPO, and whether 'OpenBrick3D' is registrable; should the project rename to avoid both the GitHub namesake (cwesson/openBrick) and the retail brand?",
+    "What does printablebricks.com actually host and under what license (HTTP 403 during research)?",
+    "Is EvanBacon/ldr's GitHub repository public (page returned 404 while npm and lego.bacon.md link to it) and is the author open to collaboration or upstreaming?",
+    "What is the internal structure of Studio .io files (zip container? encryption?) and is a clean-room reader legally safe to ship?",
+    "When will LDCad 1.7 ship as stable, and will its glTF export matter for interoperability?",
+    "Mecabricks' current pricing and whether its export terms restrict commercial/printing use of exported models.",
+    "Do Gobricks or other alt-brick makers publish part geometry or ID crosswalks (GDS numbering) that an extended registry could ingest with permission?"
+  ],
+  "recommendations": [
+    "Make LDraw the canonical geometry and ID space: ship a packed, versioned subset of the library (complete.zip is too big for web/mobile), preserve each file's !LICENSE header, and build the attribution screen (creator, work URL, license name, license URL, modification note) into every client from the first release.",
+    "Define the openBrick JSON format as a lossless superset of MPD: every document must round-trip to .mpd (0 FILE blocks, !DATA embedded textures and custom parts, STEP/ROTSTEP). This gives LeoCAD, Studio, LDCad, LPub3D and Blender interoperability for free and keeps the README promise of .ldr-compatible open formats.",
+    "Own connectivity as an open dataset: implement a parser compatible with LDCad's documented SNAP_* syntax, but author the data clean-room (or with written permission from Roland Melkert) and publish it under CC BY 4.0 with LDraw part IDs. This is the single most valuable community asset nobody has released openly.",
+    "Adopt a parts-pack + GPU-instancing renderer architecture from day one (the `ldr` package proves 394,950 bricks at 29 ms/frame under MIT); vendor or fork ldr/three.js LDrawLoader rather than LeoCAD/LDView code, and reuse ldr's USDZ export for iOS AR and glTF for Android.",
+    "Do not copy code from GPL projects (LeoCAD, LDView, LPub3D, ImportLDraw, python `ldraw`, uBrick), do not redistribute LDCad shadow data, do not store models in Studio .io, and do not ingest BrickLink catalog data; use Rebrickable bulk CSVs with attribution for names, colors and ID crosswalks.",
+    "Build the Part Designer around parts that do not exist rather than catalog reproduction: logo tiles, nameplates, mosaics, keychains, adapters and alt-system bridges. Brickset's test shows printed standard bricks are not worth it; custom parts are where printing wins and where merchandise revenue lives.",
+    "Design the print pipeline as calibration-profile-first: a printable calibration beam per printer/material (PELA's top/bottom/axle tweak method), stored profiles, a validator (manifold, 1.2 mm minimum wall, stud/tube clearances, overhang rules, no supports for studs-up orientation), and 3MF output with per-color objects for multi-material printers. Reuse LEGO.scad (MIT) logic; treat PELA, MachineBlocks and cwesson/openBrick as read-only references because of SA/NC licenses.",
+    "Create an 'extended parts registry' for custom and alt-brand parts that LDraw refuses: LDraw-compatible .dat files with openBrick connectivity metas, print profiles and provenance, each under CC BY 4.0 or CC0, so Studio and LDCad users can import them via MPD.",
+    "Resolve the name before public launch: either rebrand (e.g. consistently 'OpenBrick3D') or clear 'OpenBrick' against the Open Bricks retail brand (DPMA/EUIPO search) and the existing cwesson/openBrick repo; register npm/crates/PyPI names (all free on 2026-10-27) immediately.",
+    "Follow LEGO Fair Play strictly: LEGO® as an adjective with the mark, never the logo, never in a domain or app ID, keep the README disclaimer verbatim in app About screens, avoid minifigure-shaped parts (3D trademark upheld 2015), and market as 'compatible with leading stud-and-tube brick systems' rather than leading with 'LEGO compatible' while the ZURU case is live.",
+    "Consider a shared Rust core (parser, connectivity solver, mesh validator) compiled to WASM for web and native for desktop/mobile/CLI; weldr (Apache-2.0/MIT) is a usable seed but expect to own it. If the team prefers TypeScript-first, `ldr` plus a Node CLI covers desktop (Electron/Tauri) and web, with Capacitor or Expo for mobile.",
+    "Engage the LDraw community early: post the connectivity extension and custom-part registry proposals on forums.ldraw.org, contribute fixes upstream, and credit LDraw, Rebrickable and ldr prominently; being a kind, visible citizen of that ecosystem is the cheapest community-growth strategy available."
+  ],
+  "sources": [
+    "https://www.ldraw.org/draft-documents/careadme.txt-draft.html",
+    "https://library.ldraw.org/updates?latest",
+    "https://forums.ldraw.org/thread-29572.html",
+    "https://forums.ldraw.org/post-50570.html",
+    "https://ldraw.org/article/218.html",
+    "https://www.ldraw.org/article/47.html",
+    "https://forums.ldraw.org/post-55141.html",
+    "https://forums.ldraw.org/post-42108.html",
+    "https://www.ldraw.org/docs-main/official-model-repository-omr/rules-and-procedures-for-the-official-model-repository.html",
+    "https://en.wikipedia.org/wiki/LDraw",
+    "http://www.melkert.net/LDCad",
+    "http://www.melkert.net/LDCad/download",
+    "http://www.melkert.net/LDCad/faq",
+    "http://www.melkert.net/LDCad/req",
+    "http://www.melkert.net/LDCad/tech/meta",
+    "http://www.melkert.net/LDCad/tech/shadowLib",
+    "https://forums.ldraw.org/post-59566.html",
+    "https://github.com/leozide/leocad",
+    "https://github.com/leozide/leocad/releases",
+    "https://github.com/tcobbs/ldview",
+    "https://github.com/tcobbs/ldview/releases",
+    "https://github.com/trevorsandy/lpub3d",
+    "https://github.com/trevorsandy/lpub3d/releases",
+    "https://en.wikipedia.org/wiki/BrickLink_Studio",
+    "https://studiohelp.bricklink.com/hc/en-us/articles/6502197722647-Import-formats",
+    "https://studiohelp.bricklink.com/hc/en-us/articles/6502197862679-Exporting-to-other-formats",
+    "https://studiohelp.bricklink.com/hc/en-us/articles/5872512112663-What-is-PartDesigner",
+    "https://studiohelp.bricklink.com/hc/en-us/articles/5877891573911-Importing-a-3D-object",
+    "https://www.bricklink.com/messageThread.asp?ID=375155",
+    "https://www.eurobricks.com/forum/forums/topic/175033-converting-parts-with-textures-from-studio-to-ldraw",
+    "https://en.wikipedia.org/wiki/List_of_Lego_computer-aided_design_programs",
+    "https://www.mecabricks.com/",
+    "https://www.schieb.de/virtueller-baukasten-fuer-lego-fans",
+    "https://brickset.com/article/52611/mecabricks-the-render-farm",
+    "https://rebrickable.com/api/",
+    "https://tostracker.app/document/rebrickablecom-tos",
+    "https://pypi.org/project/rebrickable/",
+    "https://www.newelementary.com/2013/09/bricks-inc.html?m=1",
+    "https://www.thebrickfan.com/brick-owl-hit-cease-desist-letter-bricklink/",
+    "https://github.com/rgriebl/brickstore",
+    "https://brickarchitect.com/",
+    "https://threejs.org/docs/pages/LDrawLoader.html",
+    "https://threejs.org/examples/webgl_loader_ldraw",
+    "https://www.npmjs.com/package/ldr",
+    "https://lego.bacon.md",
+    "https://github.com/LasseD/buildinginstructions.js",
+    "https://github.com/jacobrsullivan/LDRAW-CORE-VIEWER",
+    "https://github.com/djeedai/weldr",
+    "https://docs.rs/crate/weldr/latest",
+    "https://github.com/partcad/partcad-ldraw",
+    "https://github.com/TobyLobster/ImportLDraw",
+    "https://github.com/cfinke/LEGO.scad",
+    "https://www.chrisfinke.com/?p=36864",
+    "https://github.com/paulirotta/PELA-blocks",
+    "https://www.ce.cit.tum.de/fileadmin/w00cgn/cm/mir-2019/mir-2019-posters/2019-houghton-poster-1.pdf",
+    "https://github.com/pks5/machineblocks",
+    "https://machineblocks.com/",
+    "https://github.com/maox/UBrick",
+    "https://www.blendernation.com/2026/03/30/free-download-ubrick-lego-generator/",
+    "https://superhivemarket.com/products/bricker/ratings",
+    "https://github.com/cwesson/openBrick",
+    "https://www.kaufland.at/product/450549664/",
+    "https://faire.com/brand/b_cfk8fs6aya",
+    "https://printpal.io/tools/brick-builder",
+    "https://hackaday.com/tag/brick-mode/",
+    "https://brickset.com/article/128767/can-you-make-compatible-bricks-with-consumer-3d-printers",
+    "https://www.printables.com/model/260284-lego-bricks",
+    "https://lugnet.com/~330/FAQ/Build/dimensions",
+    "https://www.worldbricks.com/nl/lego-nieuws/entry/2024/08/06/7676-lego-snot-basics-geometry,-techniques-and-pitfalls.html",
+    "https://brickfact.com/blog/guidebooks/lego-brick-dimensions",
+    "https://www.lego.com/en-us/legal/notices-and-policies/fair-play",
+    "https://en.wikipedia.org/wiki/Lego_clone",
+    "https://www.brickfanatics.com/lego-trademark-battle-supreme-court-ruling",
+    "https://3dprintingindustry.com/news/lego-3d-printing-takedowns-a-lawyer-responds-and-lego-replies-163104/",
+    "https://www.lumibricks.com/blogs/news/lego-vs-gobricks-review",
+    "https://bricksbulk.com/pages/about-us",
+    "https://registry.npmjs.org/-/v1/search?text=ldraw",
+    "https://crates.io/api/v1/crates?q=ldraw",
+    "https://software.pureos.net/package/bin/pureos/dawn/ldraw-parts-free"
+  ]
+}

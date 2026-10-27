@@ -1,0 +1,410 @@
+{
+  "summary": "The assembler engine should be built around one idea: bricks live on an integer lattice, so nearly every hard problem (snapping, collision, connectivity, undo, sync, file format) gets cheaper if the canonical state is integer LDraw units (LDU; 1 LDU is 0.3993 +/- 0.0001 mm, a stud pitch is 20 LDU, a plate is 8 LDU, a brick 24 LDU; LDraw is right-handed with -Y up) plus a 24-element cube-rotation index, with an escape hatch to a full float transform only for parts hinged or rotated off-lattice. Store instances in flat struct-of-arrays tables (an ECS-lite, not a deep scene graph) that reference an immutable, content-addressed part catalog carrying pre-baked data per part: render LODs, a lattice occupancy mask (solid / stud / cavity classes), a connector list in the LDCad SNAP vocabulary (cylinder M/F with R/A/S shape codes, clip, finger-hinge, generic-group), and a collision proxy. Per-instance state is only pose, part ref, colour code, flags, step and submodel id. Sideways (SNOT) building falls out of the lattice because 5 plates (40 LDU) equal 2 studs (40 LDU), so the finest common lattice is 4 LDU, or 2 LDU once half-stud jumpers are included.\n\nFor 10k-100k instances the right indexes are: a spatial hash keyed on lattice cells (Teschner et al. 2003 hash: (x*73856093 xor y*19349663 xor z*83492791) mod n; their experiments show cell size matters more than table size or hash function, and cost is O(n*p*q) for p cells per object and q objects per cell) for snapping and lattice-aware broadphase; a connector hash keyed on (quantized position, direction, type) so a snap query costs O(connectors on the dragged part); a BVH only for ray picking and frustum culling (three-mesh-bvh 0.9.16 plus @three.ez/batched-mesh-extensions on the web, parry3d 0.31.1 in Rust); and a connection graph (CSR adjacency plus union-find) for is-this-attached checks in near-O(1) amortised, with Tarjan articulation points O(V+E) for single-stud weak spots and an optional force-balance LP (Legolization 2015, StableLego 2024, code on GitHub) run asynchronously for real clutch/stability warnings. BrickLink Studio's experience is the cautionary tale: its collision accuracy depends on the render-quality LOD and its stability check is criticised for unexplained flags, so openBrick should keep a dedicated collision representation and explain every warning.\n\nOn the web, three.js 0.186.1 (MIT, 2026-09-24) BatchedMesh gives one draw call per material class with per-instance colour and per-instance geometry id; the official example renders 500,000 instances of 10 geometries with 5 LOD levels, and a 2026 benchmark shows 100k instances of a 6k-triangle mesh at ~20 FPS on an RTX 5070 Ti identically on WebGL, WebGPU and forced-WebGL2, i.e. triangle-bound, not draw-bound. Studs are the triangle budget killer, so LOD without studs beyond a few metres and screen-space edge lines (O(pixels), not O(edges)) are mandatory. Two non-obvious constraints: BatchedMesh does not support negative-scale matrices, yet LDraw models legally mirror parts (negative determinant), so mirrored geometry must be baked as separate geometry ids; and three.js LDrawLoader is a viewer, not an importer: it merges each part into one Mesh plus LineSegments, ignores !TEXMAP decals, and caches only Part/Unofficial_Part types, so openBrick needs its own type-1-line parser that resolves part references to catalog ids and transforms. The Rust path (Bevy 0.20 / wgpu 30.0.1, many_cubes stress test defaults to 1.6 million cubes with indirect drawing) wins on raw throughput and native mobile, but Bevy's editor UI toolkit only just landed; a Rust core compiled to WASM for data model, snapping and collision, with three.js for rendering, is a credible 2-3 year hybrid.\n\nUndo/redo should be a command log with inverse commands and transaction coalescing from day one; it doubles as autosave and makes the document CRDT-ready if instances are keyed by stable ids rather than array indices. Defer the CRDT library choice but measure now: the WASM payloads of loro-crdt 1.17.1 (3.60 MB raw, 1.20 MB gzip) and @automerge/automerge 3.5.0 (3.64 MB raw, 1.14 MB gzip) are far larger than vendor pages suggest, while yjs 13.6.33 is a 300 KB pure-JS build; Loro's MovableTree and MovableList map directly onto submodel hierarchy and step order, and all three ship an UndoManager that excludes remote peers. The native file should be a versioned JSON schema inside a zip container (model.json plus embedded custom parts) with lossless LDraw .ldr/.mpd round-trip (CC BY 4.0 official library since the 2023-01 reissue; LDCad snap metas are unofficial and its shadow library is all-rights-reserved, so connector data must be openBrick's own). Export glTF with EXT_mesh_gpu_instancing (ratified; one node per part+colour because the extension has no per-instance material) and 3MF per core spec 1.4.0 as one object per part in components or build items by default (manifold, millimetre units) with an explicit fuse option, since the spec says producers SHOULD NOT emit overlapping objects even though consumers must union them. Play mode belongs to Rapier 0.36.1 / JS 0.21.0 (Apache-2.0, cross-platform deterministic WASM, 3.08 MB wasm / 1.17 MB gzip): simulate each connected component as one compound rigid body, turn hinge connections into revolute joints, and break connection edges when impulse exceeds a clutch threshold; never one rigid body per brick at 100k.",
+  "findings": [
+    {
+      "claim": "three.js is at r186 (npm three 0.186.1, published 2026-09-24, MIT). r186 fixes BatchedMesh visibility updates when geometry is set by id and draw offsets; r185 added WebXR on WebGPU and surfaces WGSL diagnostics; r184 added EXT_texture_webp to GLTFExporter.",
+      "evidence": "GitHub releases page lists r186 (24 Sep), r185 (01 Jul), r184 (16 Apr) with those notes; npm view three reports version 0.186.1, modified 2026-09-24, license MIT.",
+      "confidence": "verified",
+      "source_url": "https://github.com/mrdoob/three.js/releases"
+    },
+    {
+      "claim": "BatchedMesh API: constructor(maxInstanceCount, maxVertexCount, maxIndexCount, material); addGeometry/addInstance/deleteInstance/setGeometryIdAt/setMatrixAt/setColorAt (Vector4 for alpha)/setVisibleAt/optimize(); perObjectFrustumCulled and sortObjects default true; bounds are opt-in; negatively scaled matrices are not supported; deleted geometry leaves gaps until optimize().",
+      "evidence": "Official BatchedMesh documentation page enumerates these members and states 'Negatively scaled matrices are not supported'.",
+      "confidence": "verified",
+      "source_url": "https://threejs.org/docs/pages/BatchedMesh.html"
+    },
+    {
+      "claim": "Because LDraw type-1 lines legally carry mirroring (negative-determinant 3x3 matrices, which LDrawLoader handles by flipping winding) and BatchedMesh rejects negative scale, openBrick must bake mirrored variants as separate geometry ids or forbid mirrored placement in the assembler.",
+      "evidence": "LDrawLoader source: 'CW winding and negative-determinant matrices flip vertex order'; BatchedMesh docs: negative scale unsupported. Implication is inferred from the two facts.",
+      "confidence": "inferred",
+      "source_url": "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/jsm/loaders/LDrawLoader.js"
+    },
+    {
+      "claim": "Measured three.js 0.186.1 throughput: 100,000 InstancedMesh instances of a 6,056-triangle mesh (~605.6 M triangles/frame) ran at 20.26 FPS (WebGL), 20.15 (native WebGPU) and 20.24 (WebGPURenderer forced WebGL2) on an RTX 5070 Ti / Ryzen 9 9950X at 1280x720; 1k and 10k instances were capped at 59.99 FPS; the BatchedMesh draw counter varied by backend (1 call on WebGL vs 1,001 on native WebGPU in that revision).",
+      "evidence": "Plant instancing benchmark post with 240 samples across 48 cells, five repeats each, three.js 0.186.1.",
+      "confidence": "verified",
+      "source_url": "https://discourse.threejs.org/t/three-js-plant-instancing-benchmark-240-desktop-samples-csv-json-and-a-standalone-harness/95719"
+    },
+    {
+      "claim": "The official three.js example webgl_batch_lod_bvh renders 500,000 instances of 10 TorusKnot geometries with 5 LOD levels each in a single BatchedMesh, using three-mesh-bvh for per-geometry BVH (BLAS) and @three.ez/batched-mesh-extensions for a top-level BVH (TLAS), radix sort and LOD with screen-height thresholds 0.08, 0.04, 0.033, 0.02.",
+      "evidence": "Example source sets instancesCount = 500000 and imports three-mesh-bvh 0.9.10, @three.ez/batched-mesh-extensions 0.0.11, @three.ez/simplify-geometry and meshoptimizer.",
+      "confidence": "verified",
+      "source_url": "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/webgl_batch_lod_bvh.html"
+    },
+    {
+      "claim": "@three.ez/batched-mesh-extensions 0.0.12 (2026-06-23, MIT) adds a dynamic BVH for frustum culling and raycasting (best for mostly static, scattered instances), LOD (only LODs sharing the same vertex array), per-instance uniforms (WebGLRenderer only) and a separate webgpu.js build; three-mesh-bvh is at 0.9.16 (2026-10-08, MIT).",
+      "evidence": "README feature list plus npm view output for both packages.",
+      "confidence": "verified",
+      "source_url": "https://github.com/agargaro/batched-mesh-extensions/"
+    },
+    {
+      "claim": "three.js LDrawLoader handles !COLOUR, BFC (CERTIFY/NOCERTIFY, CW/CCW, INVERTNEXT, CLIP/NOCLIP), !CATEGORY, !KEYWORDS, MPD '0 FILE' and '0 STEP' (userData.buildingStep on Groups, userData.numBuildingSteps on the root); smoothNormals is on by default with hard edges from type-2 lines or an angle threshold (comment says 67.5 degrees, code uses |dot| < 0.25); conditional lines (type 5) need setConditionalLineMaterial (LDrawConditionalLineMaterial for WebGL, LDrawConditionalLineNodeMaterial for WebGPU); !TEXMAP is not supported and MATERIAL finishes are skipped; parts are merged into one Mesh plus one LineSegments per part with per-colour groups; parts cache applies only to Part/Unofficial_Part; lookup order is fileMap, s/->parts, 48/->p, then parts/, p/, models/, then lowercase retry, all under setPartsLibraryPath; utils/packLDrawModel.js packs a model and its dependencies into one file.",
+      "evidence": "Loader documentation page and the dev-branch source file.",
+      "confidence": "verified",
+      "source_url": "https://threejs.org/docs/pages/LDrawLoader.html"
+    },
+    {
+      "claim": "GLTFExporter supports EXT_mesh_gpu_instancing; the extension is ratified by Khronos, attaches to a node with a mesh, uses TRANSLATION (VEC3), ROTATION (VEC4 quaternion) and SCALE (VEC3) accessors of equal count, allows custom underscore attributes such as _COLOR, and explicitly does not support different materials or per-instance animation within a batch. Whether BatchedMesh exports as instancing is undocumented.",
+      "evidence": "three.js GLTFExporter docs list EXT_mesh_gpu_instancing; Khronos extension README states status and limitations.",
+      "confidence": "verified",
+      "source_url": "https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Vendor/EXT_mesh_gpu_instancing/README.md"
+    },
+    {
+      "claim": "LDraw file format: right-handed, -Y is up; brick width/depth 20 LDU, brick height 24 LDU, plate height 8 LDU, stud diameter 12 LDU, stud height 4 LDU, 1 LDU ~ 0.4 mm; line types 0-5; type-1 reference is '1 colour x y z a b c d e f g h i file' with the 3x3 matrix as rotation/scale; colour 16 is the pass-through main colour and 24 the edge colour; official metas include STEP, WRITE/PRINT, CLEAR, PAUSE, SAVE, BFC, !LDRAW_ORG.",
+      "evidence": "LDraw.org File Format Specification article 218.",
+      "confidence": "verified",
+      "source_url": "https://ldraw.org/article/218"
+    },
+    {
+      "claim": "MPD bundles several LDraw files with '0 FILE name' (and rarely '0 NOFILE'); the first file is the main model and sub-files render only when referenced; the spec has no namespace scoping so subfile names can clash.",
+      "evidence": "LDraw.org MPD Language Extension standard and wiki MPD page.",
+      "confidence": "verified",
+      "source_url": "https://www.ldraw.org/article/47"
+    },
+    {
+      "claim": "Physical brick dimensions: stud pitch 8.0 mm nominal (measured 7.986 +/- 0.002 mm at 25 C), brick height 9.6 mm (measured 9.582), plate 3.2 mm (3.194), stud height 1.7 mm, brick wall 1.5 mm, underside tube outer diameter 6.31 mm with 0.657 mm wall per LUGNET; 1 LDU = 0.3993 +/- 0.0001 mm; bricks are made 0.2 mm shorter than n x 8 mm to leave a gap. Stud diameter is quoted as 4.8 mm (brickfact) or 5 mm (LUGNET/orionrobots), measured ~4.9 mm; the often-quoted tube OD of 6.51 mm is sqrt(2)*8 - 4.8 and depends on which stud diameter is assumed.",
+      "evidence": "LUGNET dimensions FAQ, brickfact guide, orionrobots specifications page; the 6.51 figure was not found in any source and is arithmetic.",
+      "confidence": "verified",
+      "source_url": "http://www.lugnet.com/~330/FAQ/Build/dimensions"
+    },
+    {
+      "claim": "SNOT/sideways building closes on the lattice: 5 plates = 5 x 8 LDU = 40 LDU = 2 studs x 20 LDU, so a 4 LDU (1.6 mm) sub-lattice covers all stud/plate alignments, and 2 LDU (0.8 mm) once half-stud (10 LDU) jumper offsets are included.",
+      "evidence": "Arithmetic on the LDU table in the LDraw spec (20 LDU pitch, 8 LDU plate).",
+      "confidence": "inferred",
+      "source_url": "https://ldraw.org/article/218"
+    },
+    {
+      "claim": "LDCad's Part Snapping Language Extension defines SNAP_CLEAR, SNAP_INCL, SNAP_CYL (gender M/F, secs shape blocks with codes R round, A axle, S square, _L/L_ flexible extensions, caps none/one/two/A/B, grid, center, slide, scale, mirror cor), SNAP_CLP (always female, radius default 4, length default 8), SNAP_FGR (finger hinges with seq widths and radius) and SNAP_GEN (matched by group with bounding pnt/box/cube/cyl/sph). It is an unofficial spec not ratified by the LDraw Standards Committee, last edited 2019-02-23.",
+      "evidence": "LDraw wiki page authored by Roland Melkert and Orion Pobursky; 2023 forum thread clarifies SNAP_FGR centred by default, SNAP_CYL not.",
+      "confidence": "verified",
+      "source_url": "https://wiki.ldraw.org/wiki/Part_Snapping_Language_Extension"
+    },
+    {
+      "claim": "LDCad's snap data ships as the shadow library offLibShadow.csl (a zip mirroring the official library layout, adding !LDCAD snap metas to a growing subset of official parts), maintained by Roland Melkert; the documentation states 'Copyright Roland Melkert 2011-2017, all rights reserved' with no explicit reuse terms, so openBrick cannot assume it is redistributable.",
+      "evidence": "melkert.net shadow library technical page.",
+      "confidence": "verified",
+      "source_url": "https://www.melkert.net/LDCad/tech/shadowLib"
+    },
+    {
+      "claim": "The official LDraw parts library has been CC BY 4.0 by default since the 2023-01 update (a complete reissue), with the contributor agreement revised 2024-06-06 allowing CC0 as an irrevocable option; as of the 2302 release 74.8 percent of parts were CC BY 4.0 with the rest dual-licensed from CC BY 2.0.",
+      "evidence": "LDraw.org Contributor Agreement page and forum posts about the 2023-01 update and migration status.",
+      "confidence": "verified",
+      "source_url": "https://www.ldraw.org/article/349"
+    },
+    {
+      "claim": "Connector positions can be derived automatically from LDraw part files because parts are built from referenced primitives (stud, tube and hole primitives live under p/ and 48/), which LDrawLoader resolves via its '48/ -> p/' and 'p/' lookup; this gives openBrick an own-licence source of snap data instead of the LDCad shadow library.",
+      "evidence": "Loader lookup order shows the primitive directory convention; the specific primitive filenames and the derivation strategy are from general LDraw knowledge, not verified against a 2026 source.",
+      "confidence": "inferred",
+      "source_url": "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/jsm/loaders/LDrawLoader.js"
+    },
+    {
+      "claim": "Teschner et al. (VMV 2003) spatial hashing: hash(x,y,z) = (x*73856093 xor y*19349663 xor z*83492791) mod n with n ideally prime; grid cell size has a larger performance impact than table size or hash function (best near the average primitive edge length); collision cost is O(n*p*q) where p is average cells per primitive and q average primitives per cell; 20k tetrahedra ran in real time on a 2003 PC.",
+      "evidence": "Paper text extracted from the ETH-hosted PDF: sections 4.1-4.3 and the complexity statement.",
+      "confidence": "verified",
+      "source_url": "https://matthias-research.github.io/pages/publications/tetraederCollision.pdf"
+    },
+    {
+      "claim": "Legolization (Luo et al., ACM TOG / SIGGRAPH Asia 2015) introduced a force-based stability metric that orders structures by stability, gives a stable/unstable threshold and identifies the weak portion, with iterative layout refinement; StableLego (2024, arXiv 2402.10711) reformulates stability as an optimisation over force-balance equations, locates the weakest connections, ships a dataset of >50,000 objects with layouts, and releases code at github.com/intelligent-control-lab/StableLego.",
+      "evidence": "Semantic Scholar record for DOI 10.1145/2816795.2818091 and the arXiv abstract page.",
+      "confidence": "verified",
+      "source_url": "https://arxiv.org/abs/2402.10711"
+    },
+    {
+      "claim": "Agrawala et al., 'Designing effective step-by-step assembly instructions', ACM TOG 2003 (SIGGRAPH 2003), 330 citations, is the canonical reference for instruction generation; its design principles (hierarchical grouping of significant parts, bottom-up ordering respecting physical support, keeping added parts visible, action diagrams) are the right model for an LPub3D-style step generator.",
+      "evidence": "Semantic Scholar metadata verified; the publisher elided the abstract and the Berkeley project page returned 503, so the listed principles come from prior knowledge of the paper.",
+      "confidence": "likely",
+      "source_url": "https://doi.org/10.1145/1201775.882352"
+    },
+    {
+      "claim": "LPub3D (open source, reads LDR/MPD, supports ROTSTEP via its 3D viewer) is at 2.4.9 (2025-01-09) with continuous build 2.4.9-r86 (2025-03-19) for Linux RPM/DEB/AppImage and macOS Apple-silicon DMG; tools disagree on ROTSTEP ADD semantics (Bricksmith relative to previous step, LPub relative to default orientation) and empty rotation-only steps need BUFEXCHG store/retrieve tricks.",
+      "evidence": "LPub3D GitHub releases page and LDraw forum threads on ROTSTEP and buffer exchange.",
+      "confidence": "verified",
+      "source_url": "https://github.com/trevorsandy/lpub3d/releases"
+    },
+    {
+      "claim": "BrickLink Studio (Unity-based) exposes collision detection as a toggle: colliding parts render as wireframe, detection accuracy follows the Render quality preference (low quality misses collisions), it is resource-heavy on large models, and the keyboard can still force parts into collision; its stability check colour-codes warnings (dark red) and cautions and was criticised on Eurobricks for lacking explanations of why parts are flagged.",
+      "evidence": "BrickLink Studio help article on collision detection and the Eurobricks stability-check thread; Wikipedia for the Unity engine.",
+      "confidence": "verified",
+      "source_url": "https://studiohelp.bricklink.com/hc/en-us/articles/5412820155927"
+    },
+    {
+      "claim": "3MF Core Specification 1.4.0 (published 2025-02-06): model unit defaults to millimeter (micron, millimeter, centimeter, inch, foot, meter allowed); object types model, solidsupport, support, surface, other; objects may hold components (objectid + transform, define-before-reference, no pid/pindex on component objects); build items carry objectid, transform and partnumber and must not reference 'other' objects; model meshes MUST have manifold edges, consistent orientation and outward normals; producers SHOULD NOT emit self-intersections or overlapping objects, but consumers MUST accept them under the positive fill rule.",
+      "evidence": "3MF Consortium spec_core markdown on GitHub.",
+      "confidence": "verified",
+      "source_url": "https://github.com/3MFConsortium/spec_core"
+    },
+    {
+      "claim": "Current 3MF extension versions (2025-02-27): Materials and Properties 1.2.1, Production 1.1.2, Slice 1.0.2, Secure Content 1.0.2, Volumetric 0.8.0; 3MF is under development as ISO/IEC DIS 25422; Blender's threemf-io add-on reports Orca Slicer / Bambu Studio full round-trip support including the Production extension multi-file structure.",
+      "evidence": "3mf.io specification page and the Blender extension page.",
+      "confidence": "verified",
+      "source_url": "https://3mf.io/specification/"
+    },
+    {
+      "claim": "lib3mf 2.5.0 (2026-02-24, BSD-2-Clause) made Java 8/9 and WASM bindings work, added Conan and improved vcpkg support, ships Python wheels (macOS universal2, manylinux x86_64, Windows amd64), C# bindings and Go/C++ examples, and includes beam-lattice and volumetric fixes; 2.4.1 added triangle sets and implicit/volumetric API.",
+      "evidence": "lib3mf GitHub releases page and repository README.",
+      "confidence": "verified",
+      "source_url": "https://github.com/3MFConsortium/lib3mf/releases"
+    },
+    {
+      "claim": "Measured CRDT and physics payloads (npm tarballs downloaded 2026-10-27, gzip default level): loro-crdt 1.17.1 WASM 3,596,988 B raw / 1,202,006 B gz; @automerge/automerge 3.5.0 WASM 3,644,225 B raw / 1,141,939 B gz (base64-embedded variant 4.86 MB raw / 1.64 MB gz); yjs 13.6.33 pure JS dist/yjs.mjs 300,059 B raw with no WASM; @dimforge/rapier3d 0.21.0 WASM 3,082,103 B raw / 1,171,012 B gz (rapier3d-compat embeds it as base64 in a 4.34 MB rapier.mjs). These are 2-4x larger than the gzipped figures on Loro's benchmark page (Automerge ~591 KB, Loro ~533 KB, ywasm ~285 KB, Yjs ~25 KB), which were measured on Loro 0.15.2 / Automerge 2.1.10.",
+      "evidence": "Local npm pack + tar + gzip measurement; Loro performance page figures as quoted by search results (the page itself returned 403).",
+      "confidence": "verified",
+      "source_url": "https://loro.dev/docs/performance"
+    },
+    {
+      "claim": "Loro (MIT; Rust, JS/WASM, Swift, loro-ffi for others) offers Text (Fugue), rich text, LWW Map, MovableList, MovableTree, time travel, shallow snapshots (like git shallow clone), fork_at and an UndoManager; loro-crdt 1.17.1 (2026-10-22) added exportPendingUpdates, a decoded-value cache limit, toContainerTreeJson built in Rust to avoid per-value WASM-JS calls, fixed MovableList undo after concurrent moves and fixed quadratic local tree moves; loro.js 0.4.0 made undo()/redo() consume at most one history item and skips concurrent tree moves that would form a cycle.",
+      "evidence": "Loro GitHub README and releases page; npm view loro-crdt.",
+      "confidence": "verified",
+      "source_url": "https://github.com/loro-dev/loro/releases"
+    },
+    {
+      "claim": "Automerge 3.0 (July 2025) cut memory by over 10x (Moby Dick text: 700 MB in Automerge 2 vs 1.3 MB in 3), loads large histories far faster (one document that had not loaded after 17 hours loaded in 9 s), keeps the Automerge 2 file format, removed the Text API, made the 'next' API default and renamed RawString to ImmutableString; current npm version is 3.5.0 (2026-09-16, MIT), Rust crate automerge 0.12.0.",
+      "evidence": "Automerge 3.0 blog post; npm and crates.io queries.",
+      "confidence": "verified",
+      "source_url": "https://automerge.org/blog/automerge-3/"
+    },
+    {
+      "claim": "Yjs (13.6.33, 2026-09-23, MIT; Rust port yrs 0.28.0) UndoManager is scoped to given shared types, tracks only transactions whose origin is in trackedOrigins (default: local null origin, so remote updates are excluded), merges edits within captureTimeout (500 ms default, 0 to disable) and emits stack-item-added/popped/updated events to attach metadata such as cursors.",
+      "evidence": "Yjs UndoManager documentation; npm and crates.io queries.",
+      "confidence": "verified",
+      "source_url": "https://docs.yjs.dev/api/undo-manager"
+    },
+    {
+      "claim": "Rapier: crate rapier3d 0.36.1 (crates.io updated 2026-10-10; changelog dated 2026-10-04) with parry3d 0.31.1; 0.36.0 (2026-09-24) added soft bodies with an experimental FEM solver, deformable colliders, tearing/cutting and C bindings and broke snapshot compatibility; 0.35.0 (2026-08-08) made SIMD always-on via wide, added a thread-pool API, made enhanced-determinism compatible with parallel, and reported ~90x faster stepping for stationary bodies with many colliders. JS bindings @dimforge/rapier3d and rapier3d-compat are at 0.21.0 (2026-09-25, Apache-2.0); the docs state the WASM build is fully cross-platform deterministic given identical construction/removal order and the same version, with the caveat that JS Math.sin/cos used to seed state are not.",
+      "evidence": "Rapier CHANGELOG.md, crates.io API, npm view, and the JavaScript determinism user guide.",
+      "confidence": "verified",
+      "source_url": "https://raw.githubusercontent.com/dimforge/rapier/master/CHANGELOG.md"
+    },
+    {
+      "claim": "Bevy 0.20 (2026-10-08; bevy_ecs 0.20.0, hecs 0.11.2 as a minimal alternative) integrates mesh shaders with the pipeline cache (not available on web), adds per-column change ticks (132x speedup in GPU mesh extraction), despawn_all (1.3-1.7x faster), Feathers editor widgets (dropdown, list view, number scrubber), contextual theming and a CAD-style pan-orbit camera upstreamed from bevy_editor_cam; the many_cubes stress test defaults to 1,600,000 cubes with flags for indirect drawing, automatic batching, CPU/frustum culling and per-instance material data; wgpu 30.0.1 (2026-08-22) is current, with v30.0.0 (2026-07-01) aligning to WebGPU vertex-slot gaps, 16-bit shader ints and HDR surface colour spaces.",
+      "evidence": "bevy.org 0.20 release post, many_cubes example page, wgpu GitHub releases, crates.io queries.",
+      "confidence": "verified",
+      "source_url": "https://bevy.org/news/bevy-0-20/"
+    },
+    {
+      "claim": "Mobile brick-builder UX evidence: Snap Brick Builder (Unity) uses one-finger drag for bricks, a second finger for camera, three fingers to rotate and pinch to zoom; Masonry 3D was criticised because bricks do not auto-align on snap and view rotation was hard to control; Kible uses an 8 mm cubic grid building in all six directions; BrickGen and LEGO Builder web demos are mouse-first and weak on touch.",
+      "evidence": "itch.io page, Common Sense Media review, Kible press release, tool pages.",
+      "confidence": "verified",
+      "source_url": "https://dyna-mike.itch.io/snap-brick-builder"
+    },
+    {
+      "claim": "LeoCAD is GPLv2, OpenGL-based, Qt desktop (Windows/Linux/macOS) with no snapping/collision documented; its GPL licence means code cannot be copied into MIT-licensed openBrick, only behaviour studied.",
+      "evidence": "LeoCAD GitHub README.",
+      "confidence": "verified",
+      "source_url": "https://github.com/leozide/leocad"
+    },
+    {
+      "claim": "Searches for Mecabricks engine internals, a formal wgpu/Bevy 100k-instance frame-time benchmark, Rapier vs PhysX benchmark tables and the LDCad shadow-library licence returned nothing authoritative; the rapier.rs benchmarks page has no numbers and Loro's docs site blocked fetches.",
+      "evidence": "Search results and fetch failures recorded during this session.",
+      "confidence": "verified",
+      "source_url": "https://rapier.rs/benchmarks/"
+    }
+  ],
+  "key_numbers": [
+    { "name": "LDU to mm", "value": "1 LDU = 0.3993 +/- 0.0001 mm (nominal 0.4 mm)", "note": "LUGNET measurement; stud pitch 20 LDU, brick 24 LDU, plate 8 LDU, stud diameter 12 LDU, stud height 4 LDU" },
+    { "name": "Stud pitch", "value": "8.0 mm nominal, 7.986 +/- 0.002 mm measured at 25 C", "note": "Bricks are n x 8 - 0.2 mm long" },
+    { "name": "Brick / plate height", "value": "9.6 mm (9.582 measured) / 3.2 mm (3.194 measured)", "note": "3 plates = 1 brick; 5 plates = 2 studs (SNOT closure)" },
+    { "name": "Stud and tube", "value": "stud 4.8-5.0 mm dia x 1.7 mm high; tube OD 6.31 mm (LUGNET) or 6.51 mm (sqrt2*8-4.8); wall 1.5 mm", "note": "Sources disagree on stud diameter; measure before baking print tolerances" },
+    { "name": "Finest common lattice", "value": "4 LDU (1.6 mm) for studs+plates; 2 LDU (0.8 mm) with half-stud jumpers", "note": "gcd(20, 8) = 4; gcd(10, 8) = 2" },
+    { "name": "Cube rotation group", "value": "24 lattice-preserving rotations", "note": "store as u8 index; compose by 24x24 lookup table" },
+    { "name": "three.js", "value": "0.186.1 / r186, 2026-09-24, MIT", "note": "WebGPURenderer with WebGL2 fallback" },
+    { "name": "three.js 100k instance benchmark", "value": "~20 FPS for 100k x 6,056 tris (605 M tris/frame) on RTX 5070 Ti; 60 FPS cap at 1k/10k", "note": "Identical on WebGL/WebGPU/WebGL2: triangle-bound" },
+    { "name": "Official BatchedMesh LOD/BVH example", "value": "500,000 instances, 10 geometries, 5 LODs, one BatchedMesh", "note": "three-mesh-bvh 0.9.16 + batched-mesh-extensions 0.0.12" },
+    { "name": "Teschner hash primes", "value": "73856093, 19349663, 83492791; cost O(n*p*q)", "note": "cell size dominates performance" },
+    { "name": "loro-crdt", "value": "1.17.1, 2026-10-22, MIT; WASM 3.60 MB raw / 1.20 MB gz", "note": "MovableTree, MovableList, shallow snapshots, UndoManager" },
+    { "name": "@automerge/automerge", "value": "3.5.0, 2026-09-16, MIT; WASM 3.64 MB raw / 1.14 MB gz", "note": "Automerge 3 = >10x memory reduction, same file format as 2" },
+    { "name": "yjs", "value": "13.6.33, 2026-09-23, MIT; 300 KB JS, no WASM", "note": "yrs 0.28.0 Rust port" },
+    { "name": "Rapier", "value": "rapier3d 0.36.1 (2026-10-10), JS 0.21.0 (2026-09-25), Apache-2.0; WASM 3.08 MB raw / 1.17 MB gz", "note": "cross-platform deterministic WASM; soft bodies since 0.36.0" },
+    { "name": "Bevy / wgpu", "value": "Bevy 0.20.0 (2026-10-08), wgpu 30.0.1 (2026-08-22), bevy_ecs 0.20.0, hecs 0.11.2", "note": "many_cubes stress test defaults to 1.6 M cubes" },
+    { "name": "3MF", "value": "Core 1.4.0 (2025-02-06); Materials 1.2.1, Production 1.1.2 (2025-02-27); ISO/IEC DIS 25422", "note": "lib3mf 2.5.0 (2026-02-24, BSD-2-Clause) with WASM bindings" },
+    { "name": "LDraw library licence", "value": "CC BY 4.0 default since 2023-01; CC0 option since 2024-06-06 agreement", "note": "LDCad SNAP metas unofficial; shadow library all rights reserved" },
+    { "name": "LPub3D", "value": "2.4.9 (2025-01-09), r86 continuous 2025-03-19", "note": "reference for STEP/ROTSTEP/BUFEXCHG semantics" },
+    { "name": "Stability literature", "value": "Legolization 2015 (72 citations); StableLego 2024 dataset >50k layouts, code public; Agrawala 2003 instructions paper (330 citations)", "note": "" }
+  ],
+  "options_compared": [
+    {
+      "option": "Data model: flat SoA instance tables (ECS-lite) referencing an immutable part catalog",
+      "pros": "Cache-friendly iteration over 100k instances; trivially serialisable; maps 1:1 onto BatchedMesh per-instance buffers and CRDT maps; part data (LODs, occupancy mask, connectors) baked once and shared",
+      "cons": "Hierarchy (submodels, groups) must be modelled as ids/tags rather than parent pointers; needs a generation-indexed handle scheme to avoid dangling ids",
+      "fit_for_openbrick": "Recommended. Keep submodels as an MPD-style DAG of references with their own instance tables; groups and selections are tags. In Rust use hecs 0.11 or bevy_ecs 0.20; in TypeScript plain typed arrays.",
+      "license": "n/a",
+      "status_2026": "Standard practice; Bevy 0.20 per-column change ticks show the direction ECS runtimes are taking"
+    },
+    {
+      "option": "Data model: full scene graph (three.js Object3D per brick)",
+      "pros": "Zero engineering, works with every three.js helper, trivial picking and transforms",
+      "cons": "100k Object3D nodes means 100k matrix updates and draw calls, GC pressure, and a Revit-to-BatchedMesh thread reports ~20 FPS vs 60 when batching is done wrong; cannot express lattice semantics",
+      "fit_for_openbrick": "Reject for the model; acceptable only for UI gizmos and the dragged ghost part",
+      "license": "MIT (three.js)",
+      "status_2026": "three.js itself pushes BatchedMesh/InstancedMesh for this scale"
+    },
+    {
+      "option": "Spatial index: lattice spatial hash (Teschner) + connector hash, BVH only for picking/culling",
+      "pros": "O(1) expected insert/remove/query per cell; no global bounds; snap queries cost O(connectors on dragged part); integer keys are deterministic and CRDT-friendly; the BVH side is already solved by three-mesh-bvh/parry",
+      "cons": "Off-lattice (hinged) parts need AABB-based multi-cell insertion; hash collisions degrade with bad cell size (use the brick cell 20x8x20 LDU)",
+      "fit_for_openbrick": "Recommended. Keep two structures: lattice hash for logic, BVH for rendering/picking.",
+      "license": "n/a (algorithm)",
+      "status_2026": "Teschner 2003 still the standard reference"
+    },
+    {
+      "option": "Spatial index: BVH / octree only (three-mesh-bvh, parry Qbvh)",
+      "pros": "One structure for everything; handles arbitrary float transforms and custom parts",
+      "cons": "O(log n) per query with refit cost on every move; no notion of stud/tube semantics; batched-mesh-extensions README says its BVH is best for mostly static instances",
+      "fit_for_openbrick": "Use as the rendering/picking index only",
+      "license": "MIT",
+      "status_2026": "three-mesh-bvh 0.9.16, parry3d 0.31.1"
+    },
+    {
+      "option": "Collision: lattice occupancy bitmasks (solid/stud/cavity classes) as broadphase + mesh/convex narrowphase",
+      "pros": "Bit-AND of pre-baked masks is O(cells) and exact for lattice-aligned bricks; decoupled from render LOD (the BrickLink Studio failure mode); studs-in-tubes handled by class rules",
+      "cons": "Needs a one-off bake per part (including custom parts from the designer); rotated/hinged parts fall back to parry/three-mesh-bvh triangle tests",
+      "fit_for_openbrick": "Recommended",
+      "license": "n/a",
+      "status_2026": "No off-the-shelf library; ~1-2 weeks of engineering"
+    },
+    {
+      "option": "Rendering: three.js BatchedMesh + batched-mesh-extensions (WebGPURenderer, WebGL2 fallback)",
+      "pros": "One draw per material class with per-instance colour and geometry id; LOD and BVH culling exist; 500k-instance official example; runs on web, Electron/Tauri desktop and mobile browsers",
+      "cons": "No negative-scale instances; triangle-bound at 100k high-detail parts (~20 FPS at 605 M tris); BatchedMesh draw-count behaviour differs per backend; edge lines need a separate pass",
+      "fit_for_openbrick": "Recommended first renderer; budget 100k instances at <= 300 tris average with stud-less far LOD",
+      "license": "MIT",
+      "status_2026": "r186; WebGPURenderer production-ready with automatic WebGL2 fallback"
+    },
+    {
+      "option": "Rendering: Rust + wgpu 30 / Bevy 0.20",
+      "pros": "Indirect drawing and GPU culling at 1.6 M cubes in the stress test; mesh shaders native; true native desktop and iOS/Android builds; one language for engine and tools",
+      "cons": "Editor UI (Feathers) is months old; web builds lack mesh shaders; WASM + wgpu on mobile browsers is less mature than three.js; smaller contributor pool for a community project",
+      "fit_for_openbrick": "Contrarian but credible for year 2-3; or hybrid: Rust core (data model, snapping, collision, file I/O) compiled to WASM behind three.js",
+      "license": "MIT/Apache-2.0 dual (Bevy, wgpu)",
+      "status_2026": "Bevy 0.20 (Oct 2026) explicitly targets editor tooling"
+    },
+    {
+      "option": "Collaboration: Yjs",
+      "pros": "Smallest payload (300 KB JS, ~25 KB gz claimed), largest ecosystem of providers (y-websocket, y-webrtc, y-indexeddb), proven UndoManager with trackedOrigins; yrs Rust port exists",
+      "cons": "No movable tree/list primitives (hierarchy moves need delete+insert), JS-first API, document GC semantics need care for 100k-entry maps",
+      "fit_for_openbrick": "Best if collaboration ships in the TypeScript client first and bundle size matters on mobile",
+      "license": "MIT",
+      "status_2026": "13.6.33 (2026-09-23)"
+    },
+    {
+      "option": "Collaboration: Loro",
+      "pros": "MovableTree (submodel hierarchy) and MovableList (step order) are native; shallow snapshots and fork_at give version history for free; Rust-native so it fits a Rust core; UndoManager",
+      "cons": "1.2 MB gzipped WASM; younger ecosystem of sync providers; API still changing (1.17.0 had breaking Rust changes)",
+      "fit_for_openbrick": "Best if a Rust core is chosen; benchmark a 100k-instance map before committing",
+      "license": "MIT",
+      "status_2026": "1.17.1 (2026-10-22)"
+    },
+    {
+      "option": "Collaboration: Automerge 3",
+      "pros": "Strong Rust+JS story, JSON-like documents, 10x memory improvement in 3.0, stable file format, automerge-repo sync",
+      "cons": "1.14 MB gzipped WASM; no movable tree; historically slower on large sequences",
+      "fit_for_openbrick": "Viable alternative to Loro; fewer brick-specific advantages",
+      "license": "MIT",
+      "status_2026": "3.5.0 (2026-09-16)"
+    },
+    {
+      "option": "3MF export: one object per part (components/build items) vs merged single mesh",
+      "pros": "Per-part: each mesh stays manifold, colours survive via materials/pid, multi-material printers get per-part colour, editable in slicers; Merged: a single solid for one-material printing and no overlap warnings",
+      "cons": "Per-part: studs sit inside tubes so build items overlap, which the spec says producers SHOULD NOT emit (consumers must union); Merged: needs a robust boolean union (e.g. Manifold) and loses per-part colour",
+      "fit_for_openbrick": "Default to per-part objects grouped under one component object; offer a fuse option that unions same-colour groups",
+      "license": "lib3mf BSD-2-Clause or hand-written zip+XML",
+      "status_2026": "Core 1.4.0; lib3mf 2.5.0 WASM bindings"
+    },
+    {
+      "option": "Play-mode physics: Rapier (one rigid body per connected component, compound box colliders, revolute joints for hinges)",
+      "pros": "Deterministic WASM, Apache-2.0, mature JS and Rust bindings, @react-three/rapier 2.2.0 if React is used; compound-of-boxes colliders are cheap",
+      "cons": "1.17 MB gzipped; one body per brick at 100k is infeasible; snapshot format breaks across versions (0.36.0)",
+      "fit_for_openbrick": "Recommended for play mode; group bricks into rigid components and break edges on impulse",
+      "license": "Apache-2.0",
+      "status_2026": "rapier3d 0.36.1 / JS 0.21.0"
+    }
+  ],
+  "recommendations": [
+    "Canonical units and pose: store positions as integer LDU (i32) in a right-handed, -Y-up LDraw frame internally (convert to Y-up glTF/3MF only at export), rotation as a u8 index into the 24-element cube rotation group with a 24x24 composition table, and a tagged 'free pose' variant (f64 TRS) for hinged/off-lattice parts. All snapping produces lattice poses; only hinge/bar/clip manipulation produces free poses.",
+    "Instance store: struct-of-arrays tables keyed by generation-indexed handles plus a stable ULID per instance for files and CRDTs: partId (u32 into catalog), pose, colourCode (u16 LDraw code), flags (hidden/locked/selected), stepIndex (u16), submodelId. Submodels are separate instance tables referenced like MPD subfiles; groups are tag sets. In Rust use hecs 0.11 or bevy_ecs 0.20; in TypeScript use typed arrays and a free-list.",
+    "Part catalog: immutable, content-addressed (hash of geometry + metadata). Bake per part: AABB in LDU, render geometry at 3 LODs (full with stud logos, studs without logos, stud-less hull) plus an optional imposter, a lattice occupancy mask at 4 LDU resolution with three classes (solid, stud, cavity) stored as bitsets, a connector list in the LDCad SNAP vocabulary (type, gender, pos, dir, shape R/A/S, length, slide/rotate DOF, group), and a collision proxy (box set or convex decomposition). Derive connectors from LDraw primitive references for the official library and ask the part designer to tag connectors on custom parts; do not redistribute LDCad's shadow library.",
+    "Spatial index: a lattice spatial hash on 20x8x20 LDU brick cells using the Teschner hash with a prime table size (or a packed 64-bit key in an open-addressing map); insert each instance into the cells its AABB covers (O(cells)); plus a connector hash keyed on (quantised position, direction octant, connector type). A snap query enumerates the dragged part's connectors, looks each up, scores candidate pairings by count and distance, applies the pose, then runs the occupancy-mask collision test; total cost O(connectors + overlapping cells), independent of model size.",
+    "Collision: broadphase and lattice narrowphase by bit-AND of occupancy masks with the class rule (solid vs solid = collision, stud vs cavity = allowed, stud vs solid = collision); fall back to parry3d / three-mesh-bvh triangle tests only for free-pose instances and custom parts. Never derive collision from the render LOD.",
+    "Connection graph: undirected multigraph edges (instA, connA, instB, connB, type, dof) in CSR plus per-instance small vectors; maintain union-find for component membership (near O(1) amortised) with full rebuild on deletion of an articulation vertex (BFS O(component)); run Tarjan articulation points O(V+E) incrementally per edit to flag parts hanging on one stud; expose a three-tier structural check: floating (not connected to ground/baseplate), weak (single connector or lever arm > N studs), and an opt-in force-balance LP based on StableLego/Legolization run in a worker thread on the affected subassembly, always with an explanation string per flag.",
+    "Undo/redo: command pattern with explicit inverse commands (Place, Remove, Move, Recolour, Regroup, Reorder step) and transaction coalescing during drags; persist the command log as a journal for autosave and crash recovery. Design every command to address instances by ULID, so the same commands can later be replayed into a CRDT.",
+    "Collaboration path: do not ship a CRDT in v1, but write a benchmark now that loads a 100k-instance document into Yjs, Loro and Automerge and measures load time, memory and update size, since the 1.1-1.2 MB gzipped WASM payloads of Loro/Automerge matter on mobile. Prefer Loro if the core is Rust (MovableTree for submodels, MovableList for steps) and Yjs if the core stays TypeScript; keep awareness/cursors out of the document.",
+    "Native format: 'model.json' validated by a published, semver-versioned JSON Schema (schemaVersion, units = LDU, instances, submodels, steps, colours by LDraw code plus a palette table, custom parts by content hash) inside a zip container that also holds custom part meshes (glTF) and a thumbnail; write migrations per version. Keep the LDraw .ldr/.mpd exporter lossless for lattice poses (type-1 lines with exact integer LDU and the 3x3 rotation matrix, 0 STEP, 0 ROTSTEP, 0 FILE) and import via an own type-1 parser that resolves part ids and colours from LDConfig.ldr, using three.js LDrawLoader or an own tessellator only to build catalog geometry.",
+    "Rendering (web first): one BatchedMesh per material class (opaque, transparent, chrome/pearl) with per-instance colour and geometry id, per-instance LOD and BVH culling from batched-mesh-extensions, screen-space normal/depth edge detection for outlines instead of per-edge line geometry, stud logos only at LOD0 within a few metres, and pre-baked mirrored geometry ids for mirrored placements. Target: 100k instances at 60 FPS on a mid-range laptop by keeping average rendered triangles per instance under ~300 after LOD.",
+    "Keep the engine renderer-agnostic: define the instance tables, catalog, hash, graph and commands as a library with no three.js types, so the same core can be compiled from Rust to WASM later or run under wgpu/Bevy natively for desktop/mobile without rewriting logic.",
+    "Input: desktop uses pointer ray to lattice plane with keyboard rotate/flip/nudge and a snap-tolerance ring; touch uses one-finger drag for the part, two-finger orbit/pinch, long-press to select, larger snap tolerance (half a stud) and always auto-aligns, because the strongest negative reviews of mobile brick apps are about non-aligning snaps and camera control.",
+    "Exports: glTF via EXT_mesh_gpu_instancing with one node per (part, colour) pair and a _COLOR custom attribute as a hint; 3MF per core 1.4.0 in millimetres with per-part manifold objects grouped under a component object by default and an explicit fuse (boolean union) option for one-material printing; emit part numbers via partnumber attributes for future sorting/BOM.",
+    "Build instructions: generate steps by topological sort of the connection graph constrained by physical support (a part is placed after at least one part it attaches to), grouped by y-layer and by subassemblies found via articulation points, capped at N parts per step, with camera selection that keeps all parts added in the step visible (render-id occlusion test), following Agrawala et al. 2003; serialise as LDraw 0 STEP/ROTSTEP so LPub3D 2.4.9 can consume the output.",
+    "Play mode: Rapier with one rigid body per connected component using compound box colliders (one box per brick cell run), revolute joints for hinge connections, prismatic joints for slide connections, and connection edges broken when contact impulse exceeds a per-connector clutch threshold; cap simulated bodies (e.g. 2,000) and freeze far components."
+  ],
+  "open_questions": [
+    "What is the rendered triangle budget per part? The LDraw library's stud-heavy geometry needs measurement (average triangles per official part at each LOD) before promising 100k instances at 60 FPS on mid-range hardware.",
+    "Can connector data be derived purely from LDraw primitive references for enough of the library (studs, tubes, pin holes, axle holes, bars, clips, hinges) or will a hand-authored connector set be needed for Technic and hinge parts? Is Roland Melkert open to licensing the LDCad shadow library?",
+    "Which core language: TypeScript everywhere, Rust core via WASM plus three.js, or Rust + Bevy? This research supports a renderer-agnostic core; the final decision belongs to the platform/toolchain topic.",
+    "CRDT at 100k entities: none of Yjs, Loro or Automerge publishes a benchmark for maps of 100k structured entries with frequent position updates; a prototype benchmark is required before committing.",
+    "Clutch/stability: how far to go beyond connectivity in v1? A force-balance LP per edit for 100k parts is not real-time; scope and UI for asynchronous warnings need a decision.",
+    "3MF overlap policy: confirm with OrcaSlicer/Bambu Studio/PrusaSlicer how overlapping per-part build items are unioned in practice, and whether per-part objects should be components of one object or separate build items for multi-colour printing.",
+    "Which stud diameter (4.8 vs 5.0 mm) and tube OD (6.31 vs 6.51 mm) to adopt as the canonical geometry for both the catalog and the print pipeline; this needs physical measurement of current bricks.",
+    "Should mirrored placements be supported in the assembler at all (they are legal in LDraw but not in physical building except for symmetric parts)?",
+    "Deterministic physics replay: Rapier guarantees cross-platform determinism in WASM but breaks snapshot compatibility across releases; does play mode need to be shareable/replayable?"
+  ],
+  "sources": [
+    "https://github.com/mrdoob/three.js/releases",
+    "https://threejs.org/docs/pages/BatchedMesh.html",
+    "https://threejs.org/docs/pages/LDrawLoader.html",
+    "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/jsm/loaders/LDrawLoader.js",
+    "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/webgl_batch_lod_bvh.html",
+    "https://threejs.org/examples/webgl_batch_lod_bvh.html",
+    "https://discourse.threejs.org/t/three-js-plant-instancing-benchmark-240-desktop-samples-csv-json-and-a-standalone-harness/95719",
+    "https://discourse.threejs.org/t/significant-performance-drop-and-high-cpu-usage-with-batchedmesh/67324",
+    "https://github.com/agargaro/batched-mesh-extensions/",
+    "https://threejs.org/docs/pages/GLTFExporter.html",
+    "https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Vendor/EXT_mesh_gpu_instancing/README.md",
+    "https://threejs.org/manual/en/webgpurenderer",
+    "https://ldraw.org/article/218",
+    "https://www.ldraw.org/article/47",
+    "https://www.ldraw.org/article/349",
+    "https://forums.ldraw.org/post-50570.html",
+    "https://forums.ldraw.org/post-49668.html",
+    "https://wiki.ldraw.org/wiki/Part_Snapping_Language_Extension",
+    "https://forums.ldraw.org/thread-29037.html",
+    "https://www.melkert.net/LDCad/tech/shadowLib",
+    "http://www.lugnet.com/~330/FAQ/Build/dimensions",
+    "https://brickfact.com/blog/guidebooks/lego-brick-dimensions",
+    "https://orionrobots.co.uk/pages/lego-specifications.html",
+    "https://matthias-research.github.io/pages/publications/tetraederCollision.pdf",
+    "https://arxiv.org/abs/2402.10711",
+    "https://github.com/intelligent-control-lab/StableLego",
+    "https://doi.org/10.1145/2816795.2818091",
+    "https://doi.org/10.1145/1201775.882352",
+    "https://github.com/trevorsandy/lpub3d/releases",
+    "https://forums.ldraw.org/post-28049.html",
+    "https://studiohelp.bricklink.com/hc/en-us/articles/5412820155927",
+    "https://www.eurobricks.com/forum/forums/topic/167604-new-stability-check-in-studio-20",
+    "https://en.wikipedia.org/wiki/BrickLink_Studio",
+    "https://github.com/3MFConsortium/spec_core",
+    "https://3mf.io/specification/",
+    "https://github.com/3MFConsortium/lib3mf/releases",
+    "https://github.com/3MFConsortium/lib3mf",
+    "https://extensions.blender.org/add-ons/threemf-io/",
+    "https://github.com/loro-dev/loro",
+    "https://github.com/loro-dev/loro/releases",
+    "https://loro.dev/docs/performance",
+    "https://www.pkgpulse.com/guides/yjs-vs-automerge-vs-loro-crdt-libraries-2026",
+    "https://automerge.org/blog/automerge-3/",
+    "https://automerge.org/docs/migrating-from-automerge-2-to-automerge-3",
+    "https://docs.yjs.dev/api/undo-manager",
+    "https://raw.githubusercontent.com/dimforge/rapier/master/CHANGELOG.md",
+    "https://rapier.rs/docs/user_guides/javascript/determinism",
+    "https://rapier.rs/docs/user_guides/javascript/getting_started_js",
+    "https://bevy.org/news/bevy-0-20/",
+    "https://bevy.org/examples/stress-tests/many-cubes/",
+    "https://github.com/gfx-rs/wgpu/releases",
+    "https://github.com/leozide/leocad",
+    "https://dyna-mike.itch.io/snap-brick-builder",
+    "https://www.commonsensemedia.org/app-reviews/masonry-3d-brick-creativity",
+    "https://www.fuelsandlubes.com/businesswire/kible-omnidirectional-snapping-building-block-system-launches-on-kickstarter/",
+    "npm registry (npm view, 2026-10-27): three 0.186.1, loro-crdt 1.17.1, @automerge/automerge 3.5.0, yjs 13.6.33, @dimforge/rapier3d 0.21.0, three-mesh-bvh 0.9.16, @three.ez/batched-mesh-extensions 0.0.12, @react-three/rapier 2.2.0",
+    "crates.io API (2026-10-27): rapier3d 0.36.1, parry3d 0.31.1, wgpu 30.0.1, bevy 0.20.0, bevy_ecs 0.20.0, hecs 0.11.2, loro 1.17.1, automerge 0.12.0, yrs 0.28.0",
+    "Local measurement (npm pack + gzip, 2026-10-27) of WASM payload sizes for loro-crdt, @automerge/automerge, @dimforge/rapier3d and yjs"
+  ]
+}

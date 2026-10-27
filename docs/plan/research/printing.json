@@ -1,0 +1,535 @@
+{
+  "summary": "Printing brick-compatible parts well is a tolerance problem first and a material problem second. Injection-moulded bricks hold roughly ±0.01 mm (mould precision 0.005 mm per the Strathclyde DESIGN 2024 paper); desktop FDM lands at ±0.1-0.2 mm untuned, which is the entire usable clutch window. The community consensus (printablebricks/ppBricks, PELA Blocks, Calibrix, Meshy's 2026 guide, the Brickset test) converges on the same recipe: nominal stud Ø4.80 mm and tube/anti-stud ID 4.80 mm, but FDM must print studs at about 4.75-4.85 mm and anti-studs at 4.90-5.00 mm, i.e. a per-printer offset of roughly -0.10 to -0.18 mm on outer contours and +0.05 to +0.10 mm on holes, walls of 0.8 mm or 1.2 mm (multiples of a 0.4 mm line), studs-up orientation with no supports, 0.16-0.2 mm layers, calibrated flow, and elephant-foot compensation (~0.2 mm for a 0.4 nozzle). The only peer-reviewed data point (Air & Wodehouse, Strathclyde, 2024) confirms 1.1 mm walls print hollow with a 0.4 nozzle, 0.8 mm walls interlock, a 2 mm fillet at the wall/roof joint boosted bridge anchoring 335 %, and the separation force of two genuine 2x4 bricks is only ~2.5-3 N, so small dimensional drift makes or breaks clutch. Materials matter less than geometry: PETG and ABS/ASA give the most brick-like, durable clutch; PLA is easiest and fine for calibration but creeps (users report axle holes losing grip after a year); standard resin is too brittle and needs tough/ABS-like formulations; SLS/MJF nylon is accurate (±0.3 mm, 0.7-0.8 mm walls) but rough and powder-trapping.\n\nStrategic implication for openBrick: own the compensation in geometry, not in the slicer. Slicer knobs differ (Orca/Bambu have separate X-Y hole vs contour compensation plus 'Precise wall'; PrusaSlicer has only a single XY size compensation that also hits holes and a planned 3.0 rewrite), users share files across slicers, and bricks need different offsets for studs (outer), tubes (inner cylinder), horizontal Technic holes (which print undersized, ~-0.2 mm, and oval) and the first layer. The right architecture is a parametric brick kernel whose every feature takes an offset vector from a per-printer/material 'fit profile', plus a printable calibration sweep part (coarse 0.05 mm steps across 4.70-4.95 mm stud OD and 4.80-5.05 mm tube ID, then a 0.02 mm fine pass; 0.01 mm steps as Calibrix uses are below FDM repeatability) whose chosen cells write that profile. This mirrors PELA's top_tweak/bottom_tweak/axle_hole_tweak and ppBricks' stud/tube/wall/technic offsets, both of which are proven but largely unmaintained GPL/CC projects openBrick can learn from without depending on.\n\nOn file formats: 3MF is now ISO/IEC 25422:2025 and the clear interchange target. Core is at v1.4.0 (Feb 2025; 1.3.0 added triangle sets and 'recommended extensions', 1.4.0 removed the short-lived mirror mechanism), Materials & Properties v1.2.1 gives per-triangle colour via colorgroup/basematerials with p1/p2/p3 indices, Production v1.2 adds mandatory UUIDs and a 'path' attribute that splits objects into separate model files, and a Toolpath extension v1.0.0 appeared in Sept 2026. Bambu Studio has used the Production extension as its default since 1.8.3, but its Metadata/ folder (model_settings.config XML, project_settings.config JSON, plate_N.json, painting data) is proprietary and reverse-engineered only; Orca inherits it with drift. lib3mf 2.5.0 (Feb 2026, BSD-2-Clause) now ships WASM and Java bindings alongside C/C++/C#/Python/Go/Node/Pascal, but there is still no official Rust binding; the Rust options are lib3mf-core 0.4.0 (BSD-2, claims Core 1.4.0 and most extensions, single maintainer) and threemf2 0.4.1 (MIT/Apache-2.0). For TypeScript, three-mf 1.1.2 (MIT) parses and builds 3MF, and three.js' 3MFLoader reads core, components, basematerials, colorgroup and texture2d but has no exporter. For validation, Manifold (Apache-2.0; npm manifold-3d 3.5.4 with WASM+types, PyPI manifold3d 3.5.4) gives guaranteed-manifold booleans and is now OpenSCAD's default engine in nightlies (no stable OpenSCAD since 2021.01); trimesh (MIT) wraps it in Python; MeshLib is source-available/commercial; admesh (GPL-2) and PyMeshLab (GPL-3) are copyleft. Legally, the brick patents expired in 1978, the ECJ ruled in 2010 the brick shape cannot be a trademark, but the LEGO name/logo and the minifigure shape (upheld 2015) remain protected, which validates the README disclaimer and argues for never generating minifigure-shaped parts.",
+  "findings": [
+    {
+      "claim": "Nominal brick geometry: stud pitch 7.986 ±0.002 mm measured (8.0 mm nominal), brick height 9.582 mm (9.6 nominal), plate height 3.194 mm (3.2 nominal), stud height ~1.7 mm, wall ~1.5 mm, tube outer Ø ~6.31 mm, 1 LDU = 0.3993 mm.",
+      "evidence": "LUGNET dimensions FAQ compiles Robert Munafo's measurements (7.986 ±0.002 mm pitch at 25 °C, LDU 0.3993 ±0.0001 mm) and Jef Poskanzer's approximate values (stud height 1.7, wall 1.5, tube OD 6.31, tube wall 0.657).",
+      "confidence": "verified",
+      "source_url": "http://www.lugnet.com/~330/FAQ/Build/dimensions"
+    },
+    {
+      "claim": "CMM measurement (1.7 µm accuracy) of a genuine 2x4 brick gives stud Ø4.88-4.90 mm, stud height 1.75 mm, tube OD 6.48 mm, wall ~1.10 mm, overall 31.80 x 15.80 x 9.60 mm; LEGO mould precision is 0.005 mm with 18 bricks per million out of spec.",
+      "evidence": "Air & Wodehouse, 'Play well, print well', Proceedings of the Design Society DESIGN 2024, Fig. 3 and section 1.2 (read from the PDF).",
+      "confidence": "verified",
+      "source_url": "https://strathprints.strath.ac.uk/89604/7/Air-etal-PDS-2024-using-LEGO-bricks-as-an-intuitive-benchmarking-tool.pdf"
+    },
+    {
+      "claim": "With a 0.4 mm nozzle, a 1.10 mm brick wall printed hollow and failed to interlock; moving to 0.8 mm walls (a multiple of 0.4) restored interlock, 1.2 mm risked inner-rib accuracy; adding a 2 mm fillet at the wall/roof joint raised the bridge anchor area by 335 % and removed roof bridging defects; studs-up orientation (Orientation 2) needs no supports and printed in 14 min.",
+      "evidence": "Same paper, sections 3.1.1-3.1.3 and Tables 2-3 (defaults: scale 1:1, studs up, no supports on FDM, 0.2 mm layer, 0.8 mm wall, 90 % infill, first layer 5 mm/s, 0.4 mm nozzle).",
+      "confidence": "verified",
+      "source_url": "https://strathprints.strath.ac.uk/89604/7/Air-etal-PDS-2024-using-LEGO-bricks-as-an-intuitive-benchmarking-tool.pdf"
+    },
+    {
+      "claim": "Separation force of two genuine 2x4 bricks is only about 2.5-3 N (each brick 2.5 g), so clutch is extremely sensitive to tenths of a millimetre.",
+      "evidence": "Paper section 3 cites Kollsker & Malaguti (2021) at 2.5 N and uses ~3 N as adequate interlock.",
+      "confidence": "verified",
+      "source_url": "https://strathprints.strath.ac.uk/89604/7/Air-etal-PDS-2024-using-LEGO-bricks-as-an-intuitive-benchmarking-tool.pdf"
+    },
+    {
+      "claim": "The paper's benchmark brick (LB049) interlocked successfully on MakerBot Replicator 2X/+, Stratasys F900/F170 (ABS-M30) and material-jetting Objet Eden350/J850 (VeroBlack Plus, Digital ABS Plus); even an Agilus30 Shore-30A elastomer brick interlocked, though elastomers were excluded for stretching. ABS on FDM needed 120 °C bed and first-layer fans off to avoid warping.",
+      "evidence": "Table 5 and section 3.3 of the paper; STL LB049 downloadable from the Strathclyde data repository.",
+      "confidence": "verified",
+      "source_url": "https://pureportal.strath.ac.uk/en/datasets/benchmark-model-for-3d-printer-dimensional-accuracy/"
+    },
+    {
+      "claim": "Printing an unmodified high-precision 2x4 model on a consumer FDM printer gives bricks that connect but with clutch 'nowhere near' real bricks; 0.2 mm nozzle/0.1 mm layers took ~30 min per brick, 0.4 mm nozzle/0.2 mm layers ~9 min; studs-up needs no supports, but plates/tiles would.",
+      "evidence": "Brickset test by the site's author using Jonathan Twynham's STEP files; no dimensional compensation was applied, which the author identifies as the missing step.",
+      "confidence": "verified",
+      "source_url": "https://brickset.com/article/128767/can-you-make-compatible-bricks-with-consumer-3d-printers"
+    },
+    {
+      "claim": "Community FDM targets: stud OD 4.75-4.85 mm (nominal 4.80), anti-stud/tube ID 4.90-5.00 mm (nominal 4.80), pitch 7.98-8.02, wall 1.20-1.60; contour compensation -0.10 to -0.18 mm depending on printer (Bambu X1C/P1S -0.10..-0.15, A1 -0.10..-0.12, Bowden Ender -0.12..-0.18), hole compensation +0.05..+0.10, iterate in 0.02 mm steps; a 4.95 mm stud will not connect and a 4.65 mm stud falls out.",
+      "evidence": "Meshy blog guide dated 2026-06-29. It is a vendor blog, not a measured study, but its numbers match PrintPal (undersize studs/tubes by 0.1-0.2 mm) and the Calibrix/Printables calibration tools.",
+      "confidence": "likely",
+      "source_url": "https://www.meshy.ai/blog/lego-compatible-3d-print-tolerances"
+    },
+    {
+      "claim": "Horizontal Technic pin/axle holes print tight: LEGO's own drawings give pin holes as Ø4.9 while LDraw's 12 LDU is 4.8 mm, and printed horizontal holes come out undersized and oval (a 4 mm hole can print at 3.6 mm). Generic FDM guidance is a horizontal-expansion start of about -0.2 mm (half the nozzle) and a test sweep of hole sizes.",
+      "evidence": "LDraw forum thread on printing elements; FIRST Robotics tolerancing guide (half-nozzle rule, 4 mm->3.6 mm example, 2.8-3.2 mm sweep for M3).",
+      "confidence": "verified",
+      "source_url": "https://ftc-docs.firstinspires.org/manufacturing/3d_printing/designing_and_slicing/tolerancing/tolerancing.html"
+    },
+    {
+      "claim": "Process limits (Hubs DFM): FDM min wall 0.8 mm, min feature 2.0 mm, accuracy ±0.1-0.2 mm; SLA min wall 0.5 mm supported / 1.0 unsupported, min feature 0.2 mm; SLS 0.8/1.0 mm, ±0.3 mm; MJF 0.7/1.0 mm, ±0.3 mm; holes under 1-2 mm are problematic in all processes; SLS/MJF hollow parts need powder escape holes.",
+      "evidence": "Hubs knowledge base DFM article, fetched directly.",
+      "confidence": "verified",
+      "source_url": "https://www.hubs.com/knowledge-base/dfm-tips-for-3d-printed-parts-with-thin-walls/"
+    },
+    {
+      "claim": "Material shrinkage ranges: PLA ~0.2-0.3 % (some sources up to 3 % by brand), PETG ~0.1-0.6 %, ABS ~0.5-0.8 % (sources quote up to 8-11 % worst case), ASA ~0.4-0.6 %; ABS/ASA need 240-250 °C, 100 °C bed and an enclosure; offsets do not transfer between materials.",
+      "evidence": "Meshy table plus 3DSourced shrinkage guide; figures vary widely across sources, so treat as ranges.",
+      "confidence": "likely",
+      "source_url": "https://www.3dsourced.com/guides/3d-print-shrinkage-pla-abs-petg/"
+    },
+    {
+      "claim": "PLA loses clutch over time: a Eurobricks user reported PLA Technic axle holes losing grip after about a year of being connected, while ABS held; PETG is repeatedly cited as the FDM compromise (good clutch, easier than ABS); standard resin is too brittle and tough/ABS-like resin is required.",
+      "evidence": "Eurobricks Technic printing thread; Creality forum; xTool guide on resin choice.",
+      "confidence": "likely",
+      "source_url": "https://www.eurobricks.com/forum/forums/topic/181777-success-3d-printing-technic-parts/page/2"
+    },
+    {
+      "claim": "PELA Blocks (OpenSCAD, CC BY-SA 4.0) calibrates by printing a calibration beam with labelled top_tweak/bottom_tweak values, test-fitting against commercial bricks, writing the chosen values into material.scad (also axle_hole_tweak, flexible_material, large_nozzle, knob_slice_count), and recalibrating on any material/nozzle/slicer change; it recommends PET/co-polymer/engineering filaments and discourages PLA and carbon-filled materials; it includes flexure ridges in sockets and advises lowering bed heat for PLA to limit elephant foot.",
+      "evidence": "PELA-blocks README and material.scad on GitHub; repo shows little recent activity (3 visible commits, 1 open issue).",
+      "confidence": "verified",
+      "source_url": "https://github.com/paulirotta/PELA-blocks"
+    },
+    {
+      "claim": "Perfect Printable Bricks (printablebricks.com / ppBricks) is a GPL-3.0 OpenSCAD + Node.js + three.js web generator (17 stars, 5 open issues) exposing modifiers for stud outer offset, stud height, tube outer and inner offsets, wall thickness offset and Technic-specific offsets, with a companion Printables calibration model; printablebricks.com returned HTTP 503 during this research.",
+      "evidence": "GitHub repo metadata; Printables 'Custom Bricks Calibration' description of the modifiers; fetch of printablebricks.com failed with 503 on 2026-10-27.",
+      "confidence": "verified",
+      "source_url": "https://github.com/FWeynschenk/ppBricks"
+    },
+    {
+      "claim": "Calibrix (MakerWorld/Printables) publishes stud and anti-stud calibration tools in 0.01 mm increments (anti-stud tool based on a 2.4 mm stud radius) with two identical rows for repeatability, feeding a parametric 'Calibrix Core' generator; other Printables tests use coarser 4.9/5.0/5.1 mm stud variants or XY-only scaling.",
+      "evidence": "Search snippets of the Calibrix model pages (pages themselves blocked fetch with 403).",
+      "confidence": "likely",
+      "source_url": "https://www.printables.com/model/1103820-calibration-plate-perfect-fit-printed-brick-stud-l"
+    },
+    {
+      "claim": "OrcaSlicer precision settings: X-Y hole compensation and X-Y contour compensation (independent, default 0), Elephant foot compensation (distance + layer count, with a 50-100 % density option, not applied with a raft), Precise wall (removes outer/inner wall overlap to improve dimensional accuracy), Precise Z height, polyholes with twist and a max edge count of 50; the Orca Tolerance Test has hexagonal holes at 0.0/0.05/0.1/0.2/0.3/0.4 mm; community rule: compensation = (nominal - measured)/2.",
+      "evidence": "OrcaSlicer wiki precision and tolerance pages; MakerWorld X-Y compensation tool.",
+      "confidence": "verified",
+      "source_url": "https://orcaslicer.com/wiki/print_settings/quality/quality_settings_precision.html"
+    },
+    {
+      "claim": "PrusaSlicer exposes Elephant foot compensation (about 0.2 mm recommended for a 0.4 nozzle, enabled in official profiles, adaptive thin-feature handling since 2.2) and a single XY size compensation in Print Settings > Advanced; there is no separate hole compensation, the XY value also affects holes, and filament shrinkage is a separate percentage under Filament > Advanced.",
+      "evidence": "Prusa help article on elephant foot; Prusa forum threads on XY compensation (2021 and 2025).",
+      "confidence": "likely",
+      "source_url": "https://help.prusa3d.com/article/elephant-foot-compensation_114487"
+    },
+    {
+      "claim": "Current slicer versions (release pages read 2026-10-27, years inferred): OrcaSlicer 2.4.2 stable (07 Jul) with 2.5.0 alpha (16 Oct, adds colour mixing and IDEX multi-part); PrusaSlicer 2.9.6 stable (25 Jun) with 3.0.0-alpha12 (21 Sep; 3MF import now geometry-only into open projects, bed data no longer saved in 3MF); Bambu Studio 2.8.2.61 stable (21 Aug) with 2.8.4 beta (22 Sep; shrinkage compensation is not applied by default on painted plates; beta 3MFs cannot be uploaded to MakerWorld).",
+      "evidence": "GitHub releases pages of the three projects.",
+      "confidence": "verified",
+      "source_url": "https://github.com/SoftFever/OrcaSlicer/releases"
+    },
+    {
+      "claim": "3MF is ISO/IEC 25422:2025 (published June 2025, Edition 1, covering Core plus materials, production, beam lattice, slice, secure content and boolean extensions). 3mf.io lists Core v1.4.0 (02/27/2025), Materials & Properties v1.2.1, Production v1.1.2 (spec text says v1.2), Beam Lattice v1.2.0, Boolean Operations v1.1.0/1.1.1 (04/03/2025), Secure Content v1.0.2, Volumetric v0.8.0 and a new Toolpath Extension v1.0.0 dated 09/17/2026. Spec repos are BSD-2-Clause.",
+      "evidence": "3mf.io specification table; VDE listing of ISO/IEC 25422:2025; spec_core and spec_production GitHub repos.",
+      "confidence": "verified",
+      "source_url": "https://3mf.io/specification/"
+    },
+    {
+      "claim": "Core 1.3.0 ('Triangle Sets and Mirroring', 07 Oct) added trianglesets, mirrormesh and a recommendedextensions list and clarified negative-determinant transforms, zip64 and thumbnails; Core 1.4.0 (11 Feb) removed the obsolete mirror mechanism pending a different approach, clarified shapes/assemblies/components and naming conventions, and added a change-history section.",
+      "evidence": "spec_core GitHub releases page.",
+      "confidence": "verified",
+      "source_url": "https://github.com/3MFConsortium/spec_core/releases"
+    },
+    {
+      "claim": "Materials & Properties v1.2.1 assigns colour per triangle via pid (resource group) and p1/p2/p3 (per-vertex indices) over basematerials (displaycolor), colorgroup (sRGB, opaque), texture2dgroup, compositematerials and multiproperties; display properties (pbspecular, pbmetallic, translucent) must not form gradients and are ignored by physical printing.",
+      "evidence": "Materials extension markdown on GitHub.",
+      "confidence": "verified",
+      "source_url": "https://github.com/3MFConsortium/spec_materials/blob/master/3MF%20Materials%20Extension.md"
+    },
+    {
+      "claim": "Production v1.2 makes RFC 4122 UUIDs mandatory on build, item, object and component, adds an optional 'path' attribute on item/component pointing to another model file in the package (one level deep only, root file only, builds in child files ignored), and requires packages that use external references to mark the extension as required.",
+      "evidence": "Production extension markdown on GitHub.",
+      "confidence": "verified",
+      "source_url": "https://github.com/3MFConsortium/spec_production/blob/master/3MF%20Production%20Extension.md"
+    },
+    {
+      "claim": "Bambu Studio has saved projects using the 3MF Production Extension by default since v1.8.3 (readable by 3MF Consortium code and Microsoft 3D Viewer), but its project format adds an undocumented Metadata/ folder: model_settings.config (XML: objects, plates, plater_name, model_instance), project_settings.config (JSON, all print settings as strings, different_settings_to_system must list overridden keys or they are ignored), filament_settings_N.config, plate_N.json, slice_info.config, thumbnails; objects with type='other' are negative volumes; plates sit on a ~303 mm grid in absolute coordinates; OrcaSlicer's keys are close but not guaranteed identical.",
+      "evidence": "Bambu Lab wiki 3MF-compatibility page (snippet) and a reverse-engineering gist; Bambu's own page returned 402 to direct fetch.",
+      "confidence": "likely",
+      "source_url": "https://gist.github.com/queso/b5a33103e13b0d2b35e5fbdc2101bf8f"
+    },
+    {
+      "claim": "lib3mf 2.5.0 (24 Feb 2026, BSD-2-Clause) added Java 8/9 and WebAssembly bindings (lib3mf-wasm download), Conan and improved vcpkg support, 'surface' object type and updated triangle-set/volumetric/implicit extension info; documented bindings are C++, C, Python, Pascal, C#, Go and Node.js on Windows/macOS/Linux; Python wheels ship on PyPI/Arch (2.5.0); there is no official Rust binding.",
+      "evidence": "lib3mf GitHub releases, readthedocs index, Arch python-lib3mf package page.",
+      "confidence": "verified",
+      "source_url": "https://github.com/3MFConsortium/lib3mf/releases"
+    },
+    {
+      "claim": "Rust 3MF options: threemf 0.7.0 (0BSD, Jan 2025, write-focused, basic); threemf2 0.4.1 (MIT OR Apache-2.0, updated 2026-08-17, 1,046 downloads, read+write, API unstable); lib3mf-core 0.4.0 (BSD-2-Clause, 15 Sep 2026, claims Core 1.4.0 plus Materials, Production, Beam Lattice, Boolean, Displacement, Secure Content, Slice and Volumetric, parser + writer, single maintainer sscargal, pre-1.0); lib3mf crate 0.1.6 (pure Rust, self-described as mostly written by Copilot agents).",
+      "evidence": "crates.io API, docs.rs and lib.rs pages.",
+      "confidence": "verified",
+      "source_url": "https://docs.rs/lib3mf-core"
+    },
+    {
+      "claim": "TypeScript/JS 3MF options: three-mf 1.1.2 (MIT, parse and build 3MF, deps jszip/fast-xml-parser/uuid, single maintainer); three-3mf-exporter (MIT, Bambu-oriented exportTo3MF, ~54 weekly downloads, low health score); three.js' own 3MFLoader reads core meshes, components/build items, basematerials, colorgroup, texture2d, sub-model files and basic metadata, with Materials extension 'only partially supported', and three.js ships no 3MF exporter.",
+      "evidence": "npm registry entries and three.js source.",
+      "confidence": "verified",
+      "source_url": "https://registry.npmjs.org/three-mf/latest"
+    },
+    {
+      "claim": "Manifold (Apache-2.0) guarantees manifold output from boolean operations, has a Merge repair for slightly non-manifold input, ships as npm manifold-3d 3.5.4 (WASM + TypeScript types), PyPI manifold3d 3.5.4 (Python >=3.9), C FFI, Java, and community Rust ports; it is used by OpenSCAD, Blender, Godot, trimesh and PyVista, and its README recommends 3MF over STL and glTF with EXT_mesh_manifold.",
+      "evidence": "Manifold GitHub README, npm and PyPI JSON metadata.",
+      "confidence": "verified",
+      "source_url": "https://github.com/elalish/manifold"
+    },
+    {
+      "claim": "Other validation tools: trimesh (MIT; is_watertight, winding/normal/hole repair, booleans via manifold3d, 3MF import via lxml); MeshLib 3.1.x (source-available, free only for non-commercial use, commercial licence required; C++, C, C#, Python, JS/WASM, Rust, Java; self-intersection repair, booleans, offsets); admesh (GPL-2.0, STL-only normals/degenerate/hole repair, maintenance mode); PyMeshLab/MeshLab (GPL-3.0).",
+      "evidence": "Respective GitHub READMEs.",
+      "confidence": "verified",
+      "source_url": "https://github.com/MeshInspector/MeshLib"
+    },
+    {
+      "claim": "OpenSCAD's last stable release is still 2021.01; Manifold became the default backend only in development snapshots (announced 17 Aug 2025), nightlies exist for macOS/Windows/Linux/WebAssembly, and minkowski still needs CGAL.",
+      "evidence": "OpenSCAD GitHub releases, downloads page and mailing-list thread.",
+      "confidence": "verified",
+      "source_url": "https://github.com/openscad/openscad/releases"
+    },
+    {
+      "claim": "Legal context: the last brick patents expired in 1978; the ECJ ruled on 14 Sep 2010 (Lego v Mega Bloks/OHIM) that the stud brick shape performs a technical function and cannot be a trademark; the Supreme Court of Canada (2005) likewise allowed Mega Bloks' stud-and-tube bricks; but the LEGO word mark/logo (Lego v Tyco, 1987) and the 3D minifigure trademark (ECJ, 16 Jun 2015; Zuru 2020) remain enforceable.",
+      "evidence": "Wikipedia 'Lego clone' article with case citations.",
+      "confidence": "verified",
+      "source_url": "https://en.wikipedia.org/wiki/Lego_clone"
+    },
+    {
+      "claim": "A GitHub project named 'openBrick' (cwesson/openBrick, OpenSCAD, 9 stars, 'Open source library for 3D printing snap-together toy building blocks') already exists, creating a naming collision for neuraldeepnet/openbrick.",
+      "evidence": "GitHub repo page.",
+      "confidence": "verified",
+      "source_url": "https://github.com/cwesson/openBrick"
+    },
+    {
+      "claim": "Format comparison: STL is geometry-only with no units, colour or explicit manifoldness; AMF added colour/materials but has little current adoption; STEP preserves exact CAD geometry but must be meshed before slicing; 3MF carries units, colours, materials, components, metadata and slicer settings in one ZIP and is the practical sharing default.",
+      "evidence": "Wevolver and other format overviews plus the 3MF specs above.",
+      "confidence": "likely",
+      "source_url": "https://www.wevolver.com/article/3d-printing-file-formats-compared-stl-amf-3mf-and-obj"
+    },
+    {
+      "claim": "Sensible calibration sweep: coarse pass of stud OD 4.70-4.95 mm and tube ID 4.80-5.05 mm in 0.05 mm steps, then a fine pass in 0.02 mm steps around the best coarse cell; 0.01 mm steps (Calibrix) are finer than typical FDM repeatability (±0.05-0.1 mm) and mostly add print time.",
+      "evidence": "Inferred from the Hubs accuracy figures, Meshy's 0.02 mm iteration advice, FIRST's 0.1 mm hole sweep and the Calibrix 0.01 mm tools.",
+      "confidence": "inferred"
+    }
+  ],
+  "key_numbers": [
+    {
+      "name": "Stud pitch (measured)",
+      "value": "7.986 ±0.002 mm",
+      "note": "8.0 mm nominal; LUGNET/Munafo"
+    },
+    {
+      "name": "Stud diameter",
+      "value": "4.80 mm nominal; 4.88-4.90 mm CMM-measured",
+      "note": "FDM print target 4.75-4.85 mm"
+    },
+    {
+      "name": "Anti-stud / tube inner diameter",
+      "value": "4.80 mm nominal",
+      "note": "FDM print target 4.90-5.00 mm"
+    },
+    {
+      "name": "Tube outer diameter",
+      "value": "6.31-6.51 mm (CMM 6.48)",
+      "note": "sources vary 6.31/6.48/6.6"
+    },
+    {
+      "name": "Brick / plate height",
+      "value": "9.6 / 3.2 mm (9.582 / 3.194 derived)",
+      "note": "stud height ~1.7-1.75 mm"
+    },
+    {
+      "name": "Wall thickness for FDM 0.4 nozzle",
+      "value": "0.8 mm (or 1.2 mm)",
+      "note": "1.1 mm printed hollow in Strathclyde test; nominal brick ~1.1-1.5"
+    },
+    {
+      "name": "Contour (outer) compensation, FDM",
+      "value": "-0.10 to -0.18 mm",
+      "note": "printer dependent; iterate 0.02 mm"
+    },
+    {
+      "name": "Hole (inner) compensation, FDM",
+      "value": "+0.05 to +0.10 mm",
+      "note": "horizontal Technic holes need more, ~+0.2 mm"
+    },
+    {
+      "name": "Elephant foot compensation",
+      "value": "~0.2 mm for 0.4 mm nozzle",
+      "note": "PrusaSlicer recommendation"
+    },
+    {
+      "name": "Separation force, two genuine 2x4",
+      "value": "~2.5-3 N",
+      "note": "Kollsker & Malaguti 2021 via Strathclyde paper"
+    },
+    {
+      "name": "Mould precision of genuine bricks",
+      "value": "0.005 mm; ~±0.01 mm part tolerance",
+      "note": "18 per million out of spec"
+    },
+    {
+      "name": "FDM accuracy / min wall / min feature",
+      "value": "±0.1-0.2 mm / 0.8 mm / 2.0 mm",
+      "note": "Hubs DFM"
+    },
+    {
+      "name": "SLA accuracy-related limits",
+      "value": "0.5 mm supported wall, 1.0 unsupported, 0.2 mm feature",
+      "note": "Hubs DFM; resin must be tough/ABS-like"
+    },
+    {
+      "name": "SLS / MJF",
+      "value": "±0.3 mm; walls 0.8/0.7 mm supported, 1.0 unsupported",
+      "note": "powder escape holes needed"
+    },
+    {
+      "name": "Shrinkage",
+      "value": "PLA ~0.2-0.3 %, PETG ~0.1-0.6 %, ASA ~0.4-0.6 %, ABS ~0.5-0.8 %+",
+      "note": "wide variance by brand"
+    },
+    {
+      "name": "Print time per 2x4 brick",
+      "value": "9 min (0.4 nozzle/0.2 layer) to 30 min (0.2 nozzle/0.1 layer)",
+      "note": "Brickset; Strathclyde 14 min"
+    },
+    {
+      "name": "3MF Core version",
+      "value": "1.4.0 (Feb 2025)",
+      "note": "ISO/IEC 25422:2025"
+    },
+    {
+      "name": "3MF Materials / Production / Toolpath",
+      "value": "1.2.1 / 1.1.2 (1.2) / 1.0.0 (Sep 2026)",
+      "note": ""
+    },
+    {
+      "name": "lib3mf",
+      "value": "2.5.0, 24 Feb 2026, BSD-2-Clause",
+      "note": "WASM + Java added; no Rust"
+    },
+    {
+      "name": "lib3mf-core (Rust)",
+      "value": "0.4.0, 15 Sep 2026, BSD-2-Clause",
+      "note": "single maintainer"
+    },
+    {
+      "name": "threemf2 (Rust)",
+      "value": "0.4.1, 17 Aug 2026, MIT/Apache-2.0",
+      "note": "1,046 downloads"
+    },
+    {
+      "name": "three-mf (TS)",
+      "value": "1.1.2, MIT",
+      "note": "parse + build"
+    },
+    {
+      "name": "manifold-3d npm / manifold3d PyPI",
+      "value": "3.5.4, Apache-2.0",
+      "note": "WASM + TS types"
+    },
+    {
+      "name": "OrcaSlicer / PrusaSlicer / Bambu Studio",
+      "value": "2.4.2 (2.5.0 alpha) / 2.9.6 (3.0.0-alpha12) / 2.8.2.61 (2.8.4 beta)",
+      "note": "as of 2026-10-27"
+    },
+    {
+      "name": "Orca tolerance test holes",
+      "value": "0.0 / 0.05 / 0.1 / 0.2 / 0.3 / 0.4 mm",
+      "note": "compensation = deviation / 2"
+    },
+    {
+      "name": "OpenSCAD stable",
+      "value": "2021.01 (nightlies default to Manifold since Aug 2025)",
+      "note": "WASM nightly exists"
+    }
+  ],
+  "open_questions": [
+    "No peer-reviewed clutch-force data exists for printed bricks by material and offset; openBrick could define a simple pull-test protocol and crowdsource a dataset (printer, material, offsets, force) which would be a genuine community contribution.",
+    "printablebricks.com was returning HTTP 503 and ppBricks has 5 open issues with unknown recent activity; is the maintainer open to collaboration, or is the project effectively abandoned (relevant for GPL-3.0 code reuse vs clean-room reimplementation)?",
+    "Bambu's Metadata/ project schema (painting/mmu_segmentation, plate config) is undocumented and version-drifting; how much of it should openBrick write to get 'open in Bambu Studio with colours' versus shipping vanilla 3MF plus per-object colours and letting the slicer assign filaments?",
+    "PrusaSlicer 3.0 (alpha12 as of Sep 2026) is changing 3MF project handling (bed data dropped, geometry-only import); will its final project format diverge further from Bambu/Orca?",
+    "Will Bambu/Orca/Prusa adopt the new 3MF Toolpath extension (v1.0.0, Sep 2026) in a way that lets openBrick emit slicer-independent print jobs, or stay with .gcode.3mf?",
+    "lib3mf 2.5.0 WASM: is the bundle size and API usable inside a browser/Electron/Tauri client, or is a small purpose-built TS/Rust writer (core + materials + production only) the better long-term dependency?",
+    "Resin: no quantitative shrinkage or clutch data for MSLA bricks was found; a dedicated resin calibration sweep (and tough-resin material list) is needed before promising resin support.",
+    "Should the default fit profile aim for genuine-brick clutch (~2.5-3 N, ABS-like) or a slightly looser 'kid-friendly' fit for PLA, given PLA's creep over time?",
+    "Horizontal Technic holes print oval; should openBrick generate compensated (slightly elliptical or polyhole) horizontal holes by default, and how should the calibration part sweep them separately from vertical tubes?",
+    "The name 'openBrick' collides with cwesson/openBrick on GitHub; is 'OpenBrick3D' (already in the README) the canonical name for packages and domains?"
+  ],
+  "options_compared": [
+    {
+      "option": "FDM, 0.4 mm nozzle, 0.16-0.2 mm layers (default target)",
+      "pros": "Ubiquitous (Bambu/Prusa/Creality), 9-14 min per 2x4, no supports studs-up, well-documented compensation values, PETG/ABS/ASA give good clutch",
+      "cons": "±0.1-0.2 mm untuned so every printer needs a fit profile; walls must be multiples of ~0.4 mm (0.8/1.2); horizontal holes print oval; layer lines on stud sides; elephant foot on first layer",
+      "fit_for_openbrick": "Primary target. Design kernel must quantise walls to line widths, bake per-feature offsets, chamfer stud tops and bottoms, and ship the calibration sweep",
+      "status_2026": "Mainstream; OrcaSlicer 2.4.2 / Bambu Studio 2.8.2 / PrusaSlicer 2.9.6"
+    },
+    {
+      "option": "FDM, 0.2 mm nozzle, 0.1 mm layers",
+      "pros": "Finer stud cylinders and sharper edges, 'barely visible' layer lines (Brickset), better for logo tiles and small text",
+      "cons": "~3x print time (30 min per brick), clogs, still needs compensation; clutch in Brickset test was worse than 0.4 nozzle without tuning",
+      "fit_for_openbrick": "Offer as a 'detail' profile for merchandise tiles; not the default",
+      "status_2026": "Supported by all major slicers"
+    },
+    {
+      "option": "MSLA resin",
+      "pros": "0.2 mm feature size, smooth surfaces, best for logo/relief tiles and mosaics; dimensional accuracy better than FDM in XY",
+      "cons": "Standard resin too brittle for snap fit; needs tough/ABS-like resin; supports and orientation issues for hollow undersides; post-cure shrinkage; no published brick-specific calibration data",
+      "fit_for_openbrick": "Secondary; expose a resin fit profile and material whitelist, but mark experimental until community data exists",
+      "status_2026": "Hubs: 0.5 mm supported / 1.0 mm unsupported wall"
+    },
+    {
+      "option": "SLS / MJF nylon (service bureaus)",
+      "pros": "No supports, strong, isotropic, ±0.3 mm but repeatable, good for Technic beams and custom parts via Shapeways-style services; proven route for custom LEGO-compatible parts historically",
+      "cons": "Rough, powder-trapping tubes, needs escape holes, slightly larger clearances, not home-printable, cost per part",
+      "fit_for_openbrick": "Tertiary; a 'service bureau' fit profile with larger tube clearance and escape holes for hollow bricks",
+      "status_2026": "Hubs: walls 0.7-0.8 mm supported, 1.0 unsupported"
+    },
+    {
+      "option": "Compensation baked into geometry at export (per-feature offsets from a fit profile)",
+      "pros": "Slicer-independent, shareable files just work, separate control of studs, tubes, horizontal holes, first-layer chamfer and wall quantisation; mirrors PELA and ppBricks practice",
+      "cons": "Requires every feature in the kernel to carry an offset parameter; calibration part must be regenerated per profile; exported files are printer-specific unless profile is embedded as metadata",
+      "fit_for_openbrick": "Recommended core strategy; store the profile in 3MF metadata so files remain traceable",
+      "license": "n/a",
+      "status_2026": "Proven in community tools"
+    },
+    {
+      "option": "Rely on slicer compensation (X-Y hole/contour, precise wall, shrinkage %)",
+      "pros": "No change to geometry, users already know these knobs, Orca/Bambu separate holes from contours",
+      "cons": "PrusaSlicer has only one XY value that also hits holes; settings differ per slicer; cannot distinguish stud vs tube vs horizontal hole; users sharing STLs lose the settings",
+      "fit_for_openbrick": "Document as a fallback and generate per-slicer hints, never the primary mechanism",
+      "status_2026": "Orca precise wall and polyholes available; Prusa 3.0 in alpha"
+    },
+    {
+      "option": "lib3mf (C++ reference implementation)",
+      "pros": "Consortium reference, all extensions, BSD-2-Clause, bindings for C/C++/C#/Python/Go/Node/Pascal/Java and new WASM (2.5.0)",
+      "cons": "Native dependency to ship per platform; no official Rust binding; WASM bundle size/API ergonomics unverified for browser clients",
+      "fit_for_openbrick": "Best for a Python/C++ validation CLI or CI conformance checks; use as the oracle to test openBrick's own writer against",
+      "license": "BSD-2-Clause",
+      "status_2026": "2.5.0 (Feb 2026)"
+    },
+    {
+      "option": "lib3mf-core (Rust)",
+      "pros": "Pure Rust, Core 1.4.0 plus most extensions, parser and writer, BSD-2-Clause, streaming parser for large files",
+      "cons": "0.4.x pre-1.0, single maintainer, new (Sep 2026), production-readiness self-asserted, only x86_64 Linux docs build shown",
+      "fit_for_openbrick": "Viable if the core is Rust; pin version, vendor if needed, and fuzz against lib3mf",
+      "license": "BSD-2-Clause",
+      "status_2026": "0.4.0, 15 Sep 2026"
+    },
+    {
+      "option": "threemf2 (Rust)",
+      "pros": "Read+write, permissive dual license, active in 2025-2026",
+      "cons": "Small (1k downloads), API unstable by its own warning, fewer extensions",
+      "fit_for_openbrick": "Fallback / reference only",
+      "license": "MIT OR Apache-2.0",
+      "status_2026": "0.4.1, Aug 2026"
+    },
+    {
+      "option": "three-mf (TypeScript) or a purpose-built TS writer",
+      "pros": "Runs in browser and Node, MIT, jszip + fast-xml-parser; a minimal core+materials+production writer is a few hundred lines",
+      "cons": "Single maintainer; no extension coverage beyond basics; three.js has a loader but no exporter; three-3mf-exporter is low-health",
+      "fit_for_openbrick": "Good for a web/Electron client; write our own tiny writer validated against lib3mf in CI",
+      "license": "MIT",
+      "status_2026": "three-mf 1.1.2"
+    },
+    {
+      "option": "Manifold (geometry kernel and validator)",
+      "pros": "Guaranteed-manifold booleans, WASM + TS types (npm manifold-3d 3.5.4), Python (manifold3d 3.5.4), C FFI, Rust ports, used by OpenSCAD/Blender/Godot/trimesh, Apache-2.0",
+      "cons": "Mesh-based (no exact B-rep/STEP); Merge repair handles only slight non-manifoldness; no 3MF I/O itself",
+      "fit_for_openbrick": "Strong candidate for the part-designer kernel and the export validator across PC and mobile",
+      "license": "Apache-2.0",
+      "status_2026": "3.5.4"
+    },
+    {
+      "option": "trimesh (Python)",
+      "pros": "MIT, is_watertight/volume checks, repair helpers, booleans via manifold3d, 3MF import, broad format support",
+      "cons": "Python only; export to 3MF limited; slower for large batch validation",
+      "fit_for_openbrick": "Good for the CLI/CI validation pipeline and research scripts",
+      "license": "MIT",
+      "status_2026": "Active"
+    },
+    {
+      "option": "MeshLib",
+      "pros": "Industrial-grade self-intersection repair, booleans, offsets, bindings incl. Rust/JS/WASM",
+      "cons": "Source-available, free only for non-commercial use, commercial licence required; incompatible with an MIT open-source core",
+      "fit_for_openbrick": "Avoid as a dependency; optional user-installed plugin at most",
+      "license": "Source-available / commercial",
+      "status_2026": "3.1.x (2026)"
+    },
+    {
+      "option": "admesh / MeshLab / PyMeshLab",
+      "pros": "Mature STL repair (admesh) and rich filters (MeshLab)",
+      "cons": "GPL-2 / GPL-3 copyleft; admesh is STL-only and in maintenance mode",
+      "fit_for_openbrick": "Use only as external CLI tools in CI, not linked into the MIT codebase",
+      "license": "GPL-2.0 / GPL-3.0",
+      "status_2026": "admesh maintenance only"
+    },
+    {
+      "option": "OpenSCAD as part-designer engine",
+      "pros": "Huge brick-generator prior art (PELA, ppBricks, cwesson/openBrick), customizer UX, Manifold backend now default in nightlies, WASM nightly exists",
+      "cons": "No stable release since 2021.01; GPL-2 runtime; CSG-only mesh output; parametric text/logo import is clunky",
+      "fit_for_openbrick": "Use as inspiration and an optional export target (.scad), not the core kernel",
+      "license": "GPL-2.0",
+      "status_2026": "2021.01 stable; nightlies with Manifold"
+    },
+    {
+      "option": "Share format: STL vs 3MF vs STEP vs AMF vs glTF",
+      "pros": "3MF: units, colour per triangle, components, UUIDs, metadata, ISO standard, slicer-native; STEP: exact geometry for CAD users; glTF+EXT_mesh_manifold: web viewers",
+      "cons": "STL: no units/colour/manifold guarantee; AMF: near-dead adoption; STEP: needs meshing and an OCCT-class kernel; Bambu/Orca project 3MF: proprietary metadata",
+      "fit_for_openbrick": "Vanilla 3MF (core + materials + production) as canonical print output, STL as legacy export, optional Bambu/Orca project-3MF flavour with colours, STEP later if a B-rep kernel is adopted",
+      "status_2026": "3MF = ISO/IEC 25422:2025"
+    }
+  ],
+  "recommendations": [
+    "Make a per-printer/material 'fit profile' a first-class data object (stud_od_offset, tube_id_offset, horizontal_hole_offset, wall_quantisation to line width, first_layer_chamfer, optional XY scale, process, material) and have the part designer, assembler export and print pipeline all read from it; embed the profile as 3MF metadata so shared files are traceable.",
+    "Bake compensation into geometry at export (as PELA and ppBricks do) rather than depending on slicer X-Y compensation; emit per-slicer hints (Orca/Bambu: hole vs contour compensation + precise wall; Prusa: XY size + elephant foot ~0.2 mm) only as advisory text.",
+    "Ship a calibration part generator: coarse sweep stud OD 4.70-4.95 mm and tube ID 4.80-5.05 mm in 0.05 mm steps (plus a horizontal Technic hole row 4.80-5.10), two identical rows for repeatability, embossed labels, then an optional 0.02 mm fine pass; the user taps the best-fitting cells in the app and the fit profile is written automatically.",
+    "Default FDM design rules in the kernel: walls quantised to 0.8 mm (optionally 1.2 mm) for a 0.4 mm nozzle, studs-up orientation, no supports, fillet/chamfer at wall-to-roof joints (Strathclyde's 2 mm fillet), 0.2-0.3 mm chamfers on stud tops and bottom edges, roof thickness >= 1.0 mm for bridging over tubes, minimum feature 1 mm for logos/text, and reject or warn on features under process minimums.",
+    "Recommend PETG as the default 'play' material and ABS/ASA for the closest-to-genuine clutch; use PLA for calibration only and warn about long-term creep; label resin as requiring tough/ABS-like resin and mark it experimental until a resin sweep dataset exists.",
+    "Adopt vanilla 3MF (Core 1.4.0 + Materials 1.2.1 + Production 1.2 UUIDs) as the canonical print output with per-object and per-triangle colours; validate every export against lib3mf in CI; keep STL as a legacy export; add an optional Bambu/Orca project-3MF flavour later, treating its Metadata/ schema as reverse-engineered and version-pinned.",
+    "Choose Manifold (Apache-2.0) as the geometry/boolean kernel and export validator: it runs in WASM for the web/mobile client and natively for the CLI, guarantees manifold output, and is what OpenSCAD now uses; pair with trimesh (MIT) in Python tooling; do not link MeshLib (commercial) or GPL tools (admesh, MeshLab) into the MIT core.",
+    "If the core is Rust, evaluate lib3mf-core 0.4.x behind a thin abstraction and fuzz its output against lib3mf; if the core is TypeScript, write a small purpose-built 3MF writer (core + materials + production) rather than depending on low-traffic npm packages, and reuse three.js 3MFLoader for viewing.",
+    "Add an export validator stage: watertight/manifold check, self-intersection check, minimum wall and feature size per process, overhang/bridging analysis of the hollow roof, and a 'clutch risk' warning when stud/tube geometry falls outside the calibrated window.",
+    "Create an open clutch-measurement protocol (simple pull test, ~2.5-3 N reference) and a community dataset of fit profiles keyed by printer/material/nozzle so new users can start from a crowd-sourced profile instead of calibrating from scratch; this is a differentiator no existing tool offers.",
+    "Keep the README disclaimer and go further: never generate minifigure-shaped parts (3D trademark upheld 2015), avoid the LEGO word in product/package names, and describe parts as 'brick-compatible'; resolve the name collision with cwesson/openBrick by standardising on 'OpenBrick3D' for packages and domains.",
+    "Track three moving targets quarterly: PrusaSlicer 3.0's 3MF project changes, Bambu/Orca Metadata schema drift, and adoption of the 3MF Toolpath extension (v1.0.0, Sep 2026); design the exporter so flavours are plug-ins."
+  ],
+  "sources": [
+    "https://3mf.io/specification/",
+    "https://github.com/3MFConsortium/spec_core/releases",
+    "https://github.com/3MFConsortium/spec_materials/blob/master/3MF%20Materials%20Extension.md",
+    "https://github.com/3MFConsortium/spec_production/blob/master/3MF%20Production%20Extension.md",
+    "https://www.vde-verlag.de/iec-standards/255158/iso-iec-25422-2025.html",
+    "https://github.com/3MFConsortium/lib3mf",
+    "https://github.com/3MFConsortium/lib3mf/releases",
+    "https://lib3mf.readthedocs.io/en/latest/",
+    "https://archlinux.org/packages/extra/x86_64/python-lib3mf/",
+    "https://wiki.bambulab.com/en/software/bambu-studio/3mf-compatibility",
+    "https://gist.github.com/queso/b5a33103e13b0d2b35e5fbdc2101bf8f",
+    "https://orcaslicer.com/wiki/print_settings/quality/quality_settings_precision.html",
+    "https://www.orcaslicer.com/wiki/calibration/tolerance_calib.html",
+    "https://makerworld.com/en/models/129893-x-y-compensation-tool",
+    "https://help.prusa3d.com/article/elephant-foot-compensation_114487",
+    "https://forum.prusa3d.com/forum/prusaslicer/xy-compensation-isnt-it-quite-incomplete",
+    "https://ftc-docs.firstinspires.org/manufacturing/3d_printing/designing_and_slicing/tolerancing/tolerancing.html",
+    "https://github.com/SoftFever/OrcaSlicer/releases",
+    "https://github.com/prusa3d/PrusaSlicer/releases",
+    "https://github.com/bambulab/BambuStudio/releases",
+    "https://strathprints.strath.ac.uk/89604/7/Air-etal-PDS-2024-using-LEGO-bricks-as-an-intuitive-benchmarking-tool.pdf",
+    "https://pureportal.strath.ac.uk/en/datasets/benchmark-model-for-3d-printer-dimensional-accuracy/",
+    "https://brickset.com/article/128767/can-you-make-compatible-bricks-with-consumer-3d-printers",
+    "https://www.meshy.ai/blog/lego-compatible-3d-print-tolerances",
+    "http://www.lugnet.com/~330/FAQ/Build/dimensions",
+    "https://github.com/paulirotta/PELA-blocks",
+    "https://github.com/FWeynschenk/ppBricks",
+    "https://www.printables.com/model/98071-lego-custom-bricks-calibration",
+    "https://www.printables.com/model/1103820-calibration-plate-perfect-fit-printed-brick-stud-l",
+    "https://www.makerworld.com/en/models/2331353",
+    "https://github.com/cwesson/openBrick",
+    "https://www.hubs.com/knowledge-base/dfm-tips-for-3d-printed-parts-with-thin-walls/",
+    "https://www.3dsourced.com/guides/3d-print-shrinkage-pla-abs-petg/",
+    "https://www.eurobricks.com/forum/forums/topic/181777-success-3d-printing-technic-parts/page/2",
+    "https://forums.ldraw.org/post-56496.html",
+    "https://blog.printpal.io/design-and-3d-print-your-own-lego-compatible-bricks/",
+    "https://en.wikipedia.org/wiki/Lego_clone",
+    "https://github.com/elalish/manifold",
+    "https://registry.npmjs.org/manifold-3d/latest",
+    "https://pypi.org/pypi/manifold3d/json",
+    "https://github.com/MeshInspector/MeshLib",
+    "https://github.com/mikedh/trimesh",
+    "https://github.com/admesh/admesh",
+    "https://github.com/cnr-isti-vclab/PyMeshLab",
+    "https://docs.rs/lib3mf-core",
+    "https://crates.io/api/v1/crates/threemf2",
+    "https://docs.rs/threemf",
+    "https://docs.rs/crate/lib3mf/latest",
+    "https://registry.npmjs.org/three-mf/latest",
+    "https://npmjs.com/package/three-3mf-exporter",
+    "https://github.com/mrdoob/three.js/blob/dev/examples/jsm/loaders/3MFLoader.js",
+    "https://github.com/openscad/openscad/releases",
+    "https://openscad.org/downloads.html",
+    "https://lists.openscad.org/empathy/thread/TMJEJCZINIJNYJX2YF7IDNBAPQY66KIF",
+    "https://www.wevolver.com/article/3d-printing-file-formats-compared-stl-amf-3mf-and-obj"
+  ]
+}

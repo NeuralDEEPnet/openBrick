@@ -1,0 +1,516 @@
+{
+  "summary": "Verified as of 2026-10-27: the parametric-UX landscape splits into comment-annotated scripts (OpenSCAD customizer: `name = 1; // [min:step:max]`, `/* [Tab] */`, `[Hidden]`, JSON presets, still the lingua franca of Thingiverse/MakerWorld, but literal-only, no conditional visibility, GPL, stable release still 2021.01 with Manifold only default in nightlies since 2025-08-17), typed-declaration UIs (Onshape FeatureScript: a static precondition generates the dialog, bounded quantities with units, enums, arrays, `if`-conditional parameters, UIHints, Editing Logic for smart defaults, and draggable Manipulators), and code-as-model systems (Zoo KCL 3: MIT language, `@settings(kclVersion = 3.0)` pragma, mandatory angle units, but the geometry engine is a hosted video stream; CadQuery 2.8.0 / build123d 0.13.0 on OCCT, Apache-2.0, Python-only). Brick-specific generators converge on the same small vocabulary: LEGO.scad (MIT) exposes ~40 customizer params on an 8 mm / 9.6 mm / 3.2 mm grid with printer tweaks (`stud_rescale` 0.51-1.49, `wall_play` 0.1, `stud_play` 0.03); PELA Blocks (CC BY-SA 4.0) separates per-material calibration into three tweak values (PLA -0.08/0.04/0.07 mm) measured from a printed calibration beam. Nothing found on Printables/MakerWorld does SVG-to-embossed brick tiles; the closest are text-brick customizers with a tolerance slider and a 16x8 sign tile.\n\nFor connectivity, the only documented, text-based, battle-tested model is LDCad's `!LDCAD SNAP_*` metas (SNAP_CYL with gender M/F, `secs` of R/A/S/_L sections, `caps`, `grid=C nx C nz dx dz`, SNAP_CLP radius/length, SNAP_FGR finger sequences, SNAP_GEN bounding shapes, `group` filters). Its vocabulary is reusable, but its shadow library data is 'all rights reserved' (cannot be bundled), Studio's `.conn` is binary and still unparsed by the community (thread 2024-11 to 2026-02, no working parser), Mecabricks is proprietary, and three.js LDrawLoader (r186) renders LDraw but reads no snap metas. openBrick must therefore author its own connectivity, which is easy if connectivity is derived from features (a stud field *is* a male cylinder grid) rather than hand-written.\n\nThe print pipeline numbers are stable across sources: 0.4 mm nozzle FDM wants emboss strokes >= 0.8 mm (two extrusion lines), relief 0.4-1.0 mm high (1.2-1.5 mm for standalone legibility), bold sans-serif, text on top/bottom faces not walls; QR modules need 0.9-1.2 mm so a scannable code is ~30-60 mm and does not fit a 2x4 tile. Fonts: OFL explicitly permits bundling in commercial/proprietary apps and explicitly lists 3D-printed shapes as unencumbered output; ship full (unsubsetted) font files with copyright + license text because subsetting is a 'modification' that triggers Reserved Font Name renaming. Tooling is ready: Manifold 3.5.4 (Apache-2.0, WASM, cross-platform deterministic doubles since 3.5.0, Minkowski since 3.4.0, 3MF/glTF I/O, cancellable booleans), vtracer 1.0.0-alpha.4 (MIT/Apache, Rust+WASM, colour) instead of GPL potrace, harfbuzzjs 1.6.4 + opentype.js 2.0.0 (MIT) for text, Extism 1.41.0 / @extism/extism 2.0.0-rc13 (BSD-3, browser + Node) or wasmtime 50.0.0 for sandboxing scripted parts, OrcaSlicer CLI (`--arrange 1 --export-3mf`) and 3MF 1.4.0 (ISO/IEC 25422:2025) for batch output.\n\nRecommendation in one line: make the part definition a versioned, declarative JSON feature document (`openbrick/part@1`) on an integer-LDU grid whose features carry both geometry and connectivity, expose it through a typed-parameter UI borrowed from FeatureScript (bounds, units, enums, conditional visibility, manipulators), let advanced users generate that same document from a TypeScript (later Rust) API running in a WASM sandbox, evaluate it with Manifold, keep printer calibration in a separate printer profile, and export connectivity as `!LDCAD SNAP_*` lines inside LDraw `.dat` so LDCad can snap openBrick parts today. Do not build an OpenSCAD-like language; bridge to OpenSCAD files via an importer run out-of-process.",
+  "findings": [
+    {
+      "claim": "OpenSCAD's customizer syntax is: a comment line describing the variable, then `name = default; // widget-spec`, where `// [a, b, c]` or `// [v:Label, ...]` makes a dropdown, `// [max]`, `// [min:max]` or `// [min:step:max]` makes a slider (numbers only), booleans become checkboxes, plain numbers spinboxes, strings and >4-element vectors text boxes, 2-4 element vectors per-element spinboxes; `/* [Tab] */` creates tabs, `[Hidden]` hides, `[Global]` shows on every tab. Only literals in the main file above the first module count; expressions are not supported.",
+      "evidence": "OpenSCAD manual, Customizer page (app.openscad.org).",
+      "confidence": "verified",
+      "source_url": "https://app.openscad.org/documentation/manual/Customizer.html"
+    },
+    {
+      "claim": "OpenSCAD presets are a JSON file `{\"parameterSets\": {\"SetName\": {\"param\": \"value\"}}, \"fileFormatVersion\": \"1\"}`; partial sets only modify listed params; hidden params are written but not read back; CLI is `openscad -o out.stl -p params.json -P SetName file.scad`.",
+      "evidence": "Same manual page, Preset and command-line sections.",
+      "confidence": "verified",
+      "source_url": "https://app.openscad.org/documentation/manual/Customizer.html"
+    },
+    {
+      "claim": "The customizer's most-requested missing feature is conditional parameter visibility (a GitHub issue open for years); other recurring pains: single-file only (include/use breaks parsing), non-ASCII comments breaking silently, fragile fonts across machines, web renderer differing from desktop. Thingiverse Customizer launched early 2013; native OpenSCAD customizer shipped in 2019.05 with JSON presets and [Hidden].",
+      "evidence": "ModelRift blog 'Building a better OpenSCAD customizer' (history + limitations).",
+      "confidence": "verified",
+      "source_url": "https://modelrift.com/blog/openscad-customizer-history"
+    },
+    {
+      "claim": "MakerWorld's Parametric Model Maker (launched 2023) runs OpenSCAD 2021.01 server-side with extensions: a `// font` tag turning a string into a font picker, pre-installed BOSL2/UB/KeyV2 libraries, single-file only, minkowski() reliably times out, outputs STL or 3MF. This is the largest live audience for brick-generator parameters today.",
+      "evidence": "ModelRift history article and Maker Hacks walkthrough (updated 2026-09-25).",
+      "confidence": "verified",
+      "source_url": "https://www.makerhacks.com/openscad-makerworld-customizer/"
+    },
+    {
+      "claim": "OpenSCAD's latest tagged stable release is still 2021.01; the Manifold backend became the default in nightly builds on 2025-08-17 (CGAL via `--backend=cgal` or Preferences); the official downloads page describes the WebAssembly build as experimental, 'a bit slow', with no preview, fonts or GUI.",
+      "evidence": "GitHub releases page (2021.01 marked Latest), Marius Kintel mailing-list post 2025-08-17, openscad.org downloads page.",
+      "confidence": "verified",
+      "source_url": "https://lists.openscad.org/empathy/thread/TMJEJCZINIJNYJX2YF7IDNBAPQY66KIF"
+    },
+    {
+      "claim": "openscad-playground (OpenSCAD-in-the-browser React component) is 2.4.0 under GPL-2.0-or-later; OpenSCAD itself is GPL. Linking either into an MIT desktop/mobile client would pull the client under GPL; running OpenSCAD as a separate process/CLI for an import bridge does not.",
+      "evidence": "npm registry metadata for openscad-playground; GPL implication is standard license reasoning.",
+      "confidence": "likely",
+      "source_url": "https://registry.npmjs.org/openscad-playground/latest"
+    },
+    {
+      "claim": "Onshape FeatureScript builds a feature dialog by statically analysing the `precondition`: typed params (`is boolean`, `is string` with MinLength/MaxLength, exported enums, `isLength`/`isAngle`/`isInteger`/`isReal` with a BoundSpec that also sets the default, `is Query` selections with filters, arrays with label templates, groups, and `if (definition.x) { ... }` conditional visibility); UIHints such as OPPOSITE_DIRECTION, HORIZONTAL_ENUM, ALWAYS_HIDDEN, READ_ONLY, REMEMBER_PREVIOUS_VALUE; an Editing Logic Function recomputes defaults when inputs change; Manipulators (LINEAR_1D, ANGULAR, FLIP, TRIAD_FULL) give in-viewport drag handles.",
+      "evidence": "Onshape FeatureScript UI spec.",
+      "confidence": "verified",
+      "source_url": "https://cad.onshape.com/FsDoc/uispec.html"
+    },
+    {
+      "claim": "Tinkercad's JavaScript Shape Generators (2012-2016, 'JavaScript programs that generate 3D geometry based on a set of visual inputs') were removed and replaced by block-based Codeblocks; no text API remains for community shape scripts.",
+      "evidence": "Adafruit 2012/2016 posts and a Hackaday report of the JS feature being removed; Instructables still describe the old API.",
+      "confidence": "likely",
+      "source_url": "https://adafruitdaily.com/2016/03/14/tinkercad-shape-generators-lets-you-code-your-models-for-3d-printing"
+    },
+    {
+      "claim": "Fusion 360's parametric UX is a 'Change Parameters' table of named user parameters (name, unit, expression referencing other parameters, comment, favourites) that drive sketch dimensions; it is the model most hobby designers of brick parts already know.",
+      "evidence": "General product knowledge; not re-verified this session because the search budget was exhausted.",
+      "confidence": "inferred"
+    },
+    {
+      "claim": "CadQuery 2.8.0 (Apache-2.0, requires cadquery-ocp >=7.9.3.1 <8.0) and build123d 0.13.0 (Apache-2.0, requires cadquery-ocp-novtk >=8.0 <8.1, builder + algebra modes) are mature Python B-rep stacks on OCCT; they are Python-only and OCCT is heavy for browser/mobile, so they suit server-side STEP export, not the client.",
+      "evidence": "PyPI JSON metadata for both packages.",
+      "confidence": "verified",
+      "source_url": "https://pypi.org/pypi/build123d/json"
+    },
+    {
+      "claim": "Manifold is at 3.5.4 (2025-09-25 patch, Apache-2.0, npm `manifold-3d`), with 3.5.0 (May) adding cross-platform double-precision determinism, ray casting, progress/cancellation for booleans and 3MF export improvements; 3.4.1 added a 3MF importer; 3.4.0 (Feb 2026) added MinkowskiSum/Difference and glTF import; 3.3.0 exposed a `npx manifold-cad` TypeScript script runner. WASM objects must be `delete()`d manually.",
+      "evidence": "GitHub releases page and npm registry metadata.",
+      "confidence": "verified",
+      "source_url": "https://github.com/elalish/manifold/releases"
+    },
+    {
+      "claim": "Browser CAD alternatives: replicad 1.2.0 (MIT, on OpenCascade.js/OCCT WASM), @jscad/modeling 2.13.0 (MIT, pure JS CSG). OCCT-in-WASM bundles are large; JSCAD's CSG is slower and less robust than Manifold for thousands of booleans.",
+      "evidence": "npm registry metadata; size/robustness judgement from project READMEs and community posts.",
+      "confidence": "likely",
+      "source_url": "https://registry.npmjs.org/replicad/latest"
+    },
+    {
+      "claim": "Zoo's KCL: the language (`kcl-lib` 0.2.193, MIT, in KittyCAD/modeling-app) is open, functional, text-first and designed to be LLM-readable, but the app's 3D view 'is just a video stream from our hosted geometry engine' over WebSockets; KCL 3 (Oct 2026) requires a whole-project `@settings(kclVersion = 3.0)` pragma, mandatory units on angles (`90deg`), sketch blocks with constraints (coincident/horizontal/vertical/tangent) and in-order fillet/chamfer/booleans.",
+      "evidence": "crates.io metadata, modeling-app README, Zoo 'Migrating to KCL 3' page.",
+      "confidence": "verified",
+      "source_url": "https://zoo.dev/docs/kcl-lang/migrating-to-kcl-3"
+    },
+    {
+      "claim": "LDCad's snap vocabulary: `0 !LDCAD SNAP_CYL [gender=M|F] [caps=none|one|two|A|B] [secs=R 6 8 ...] [grid=C 2 C 4 20 20] [center=bool] [slide=bool] [group=str] [scale=none|YOnly|ROnly|YandR] [mirror=none|cor] [pos=x y z] [ori=3x3]` where secs are `shapeVariant radius length` blocks (R round, A axle, S square, `_L`/`L_` flexible) along -Y; `SNAP_CLP [radius=4] [length=8]` (clips are always female vs male cylinders); `SNAP_FGR [genderOfs=M] [seq=4.5 8 4.5] [radius=6]` for hinge fingers; `SNAP_GEN [bounding=box|cube|cyl|sph|pnt ...]` for odd shapes; `SNAP_INCL [ref=file.dat]` to reuse; `SNAP_CLEAR`. Grid also has a 3D form `C x C y C z dx dy dz`. Matching: male pens to female holes, clips to male cylinders, fingers to fingers, optional group string restricts matches, closest candidate wins.",
+      "evidence": "LDCad meta reference and Roland Melkert's forum answers (Aug 2023).",
+      "confidence": "verified",
+      "source_url": "https://www.melkert.net/LDCad/tech/meta"
+    },
+    {
+      "claim": "LDCad keeps snap data out of LDraw files in a 'shadow library' (`offLibShadow.csl`, a zip mirroring the LDraw tree with same-named .dat files merged in memory) whose notice reads 'Copyright Roland Melkert 2011-2017, all rights reserved'; the LDraw Parts Library itself is CC BY 2.0 (header `0 !LICENSE Redistributable under CCAL version 2.0`). openBrick can ship LDraw parts but cannot redistribute LDCad's connectivity data.",
+      "evidence": "LDCad shadow library page; LDraw legal info page.",
+      "confidence": "verified",
+      "source_url": "https://www.ldraw.org/docs-main/licenses/legal-info.html"
+    },
+    {
+      "claim": "BrickLink Studio connectivity (`.conn`) is a binary, undocumented format; a community reverse-engineering thread (2024-11-30 to 2026-02-26) found 43 connectivity element types with paired IDs (pinhole 2/pin 3, axlehole 6/axle 7, round hole 10/bar 11, clip 12/bar 13), LDU coordinates, a 3x3 matrix, half-stud grid sizes, and unknown geometry blocks; as of 2026-02 nobody reports a working parser.",
+      "evidence": "LDraw forum thread #28521.",
+      "confidence": "verified",
+      "source_url": "https://forums.ldraw.org/thread-28521.html"
+    },
+    {
+      "claim": "three.js r0.186.1 LDrawLoader loads LDraw/MPD with parts-library lookup (`setPartsLibraryPath`, `setFileMap`, `preloadMaterials(LDConfig.ldr)`), colours, BFC, conditional lines (WebGL and WebGPU node material) and a packing script for web delivery; it exposes no connectivity/snap data, so an assembler needs its own snap engine.",
+      "evidence": "three.js LDrawLoader docs; npm version.",
+      "confidence": "verified",
+      "source_url": "https://threejs.org/docs/pages/LDrawLoader.html"
+    },
+    {
+      "claim": "Mecabricks' snapping ('the heart of the building system') is proprietary and undocumented; users have reported it not working as advertised. Not a reusable reference beyond UX observation.",
+      "evidence": "Eurobricks and LDraw forum threads.",
+      "confidence": "verified",
+      "source_url": "https://eurobricks.com/forum/forums/topic/69050-software-mecabricks-online-design-tool"
+    },
+    {
+      "claim": "LEGO.scad (MIT, (c) 2015 Christopher Finke) is the de-facto parameter reference: block_width/length, block_height_ratio (1/3..10), block_type (brick, tile, wing, slope, curve, baseplate, round, round-tile), stud_type (solid/hollow/open), technic/axle holes, stud_matrix_string, SNOT dual-sided, plus a [Printer-Specific] tab with stud_rescale 0.51-1.49 (commented presets 1.03, 1.0475, 1.022), wall_splines_rescale, stud_top_roundness, scale. Constants: pitch 8, stud d 4.8, stud h 1.8, wall 1.2 (with splines), post d ~6.45, spline 0.7, brick 9.6, baseplate 1.3, hollow-stud ID 3.20, Technic hole 4.8 at z 5.8 with 6.2x0.9 bevel, axle 5.0 x 2.0 spline, wall_play 0.1, stud_play 0.03, bar_play 0.01.",
+      "evidence": "LEGO.scad source and LICENSE on GitHub.",
+      "confidence": "verified",
+      "source_url": "https://raw.githubusercontent.com/cfinke/LEGO.scad/master/LEGO.scad"
+    },
+    {
+      "claim": "PELA Blocks (CC BY-SA 4.0) models printer/material fit as three per-material tweaks `[name, flexible, top_tweak, bottom_tweak, axle_hole_tweak]` with separate fine (<0.5 mm) and large nozzle tables, e.g. PLA (-0.08, 0.04, 0.07), ABS fine (-0.18, 0.16, 0.14), PET (0.04, 0.10, 0.04), TPU95 (-0.06, -0.02, -0.1); base radii knob 2.57, socket ring 2.75, axle hole 2.45; ring wall 1.2 (large) / 0.8 (fine). Workflow: print PELA-calibration beam, test-fit against real bricks, read the three values off the beam, enter them, verify with a 2x2 block. Advice: 0.4 mm nozzle or smaller, avoid PLA and carbon fills, prefer PET/co-polymers.",
+      "evidence": "PELA-blocks material.scad and README.",
+      "confidence": "verified",
+      "source_url": "https://raw.githubusercontent.com/paulirotta/PELA-blocks/master/material.scad"
+    },
+    {
+      "claim": "Reference dimensions disagree at the 0.2 mm level: LUGNET gives stud pitch 7.985-8.0 mm (measured 7.986 +/- 0.002 at 25 C), stud d 5.0, stud h 1.7, brick 9.582-9.6, plate 3.194-3.2, wall 1.5, tube OD 6.31 / wall 0.657, 1 LDU = 0.3993 mm; LEGO.scad and most 3D-print generators use stud d 4.8 and wall 1.2. The 4.8 figure matches measured real studs (~4.9) better for press-fit; treat 'stud diameter' as the first calibration variable, not a constant.",
+      "evidence": "LUGNET dimensions FAQ, orionrobots specs page, LEGO.scad; brickfact measured ~4.9 mm.",
+      "confidence": "likely",
+      "source_url": "https://www.lugnet.com/~330/FAQ/Build/dimensions"
+    },
+    {
+      "claim": "FDM design guides converge on: smallest X-Y feature ~ nozzle diameter (0.4), practical embossed stroke >= 0.8 mm (two lines), relief height 0.4-1.0 mm, Xometry recommends text >= 1 mm high and 1.2-1.5 mm for legibility, one service lists min embossed/engraved detail 0.8 mm wide x 0.4 mm deep; bold sans-serif fonts; put text on top/bottom faces, not vertical walls.",
+      "evidence": "Xometry FDM mini-guide, UZH FDM design guideline PDF, Sovol and other vendor guides.",
+      "confidence": "verified",
+      "source_url": "https://www.xometry.com/resources/3d-printing/mini-guide-fdm-3d-printing/"
+    },
+    {
+      "claim": "3D-printed QR codes need modules of ~0.9-1.2 mm on a 0.4 mm nozzle (PrintPal warns below 1.2; a parametric ring model defaults 0.9), raised 0.6-2 mm, 4-module quiet zone, 40-60 mm overall for phone scanning. A version-2 code (25x25) at 1.0 mm with quiet zone is ~33 mm: it does not fit a 2x4 tile (16x32 mm) but fits a 6x6 or larger tile; serial numbers on small merch should be text or a Data Matrix, with QR reserved for >= 5x5-stud faces.",
+      "evidence": "PrintPal, Siraya Tech, MakerWorld QR generator pages; size arithmetic is ours.",
+      "confidence": "likely",
+      "source_url": "https://blog.printpal.io/how-to-3d-print-a-qr-code-that-actually-scans/"
+    },
+    {
+      "claim": "SIL OFL 1.1: fonts may be bundled with commercial/proprietary software ('only the portions based on the Font Software are required to be released under the OFL'); minimum obligation when bundling (stated for mobile apps) is to include the copyright statement, license notice and license text; artwork and 'physical objects... 3D-printed/laser-cut shapes' made with OFL fonts need no additional license and are not subject to the OFL; subsetting or re-encoding counts as modification, so a subset font may not keep a Reserved Font Name; selling the fonts alone is prohibited.",
+      "evidence": "OFL FAQ sections 1.1, 1.3, 1.4, 1.12-1.14, 1.20, 2.6, 5.x.",
+      "confidence": "verified",
+      "source_url": "https://openfontlicense.org/ofl-faq/"
+    },
+    {
+      "claim": "OpenSCAD's text() takes `font=\"Family:style=Bold Italic\"` (fontconfig syntax), halign/valign/spacing/direction/language/script and $fn, bundles Liberation Mono/Sans/Serif (Liberation Sans default) for cross-platform consistency, and lets projects register .ttf/.otf via `use <font.ttf>`. Text shaping/outline libraries for a TS core: harfbuzzjs 1.6.4 (MIT, HarfBuzz in WASM) and opentype.js 2.0.0 (MIT).",
+      "evidence": "OpenSCAD manual Text page; npm registry metadata.",
+      "confidence": "verified",
+      "source_url": "https://app.openscad.org/documentation/manual/Text.html"
+    },
+    {
+      "claim": "Raster-to-vector: vtracer 1.0.0-alpha.4 (crates.io, updated 2026-08-29, MIT OR Apache-2.0, Rust with a WASM demo, colour and pixel-art modes, O(n) fitting per its authors) vs potrace 1.16 (2019-09-17, GPL-2.0-or-later, black-and-white only, paid 'Potrace Professional' for proprietary use). For an MIT project, vtracer (or an own marching-squares + Ramer-Douglas-Peucker tracer for logos) is the safe choice.",
+      "evidence": "crates.io API, potrace homepage.",
+      "confidence": "verified",
+      "source_url": "https://crates.io/api/v1/crates/vtracer"
+    },
+    {
+      "claim": "Sandboxing stack: Extism 1.41.0 (crates.io 2026-10-09, BSD-3-Clause; JS host `@extism/extism` 2.0.0-rc13 with browser and Node builds) runs untrusted WASM plugins in-process with a manifest (sources with SHA-256 hash, `max_pages` memory cap, `allowed_hosts` empty = no network, `allowed_paths` none = no FS, config map) and PDKs for Rust, JS, Go, C, Zig, .NET; wasmtime is 50.0.0 (2026-10-20, Apache-2.0 WITH LLVM-exception); WASI 0.3.0 was ratified 2026-06-11 with native async in Wasmtime 46+, but a part-script ABI does not need WASI at all.",
+      "evidence": "crates.io and npm metadata; Extism manifest docs; Bytecode Alliance WASI 0.3 article.",
+      "confidence": "verified",
+      "source_url": "https://extism.org/docs/concepts/manifest"
+    },
+    {
+      "claim": "OrcaSlicer's headless CLI can batch merch runs: `orca-slicer in.3mf --load-settings \"process.json;printer.json\" --load-filaments f.json --arrange 1 --orient 1 --slice 0 --export-3mf out.3mf`, plus `--repetitions N` (single plate), `--assemble`, `--ensure-on-bed`, `--convert-unit`, `--repair`; 43 keys are never exposed and booleans must be `--flag=0`. PrusaSlicer offers `--export-3mf/--export-gcode` but no documented plate arrangement workflow.",
+      "evidence": "OrcaSlicer CLI wiki (mode + transform pages), Debian prusa-slicer man page.",
+      "confidence": "verified",
+      "source_url": "https://www.orcaslicer.com/wiki/cli/cli_mode"
+    },
+    {
+      "claim": "3MF core is 1.4.0, aligned with ISO/IEC 25422:2025; extensions: Materials & Properties 1.2.1, Production 1.1.2 (build items with UUIDs/paths), Boolean Operations 1.1.0, Beam Lattice 1.2.0, Secure Content 1.0.2, Toolpath 1.0.0, Volumetric 0.8.0. Per-object colours/materials and metadata are standard, so one 3MF per plate with named objects is portable across Orca/Bambu/Prusa/Cura.",
+      "evidence": "3mf.io spec index.",
+      "confidence": "verified",
+      "source_url": "https://3mf.io/spec/"
+    },
+    {
+      "claim": "No existing generator on Printables/MakerWorld/Cults takes an SVG and embosses it on a brick tile; the market has text-brick customizers with a tolerance slider (Thingiverse-derived), a 16x8 'Make My Sign' tile tuned for Bambu PLA, flat tiles up to 50x50 from printablebricks.com, and commercial eBay logo tiles. A print-first SVG logo tile is an unoccupied niche.",
+      "evidence": "Search across Printables, MakerWorld, Cults3D, eBay listings.",
+      "confidence": "verified",
+      "source_url": "https://www.printables.com/model/116486-lego-compatible-brick-tile-all-sizes-upto-50x50"
+    },
+    {
+      "claim": "Brick mosaic generators (image -> 1x1 plate/tile colour map) exist as web tools and scripts (palette quantisation to brick colours, BOM output), but none produce a printable multi-colour mosaic tile with connectivity; this is a natural openBrick feature (quantise in CIELAB to the brick palette, emit per-colour bodies for AMS/MMU printing plus a BOM for real bricks).",
+      "evidence": "General landscape knowledge; targeted search was not possible after the search budget ran out.",
+      "confidence": "inferred"
+    },
+    {
+      "claim": "Positions on the brick grid are exactly representable as integers in LDU (1 LDU = 0.4 mm): stud pitch 20, half-stud 10, plate 8, brick 24, Technic hole centre 14.5 LDU above a brick's bottom (5.8 mm); using integer LDU for layout and converting to mm only when generating geometry removes floating-point drift in snapping, hashing and diffing.",
+      "evidence": "LDraw unit table (Wikipedia/LDraw wiki) and LEGO.scad constants; design conclusion is ours.",
+      "confidence": "likely",
+      "source_url": "https://en.wikipedia.org/wiki/LDraw"
+    },
+    {
+      "claim": "Connectivity for official LDraw parts can be derived heuristically without LDCad's data because LDraw part files reference primitives (`stud.dat`, `stud4.dat`, `stud2.dat`, `axlehole.dat`, `connect.dat`, `peghole.dat`...) with a transform; scanning those references yields male stud, anti-stud/tube, axle and pin-hole positions for most System parts.",
+      "evidence": "LDraw primitive conventions; this is how shadow-library authors work, but we did not verify coverage numbers.",
+      "confidence": "inferred"
+    }
+  ],
+  "key_numbers": [
+    {
+      "name": "Stud pitch",
+      "value": "8.0 mm nominal / 7.985-7.986 mm measured (20 LDU)",
+      "note": "LUGNET measured +/- 0.002 mm at 25 C"
+    },
+    {
+      "name": "Stud diameter",
+      "value": "4.8 mm (LEGO.scad, print generators) vs 5.0 mm (LUGNET nominal); ~4.9 measured",
+      "note": "first calibration variable"
+    },
+    {
+      "name": "Stud height",
+      "value": "1.8 mm (LEGO.scad) / 1.7 mm (LUGNET)"
+    },
+    {
+      "name": "Brick / plate height",
+      "value": "9.6 / 3.2 mm (24 / 8 LDU); measured 9.582 / 3.194"
+    },
+    {
+      "name": "LDU",
+      "value": "0.4 mm nominal; 0.3993 +/- 0.0001 mm measured"
+    },
+    {
+      "name": "Wall thickness",
+      "value": "1.2 mm with splines (LEGO.scad) / 1.5 mm (LUGNET)"
+    },
+    {
+      "name": "Bottom tube OD / wall",
+      "value": "6.31 / 0.657 mm (LUGNET); LEGO.scad post ~6.45 mm",
+      "note": "tube OD = sqrt(2)*pitch - stud d"
+    },
+    {
+      "name": "Technic pin hole",
+      "value": "4.8 mm dia, centre 5.8 mm above brick bottom, 6.2 x 0.9 mm bevel (LEGO.scad)"
+    },
+    {
+      "name": "Axle cross",
+      "value": "5.0 mm across, 2.0 mm spline width (LEGO.scad)"
+    },
+    {
+      "name": "Bar / hollow stud ID",
+      "value": "3.18 mm (+0.02 play in LEGO.scad)"
+    },
+    {
+      "name": "LEGO.scad play values",
+      "value": "wall_play 0.1, stud_play 0.03, bar_play 0.01 mm; stud_rescale presets 1.03 / 1.0475 / 1.022"
+    },
+    {
+      "name": "PELA tweaks (top, bottom, axle)",
+      "value": "PLA -0.08/0.04/0.07; ABS fine -0.18/0.16/0.14; PET 0.04/0.10/0.04; TPU95 -0.06/-0.02/-0.10 mm"
+    },
+    {
+      "name": "PELA base radii",
+      "value": "knob 2.57, socket ring 2.75, axle hole 2.45 mm; ring wall 1.2 (>=0.5 nozzle) / 0.8 (fine)"
+    },
+    {
+      "name": "FDM min emboss stroke (0.4 nozzle)",
+      "value": ">= 0.8 mm; relief height 0.4-1.0 mm; standalone text >= 1.0-1.5 mm high"
+    },
+    {
+      "name": "QR module size (FDM)",
+      "value": "0.9-1.2 mm per module; 40-60 mm overall; 4-module quiet zone"
+    },
+    {
+      "name": "LDCad SNAP_CLP defaults",
+      "value": "radius 4 LDU (bar 3.2 mm), length 8 LDU"
+    },
+    {
+      "name": "Studio .conn element types",
+      "value": "43 (thread count); ID pairs pinhole 2/pin 3, axlehole 6/axle 7, hole 10/bar 11, clip 12/bar 13"
+    },
+    {
+      "name": "Manifold",
+      "value": "3.5.4 (2025-09-25), Apache-2.0",
+      "note": "3.5.0 deterministic doubles; 3.4.0 Minkowski; 3.4.1 3MF import"
+    },
+    {
+      "name": "OpenSCAD",
+      "value": "stable 2021.01; Manifold default in nightlies since 2025-08-17; GPL"
+    },
+    {
+      "name": "openscad-playground",
+      "value": "2.4.0, GPL-2.0-or-later"
+    },
+    {
+      "name": "CadQuery / build123d",
+      "value": "2.8.0 / 0.13.0, Apache-2.0, OCP 7.9.x / 8.0.x"
+    },
+    {
+      "name": "replicad / @jscad/modeling",
+      "value": "1.2.0 MIT / 2.13.0 MIT"
+    },
+    {
+      "name": "kcl-lib",
+      "value": "0.2.193 (2026-10-21), MIT; KCL 3 released 2026-10"
+    },
+    {
+      "name": "Extism",
+      "value": "Rust 1.41.0 (2026-10-09) BSD-3; @extism/extism 2.0.0-rc13 (browser + Node)"
+    },
+    {
+      "name": "wasmtime / WASI",
+      "value": "wasmtime 50.0.0 (2026-10-20); WASI 0.3.0 ratified 2026-06-11"
+    },
+    {
+      "name": "vtracer / potrace",
+      "value": "1.0.0-alpha.4 (2026-08-29) MIT/Apache vs 1.16 (2019) GPL-2+ with paid Professional"
+    },
+    {
+      "name": "harfbuzzjs / opentype.js",
+      "value": "1.6.4 MIT / 2.0.0 MIT"
+    },
+    {
+      "name": "three.js",
+      "value": "0.186.1 MIT (LDrawLoader, LDrawConditionalLineMaterial)"
+    },
+    {
+      "name": "3MF",
+      "value": "core 1.4.0 = ISO/IEC 25422:2025; Production 1.1.2; Boolean Ops 1.1.0"
+    },
+    {
+      "name": "LDraw parts library license",
+      "value": "CC BY 2.0 (CCAL 2.0 header line); LDCad shadow library: all rights reserved"
+    },
+    {
+      "name": "Thingiverse Customizer / OpenSCAD native customizer",
+      "value": "early 2013 / 2019.05"
+    }
+  ],
+  "open_questions": [
+    "Trade-dress risk: a 'logo tile' product line reproduces the stud-and-tube look; patents are expired but the stud shape, 'LEGO' word and minifigure are trademarked. Legal review of marketing language and of whether generated parts may carry the word 'LEGO' anywhere (recommend never, even in filenames).",
+    "Target fit philosophy: should openBrick default to 'fits genuine bricks' (stud ~4.85-4.9 printed, requires per-printer calibration) or 'fits itself' (looser, prints anywhere)? PELA and LEGO.scad disagree; a calibration coupon in the first-run flow decides it, but the default matters for first impressions.",
+    "Do we need B-rep at all? Prismatic bricks are fully expressible with 2D polygons + extrude + Manifold booleans; fillets on keychain loops and chamfered stud tops are the only places a B-rep kernel would be nicer. Decide whether 'fillet' is a mesh-level feature (offset/rounding of the 2D profile) or a phase-2 OCCT service.",
+    "Connectivity coverage for official LDraw parts: how many of the ~15k parts get usable snap data from primitive scanning alone, and is it acceptable to ask contributors to hand-author the rest in the SNAP vocabulary?",
+    "Should openBrick's exported LDraw files embed `!LDCAD SNAP_*` metas inline (works in LDCad, ignored by others) or ship a parallel shadow-style file? LDCad reads both; inline is simpler for sharing.",
+    "Scripted parts: TypeScript executed via QuickJS-in-WASM (Extism JS PDK) is slow for geometry loops; if scripts only emit feature IR it is fine, but if the community wants per-vertex control we need a Rust/AssemblyScript path and a stable host ABI. Which do we commit to first?",
+    "Multi-colour logo tiles: the face-down 'inlay' workflow (filament swap after N layers) gives the best-looking merch but depends on slicer behaviour (Orca/Bambu 3MF per-object colours vs painted colours in a vendor extension). Confirm which 3MF representation survives round-trips through Orca, Bambu Studio, PrusaSlicer and Cura.",
+    "Font set: candidate OFL fonts (Inter, Noto Sans, Atkinson Hyperlegible, Liberation Sans) need their individual license files checked for Reserved Font Names before bundling; Roboto's license status (Apache vs OFL) must be verified rather than assumed.",
+    "Serial/QR placement: embossed serials on the underside collide with tube geometry on 1-stud-wide parts; decide a canonical 'serial face' per part type.",
+    "Mobile: Manifold WASM + three.js runs in mobile WebViews, but memory ceilings on iOS WebKit for thousands of instances and WASM heap limits for Minkowski/large mosaics are unmeasured."
+  ],
+  "options_compared": [
+    {
+      "option": "Declarative JSON part document (feature IR on an LDU grid) - RECOMMENDED core",
+      "pros": "Diffable, versionable, schema-validated, language-neutral; UI can be generated from typed params (FeatureScript-style); connectivity derivable from features; trivially sandboxed (it is data); cacheable by content hash; matches README promise of open .json formats.",
+      "cons": "Less expressive than code for unusual shapes; needs an escape hatch (scripts) and a disciplined schema-versioning policy.",
+      "fit_for_openbrick": "Excellent: bricks are a small closed vocabulary (body, stud field, tube field, holes, relief, text, loop) and merch needs reproducibility more than freedom.",
+      "license": "n/a (own spec, MIT)",
+      "status_2026": "Nothing comparable exists for bricks; LEGO.scad/PELA parameter sets map 1:1 onto it."
+    },
+    {
+      "option": "TypeScript API that emits the feature IR, run in a WASM sandbox (QuickJS via Extism JS PDK) or in a Web Worker",
+      "pros": "Familiar to web contributors and AI-assisted coding; can be typed (zod/TS types for params); same IR output keeps the rest of the pipeline unchanged; manifold-cad proves TS-as-CAD-script works.",
+      "cons": "QuickJS is ~10-30x slower than JIT JS; a Worker is not a security sandbox against exfiltration unless CSP/no-network is enforced; two execution paths to maintain.",
+      "fit_for_openbrick": "Good as the 'advanced/community' layer in v1.x, after the declarative layer is stable.",
+      "license": "Extism BSD-3-Clause; QuickJS MIT",
+      "status_2026": "@extism/extism 2.0.0-rc13 works in browsers and Node; Extism Rust 1.41.0."
+    },
+    {
+      "option": "Rust API compiled to WASM (wasm-bindgen / Extism Rust PDK) for scripted parts",
+      "pros": "Fast, deterministic, strongest sandbox (wasmtime fuel/memory caps), same code runs in desktop core and browser; natural fit with Rust 1.97 on the dev box.",
+      "cons": "High barrier for hobby contributors; compile step; needs a stable host ABI.",
+      "fit_for_openbrick": "Right choice for built-in feature implementations and for 'official' generator plugins; not for casual scripting.",
+      "license": "Apache/MIT ecosystem",
+      "status_2026": "wasmtime 50.0.0; WASI 0.3 async not needed for part scripts."
+    },
+    {
+      "option": "OpenSCAD-like script language of our own",
+      "pros": "Familiar to the largest existing brick-generator community; CSG mental model maps to bricks.",
+      "cons": "Years of parser/evaluator work; recreates the customizer's known UX limits (literal-only params, no conditional UI); competes with OpenSCAD instead of interoperating; hard to sandbox without WASM anyway.",
+      "fit_for_openbrick": "Poor. Do not build. Provide an importer instead.",
+      "license": "n/a",
+      "status_2026": "OpenSCAD community itself is moving toward Manifold and Python bindings rather than language growth."
+    },
+    {
+      "option": "Embed OpenSCAD (WASM or CLI) as the geometry/customizer engine",
+      "pros": "Instant compatibility with LEGO.scad, PELA, MakerWorld files; Manifold-backed nightlies are fast.",
+      "cons": "GPL contaminates an MIT client if linked; WASM build is 'experimental, slow, no fonts' per openscad.org; stable is 2021.01; customizer cannot express dependencies.",
+      "fit_for_openbrick": "Only as an out-of-process import bridge ('open .scad -> run openscad CLI -> mesh + parsed params').",
+      "license": "GPL-2.0-or-later",
+      "status_2026": "No stable release since 2021.01; Manifold default in nightlies since 2025-08-17."
+    },
+    {
+      "option": "KCL (Zoo) as DSL",
+      "pros": "Modern, functional, LLM-friendly text CAD language with a version pragma and units; MIT language implementation.",
+      "cons": "Geometry engine is Zoo's hosted service (3D view is a video stream); no brick concepts; breaking changes between KCL 2 and 3 show churn.",
+      "fit_for_openbrick": "Borrow design ideas (`@settings(kclVersion)`, unit-suffixed literals, tags on edges); do not depend on it.",
+      "license": "kcl-lib MIT; engine proprietary/hosted",
+      "status_2026": "kcl-lib 0.2.193; KCL 3 released Oct 2026."
+    },
+    {
+      "option": "CadQuery / build123d (Python, OCCT B-rep)",
+      "pros": "True B-rep with fillets, STEP export for injection-mould tooling of merch; Apache-2.0; mature.",
+      "cons": "Python runtime and OCCT (hundreds of MB) do not belong in a mobile/web client; slower booleans than Manifold for thousands of instances.",
+      "fit_for_openbrick": "Optional server-side 'STEP export / mould' service in a later phase.",
+      "license": "Apache-2.0",
+      "status_2026": "CadQuery 2.8.0, build123d 0.13.0 on OCP 8.0."
+    },
+    {
+      "option": "Manifold mesh kernel (WASM + Rust/C++)",
+      "pros": "Guaranteed-manifold booleans, deterministic across platforms, CrossSection 2D booleans/offset for logo cleanup, Minkowski for rounding, 3MF/glTF I/O, progress/cancel, Apache-2.0, adopted by OpenSCAD and Blender users.",
+      "cons": "No B-rep fillets; manual delete() in JS; Minkowski slow on complex meshes.",
+      "fit_for_openbrick": "The kernel. Prismatic brick geometry + 2D offsets cover 95% of merch parts.",
+      "license": "Apache-2.0",
+      "status_2026": "3.5.4"
+    },
+    {
+      "option": "Connectivity model: LDCad SNAP vocabulary vs Studio .conn vs bespoke",
+      "pros": "SNAP: documented, text, proven in an editor, exportable inline in .dat; bespoke: can be derived from features and carry print metadata.",
+      "cons": "SNAP data for official parts is not redistributable; Studio .conn is binary and unparsed; bespoke alone interoperates with nothing.",
+      "fit_for_openbrick": "Hybrid: internal typed connectors (studM, studF, tubeF, pinM/F, axleM/F, barM, clipF, hingeFinger) that serialise losslessly to `!LDCAD SNAP_*` on export.",
+      "license": "LDraw parts CC BY 2.0; LDCad shadow library all rights reserved",
+      "status_2026": "LDCad 1.7 scripting API; Studio reverse-engineering stalled Feb 2026."
+    },
+    {
+      "option": "Raster tracing: vtracer vs potrace vs own tracer",
+      "pros": "vtracer: MIT/Apache, Rust+WASM, colour; potrace: best-known curves; own: tiny and fully controlled for logos.",
+      "cons": "vtracer still 1.0.0-alpha; potrace GPL (or paid); own tracer lacks curve fitting quality.",
+      "fit_for_openbrick": "vtracer via WASM for PNG/JPG, native SVG path parsing for SVG (most merch logos arrive as SVG anyway).",
+      "license": "MIT OR Apache-2.0 / GPL-2.0+",
+      "status_2026": "vtracer 1.0.0-alpha.4 (Aug 2026); potrace 1.16 (2019)"
+    },
+    {
+      "option": "Batch export: OrcaSlicer CLI vs own nesting + plain 3MF",
+      "pros": "Orca CLI arranges, orients, slices and exports 3MF headlessly; own nesting is trivial for rectangular brick footprints and keeps the pipeline slicer-agnostic.",
+      "cons": "Orca CLI hides 43 keys, is version-sensitive and GPL/AGPL-licensed (separate process is fine); own nesting must respect bed size and spacing per printer.",
+      "fit_for_openbrick": "Own grid-aware shelf packing -> one 3MF per plate with named objects; optional 'hand off to Orca CLI' button.",
+      "license": "3MF spec open; Orca AGPL-3.0 (separate process)",
+      "status_2026": "3MF 1.4.0 / ISO 25422:2025"
+    }
+  ],
+  "recommendations": [
+    "DSL SHAPE: adopt a three-layer design. (1) `openbrick/part@1` JSON document = the canonical, shareable artefact: `meta` (id, version, license, author, tags), `params` (typed, UI-bearing), `features` (ordered list of brick-aware ops), `snap` ('derived' or explicit connector list), `print` (face-up, fit-critical features, allowed process profiles, colour roles), `export` (batch rules). (2) A TypeScript API (`@openbrick/part`) whose only job is to produce that document; scripts run in a WASM sandbox (Extism JS PDK first, Rust PDK for official plugins) with no network/FS, memory and fuel caps, and content-hash caching of their output. (3) A Rust/TS evaluator turns features into Manifold geometry and connector lists. Never let scripts call the kernel directly in v1; they emit IR, which keeps results deterministic and mobile-safe.",
+    "PARAMETER UX: copy FeatureScript, not the OpenSCAD comment hack. Each param has `type` (int, length, angle, bool, string, enum, grid2, svg, image, font, color, list), `unit` (stud, ldu, mm, deg), `default`, `min/max/step`, `options` with labels, `group`, `visibleWhen` (a tiny expression language over other params), `help`, and optional `manipulator` (in-viewport drag handle: linear along an axis, grid-snapped). Add an `onChange` editing-logic hook (declarative: 'when size changes, clamp margin') and JSON presets compatible in spirit with OpenSCAD's `parameterSets`. Provide an OpenSCAD customizer importer that maps `// [a:b:c]`, `[x:Label]`, `/* [Tab] */`, `[Hidden]` and MakerWorld's `// font` onto these types so LEGO.scad-style files open with a working panel.",
+    "GRID AND UNITS: store all layout positions as integer LDU (stud 20, half-stud 10, plate 8, brick 24, Technic hole centre 14.5 LDU = 5.8 mm above brick bottom); allow `stud`/`plate` unit suffixes in params and expressions (`4stud`, `1/3brick`), KCL-style, and only convert to mm in the evaluator. Enforce a constraint solver no bigger than 'snap to grid + optional half-stud/half-plate offsets + alignment to another feature'; a full 2D constraint solver is not needed for bricks.",
+    "CONNECTION FEATURES: implement connectors as first-class reusable features with both geometry and snap semantics: `stud.field` (male cyl grid, solid/hollow/open), `tube.field`/`antistud` (female grid incl. 1-wide pin posts), `technic.hole` (female R 4.8 mm with bevel), `axle.hole` / `axle` (A sections), `bar` (male R 3.18), `clip` (female, LDCad CLP radius 4 LDU / length 8), `hinge.finger` (FGR sequences), `ball`/`socket` (GEN bounding). Each feature knows its LDU footprint, gender, section list and print rules (which faces may touch the bed, which need calibration offsets). Derive the `snap` block automatically from them; allow explicit overrides for exotic parts.",
+    "LDRAW/LDCAD INTEROP: export every part as an LDraw `.dat` (geometry as triangles/quads in LDU, BFC CCW, `0 !LICENSE` line, 'Unofficial' header) with inline `0 !LDCAD SNAP_CYL/CLP/FGR/GEN` metas generated from the connector list (e.g. a 2x4 tile underside: `0 !LDCAD SNAP_CYL [gender=F] [caps=one] [secs=R 6 8] [grid=C 2 C 4 20 20] [pos=0 0 0] [ori=1 0 0 0 1 0 0 0 1]`, illustrative values). This makes openBrick parts snap in LDCad immediately and lets three.js LDrawLoader render them. Do not target Studio `.conn` until a community parser exists; do not ship LDCad's shadow library. For official LDraw parts in the assembler, generate snap data by scanning primitive references (stud.dat, stud4.dat, axlehole.dat, peghole.dat...) and let contributors refine it in the SNAP vocabulary under CC BY.",
+    "LOGO PIPELINE: SVG -> parse paths (usvg-style flattening, 0.05 mm tolerance) -> polygons with even-odd fill -> Manifold CrossSection: morphological opening (inset w/2 then outset w/2 with w = profile.minFeature, 0.8 mm on 0.4 mm FDM) to drop unprintable hairlines, report removed-area % and show it red in the preview -> fit into the face box with margin -> extrude by relief height -> union (emboss) or subtract (deboss). PNG/JPG -> threshold/posterize -> vtracer (WASM) -> same pipeline. Offer three relief modes: emboss (face-up print), deboss, and 'inlay' (face-down print, logo as a second body for a filament swap or AMS; export as separate 3MF objects with colour roles). Each process profile (fdm-0.4, fdm-0.2, resin) declares minFeature, minReliefHeight, maxOverhang, and the UI blocks export (not just warns) when a fit-critical rule fails.",
+    "TEXT: shape with harfbuzzjs (MIT) and outline with opentype.js (MIT); bundle a small OFL set (verify each LICENSE: Inter, Noto Sans, Atkinson Hyperlegible, Liberation Sans as a default because OpenSCAD users know it) as complete, unmodified files with their copyright and OFL text in an in-app 'Fonts' screen; never subset bundled fonts (subsetting triggers Reserved Font Name renaming). Add `printSafe` metadata per font/weight (measured minimum stroke at 10 mm cap height) and auto-pick weight so the stroke meets the profile's minFeature; let users add their own .ttf/.otf locally without redistributing them (store a hash + name in the part file, like OpenSCAD's `use <font.ttf>`). Generated 3D text carries no font-license obligations (OFL FAQ 1.1/1.13).",
+    "CALIBRATION: keep fit offsets out of the part file. A `printerProfile` (nozzle, material, slicer) holds `studDiameterOffset`, `tubeInnerOffset`, `holeDiameterOffset`, `xyCompensation`, modelled on PELA's three tweaks and LEGO.scad's stud_rescale; ship a calibration coupon generator (2x4 bar with 5 stud sizes 4.75-4.95 mm and matching sockets, labels embossed) and a first-run wizard that writes the profile. Part files list which features are `fitCritical` so batch export can refuse to run without a calibrated profile. Default nominal stud 4.8 mm; expose 'fits genuine bricks' vs 'fits openBrick only' as a profile intent.",
+    "VERSIONING: version the schema (`\"openbrick\": \"1.0\"` pragma at top, whole-document like KCL's `@settings(kclVersion)`), the part (`version` semver + `contentHash` of the normalised document), and the evaluator (`generatorVersion` written into exports). Keep the feature IR append-only within a major version; write explicit migration functions per schema bump; store `lock` info for reproducibility (font hashes, process profile id, kernel version). Export filenames: `{partId}-v{version}-{paramsHash8}.stl/3mf`.",
+    "BATCH / MERCH RUNS: add a `run` document: a part reference + a CSV/JSON of rows (one per variant: name, logo, colour role) + plate constraints (bed size, spacing 3 mm, orientation rule, max parts per plate) + naming (`{sku}-{serial:04}`) + serial marking (`deboss text on bottom face` default; QR only when the chosen face is >= 5x5 studs since modules must be >= 0.9-1.2 mm; Data Matrix as the compact option). Nest with a grid-aware shelf packer (parts are rectangles in LDU), emit one 3MF per plate with named objects + metadata (serial, params hash) and a manifest CSV; optionally hand plates to OrcaSlicer CLI (`--arrange 1 --orient 1 --export-3mf`) as a separate process. Deterministic ordering so re-runs reproduce identical plates.",
+    "DO NOT: build an OpenSCAD-like language; link GPL OpenSCAD/openscad-playground into the MIT client; depend on KCL's hosted engine; ship LDCad shadow data; use potrace (GPL) in the core; hand-author connectivity separately from geometry; store printer tolerances inside part files; use floating mm for grid positions.",
+    "WORKED EXAMPLE 1 - 2x4 logo tile with embossed SVG (openbrick/part@1 JSON):\n{\n  \"openbrick\": \"1.0\",\n  \"id\": \"ndn.logo-tile\", \"version\": \"1.2.0\", \"name\": \"Logo tile\", \"license\": \"CC-BY-4.0\",\n  \"params\": {\n    \"size\":   {\"type\": \"grid2\", \"unit\": \"stud\", \"default\": [2,4], \"min\": [1,1], \"max\": [16,32], \"group\": \"Size\", \"manipulator\": \"corner\"},\n    \"height\": {\"type\": \"enum\", \"default\": \"plate\", \"options\": [{\"value\":\"plate\",\"label\":\"Plate (1/3)\"},{\"value\":\"brick\",\"label\":\"Brick\"}], \"group\": \"Size\"},\n    \"logo\":   {\"type\": \"svg\", \"default\": \"assets/ndn-mark.svg\", \"group\": \"Artwork\", \"help\": \"Single-colour SVG; thin lines under 0.8 mm are removed\"},\n    \"relief\": {\"type\": \"enum\", \"default\": \"emboss\", \"options\": [\"emboss\",\"deboss\",\"inlay\"], \"group\": \"Artwork\"},\n    \"reliefHeight\": {\"type\": \"length\", \"unit\": \"mm\", \"default\": 0.6, \"min\": 0.2, \"max\": 1.5, \"step\": 0.1, \"visibleWhen\": \"relief != 'inlay'\"},\n    \"margin\": {\"type\": \"length\", \"unit\": \"mm\", \"default\": 1.0, \"min\": 0.4, \"max\": 4}\n  },\n  \"features\": [\n    {\"id\": \"body\", \"op\": \"body.tile\", \"size\": \"$size\", \"height\": \"$height\", \"topFillet\": \"0.3mm\"},\n    {\"id\": \"bottom\", \"op\": \"tube.field\", \"on\": \"body.bottom\", \"grid\": \"auto\", \"fitCritical\": true},\n    {\"id\": \"art\", \"op\": \"relief.svg\", \"on\": \"body.top\", \"src\": \"$logo\", \"mode\": \"$relief\", \"height\": \"$reliefHeight\",\n     \"fit\": {\"margin\": \"$margin\", \"align\": \"center\", \"keepAspect\": true}, \"minFeature\": \"profile.minFeature\", \"colorRole\": \"accent\"}\n  ],\n  \"snap\": \"derived\",\n  \"print\": {\"up\": {\"emboss\": \"top\", \"deboss\": \"top\", \"inlay\": \"bottom\"}, \"profiles\": [\"fdm-0.4\", \"fdm-0.2\", \"resin\"]},\n  \"export\": {\"formats\": [\"3mf\",\"stl\",\"ldr\"], \"batch\": {\"filename\": \"{id}-{size[0]}x{size[1]}-{serial:04}\", \"serial\": {\"mode\": \"deboss\", \"on\": \"body.bottom\", \"height\": \"0.4mm\"}}}\n}\nDerived snap (2x4): 8 female stud sockets on the bottom -> LDraw export line `0 !LDCAD SNAP_CYL [gender=F] [caps=one] [secs=R 6 8] [grid=C 2 C 4 20 20]`; no male connectors (tile). Evaluator: tile body 15.8 x 31.8 x 3.2 mm (wall_play 0.1 per side), 3 tubes OD 6.45/ID 4.8 + edge pins, SVG opened at 0.8 mm then extruded 0.6 mm.",
+    "WORKED EXAMPLE 2 - nameplate with text and keychain loop (openbrick/part@1 JSON):\n{\n  \"openbrick\": \"1.0\",\n  \"id\": \"ndn.nameplate-keychain\", \"version\": \"1.0.0\", \"name\": \"Nameplate keychain\", \"license\": \"CC-BY-4.0\",\n  \"params\": {\n    \"text\":   {\"type\": \"string\", \"default\": \"OPENBRICK\", \"maxLength\": 14, \"group\": \"Text\"},\n    \"font\":   {\"type\": \"font\", \"default\": \"Inter:Bold\", \"bundledOnly\": true, \"group\": \"Text\"},\n    \"length\": {\"type\": \"int\", \"unit\": \"stud\", \"default\": 8, \"min\": 4, \"max\": 16, \"group\": \"Size\", \"manipulator\": \"x\"},\n    \"width\":  {\"type\": \"int\", \"unit\": \"stud\", \"default\": 2, \"options\": [1, 2], \"group\": \"Size\"},\n    \"studsOnTop\": {\"type\": \"bool\", \"default\": false, \"group\": \"Size\"},\n    \"loop\":   {\"type\": \"enum\", \"default\": \"left\", \"options\": [\"none\",\"left\",\"right\"], \"group\": \"Keychain\"},\n    \"ringHole\": {\"type\": \"length\", \"unit\": \"mm\", \"default\": 5.0, \"min\": 3, \"max\": 8, \"step\": 0.5, \"visibleWhen\": \"loop != 'none'\"}\n  },\n  \"features\": [\n    {\"id\": \"body\", \"op\": \"body.brick\", \"size\": [\"$width\", \"$length\"], \"height\": \"plate\"},\n    {\"id\": \"studs\", \"op\": \"stud.field\", \"on\": \"body.top\", \"if\": \"$studsOnTop\", \"studType\": \"solid\"},\n    {\"id\": \"bottom\", \"op\": \"tube.field\", \"on\": \"body.bottom\", \"fitCritical\": true},\n    {\"id\": \"label\", \"op\": \"relief.text\", \"on\": \"body.top\", \"if\": \"!$studsOnTop\", \"text\": \"$text\", \"font\": \"$font\", \"mode\": \"emboss\", \"height\": \"0.6mm\",\n     \"fit\": {\"box\": \"face\", \"margin\": \"1.2mm\", \"shrinkToFit\": true, \"minCapHeight\": \"4mm\"}, \"minStroke\": \"profile.minFeature\", \"colorRole\": \"accent\"},\n    {\"id\": \"ring\", \"op\": \"loop.keyring\", \"if\": \"$loop != 'none'\", \"attachTo\": \"body\", \"side\": \"$loop\", \"holeDiameter\": \"$ringHole\", \"wall\": \"2.4mm\", \"thickness\": \"plate\", \"fillet\": \"1mm\", \"offGrid\": true}\n  ],\n  \"snap\": \"derived\",\n  \"print\": {\"up\": \"top\", \"profiles\": [\"fdm-0.4\", \"fdm-0.2\"], \"rules\": [{\"feature\": \"label\", \"check\": \"strokeWidth >= profile.minFeature\", \"onFail\": \"shrink-or-bolder\"}]},\n  \"export\": {\"formats\": [\"3mf\",\"stl\",\"ldr\"], \"batch\": {\"rowsFrom\": \"csv:names.csv\", \"map\": {\"text\": \"name\"}, \"filename\": \"{id}-{text|slug}-{serial:03}\"}}\n}\nDerived snap: `tube.field` -> female grid `C 2 C 8 20 20`; `stud.field` (if enabled) -> male `secs=R 6 4` grid on top; the loop is marked `offGrid` so it contributes no connectors and the assembler treats it as decoration. Evaluator: 15.8 x 63.8 x 3.2 mm plate, text shaped with HarfBuzz, outline opened at 0.8 mm, auto-shrunk until it fits 61.4 x 13.4 mm with cap height >= 4 mm, loop = 2.4 mm wall around a 5 mm hole fused to the short side with 1 mm fillet (Minkowski/2D offset).",
+    "PHASING FOR 2-4 ENGINEERS: M1 (weeks 1-6): schema + evaluator in Rust (Manifold via C API) and TS (manifold-3d WASM) sharing golden-test fixtures; tile/brick/plate bodies, stud/tube fields, relief.svg, relief.text; STL/3MF export; OpenSCAD-customizer importer for LEGO.scad files. M2: typed param panel + manipulators + presets; calibration coupon + printer profiles; LDraw .dat + SNAP export; CLI `openbrick build part.json --profile fdm-0.4`. M3: batch runs (CSV, nesting, serials); Technic holes/axles/bars/clips; mosaic feature. M4: Extism-sandboxed TS scripts emitting IR; community part registry with content hashes."
+  ],
+  "sources": [
+    "https://app.openscad.org/documentation/manual/Customizer.html",
+    "https://app.openscad.org/documentation/manual/Text.html",
+    "https://modelrift.com/blog/openscad-customizer-history",
+    "https://www.makerhacks.com/openscad-makerworld-customizer/",
+    "https://lists.openscad.org/empathy/thread/TMJEJCZINIJNYJX2YF7IDNBAPQY66KIF",
+    "https://github.com/openscad/openscad/releases",
+    "https://openscad.org/downloads.html",
+    "https://registry.npmjs.org/openscad-playground/latest",
+    "https://cad.onshape.com/FsDoc/uispec.html",
+    "https://forum.onshape.com/discussion/24513/set-default-value-for-length-and-angle-in-annotation-in-feature-script-precondition",
+    "https://adafruitdaily.com/2016/03/14/tinkercad-shape-generators-lets-you-code-your-models-for-3d-printing",
+    "https://pypi.org/pypi/build123d/json",
+    "https://pypi.org/pypi/cadquery/json",
+    "https://build123d.readthedocs.io/en/latest/index.html",
+    "https://github.com/elalish/manifold/releases",
+    "https://registry.npmjs.org/manifold-3d/latest",
+    "https://registry.npmjs.org/replicad/latest",
+    "https://registry.npmjs.org/@jscad/modeling/latest",
+    "https://zoo.dev/docs/kcl-lang/migrating-to-kcl-3",
+    "https://zoo.dev/research/introducing-kcl",
+    "https://github.com/KittyCAD/modeling-app",
+    "https://crates.io/api/v1/crates/kcl-lib",
+    "https://www.melkert.net/LDCad/tech/meta",
+    "https://www.melkert.net/LDCad/tech/shadowLib",
+    "https://forums.ldraw.org/post-51111.html",
+    "https://www.ldraw.org/docs-main/licenses/legal-info.html",
+    "https://en.wikipedia.org/wiki/LDraw",
+    "https://forums.ldraw.org/thread-28521.html",
+    "https://github.com/Cheenzo/StudioParts",
+    "https://threejs.org/docs/pages/LDrawLoader.html",
+    "https://registry.npmjs.org/three/latest",
+    "https://eurobricks.com/forum/forums/topic/69050-software-mecabricks-online-design-tool",
+    "https://raw.githubusercontent.com/cfinke/LEGO.scad/master/LEGO.scad",
+    "https://raw.githubusercontent.com/cfinke/LEGO.scad/master/LICENSE",
+    "https://www.chrisfinke.com/?p=14356",
+    "https://raw.githubusercontent.com/paulirotta/PELA-blocks/master/material.scad",
+    "https://raw.githubusercontent.com/paulirotta/PELA-blocks/master/README.md",
+    "https://lists.openscad.org/empathy/thread/EUJLOJ6X22PICPOXL3OLLERYADAKRKAM",
+    "https://www.lugnet.com/~330/FAQ/Build/dimensions",
+    "https://orionrobots.co.uk/wiki/lego_specifications.html",
+    "https://brickfact.com/blog/guidebooks/lego-brick-dimensions",
+    "https://www.xometry.com/resources/3d-printing/mini-guide-fdm-3d-printing/",
+    "https://www.amf.uzh.ch/dam/jcr:fd1ee024-1a98-488b-89ec-ffd85befa786/Design-Guideline-FDM.pdf",
+    "https://www.sovol3d.com/blogs/news/3d-printing-text-and-logos-how-to-emboss-engrave-and-print-clean-details",
+    "https://blog.printpal.io/how-to-3d-print-a-qr-code-that-actually-scans/",
+    "https://siraya.tech/blogs/news/how-to-3d-print-a-qr-code",
+    "https://makerworld.com/models/1754644",
+    "https://openfontlicense.org/ofl-faq/",
+    "https://registry.npmjs.org/harfbuzzjs/latest",
+    "https://registry.npmjs.org/opentype.js/latest",
+    "https://crates.io/api/v1/crates/vtracer",
+    "https://potrace.sourceforge.net/",
+    "https://crates.io/api/v1/crates/extism",
+    "https://registry.npmjs.org/@extism/extism/latest",
+    "https://extism.org/docs/concepts/manifest",
+    "https://crates.io/api/v1/crates/wasmtime",
+    "https://bytecodealliance.org/articles/WASI-0.3",
+    "https://wasi.dev/releases/wasi-p3",
+    "https://www.orcaslicer.com/wiki/cli/cli_mode",
+    "https://www.orcaslicer.com/wiki/cli/cli_transform",
+    "https://dyn.manpages.debian.org/trixie/prusa-slicer/prusa-slicer.1",
+    "https://3mf.io/spec/",
+    "https://www.printables.com/model/116486-lego-compatible-brick-tile-all-sizes-upto-50x50",
+    "https://makerworld.com/models/78437",
+    "https://cults3d.com/:249266",
+    "https://www.printables.com/model/348098-perfect-parametric-bricks-and-more"
+  ]
+}

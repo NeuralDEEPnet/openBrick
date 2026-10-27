@@ -1,0 +1,535 @@
+{
+  "summary": "Late-2026 state of play: the web rendering stack is the pragmatic center of gravity for openBrick. three.js r186 (24 Sep 2026, MIT) ships WebGPURenderer with automatic WebGL 2 fallback and a forceWebGL switch, so one renderer API covers every shell. WebGPU is now default-on in Chrome 113+ (desktop), Chrome 121+ on Android 12+ (ARM/Qualcomm/Intel GPUs), Safari 26 (macOS/iOS/iPadOS 26) and Firefox 141+ on Windows / 145-147 on macOS, but it is NOT available in WebKitGTK (Tauri on Linux), Firefox Linux stable, Firefox Android, Samsung Xclipse phones (still TBD), and WKWebView-on-iOS availability is unconfirmed by Apple. Chrome 146 adds a WebGPU 'compatibility mode' (GLES 3.1 / D3D11) explicitly for desktop, Android and WebView, which will widen reach, but a 2-3 year architecture must treat WebGL 2 as the floor and WebGPU as progressive enhancement. Of the alternatives, Babylon.js 9.32 (Apache-2.0) and PlayCanvas 2.23 (MIT) are credible WebGPU+WebGL2 engines, but neither has an LDraw loader and both are heavier; three.js LDrawLoader already handles .ldr/.dat/.mpd with WebGPU-aware conditional-line materials, and the LDraw parts library is CC BY 2.0, which is compatible with an MIT app.\n\nApp shell: Tauri 2.12.3 (10 Oct 2026) is first-class on desktop and workable on mobile, with concrete gaps: the updater plugin is desktop-only (fine, stores update mobile apps), autostart/cli/positioner/single-instance/window-state are desktop-only, fs/shell/process/global-shortcut are 'unknown/untested' on mobile, Android minSdk defaults to 24 (Android 7.0) and iOS minimum to 15.0, and rendering depends on the OS WebView (WebView2 on Windows, WKWebView on macOS/iOS, WebKitGTK on Linux, Android System WebView). Known pain points are WebKitGTK + NVIDIA DMABUF crashes on Linux (Tauri documents env-var workarounds), no WebGPU on Linux, device-dependent Android WebView versions, and Rust-to-WebView IPC for large mesh buffers. Electron 45 (20 Oct 2026, Chromium 156, Node 24.22) gives the most consistent desktop rendering, including WebGPU on Linux via Chromium, at the cost of 100+ MB installs and no mobile. Capacitor 8.5.3 wraps the same web bundle for iOS/Android with identical WebView constraints. Native engines are weaker fits for the whole product: Godot 4.7.2 (MIT, Jolt default, LibGodot embedding) has excellent native mobile exports and MultiMesh instancing but its web export is WebGL2-only, single-threaded by default, no C#, and flagged as problematic on Safari; Bevy 0.20 (8 Oct 2026, wgpu 30) is a strong Rust-only renderer but ships breaking releases roughly every four months, has no editor, example-level mobile, and a small contributor pool; Flutter 3.47's 3D stack (flutter_scene 0.24.3) is explicitly pre-1.0 with breaking minor releases; Unity Personal is restricted to 'gaming and entertainment applications only' and is proprietary; rend3 was archived in June 2025; Qt is usable under LGPL or a 546 EUR/yr small-business license but has little overlap with web contributors.\n\nPerformance: the only rigorous 2026 datapoint found is a three.js 0.186.1 harness rendering 100,000 InstancedMesh copies of a 6,056-triangle plant (about 605.6M triangles per frame) at ~20 fps on an RTX 5070 Ti (43.9 TFLOPS), with statistically identical results on WebGL, native WebGPU and the WebGL2 node backend; 1k and 10k ran at the 60 fps vsync cap. That is roughly 12 G triangles/s and shows the API is not the bottleneck, geometry is. The same harness showed BatchedMesh costs 1 draw call on WebGL2 (multi-draw) but 1,001 draw calls for 1,000 instances on the WebGPU backend, because WebGPU core has no multi-draw. Scaling by FLOPS (Tiger Lake Iris Xe 2.1 TFLOPS, Lunar Lake / Radeon 780M / Apple M-series base 4-8 TFLOPS, Snapdragon 7 Gen 3 Adreno 720 ~1.0 TFLOPS, Apple A18 4-5 GPU cores) and discounting phones for thermal throttling and DPR 2-3 screens gives an inferred budget of roughly 10-20M triangles/frame at 60 fps on an integrated-GPU laptop and 3-6M at 60 fps (6-12M at 30 fps) on a mid-range 2024-2025 phone. A full-stud LDraw-quality 2x4 brick is ~600-1,200 triangles, so 10k bricks is comfortable on laptops (60 fps) and feasible on phones with a ~200-triangle LOD; 100k bricks needs LOD down to <=100 tris/brick average on laptops (60 fps achievable) and <=30 tris/brick on phones plus chunked instancing for frustum culling and rendering at <=1x DPR (30 fps is the honest target). Instancing alone cannot frustum-cull per instance; a Quest 2 datapoint lost ~30 fps that way.\n\nRecommendation in one line: a Rust core crate (geometry kernel, LDraw/JSON IO, print validation) compiled natively for Tauri commands and a headless CLI, and to WASM for the browser/PWA; a TypeScript UI with three.js WebGPURenderer plus WebGL2 fallback, chunked InstancedMesh per (part, color) with three LOD tiers; Tauri 2 for Windows/macOS/Linux and Android first, iOS via Tauri with Capacitor kept as a fallback shell; the same bundle served as a PWA for zero-install trials; distribution through cargo-binstall, Homebrew, winget, Scoop, Flatpak/AUR and adb-installable APKs for the 'install via command line' promise. Godot 4.x (LibGodot + MultiMesh) and Bevy are the watch-list options for a future native play-mode renderer, not for the first two years.",
+  "findings": [
+    {
+      "claim": "Tauri's latest release is 2.12.3 (10 Oct 2026); 2.12.0 (26 Sep 2026) dropped Windows 7, raised minimum Gradle to 8.13, added a webview permission-handler API and fixed an IPC channel scoping vulnerability (GHSA-w28w-mhc8-qvjv). 2.11.0 added multi-window support and file associations on Android and iOS.",
+      "evidence": "Official all-versions changelog lists 2.12.3 (Oct 10, 2026), 2.12.2 (Oct 9), 2.12.1 (Sep 30), 2.12.0 (Sep 26) and the per-version notes quoted above.",
+      "confidence": "verified",
+      "source_url": "https://v2.tauri.app/release/tauri/all-versions/"
+    },
+    {
+      "claim": "The Tauri updater plugin supports Linux, Windows and macOS only; Android and iOS are marked not supported. Signing is mandatory and cannot be disabled; losing the private key means existing installs can never be updated.",
+      "evidence": "plugins-workspace README platform table: updater | Windows ✓ | macOS ✓ | Linux ✓ | Android x | iOS x. Updater docs: 'This cannot be disabled'; endpoints enforce TLS in production.",
+      "confidence": "verified",
+      "source_url": "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/v2/README.md"
+    },
+    {
+      "claim": "Tauri official plugin coverage is uneven across platforms: desktop-only = autostart, cli, positioner, single-instance, updater, window-state; mobile-only = barcode-scanner, biometric, geolocation, haptics, nfc, torch; fully cross-platform = clipboard-manager, deep-link, dialog, http, log, notification, opener, os, sql, store, upload; fs, shell, process, global-shortcut, localhost, websocket, stronghold and persisted-scope are 'unknown/untested or planned' on Android/iOS. All plugins require Rust 1.90+.",
+      "evidence": "plugins-workspace README support matrix (legend: ✓ partially supported, x not supported, ? unknown/untested).",
+      "confidence": "verified",
+      "source_url": "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/v2/README.md"
+    },
+    {
+      "claim": "Tauri 2 mobile defaults: bundle.android.minSdkVersion = 24 (Android 7.0) and bundle.iOS.minimumSystemVersion = \"15.0\"; the CLI templates use placeholders filled from these config values; Android template targets compileSdk/targetSdk 37.",
+      "evidence": "Config reference documents the defaults; the mobile templates contain {{android.min-sdk-version}} and {{apple.ios-version}} placeholders.",
+      "confidence": "verified",
+      "source_url": "https://v2.tauri.app/reference/config/"
+    },
+    {
+      "claim": "Tauri renders through the OS webview: WebView2 (Chromium/Edge) on Windows, WKWebView on macOS and iOS, WebKitGTK on Linux, and Android System WebView (Chromium-based, version depends on the device's WebView provider). This is the root of all cross-platform rendering inconsistency.",
+      "evidence": "Tauri webview-versions reference page.",
+      "confidence": "verified",
+      "source_url": "https://v2.tauri.app/reference/webview-versions/"
+    },
+    {
+      "claim": "Tauri on Linux has documented graphics failures with NVIDIA drivers (WebKitGTK DMABUF renderer requesting unsupported buffer formats, 'Error 71' Wayland crashes). Official workarounds are __NV_DISABLE_EXPLICIT_SYNC=1, then WEBKIT_DISABLE_DMABUF_RENDERER=1 (slower path), then WEBKIT_DISABLE_COMPOSITING_MODE=1 (disables accelerated compositing).",
+      "evidence": "Tauri 'Linux Graphics Issues' debugging page.",
+      "confidence": "verified",
+      "source_url": "https://v2.tauri.app/develop/debug/linux-graphics/"
+    },
+    {
+      "claim": "WebKitGTK has no WebGPU implementation; WebGL is available and since 2.51.1 (24 Oct 2025) runs in the GPU process by default. A Tauri Linux build must therefore use the WebGL 2 path.",
+      "evidence": "2.51.1 release notes: 'Use the GPU process for WebGL by default'; no WebGPU mention in 2.51/2.52 notes; 2023 webkit-gtk list: WebGPU not supported and nobody working on it.",
+      "confidence": "likely",
+      "source_url": "https://webkitgtk.org/2025/10/24/webkitgtk2.51.1-released.html"
+    },
+    {
+      "claim": "Tauri binary sizes are typically a few MB to ~10 MB because no browser engine is bundled, but a heavy SPA frontend can push a bundle past 30 MB; Tauri's own size page gives no numbers and recommends lto, codegen-units=1, opt-level s/z, panic=abort, strip and removeUnusedCommands (tauri 2.4+).",
+      "evidence": "Tauri app-size concept page (tips only) plus third-party 2026 comparisons for the figures.",
+      "confidence": "likely",
+      "source_url": "https://v2.tauri.app/concept/size/"
+    },
+    {
+      "claim": "A third-party review reports Figma could not adopt Tauri because its canvas rendering hit too many WebKit-specific differences; the recurring Tauri complaint is rendering inconsistency across WebKit/WebView2/WebKitGTK, with mobile described as functional but rougher than desktop (plugins, signing, webview quirks).",
+      "evidence": "Hysen Labs project review and 2026 Tauri-vs-Electron comparisons.",
+      "confidence": "likely",
+      "source_url": "https://hysenlabs.com/projects/tauri-apps-tauri"
+    },
+    {
+      "claim": "Electron 45.0.0 shipped 20 Oct 2026 with Chromium 156.0.8078.48 and Node 24.22.0; 44.9.3 and 43.8.3 are the other supported stable lines. Electron has no mobile target.",
+      "evidence": "releases.electronjs.org stable table.",
+      "confidence": "verified",
+      "source_url": "https://releases.electronjs.org/"
+    },
+    {
+      "claim": "three.js r186 (24 Sep 2026) is current; r185 (1 Jul) added full InstancedMesh support inside WebGPU render bundles and WebXR on WebGPU; r184 (16 Apr) made TSL compilation 3x faster and added a NodeMaterial compatibility layer; r183 (20 Feb) added BatchedMesh per-instance opacity and wireframe and renamed PostProcessing to RenderPipeline.",
+      "evidence": "GitHub releases page for mrdoob/three.js and a March 2026 r183 write-up.",
+      "confidence": "verified",
+      "source_url": "https://github.com/mrdoob/three.js/releases"
+    },
+    {
+      "claim": "three.js WebGPURenderer tries a WebGPU backend by default and falls back to WebGL 2 when unavailable; forceWebGL: true forces the WebGL 2 backend. The manual still characterises WebGPURenderer as experimental and WebGLRenderer as the recommended choice for pure WebGL 2 apps (manual page could not be fetched directly; statement comes from search snippets).",
+      "evidence": "WebGPURenderer docs page quotes the fallback and forceWebGL option; manual wording per search results for threejs.org/manual/en/webgpurenderer.",
+      "confidence": "likely",
+      "source_url": "https://threejs.org/docs/pages/WebGPURenderer.html"
+    },
+    {
+      "claim": "Benchmark (three.js 0.186.1, InstancedMesh, static camera, 1280x720, Chromium 155, RTX 5070 Ti + Ryzen 9 9950X): 1,000 and 10,000 instances of a 6,056-triangle mesh ran at 59.99 fps (vsync-capped) on classic WebGL, native WebGPU and the WebGL2 node backend; 100,000 instances (~605.6M triangles/frame) ran at 20.26 / 20.15 / 20.24 fps respectively. Backend choice made no measurable difference; triangle throughput did.",
+      "evidence": "three.js forum benchmark post with 240 desktop samples and a standalone harness.",
+      "confidence": "verified",
+      "source_url": "https://discourse.threejs.org/t/three-js-plant-instancing-benchmark-240-desktop-samples-csv-json-and-a-standalone-harness/95719"
+    },
+    {
+      "claim": "In the same harness, BatchedMesh with 1,000 instances issued 1 render call on classic WebGL (WEBGL_multi_draw) but 1,001 render calls on the native WebGPU backend, because WebGPU core has no multi-draw; so BatchedMesh on WebGPU is one draw per instance as of r186. For 100k bricks, InstancedMesh per part type (or chunked instancing) is the safer primitive across both backends.",
+      "evidence": "Renderer counters reported in the benchmark post ('a batch class name alone does not guarantee a single underlying draw on every backend').",
+      "confidence": "verified",
+      "source_url": "https://discourse.threejs.org/t/three-js-plant-instancing-benchmark-240-desktop-samples-csv-json-and-a-standalone-harness/95719"
+    },
+    {
+      "claim": "BatchedMesh supports per-instance frustum culling (perObjectFrustumCulled, default true), sorting, setVisibleAt, setColorAt with alpha, add/delete geometry and instances, optimize() to defragment; limitations: fixed max instance/vertex/index capacity set up front, negative scale unsupported, bounds null until computed.",
+      "evidence": "three.js BatchedMesh docs page.",
+      "confidence": "verified",
+      "source_url": "https://threejs.org/docs/pages/BatchedMesh.html"
+    },
+    {
+      "claim": "Per-instance frustum culling in BatchedMesh runs on the CPU every frame; forum reports show large BatchedMesh scenes dropping to ~20 fps with high CPU usage versus ~60 fps for plain meshes, so 100k-instance BatchedMesh scenes need culling disabled or chunked.",
+      "evidence": "three.js forum thread 'Significant Performance Drop and High CPU Usage with BatchedMesh'.",
+      "confidence": "likely",
+      "source_url": "https://discourse.threejs.org/t/significant-performance-drop-and-high-cpu-usage-with-batchedmesh/67324"
+    },
+    {
+      "claim": "On a Quest 2 (mobile-class Adreno GPU), 2,600 naive meshes rendered at ~85 fps while a single InstancedMesh of the same objects dropped to ~55 fps, because instanced geometry cannot be frustum-culled per instance; chunked instancing or GPU culling is required on tile-based mobile GPUs.",
+      "evidence": "VR Me Up devlog measurements.",
+      "confidence": "likely",
+      "source_url": "https://vrmeup.com/devlog/devlog_10_threejs_instancedmesh_performance_optimizations.html"
+    },
+    {
+      "claim": "three.js LDrawLoader loads .ldr/.dat/.txt (and packed .mpd) files, needs setPartsLibraryPath for unpacked models, looks parts up by trial and error across parts/, p/, models/ (slow on the web, so packing is recommended), supports !COLOUR/BFC/!CATEGORY/!KEYWORDS, and has LDrawConditionalLineNodeMaterial for WebGPURenderer and LDrawConditionalLineMaterial for WebGLRenderer. The official example exposes Smooth Normals, Merge model and Conditional Lines toggles; LDrawUtils.mergeObject() merges by material for speed at the cost of build steps.",
+      "evidence": "LDrawLoader docs page and the webgl_loader_ldraw example.",
+      "confidence": "verified",
+      "source_url": "https://threejs.org/docs/pages/LDrawLoader.html"
+    },
+    {
+      "claim": "The LDraw Parts Library is licensed under Creative Commons Attribution 2.0 (header '0 !LICENSE Redistributable under CCAL version 2.0'); commercial use and derivatives are allowed with attribution, and crediting 'The LDraw Parts Library' is accepted in lieu of a full author list. Rendered images are not considered derivative works.",
+      "evidence": "LDraw.org Legal Info page.",
+      "confidence": "verified",
+      "source_url": "https://www.ldraw.org/legal-info.html"
+    },
+    {
+      "claim": "WebGPU browser status (gpuweb wiki, last edited 2 Oct 2026): Chrome 113+ on Windows/macOS/ChromeOS; Chrome 121+ on Android 12+ with ARM/Qualcomm/Intel GPUs, Chrome 139 for Imagination on Android 16+, Samsung Xclipse 'TBD'; Chrome 144 on Linux Intel Gen12+, 147 on NVIDIA/Wayland, other Linux behind a flag; Firefox 141 Windows, 145 macOS 26+, 147 all macOS, Linux Nightly only, Android behind a flag; Safari 26 enabled by default on macOS/iOS/iPadOS/visionOS 26.",
+      "evidence": "gpuweb Implementation-Status wiki.",
+      "confidence": "verified",
+      "source_url": "https://github.com/gpuweb/gpuweb/wiki/Implementation-Status"
+    },
+    {
+      "claim": "Chromium plans to ship WebGPU 'Compatibility mode' in Chrome 146 for desktop, Android and WebView: an opt-in subset of WebGPU running on OpenGL ES 3.1 / D3D11 for older devices. Google's own numbers: 23% of Android users lack Vulkan 1.1 (15% have no Vulkan) and 31% of Windows Chrome users lack D3D feature level 11.1. Apps written for compat mode also run on core WebGPU.",
+      "evidence": "blink-dev Intent to Ship thread (Jan 2026).",
+      "confidence": "verified",
+      "source_url": "https://groups.google.com/a/chromium.org/g/blink-dev/c/N3RlLGCOTJ4/m/loneRTlPBwAJ"
+    },
+    {
+      "claim": "WebGPU inside WKWebView (what Tauri and Capacitor use on iOS) was not available on iOS 18.x even with the Safari flag enabled; an Apple-side forum reply (June 2025) said WKWebView gets WebGPU once it is enabled by default (iOS 26), and Apple DTS (April 2025) declined to give a roadmap. No official confirmation for the shipped iOS 26 was found, so it must be feature-detected on device.",
+      "evidence": "Apple Developer Forums threads 770862 and 781602.",
+      "confidence": "likely",
+      "source_url": "https://developer.apple.com/forums/thread/770862"
+    },
+    {
+      "claim": "Chrome's WebGPU-on-Android announcement (Chrome 121) requires Android 12+ and Qualcomm or ARM GPUs and does not mention Android System WebView; WebView availability is only implied by the Chrome 146 compat-mode intent that names WebView explicitly.",
+      "evidence": "Chrome developers blog 'New in WebGPU 121'.",
+      "confidence": "verified",
+      "source_url": "https://developer.chrome.com/blog/new-in-webgpu-121"
+    },
+    {
+      "claim": "Babylon.js is at 9.32.1 (27 Oct 2026), Apache-2.0; 9.0 was announced 26 Mar 2026 with clustered lighting (WebGPU and WebGL2), a frame graph (claimed 40%+ GPU memory savings in some cases), volumetric lighting with WebGPU compute and WebGL2 fallbacks, node particle editor and animation retargeting. The 9.2x-9.3x line is dominated by WebGPU correctness fixes.",
+      "evidence": "GitHub releases and the Windows Developer Blog announcement.",
+      "confidence": "verified",
+      "source_url": "https://github.com/BabylonJS/Babylon.js/releases"
+    },
+    {
+      "claim": "PlayCanvas engine is MIT, built on WebGL2 and WebGPU, at v2.23.3 (15 Oct 2026); v2.23.0 (1 Oct 2026) moved mesh-instance matrices into a persistent WebGPU storage buffer and cut per-draw overhead. The visual editor is a separate proprietary SaaS.",
+      "evidence": "playcanvas/engine repository and releases page; third-party 2026 comparison for editor pricing.",
+      "confidence": "verified",
+      "source_url": "https://github.com/playcanvas/engine/releases"
+    },
+    {
+      "claim": "wgpu is at v30.0.1 (22 Aug 2026); v30.0.0 (1 Jul 2026) added HDR/wide-gamut surfaces and a STRICT_WEBGPU_COMPLIANCE flag; v28.0.0 (18 Dec 2025) added mesh shaders (Vulkan full, Metal/DX12 via passthrough) and multiview; WebGL2 remains available through the GLES backend 'webgl' feature.",
+      "evidence": "gfx-rs/wgpu releases page.",
+      "confidence": "verified",
+      "source_url": "https://github.com/gfx-rs/wgpu/releases"
+    },
+    {
+      "claim": "rend3 was archived by its owner on 7 Jun 2025 and is read-only; its README still says 'under active development', which is stale.",
+      "evidence": "GitHub repository banner.",
+      "confidence": "verified",
+      "source_url": "https://github.com/BVE-Reborn/rend3"
+    },
+    {
+      "claim": "Bevy 0.20 released 8 Oct 2026 (227 contributors, 817 PRs) on wgpu 30 with 'webgl' and 'webgpu' cargo features; mesh shaders are not supported on web; Feathers UI gained dropdowns, list views, number inputs and contextual theming; there is still no shipped editor; shaders moved to WESL. Cadence: 0.17 (30 Sep 2025), 0.18 (13 Jan 2026), 0.19 (19 Jun 2026), 0.20 (8 Oct 2026), each with a migration guide.",
+      "evidence": "bevy.org news and release post; bevy_render Cargo.toml at tag v0.20.0 pins wgpu = \"30\".",
+      "confidence": "verified",
+      "source_url": "https://bevy.org/news/bevy-0-20/"
+    },
+    {
+      "claim": "Bevy's iOS and Android support exists at the level of a maintained examples/mobile project (Xcode project, android folder, Makefile, build_rust_deps.sh), not as documented first-class targets in release notes.",
+      "evidence": "bevy repository examples/mobile directory; 0.20 release post mentions mobile only for ASTC texture output.",
+      "confidence": "likely",
+      "source_url": "https://github.com/bevyengine/bevy/tree/main/examples/mobile"
+    },
+    {
+      "claim": "Godot 4.6 shipped January 2026 and 4.7 in June 2026; current stable is 4.7.2 (18 Aug 2026), MIT. 4.6 made Jolt the default 3D physics, D3D12 the default for new Windows projects, introduced LibGodot (embed the engine as a library on Linux/Windows/macOS), a JSON-defined GDExtension interface and the GABE Android build environment; 4.7 made GABE stable, added Android XR, HDR output and AreaLight3D.",
+      "evidence": "Wikipedia release table; godotengine.org 4.6 and 4.7 release pages.",
+      "confidence": "verified",
+      "source_url": "https://en.wikipedia.org/wiki/Godot_(game_engine)"
+    },
+    {
+      "claim": "Godot web export (4.7 docs) can only target WebGL 2.0 via the Compatibility renderer; 'Godot currently does not support WebGPU'; single-threaded export is the default since 4.3; C# projects cannot be exported to the web; Safari has 'several issues with WebGL 2.0 support that other browsers don't have'; .wasm/.pck payloads are large and need server-side compression.",
+      "evidence": "Official 'Exporting for the Web' page for 4.7 (stable).",
+      "confidence": "verified",
+      "source_url": "https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_web.html"
+    },
+    {
+      "claim": "godot-rust (gdext) is at crate version 0.5.5, MPL-2.0, usable for games/tools, with 'experimental' Wasm, Android and iOS support where 'documentation and tooling is still lacking', and occasional breaking changes.",
+      "evidence": "gdext README and docs.rs.",
+      "confidence": "verified",
+      "source_url": "https://github.com/godot-rust/gdext"
+    },
+    {
+      "claim": "Flutter's latest stable is 3.47 (docs updated 12 Aug 2026); 3.47 made Impeller the default renderer on Linux and Windows and raised the macOS minimum to 12. flutter_scene 0.24.3 (built on Flutter GPU) now runs on stable (requires Flutter 3.47+, 3.47.1 for Windows/Linux release builds) with a WebGL2 web backend, but is 'pre-1.0 and evolving quickly; minor releases can include breaking changes'.",
+      "evidence": "Flutter release notes index and 3.47.0 notes; pub.dev flutter_scene page.",
+      "confidence": "verified",
+      "source_url": "https://pub.dev/packages/flutter_scene"
+    },
+    {
+      "claim": "Expo SDK 58 uses React Native 0.88 and React 19.3. The expo-gl + expo-three path is legacy (physical device required, three.js cannot run in worklets, breaks with remote debugging); @react-three/native v10 is labelled 'DO NOT USE YET'; react-native-webgpu (Dawn-based, MIT) runs three.js r168+ and has an Expo template (create-expo-app -e with-webgpu) but needs a development build, not Expo Go, and the new architecture.",
+      "evidence": "Expo docs, pmndrs/native README, react-native-webgpu repo, TypeGPU React Native integration page.",
+      "confidence": "likely",
+      "source_url": "https://docs.expo.dev/versions/latest/"
+    },
+    {
+      "claim": "Capacitor is at 8.5.3 (7 Oct 2026) with 9.0.0-alpha.8 in progress; Capacitor 8 (8 Dec 2025) made Swift Package Manager the default for iOS and added edge-to-edge support on Android. It uses WKWebView and Android System WebView, so it shares Tauri mobile's rendering constraints.",
+      "evidence": "ionic-team/capacitor releases and the Capacitor 8 announcement.",
+      "confidence": "verified",
+      "source_url": "https://github.com/ionic-team/capacitor/releases"
+    },
+    {
+      "claim": "Unity Personal is free only if revenue/funding is under $200K and 'for gaming and entertainment applications only'; Pro is $210/month (from $2,310/yr); Industry (custom pricing) is required for non-game applications when company finances exceed $1M. The Runtime Fee was cancelled in September 2024. A brick CAD/merchandise tool risks being classified as non-game.",
+      "evidence": "unity.com/pricing and Unity pricing-updates page.",
+      "confidence": "verified",
+      "source_url": "https://unity.com/pricing"
+    },
+    {
+      "claim": "Qt for Small Business (Application Development Enterprise) costs 546 EUR/yr ($618) for companies with at most 1M EUR/USD annual revenue or funding, maximum three licenses, 12-month manual renewal; above that threshold standard (quote-based) pricing applies. The LGPL route remains available for dynamically linked open-source apps.",
+      "evidence": "qt.io small-business pricing page.",
+      "confidence": "verified",
+      "source_url": "https://www.qt.io/pricing/qt-for-small-business"
+    },
+    {
+      "claim": "egui is at 0.37.0 (15 Oct 2026); 0.34.1 enabled a WebGL fallback for the wgpu backend on web; 0.36.0 fixed autocomplete/IME on iOS and Android for eframe web; 0.35 made drag-to-scroll touch-only. Native mobile is not an advertised eframe target.",
+      "evidence": "emilk/egui releases page.",
+      "confidence": "verified",
+      "source_url": "https://github.com/emilk/egui/releases"
+    },
+    {
+      "claim": "Dioxus 0.7 (8 Sep 2025) shipped a native renderer (Blitz) and hot-patching; on 10 Sep 2026 the Dioxus team announced it is joining Cognition (Devin) while promising to keep building Dioxus, Blitz, Taffy and Subsecond. Treat as a bus-factor risk for a 2-3 year bet.",
+      "evidence": "dioxuslabs.com blog index.",
+      "confidence": "verified",
+      "source_url": "https://dioxuslabs.com/blog/"
+    },
+    {
+      "claim": "Wails v3.0.0 (Go + webview, MIT) is listed as stable, desktop-only (Linux/macOS/Windows); no mobile support is advertised.",
+      "evidence": "wailsapp/wails repository.",
+      "confidence": "verified",
+      "source_url": "https://github.com/wailsapp/wails"
+    },
+    {
+      "claim": "GPU reference points: GeForce RTX 5070 Ti = 43.9 TFLOPS FP32, 8,960 CUDA cores; Intel Tiger Lake Iris Xe iGPU = 2.1 TFLOPS FP32; Qualcomm Adreno 720 (Snapdragon 7 Gen 3) = ~998 GFLOPS FP32 at 975 MHz; Adreno 810 (Snapdragon 6 Gen 4 / 7s Gen 3) = ~460-590 GFLOPS; Adreno 735 (8s Gen 3) = ~1.69 TFLOPS; Adreno 750 (8 Gen 3) = ~2.8-3.1 TFLOPS. Apple A18 has a 4-core (iPhone 16e) or 5-core (iPhone 16) GPU, claimed +40% over A16; Apple publishes no FLOPS.",
+      "evidence": "Wikipedia pages for GeForce RTX 50 series, Intel Xe, Adreno and Apple A18.",
+      "confidence": "verified",
+      "source_url": "https://en.wikipedia.org/wiki/Adreno"
+    },
+    {
+      "claim": "Derived throughput budget: the RTX 5070 Ti benchmark implies ~12 G triangles/s effective for a simple instanced vertex shader in three.js. Scaling by FLOPS (roughly 1/10 to 1/20 for 2-4 TFLOPS integrated laptop GPUs, 1/40 or worse for a ~1 TFLOPS phone GPU under sustained thermal limits) gives about 0.6-1.2 G tri/s on an integrated laptop GPU (10-20M triangles per frame at 60 fps) and 0.2-0.4 G tri/s on a mid-range 2024-2025 phone (3-6M at 60 fps, 6-12M at 30 fps). Phones additionally render at DPR 2-3, so fill rate forces rendering at <=1x DPR.",
+      "evidence": "Inference from the verified benchmark and verified FLOPS figures; vertex throughput does not scale perfectly with FLOPS, so treat as order-of-magnitude.",
+      "confidence": "inferred"
+    },
+    {
+      "claim": "Brick geometry budget (inferred from LDraw primitives): an LDraw-quality 2x4 brick with 16-segment studs and inner tubes is roughly 600-1,200 triangles (LOD0); 8-segment studs and no tubes ~150-300 (LOD1); studless box 12 (LOD2). Instance data is small: 100k x (64 B matrix + 16 B color) = 8 MB.",
+      "evidence": "Typical LDraw 3001.dat composition (stud = 4-4cyli + 4-4disc primitives) and three.js InstancedMesh buffer layout.",
+      "confidence": "inferred"
+    },
+    {
+      "claim": "Concrete expectations for openBrick (three.js, chunked InstancedMesh per part+color, three LOD tiers, 1080p laptop / native-res-at-0.75x phone): integrated-GPU laptop (Iris Xe / Arc 140V / Radeon 780M / Apple M-series base): 10k bricks at LOD0 = 60 fps; 100k bricks at LOD0 (60-120M tris) = 8-25 fps, so not acceptable; 100k with LOD averaging <=100 tris/brick (<=10M tris) = 45-60 fps. Mid-range 2024-2025 phone (Snapdragon 7 Gen 3 / Dimensity 7300-8300 / Pixel 8a-9a / iPhone 16e): 10k bricks at LOD0 = 25-45 fps, at LOD1 (~3M tris) = 60 fps; 100k bricks only with LOD averaging <=30 tris/brick plus chunked frustum culling = 30 fps target, 60 fps unlikely for a full view. Apple A18-class phones sit roughly 1.5-2x above the Adreno 720 numbers.",
+      "evidence": "Derived from the verified RTX 5070 Ti benchmark, the FLOPS figures above, the Quest 2 culling datapoint and typical mobile thermal throttling; must be validated on real devices with a harness in week 1.",
+      "confidence": "inferred"
+    },
+    {
+      "claim": "Non-obvious architecture: a single Rust core crate (brick geometry kernel, stud/tube lattice math, LDraw and JSON IO, 3D-print validation) can be compiled three ways from one codebase: native for Tauri commands, native for a headless CLI (openbrick export/validate), and to WASM for the browser/PWA and Capacitor shells. This keeps the 'install via command line' promise honest (cargo-binstall, Homebrew tap, winget, Scoop, Flatpak, AUR, adb-installable APK) while the UI stays TypeScript + three.js, the stack where contributor familiarity and AI code-assistant quality are highest. iOS cannot be installed from a command line outside TestFlight/EU alternative marketplaces.",
+      "evidence": "Toolchain facts above (Rust 1.97 and Node 22 on the dev box; Tauri supports Rust commands and WASM frontends; wgpu/three both target WebGL2 and WebGPU); distribution channels are standard practice.",
+      "confidence": "inferred"
+    }
+  ],
+  "key_numbers": [
+    {"name": "Tauri latest", "value": "2.12.3 (10 Oct 2026)", "note": "2.12.0 dropped Windows 7, min Gradle 8.13; plugins require Rust 1.90+"},
+    {"name": "Tauri mobile minimums (defaults)", "value": "Android minSdk 24 (7.0); iOS 15.0", "note": "bundle.android.minSdkVersion / bundle.iOS.minimumSystemVersion"},
+    {"name": "Tauri updater platforms", "value": "Windows, macOS, Linux only", "note": "Android/iOS not supported; stores handle mobile updates"},
+    {"name": "Electron latest", "value": "45.0.0 (20 Oct 2026), Chromium 156, Node 24.22", "note": "Stable lines 45/44/43"},
+    {"name": "three.js latest", "value": "r186 (24 Sep 2026)", "note": "MIT; WebGPURenderer with WebGL2 fallback; InstancedMesh in render bundles since r185"},
+    {"name": "three.js 100k InstancedMesh benchmark", "value": "~20 fps at 605.6M tris/frame on RTX 5070 Ti; 10k = 60 fps (vsync)", "note": "three.js 0.186.1; WebGL 20.26 / WebGPU 20.15 / WebGL2-node 20.24 fps"},
+    {"name": "BatchedMesh draw calls on WebGPU backend", "value": "1,001 calls for 1,000 instances (vs 1 on WebGL2 multi-draw)", "note": "WebGPU core lacks multi-draw as of r186"},
+    {"name": "Babylon.js latest", "value": "9.32.1 (27 Oct 2026); 9.0 on 26 Mar 2026", "note": "Apache-2.0"},
+    {"name": "PlayCanvas engine latest", "value": "v2.23.3 (15 Oct 2026)", "note": "MIT; WebGL2 + WebGPU"},
+    {"name": "wgpu latest", "value": "v30.0.1 (22 Aug 2026)", "note": "Mesh shaders since v28.0.0 (18 Dec 2025)"},
+    {"name": "Bevy latest", "value": "0.20 (8 Oct 2026) on wgpu 30", "note": "Releases every ~4 months with breaking changes; no editor"},
+    {"name": "Godot stable", "value": "4.7.2 (18 Aug 2026); 4.6 Jan 2026; 4.7 Jun 2026", "note": "MIT; web export WebGL2 only, no WebGPU, no C# on web"},
+    {"name": "godot-rust gdext", "value": "0.5.5, MPL-2.0", "note": "Wasm/Android/iOS experimental"},
+    {"name": "Flutter stable", "value": "3.47 (Aug 2026); flutter_scene 0.24.3 pre-1.0", "note": "Impeller default on Linux/Windows since 3.47"},
+    {"name": "Expo / React Native", "value": "SDK 58 / RN 0.88 / React 19.3", "note": "@react-three/native marked DO NOT USE YET"},
+    {"name": "Capacitor latest", "value": "8.5.3 (7 Oct 2026); 9.0.0-alpha.8", "note": "SPM default on iOS since 8.0"},
+    {"name": "egui latest", "value": "0.37.0 (15 Oct 2026)", "note": "WebGL fallback for wgpu web backend since 0.34.1"},
+    {"name": "WebGPU reach", "value": "Chrome 113+ desktop, Chrome 121+ Android 12+ (ARM/Qualcomm/Intel), Safari 26, Firefox 141 Win / 145-147 macOS", "note": "Not in WebKitGTK, Firefox Linux stable, Firefox Android; Samsung Xclipse TBD"},
+    {"name": "WebGPU compatibility mode", "value": "Chrome 146 (desktop, Android, WebView) on GLES 3.1 / D3D11", "note": "23% of Android users lack Vulkan 1.1; 31% of Windows Chrome users lack D3D FL 11.1"},
+    {"name": "Unity Personal threshold", "value": "< $200K revenue/funding and gaming/entertainment only", "note": "Pro from $2,310/yr; Industry custom when > $1M and non-game"},
+    {"name": "Qt small-business license", "value": "546 EUR/yr ($618) if <= 1M EUR revenue", "note": "Max 3 licenses; LGPL route otherwise"},
+    {"name": "LDraw parts library license", "value": "CC BY 2.0", "note": "Credit 'The LDraw Parts Library'"},
+    {"name": "GPU FLOPS anchors", "value": "RTX 5070 Ti 43.9 TFLOPS; Iris Xe (Tiger Lake) 2.1 TFLOPS; Adreno 720 ~1.0 TFLOPS; Adreno 810 ~0.5 TFLOPS; Adreno 750 ~3 TFLOPS", "note": "Apple A18: 4-5 GPU cores, no published FLOPS"},
+    {"name": "Inferred triangle budget at 60 fps", "value": "10-20M tris/frame on integrated laptop GPU; 3-6M on mid-range phone", "note": "Order-of-magnitude; validate on devices"},
+    {"name": "Inferred brick triangle counts", "value": "LOD0 600-1,200; LOD1 150-300; LOD2 12", "note": "100k instances = ~8 MB of instance data"},
+    {"name": "Expected fps (inferred)", "value": "10k bricks: 60 fps laptop, 25-45 fps phone at LOD0 / 60 fps at LOD1; 100k bricks: 45-60 fps laptop with LOD, 30 fps phone with LOD + chunk culling", "note": "Without LOD, 100k at LOD0 is 8-25 fps on laptop iGPU"},
+    {"name": "rend3", "value": "Archived 7 Jun 2025", "note": "Do not adopt"}
+  ],
+  "open_questions": [
+    "Does WKWebView on shipped iOS 26 / 26.1 expose navigator.gpu by default (Apple-side forum reply says it should)? Needs an on-device check in a Tauri and a Capacitor shell before any iOS WebGPU-only feature is planned.",
+    "What fraction of openBrick's Android audience runs Samsung Xclipse GPUs (Galaxy S22-S24 era), which the gpuweb wiki still lists as TBD for WebGPU, and does Chrome 146 compatibility mode cover them in WebView?",
+    "Will Tauri's fs, shell, global-shortcut and process plugins reach documented Android/iOS support, or does openBrick need its own small Swift/Kotlin plugins for file import/export and share sheets on mobile?",
+    "Real measured frame rates: the laptop/phone numbers here are FLOPS-scaled inferences from one RTX 5070 Ti benchmark; the team should run the published three.js harness (or a brick-specific fork) on an Iris Xe laptop, a Radeon 780M laptop, an M-series Mac, a Pixel 8a/9a, a Galaxy A5x and an iPhone 16e in week 1 and publish the CSV.",
+    "Is WebGPURenderer's WebGL2 backend on WebKitGTK (Linux) and on Android WebView stable enough to be the single code path, or should openBrick keep a classic WebGLRenderer build as a safety valve (the three.js manual still calls WebGPURenderer experimental)?",
+    "Rust-to-WebView IPC cost for large meshes in Tauri (custom protocol vs Channel vs WASM-side generation): which path keeps part-designer boolean operations interactive at 100k+ triangles?",
+    "Does Godot's LibGodot (desktop-only today) become a viable embedded 'play mode' renderer inside a Tauri window, or is that a 2028 question?",
+    "Should mobile ship first as a PWA (no store, instant updates, same bundle) and only later as store apps, given iOS PWA storage limits and the lack of command-line install on iOS?"
+  ],
+  "options_compared": [
+    {
+      "option": "Tauri 2.x (Rust shell + OS webview) for desktop and mobile",
+      "pros": "Small binaries; Rust backend fits a Rust geometry core and a shared CLI; desktop first-class with 30 official plugins; Android and iOS from the same code (multi-window, file associations since 2.11); strong security model (ACL/capabilities); cargo/npm-installable toolchain; large community.",
+      "cons": "Rendering depends on OS webviews (WebKitGTK has no WebGPU and has NVIDIA DMABUF crashes; Android WebView version varies by device; WKWebView WebGPU on iOS unconfirmed); updater desktop-only; several plugins untested on mobile; mobile tooling (Gradle 8.13+, Xcode 27 quirks) rougher than Flutter/RN; IPC for big buffers needs care.",
+      "fit_for_openbrick": "Best overall fit: desktop-first quality, shared Rust core, community-friendly TS/Rust split, mobile from the same bundle. Requires WebGL2-first rendering and a device benchmark harness.",
+      "license": "MIT / Apache-2.0",
+      "status_2026": "2.12.3 (10 Oct 2026); mobile stable since 2.0 (Oct 2024) but plugin matrix still uneven"
+    },
+    {
+      "option": "Electron (desktop only)",
+      "pros": "Bundled Chromium gives identical rendering on Windows/macOS/Linux, WebGPU everywhere including Linux; mature updater, packaging and ecosystem; Node 24 main process.",
+      "cons": "100+ MB installs and high memory; no mobile; three stable lines move every ~2 months (Chromium cadence); less alignment with a Rust core (needs N-API or WASM).",
+      "fit_for_openbrick": "Fallback shell if Tauri's webview inconsistency becomes a real support burden; could be shipped later as a 'Linux NVIDIA safe build' from the same web bundle.",
+      "license": "MIT",
+      "status_2026": "45.0.0 (20 Oct 2026), Chromium 156, Node 24.22"
+    },
+    {
+      "option": "Capacitor 8 + PWA (same web bundle on iOS/Android/browser)",
+      "pros": "Zero-friction reuse of the web UI; PWA gives install-free trials and instant updates; SPM default on iOS; huge plugin ecosystem; familiar to web contributors.",
+      "cons": "Same WKWebView/Android WebView limits as Tauri mobile; no Rust host (core must run as WASM); iOS PWA storage/eviction caveats; no desktop story beyond the browser.",
+      "fit_for_openbrick": "Strong secondary/fallback mobile shell and the right vehicle for a browser-based 'try it now' version.",
+      "license": "MIT",
+      "status_2026": "8.5.3 (7 Oct 2026); 9.0 alpha"
+    },
+    {
+      "option": "Flutter 3.47 + flutter_gpu / flutter_scene",
+      "pros": "One Dart codebase for iOS/Android/desktop/web with excellent touch UX; Impeller now default on all native platforms; flutter_scene runs on stable with a WebGL2 web backend.",
+      "cons": "3D stack is pre-1.0 with breaking minor releases; no instancing/LOD ecosystem comparable to three.js; no LDraw tooling; Dart contributor pool smaller for CAD-style work; web renderer remains Skia/CanvasKit.",
+      "fit_for_openbrick": "Poor fit for a 100k-instance 3D editor today; revisit if flutter_scene reaches 1.0 with instancing.",
+      "license": "BSD-3-Clause",
+      "status_2026": "Flutter 3.47 (Aug 2026); flutter_scene 0.24.3 pre-1.0"
+    },
+    {
+      "option": "React Native / Expo SDK 58 with react-native-webgpu (or legacy expo-gl)",
+      "pros": "Native mobile UX and store tooling; react-native-webgpu (Dawn) runs three.js r168+ and has an Expo template; React skills are common.",
+      "cons": "expo-gl/expo-three is legacy and fragile; @react-three/native is marked 'DO NOT USE YET'; needs dev builds (no Expo Go) and the new architecture; desktop via react-native-windows/macos is not credible for a CAD tool; two UI codebases vs the web app.",
+      "fit_for_openbrick": "Not recommended; the web bundle in Tauri/Capacitor reaches the same devices with one UI.",
+      "license": "MIT",
+      "status_2026": "SDK 58 / RN 0.88; react-native-webgpu MIT, active"
+    },
+    {
+      "option": "Godot 4.7 (GDScript/C#/Rust via gdext)",
+      "pros": "MIT; excellent native mobile and desktop exports; MultiMesh instancing and Jolt physics make a fun 'play' assembler cheap; LibGodot (4.6+) can embed the engine; GDScript is approachable for community contributors; D3D12/Vulkan/Metal backends.",
+      "cons": "Web export is WebGL2 Compatibility only, single-threaded by default, no WebGPU, no C# on web, Safari issues; parametric CAD, mesh booleans and print validation must be built anyway; gdext mobile/Wasm experimental; a non-web UI toolkit for a tool-heavy app.",
+      "fit_for_openbrick": "Good candidate for a future native play-mode or for an alternative 'game-like' client; weak for the browser/PWA and the part-designer tooling in years 1-2.",
+      "license": "MIT (gdext MPL-2.0)",
+      "status_2026": "4.7.2 (18 Aug 2026)"
+    },
+    {
+      "option": "Bevy 0.20 (Rust, wgpu 30)",
+      "pros": "Pure Rust with the geometry core in-process; wgpu backends for Vulkan/Metal/D3D12/GLES and WebGPU/WebGL2; ECS suits 100k-entity worlds; mesh shaders on native; Feathers UI maturing.",
+      "cons": "Breaking release every ~4 months with migration work; no editor; mobile at example level; web lacks mesh shaders; UI tooling still young for a CAD app; small contributor pool and weaker AI-assistant coverage than TS.",
+      "fit_for_openbrick": "Watch-list option for a native renderer if the webview path hits a ceiling; too much churn for a 2-4 person team today.",
+      "license": "MIT / Apache-2.0",
+      "status_2026": "0.20 (8 Oct 2026)"
+    },
+    {
+      "option": "egui / eframe + winit + wgpu (Rust native tool UI)",
+      "pros": "Immediate-mode UI is fast to build for tool panels; wgpu rendering in-process with a Rust core; eframe web target with WebGL fallback; tiny binaries.",
+      "cons": "Not a mobile-native experience (touch handling is basic, no store integration); accessibility and theming weaker than HTML; custom 3D renderer must be written on wgpu; contributor base small.",
+      "fit_for_openbrick": "Viable for a desktop-only engineering tool; the two-platform brief and community contribution goals favour the web UI.",
+      "license": "MIT / Apache-2.0",
+      "status_2026": "egui 0.37.0 (15 Oct 2026), wgpu 30.0.1"
+    },
+    {
+      "option": "Qt 6 / QML with Qt Quick 3D",
+      "pros": "Mature native desktop and mobile; Qt Quick 3D has instancing; LGPL use is compatible with an MIT app via dynamic linking; small-business license 546 EUR/yr.",
+      "cons": "C++/QML skills rare among web contributors; LGPL packaging on iOS is awkward; commercial pricing jumps above 1M EUR revenue; no browser story; AI-assisted coding quality lower than TS/Rust.",
+      "fit_for_openbrick": "Not recommended; cost and contributor friction outweigh the native polish.",
+      "license": "LGPL-3.0 / GPL / commercial",
+      "status_2026": "Qt 6.11 current"
+    },
+    {
+      "option": "Unity",
+      "pros": "Best-in-class mobile and desktop tooling, asset pipeline, instancing and physics.",
+      "cons": "Proprietary engine contradicts the open-source pillar; Personal tier limited to gaming/entertainment and < $200K; a merchandise/CAD tool likely needs Industry (custom pricing when > $1M); trust damaged by the 2023 Runtime Fee episode even though it was cancelled; contributors need Unity licenses.",
+      "fit_for_openbrick": "Rejected.",
+      "license": "Proprietary",
+      "status_2026": "Personal free < $200K, Pro from $2,310/yr; Runtime Fee cancelled Sep 2024"
+    },
+    {
+      "option": "Dioxus 0.7 (Rust, web/desktop/mobile, Blitz native renderer)",
+      "pros": "Rust end-to-end with React-like components; desktop, web and Android targets; hot-patching.",
+      "cons": "Team joined Cognition in Sep 2026 (continuity promised but unproven); native renderer young; iOS less documented; smaller ecosystem than Tauri.",
+      "fit_for_openbrick": "Interesting but too risky as the primary shell; Tauri can host a Dioxus or React frontend interchangeably.",
+      "license": "MIT / Apache-2.0",
+      "status_2026": "0.7 (8 Sep 2025); team acquisition 10 Sep 2026"
+    },
+    {
+      "option": "Wails v3 (Go + webview)",
+      "pros": "Go is on the dev box; small binaries; v3.0.0 stable; MIT.",
+      "cons": "Desktop only, no mobile; Go is a weaker fit than Rust for a WASM-shared geometry core.",
+      "fit_for_openbrick": "Not recommended for the main client; fine for internal tools.",
+      "license": "MIT",
+      "status_2026": "v3.0.0 stable"
+    },
+    {
+      "option": "three.js r186 (renderer)",
+      "pros": "MIT; WebGPURenderer with automatic WebGL2 fallback; InstancedMesh (render-bundle support), BatchedMesh, TSL node materials; LDrawLoader with WebGPU-aware conditional lines; by far the largest community, examples and AI-assistant coverage; proven 100k-instance throughput in 2026 benchmarks.",
+      "cons": "Manual still labels WebGPURenderer experimental; BatchedMesh degrades to one draw per instance on WebGPU; per-instance frustum culling is CPU-side; no built-in LOD for instances, chunking must be written.",
+      "fit_for_openbrick": "Recommended renderer.",
+      "license": "MIT",
+      "status_2026": "r186 (24 Sep 2026)"
+    },
+    {
+      "option": "Babylon.js 9.32",
+      "pros": "Apache-2.0; WebGPU first-class with WebGL2 fallbacks; thin instances, clustered lighting, frame graph; TypeScript-first with Microsoft backing; strong tooling (Inspector, Node editors).",
+      "cons": "Larger bundle; smaller community than three.js; no LDraw loader; API churn across 9.x minors is low but WebGPU fixes land weekly, indicating remaining rough edges.",
+      "fit_for_openbrick": "Credible alternative if the team prefers a batteries-included engine; keep as plan B.",
+      "license": "Apache-2.0",
+      "status_2026": "9.32.1 (27 Oct 2026); 9.0 Mar 2026"
+    },
+    {
+      "option": "PlayCanvas engine 2.23",
+      "pros": "MIT; dual WebGL2/WebGPU; v2.23 moved instance matrices to persistent storage buffers on WebGPU; lean runtime.",
+      "cons": "Visual editor is proprietary SaaS; smaller community; no LDraw loader; less CAD-style tooling.",
+      "fit_for_openbrick": "Not recommended over three.js; monitor its WebGPU instancing work.",
+      "license": "MIT (engine); editor proprietary",
+      "status_2026": "v2.23.3 (15 Oct 2026)"
+    },
+    {
+      "option": "wgpu 30 native renderer (custom, Rust)",
+      "pros": "Full control, mesh shaders, one API for native and web; pairs with Bevy or egui; no webview dependency.",
+      "cons": "Writing and maintaining a renderer, picking, outlines, text and UI integration is a multi-engineer-year investment for a 2-4 person team; no web-contributor familiarity.",
+      "fit_for_openbrick": "Only as a later native play-mode renderer; not for the first product.",
+      "license": "MIT / Apache-2.0",
+      "status_2026": "v30.0.1 (22 Aug 2026)"
+    },
+    {
+      "option": "rend3",
+      "pros": "Was a convenient wgpu scene renderer.",
+      "cons": "Archived 7 Jun 2025; read-only.",
+      "fit_for_openbrick": "Do not use.",
+      "license": "MIT / Apache-2.0 / Zlib",
+      "status_2026": "Archived"
+    }
+  ],
+  "recommendations": [
+    "Adopt Tauri 2.12+ as the primary shell for Windows/macOS/Linux and Android, with iOS built from the same Tauri project; keep a Capacitor 8 configuration of the same web bundle as the fallback mobile shell and publish the bundle as a PWA for install-free trials.",
+    "Render with three.js r186+ WebGPURenderer and rely on its automatic WebGL 2 fallback; ship with WebGL2 as the floor (WebKitGTK on Linux, Samsung Xclipse, older Android, unconfirmed WKWebView) and treat WebGPU as progressive enhancement. Feature-detect navigator.gpu at runtime and record the backend in telemetry/bug reports.",
+    "Structure the scene as chunked InstancedMesh per (part, color, LOD) over a spatial grid (for example 32x32x32-stud cells) so chunks can be frustum-culled and LOD-swapped; avoid BatchedMesh on the WebGPU backend for the assembler (one draw per instance) and avoid per-object CPU culling at 100k scale.",
+    "Define and enforce a triangle budget early: three LOD tiers per part (LOD0 full studs 600-1,200 tris, LOD1 ~200, LOD2 12), a per-frame cap of ~10M triangles on laptops and ~3M on phones, and phone rendering at 0.5-0.75x devicePixelRatio. Commit publicly to 10k bricks at 60 fps on all tiers, 100k at 60 fps on integrated-GPU laptops and 30 fps on mid-range phones, all with LOD.",
+    "Build the benchmark harness in week 1 (fork the published three.js instancing harness, swap in brick geometry) and run it on an Iris Xe laptop, a Radeon 780M laptop, a base M-series Mac, a Pixel 8a/9a, a Galaxy A5x (Xclipse) and an iPhone 16e; publish the CSV in the repo so contributors can add devices.",
+    "Put the geometry kernel, stud/tube snapping math, LDraw/JSON IO and print validation in a Rust core crate compiled natively for Tauri commands and a headless CLI, and to WASM for the browser; this single-sources logic across all shells and makes 'install via command line' real (cargo-binstall, Homebrew tap, winget, Scoop, Flatpak, AUR, plus adb-installable APKs on GitHub Releases).",
+    "Use three.js LDrawLoader and the CC BY 2.0 LDraw parts library (credit 'The LDraw Parts Library'), pre-packing parts into bundles for web loading; make .ldr/.mpd a first-class import/export alongside the native JSON format.",
+    "Plan for Tauri's mobile gaps explicitly: rely on app stores for mobile updates (updater is desktop-only), budget for small Swift/Kotlin plugins where fs/shell are untested on mobile, and ship a Linux 'safe rendering' flag that sets the documented WebKitGTK/NVIDIA env vars before the webview initializes.",
+    "Do not build on Unity (license scope and proprietary), rend3 (archived), expo-gl/expo-three or @react-three/native (legacy or 'do not use yet'), or Flutter's 3D stack (pre-1.0); treat Dioxus as a risk after the Cognition acquisition.",
+    "Keep Godot 4.x (MultiMesh, Jolt, LibGodot) and Bevy/wgpu on a watch list for a future native play-mode client once the core and file formats are stable; re-evaluate in 12 months when WebGPU compatibility mode (Chrome 146) and WKWebView WebGPU status are settled."
+  ],
+  "sources": [
+    "https://v2.tauri.app/release/tauri/all-versions/",
+    "https://v2.tauri.app/plugin/updater/",
+    "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/v2/README.md",
+    "https://v2.tauri.app/plugin/",
+    "https://v2.tauri.app/reference/config/",
+    "https://v2.tauri.app/reference/webview-versions/",
+    "https://v2.tauri.app/start/prerequisites/",
+    "https://v2.tauri.app/concept/size/",
+    "https://v2.tauri.app/develop/debug/linux-graphics/",
+    "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/templates/mobile/android/app/build.gradle.kts",
+    "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/templates/mobile/ios/project.yml",
+    "https://hysenlabs.com/projects/tauri-apps-tauri",
+    "https://tech-insider.org/tauri-vs-electron-2026/",
+    "https://releases.electronjs.org/",
+    "https://github.com/mrdoob/three.js/releases",
+    "https://threejs.org/docs/pages/WebGPURenderer.html",
+    "https://threejs.org/docs/pages/BatchedMesh.html",
+    "https://threejs.org/docs/pages/LDrawLoader.html",
+    "https://threejs.org/examples/webgl_loader_ldraw",
+    "https://threejs.org/manual/en/webgpurenderer",
+    "https://app.cinevva.com/zh-CN/news/2026-03-18-threejs-r183-render-pipeline",
+    "https://discourse.threejs.org/t/three-js-plant-instancing-benchmark-240-desktop-samples-csv-json-and-a-standalone-harness/95719",
+    "https://discourse.threejs.org/t/significant-performance-drop-and-high-cpu-usage-with-batchedmesh/67324",
+    "https://discourse.threejs.org/t/how-to-choose-between-instancedmesh-and-batchedmesh/81221",
+    "https://vrmeup.com/devlog/devlog_10_threejs_instancedmesh_performance_optimizations.html",
+    "https://r3f.docs.pmnd.rs/advanced/scaling-performance",
+    "https://www.ldraw.org/legal-info.html",
+    "https://github.com/gpuweb/gpuweb/wiki/Implementation-Status",
+    "https://groups.google.com/a/chromium.org/g/blink-dev/c/N3RlLGCOTJ4/m/loneRTlPBwAJ",
+    "https://developer.chrome.com/blog/new-in-webgpu-121",
+    "https://developer.apple.com/forums/thread/770862",
+    "https://developer.apple.com/forums/thread/781602",
+    "https://web.dev/blog/webgpu-supported-major-browsers",
+    "https://webkitgtk.org/2025/10/24/webkitgtk2.51.1-released.html",
+    "https://lists.webkit.org/pipermail/webkit-gtk/2023-October/003947.html",
+    "https://github.com/BabylonJS/Babylon.js/releases",
+    "https://github.com/BabylonJS/Babylon.js",
+    "https://blogs.windows.com/windowsdeveloper/?p=57710",
+    "https://github.com/playcanvas/engine",
+    "https://github.com/playcanvas/engine/releases",
+    "https://github.com/gfx-rs/wgpu/releases",
+    "https://github.com/BVE-Reborn/rend3",
+    "https://bevy.org/news/",
+    "https://bevy.org/news/bevy-0-20/",
+    "https://raw.githubusercontent.com/bevyengine/bevy/v0.20.0/crates/bevy_render/Cargo.toml",
+    "https://github.com/bevyengine/bevy/tree/main/examples/mobile",
+    "https://en.wikipedia.org/wiki/Godot_(game_engine)",
+    "https://godotengine.org/releases/4.6/",
+    "https://godotengine.org/releases/4.7/",
+    "https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_web.html",
+    "https://docs.godotengine.org/en/4.6/tutorials/export/exporting_for_web.html",
+    "https://github.com/godot-rust/gdext",
+    "https://docs.rs/godot/latest/godot/",
+    "https://docs.flutter.dev/release/release-notes",
+    "https://docs.flutter.dev/release/release-notes/release-notes-3.47.0",
+    "https://pub.dev/packages/flutter_scene",
+    "https://docs.expo.dev/versions/latest/",
+    "https://docs.expo.dev/versions/v55.0.0/sdk/gl-view",
+    "https://github.com/pmndrs/native",
+    "https://github.com/wcandillon/react-native-webgpu",
+    "https://docs.swmansion.com/TypeGPU/integration/react-native/",
+    "https://github.com/ionic-team/capacitor/releases",
+    "https://ionic.io/blog/announcing-capacitor-8",
+    "https://unity.com/pricing",
+    "https://activation.unity3d.com/products/pricing-updates",
+    "https://www.qt.io/pricing/qt-for-small-business",
+    "https://github.com/emilk/egui/releases",
+    "https://dioxuslabs.com/blog/",
+    "https://github.com/wailsapp/wails",
+    "https://en.wikipedia.org/wiki/GeForce_RTX_50_series",
+    "https://en.wikipedia.org/wiki/Intel_Xe",
+    "https://en.wikipedia.org/wiki/Adreno",
+    "https://en.wikipedia.org/wiki/Apple_A18"
+  ]
+}
