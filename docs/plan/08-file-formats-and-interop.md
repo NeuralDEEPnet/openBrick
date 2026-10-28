@@ -24,7 +24,7 @@
 | `.obrun.json` | one batch run | JSON |
 | `.obpack` | a packed, versioned LDraw subset plus derived connectors and LODs (the catalog cache) | zip with index |
 
-Every document starts with `"openbrick": "<schema semver>"` and a `kind`. JSON Schemas are published in `schemas/` and validated in CI.
+Every document starts with `"openbrick": "<schema semver>"` and a `kind` (optional on `openbrick/part@1` documents; when present it is `"part"`). JSON Schemas (draft 2020-12) are published in `schemas/`. In CI, `cargo xtask data` validates every data file and the schema fixtures against them, loads each with its Rust reader, and validates what the reader writes back.
 
 ## 2. `model.json` schema sketch
 
@@ -114,7 +114,7 @@ Imported `.stl`, `.obj`, `.gltf/.glb`, `.3mf` (and `.ply`) become custom parts:
 
 ## 9. Compatibility and migration policy
 
-- Schema versions are semver; minor versions are additive and readable by older minors (unknown fields preserved); major versions ship an explicit migration function and a CLI `openbrick migrate`.
+- Schema versions are semver; minor versions are additive and readable by older minors; major versions ship an explicit migration function and a CLI `openbrick migrate`. Readers ignore fields from a newer minor; parameters and features keep them, other objects drop them on write until the Rust structs model them. Each minor's JSON Schema rejects unknown fields in documents of its own minor or older, so a typo fails in CI. In a newer-minor document it checks only the fields it knows (`$defs/atThisMinor` and `$defs/knownFields` in `schemas/`). A new minor gets a new schema `$id` (`.../schemas/1.1/...`).
 - Every release can read every earlier schema; writes use the newest.
 - Content hashes include the schema version, the kernel version and the normalised document so caches never collide across versions.
 - Deprecations are announced one minor ahead and kept readable for two majors.

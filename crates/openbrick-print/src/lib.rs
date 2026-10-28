@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 
+pub use openbrick_units::Credit;
+
 /// What a manufacturing process can resolve.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,6 +13,8 @@ pub struct ProcessProfile {
     pub kind: String,
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit: Option<Credit>,
     pub line_width_mm: f64,
     pub layer_height_mm: Vec<f64>,
     pub min_wall_mm: f64,
@@ -58,15 +62,33 @@ fn one() -> f64 {
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Calibration {
+    #[serde(deserialize_with = "whole_u32")]
     pub coupon_version: u32,
     /// Chosen coupon cells by connector type: stud, tube, pocketTubeOD, pocketRib, technicH, pin, axle, bar, clip.
     pub chosen_cells: BTreeMap<String, f64>,
-    #[serde(default)]
+    /// Calendar date, YYYY-MM-DD; omitted when written if unknown.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub date: String,
     #[serde(default)]
     pub pull_test_n: Option<f64>,
     #[serde(default)]
     pub control_pull_test_n: Option<f64>,
+}
+
+/// A whole number in `u32` range, written either as `1` or as `1.0`. JSON does not
+/// tell the two apart and neither does JSON Schema (draft 2020-12 counts `1.0` as an
+/// integer), so a document that passes `schemas/fit-profile.schema.json` must load.
+fn whole_u32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    use serde::de::{Deserialize, Error};
+    let v = f64::deserialize(d)?;
+    if v.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&v) {
+        Ok(v as u32)
+    } else {
+        Err(D::Error::custom(format!(
+            "expected a whole number from 0 to {}, found {v}",
+            u32::MAX
+        )))
+    }
 }
 
 /// One printer, nozzle and material combination after calibration.
@@ -76,6 +98,8 @@ pub struct FitProfile {
     pub openbrick: String,
     pub kind: String,
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit: Option<Credit>,
     pub process: String,
     pub printer: String,
     pub nozzle_mm: f64,
@@ -84,7 +108,7 @@ pub struct FitProfile {
     pub slicer: String,
     pub intent: String,
     pub offsets_mm: Offsets,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calibration: Option<Calibration>,
     #[serde(default)]
     pub notes: String,

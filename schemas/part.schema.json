@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/part.schema.json",
+  "title": "OpenBrick3D part document (openbrick/part@1)",
+  "description": "A parametric brick-compatible part (parts/*.obpart.json): typed parameters plus an ordered list of brick-aware feature operations. Read by openbrick-part as PartDoc; see docs/plan/06 sections 2 to 4. A 1.0 document may use only the top-level fields named here ($defs/knownFields), because serde would silently drop a misspelt one; params and features carry op-specific fields, so they stay open. Feature values may be literals with unit suffixes (\"0.6mm\", \"2stud\"), references (\"$size\") or small expressions (\"profile.minFeature\"), so op-specific fields are not typed here; the evaluator checks them. Semantic rules (unique feature ids, anchors defined before use) are checked by PartDoc::check.",
+  "type": "object",
+  "required": ["openbrick", "id", "version", "name", "license", "credit", "features"],
+  "properties": {
+    "openbrick": { "$ref": "#/$defs/pragma" },
+    "kind": {
+      "description": "Optional; when present it must be part (docs/plan/08 section 1 gives every document a kind).",
+      "const": "part"
+    },
+    "id": {
+      "description": "Reverse-DNS-ish, lower case: a namespace, a dot, then the part name, as in ndn.logo-tile (docs/plan/06 section 2).",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*(\\.[a-z0-9]+(-[a-z0-9]+)*)+$"
+    },
+    "version": {
+      "$ref": "#/$defs/semver",
+      "description": "Version of this part design; the schema version is the openbrick pragma."
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "license": { "$ref": "#/$defs/spdx" },
+    "credit": { "$ref": "#/$defs/credit" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "params": {
+      "description": "Typed, UI-bearing parameters by name; features refer to them as $name.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/$defs/param" }
+    },
+    "presets": {
+      "description": "Named parameter sets, importable from OpenSCAD parameterSets JSON (docs/plan/06 section 3). Not read by openbrick-part yet.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "params"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "params": { "type": "object" }
+        }
+      }
+    },
+    "features": {
+      "description": "Ordered feature operations; each may anchor on a face of an earlier one.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/feature" }
+    },
+    "snap": {
+      "description": "derived (the default: connectors come from the features) or an explicit connector list for exotic parts (docs/plan/06 sections 2 and 6).",
+      "anyOf": [
+        { "const": "derived" },
+        { "type": "array", "items": { "$ref": "#/$defs/connector" } }
+      ]
+    },
+    "print": {
+      "description": "Print intent: which face is up per relief mode, allowed process profiles, fit-critical feature ids and extra rules. Free-form beyond these fields.",
+      "type": "object",
+      "properties": {
+        "up": {
+          "description": "The face that faces up, either one face or one per relief mode.",
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } }
+          ]
+        },
+        "profiles": {
+          "description": "Process profile ids this part is designed for.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/profileId" }
+        },
+        "fitCritical": {
+          "description": "Ids of fit-critical features; export needs a calibrated fit profile covering them (rule FIT.MISSING).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/featureId" }
+        },
+        "rules": {
+          "description": "Extra checks with an onFail action such as shrink-or-bolder.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["check"],
+            "properties": {
+              "feature": { "$ref": "#/$defs/featureId" },
+              "check": { "type": "string", "minLength": 1 },
+              "onFail": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "export": {
+      "description": "Export formats and batch naming. Free-form beyond formats.",
+      "type": "object",
+      "properties": {
+        "formats": {
+          "description": "File extensions to export, lower case (docs/plan/08).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9]+$" }
+        },
+        "batch": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "lock": {
+      "description": "Reproducibility record: font hashes, process profile id, kernel version (docs/plan/06 section 10). Not read by openbrick-part yet.",
+      "type": "object"
+    }
+  },
+  "if": { "$ref": "#/$defs/atThisMinor" },
+  "then": { "$ref": "#/$defs/knownFields" },
+  "$defs": {
+    "knownFields": {
+      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error: serde would drop it silently, so a misspelt optional field would change nothing. Objects not listed here are open on purpose. cargo xtask data checks that these lists match the properties the schema declares.",
+      "properties": {
+        "openbrick": true,
+        "kind": true,
+        "id": true,
+        "version": true,
+        "name": true,
+        "license": true,
+        "credit": { "properties": { "author": true, "url": true }, "additionalProperties": false },
+        "provenance": {
+          "properties": { "source": true, "author": true, "license": true, "url": true, "modified": true, "history": true },
+          "additionalProperties": false
+        },
+        "params": true,
+        "presets": {
+          "items": { "properties": { "name": true, "params": true }, "additionalProperties": false }
+        },
+        "features": true,
+        "snap": true,
+        "print": true,
+        "export": true,
+        "lock": true
+      },
+      "additionalProperties": false
+    },
+    "atThisMinor": {
+      "description": "Matches a document whose pragma names this schema's minor version, 1.0 (or a 1.0.x patch). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9).",
+      "required": ["openbrick"],
+      "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+    },
+    "featureId": {
+      "description": "A feature id: a letter or underscore, then letters, digits, underscores or hyphens. No dots, because anchors are written id.face and PartDoc::check splits them at the first dot.",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+    },
+    "param": {
+      "description": "One parameter (openbrick_part::Param). Fields beyond those listed (maxLength, bundledOnly, onChange, ...) are kept by serde's flatten, so they are allowed.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "enum": ["int", "length", "angle", "bool", "string", "enum", "grid2", "svg", "image", "font", "color", "list"]
+        },
+        "unit": { "enum": ["stud", "plate", "ldu", "mm", "deg"] },
+        "default": { "description": "Any JSON value matching the type." },
+        "min": { "description": "A number, or a per-axis array for grid2." },
+        "max": { "description": "A number, or a per-axis array for grid2." },
+        "step": { "type": "number", "exclusiveMinimum": 0 },
+        "options": {
+          "description": "Allowed values, either plain values or { value, label } pairs.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "anyOf": [
+              { "type": ["string", "number", "boolean"] },
+              {
+                "type": "object",
+                "required": ["value"],
+                "properties": { "label": { "type": "string" } },
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "group": { "description": "Panel tab.", "type": "string" },
+        "visibleWhen": { "description": "Expression over other params, for example relief != 'inlay'.", "type": "string" },
+        "help": { "description": "One-line hint.", "type": "string" },
+        "manipulator": { "description": "In-viewport drag handle.", "enum": ["x", "y", "z", "corner"] }
+      },
+      "additionalProperties": true
+    },
+    "feature": {
+      "description": "One feature operation (openbrick_part::Feature). Op-specific fields are kept by serde's flatten, so they are allowed; the evaluator reads them.",
+      "type": "object",
+      "required": ["id", "op"],
+      "properties": {
+        "id": { "$ref": "#/$defs/featureId" },
+        "op": {
+          "description": "The operation. Must equal openbrick_part::KNOWN_OPS (a test in openbrick-part keeps the two in step).",
+          "enum": [
+            "body.tile",
+            "body.plate",
+            "body.brick",
+            "body.baseplate",
+            "stud.field",
+            "tube.field",
+            "technic.hole",
+            "axle.hole",
+            "axle",
+            "pin",
+            "bar",
+            "clip",
+            "hinge.finger",
+            "ball",
+            "socket",
+            "relief.svg",
+            "relief.text",
+            "relief.image",
+            "mosaic",
+            "loop.keyring",
+            "cut.svg",
+            "cut.shape",
+            "round",
+            "adapter.stud-technic"
+          ]
+        },
+        "on": {
+          "description": "Anchor: a face of an earlier feature, written id.face (for example body.top).",
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$"
+        },
+        "if": {
+          "description": "Expression; the feature is skipped when it is false.",
+          "type": "string",
+          "minLength": 1
+        },
+        "colorRole": {
+          "description": "Colour role; one 3MF object per role (docs/plan/05 section 7).",
+          "enum": ["body", "accent", "serial"]
+        },
+        "fitCritical": { "type": "boolean" },
+        "offGrid": {
+          "description": "Decoration that emits no connectors (keychain loops and the like).",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "connector": {
+      "description": "An explicit connector for snap (docs/plan/06 section 6); positions are integer LDU.",
+      "type": "object",
+      "required": ["type", "pos"],
+      "properties": {
+        "type": {
+          "enum": ["studM", "studF", "tubeF", "pinM", "pinF", "axleM", "axleF", "barM", "clipF", "hingeFinger", "ball", "socket"]
+        },
+        "pos": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "type": "integer" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "pragma": {
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Every 1.x is accepted: readers ignore fields from minors newer than they know, and this schema checks only the fields it names in documents newer than 1.0 (see atThisMinor).",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
+    },
+    "semver": {
+      "description": "A Semantic Versioning 2.0.0 version (pattern from semver.org).",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*)?(\\+[0-9a-zA-Z-]+(\\.[0-9a-zA-Z-]+)*)?$"
+    },
+    "spdx": {
+      "description": "An SPDX licence id, or a simple AND, OR or WITH expression of ids (LICENSE-POLICY.md).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*( (AND|OR|WITH) [A-Za-z0-9][A-Za-z0-9.+-]*)*$"
+    },
+    "credit": {
+      "description": "Who made the document. Keeping it is a community norm, not a legal condition (LICENSE-POLICY.md).",
+      "type": "object",
+      "required": ["author"],
+      "properties": {
+        "author": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" }
+      }
+    },
+    "provenance": {
+      "description": "Where the data came from, so attribution travels with it through conversion, export and printing (LICENSE-POLICY.md, docs/plan/06 section 2).",
+      "type": "object",
+      "properties": {
+        "source": { "description": "original, or the upstream file or project the data derives from.", "type": "string" },
+        "author": { "type": "string" },
+        "license": { "$ref": "#/$defs/spdx" },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" },
+        "modified": { "type": "boolean" },
+        "history": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "profileId": {
+      "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+(\\.[a-z0-9]+)*)*$"
+    }
+  }
+}

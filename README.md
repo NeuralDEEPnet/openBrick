@@ -4,7 +4,7 @@
 
 > **Disclaimer.** OpenBrick3D is an independent, community-driven open-source project published by Neural Deep Network Ltd (Malta). It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group. LEGO®, the LEGO® logo and the Minifigure are trademarks of the LEGO Group of companies, which does not sponsor, authorize or endorse this project. Works with LEGO®-compatible bricks. LDraw™ is a trademark of the Estate of James Jessiman. This software uses the LDraw Parts Library (https://www.ldraw.org).
 
-**Status:** planning complete, scaffold in place (milestone M0). Nothing is installable yet. The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
+**Status:** milestone M0. The geometry kernel works (pure Rust, bit-identical on native and WebAssembly), data documents have JSON Schemas, and the M0 spikes are reported in [`docs/spikes/`](docs/spikes/). Nothing is installable yet. The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
 
 ## Three pillars, one core
 
@@ -33,7 +33,9 @@ standards/     Dimensional Standard v1 (CC0) and measurement data
 profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla) and example fit profiles
 parts/         openBrick-native part documents (CC0)
 schemas/       JSON Schemas for every document kind
+bench/         device render harness (bench/harness) and device results (bench/devices)
 docs/plan/     the full planning record
+docs/spikes/   M0 spike reports (kernels, LDraw connectivity)
 ```
 
 ## Building (M0)
@@ -43,7 +45,7 @@ cargo xtask check      # fmt, clippy, tests, data validation
 cargo run -p openbrick -- standard   # print the Dimensional Standard
 ```
 
-Requires Rust 1.90 or newer (`rust-toolchain.toml` pins the version). Node 22 and pnpm are needed from M2.
+Requires Rust 1.90 or newer (`rust-toolchain.toml` selects stable). Node 22 and pnpm are needed for the device render harness (`pnpm --dir bench/harness dev`; `pnpm test` runs its unit tests) now and for the apps from M2.
 
 ## Install (planned)
 

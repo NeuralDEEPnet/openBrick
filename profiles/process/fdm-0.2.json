@@ -2,6 +2,7 @@
   "openbrick": "1.0",
   "kind": "process",
   "id": "fdm-0.2",
+  "credit": { "author": "OpenBrick3D contributors" },
   "name": "FDM detail, 0.2 mm nozzle, 0.1 mm layers",
   "lineWidthMm": 0.22,
   "layerHeightMm": [0.1],

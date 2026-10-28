@@ -48,7 +48,10 @@ gantt
 ## Dependencies and sequencing rules
 
 - M1 depends on the M0 kernel decision. If manifold-rust fails the corpus, M1 starts on manifold-csg for CLI and desktop only (its wasm32 support is provisional); web and mobile use manifold-3d (WASM) behind the same Kernel trait until manifold-rust passes; add 2 weeks to M2 and re-plan M4.
-- M3a cannot start before the M0 connectivity spike shows at least 70 percent of common parts get usable connectors from primitives; otherwise M3a adds two weeks for hand-authoring the top 500 parts.
+- M3a cannot start before the M0 connectivity spike shows at least 70 percent of common parts get usable connectors from primitives; otherwise M3a adds two weeks for hand-authoring the top 500 parts. Status 2026-10-28: met on the 164 parts with ground truth (84.8 percent), not yet over all 200 (69.5 percent lower bound). Before M3a starts, re-check the 36 unverified parts blind and build the clip and hinge calibration table, then rerun the spike. Add the two weeks only if the lower bound stays below 70 percent. Either way, M3a plans about 1.5 weeks for three items ([Q04 report](../spikes/q04-ldraw-connectivity.md)):
+  - female stud synthesis;
+  - the calibration table;
+  - an override table for bars, gears with raw-geometry holes, old hinges and swivel plates, raw-geometry clips, towballs, Technic plates with holes, and wedges and wings.
 - M4 Android depends on the Play organisation account (start in M0).
 - M5 iOS depends on the Apple Developer Program enrolment (start in M0) and on the M4 WASM memory measurements on iOS WebKit (R15).
 - Mobile stores take every second desktop release.

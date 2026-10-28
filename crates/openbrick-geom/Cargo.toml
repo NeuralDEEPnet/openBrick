@@ -1,15 +1,51 @@
 [package]
 name = "openbrick-geom"
-description = "Geometry kernel trait for OpenBrick3D (Manifold-backed implementations land in M1)"
+description = "Geometry kernel trait for OpenBrick3D with pure-Rust and C++ Manifold backends"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["manifold-rust"]
+# Pure-Rust port of Manifold 3.5.0 (decision D02 default backend).
+manifold-rust = ["dep:manifold-rust"]
+# C++ Manifold v3.5.3 through FFI (decision D02 hedge for CLI and desktop, never
+# wasm). The first build clones Manifold and Clipper2 from GitHub and compiles them
+# with cmake and a C++17 compiler, unless MANIFOLD_CSG_LIB_DIR points at a prebuilt
+# library. See docs/spikes/q01b-manifold-csg-comparison.md.
+manifold-csg = ["dep:manifold-csg", "dep:manifold-csg-sys"]
+
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+# Pinned exactly: the kernel id in content hashes names this version.
+manifold-rust = { version = "=0.19.1", optional = true }
+# Both pinned exactly because the kernel id in content hashes names these versions
+# (manifold-csg-sys 3.5.105 builds Manifold v3.5.3; it is listed only to pin it).
+# default-features = false drops "parallel", which also fetches and links oneTBB.
+manifold-csg = { version = "=0.4.1", optional = true, default-features = false }
+manifold-csg-sys = { version = "=3.5.105", optional = true, default-features = false }
+
+[dev-dependencies]
+openbrick-units = { workspace = true }
+serde_json = { workspace = true }
+manifold-rust = "=0.19.1"
+
+[[example]]
+name = "wasm_probe"
+crate-type = ["cdylib"]
+required-features = ["manifold-rust"]
+
+# The harness meshes are defined as manifold-rust output (the default kernel).
+[[example]]
+name = "export_lods"
+required-features = ["manifold-rust"]
+
+[[test]]
+name = "harness_meshes"
+required-features = ["manifold-rust"]
 
 [lints]
 workspace = true

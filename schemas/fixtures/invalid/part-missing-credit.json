@@ -1,0 +1,14 @@
+{
+  "openbrick": "1.0",
+  "id": "fixture.minimal-plate",
+  "version": "0.1.0",
+  "name": "Minimal plate",
+  "license": "CC0-1.0",
+  "features": [
+    {
+      "id": "body",
+      "op": "body.plate",
+      "size": [2, 2]
+    }
+  ]
+}

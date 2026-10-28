@@ -1,0 +1,29 @@
+{
+  "openbrick": "1.0",
+  "kind": "process",
+  "id": "fdm-0.4",
+  "credit": {
+    "author": "OpenBrick3D contributors"
+  },
+  "name": "FDM, 0.4 mm nozzle (required fields only)",
+  "lineWidthMm": 0.4,
+  "layerHeightMm": [0.2],
+  "minWallMm": 0.8,
+  "wallQuantiseMm": 0.4,
+  "minFeatureMm": 0.8,
+  "minTubeWallMm": 0.7,
+  "minCavityDepthMm": 1.8,
+  "minReliefHeightMm": 0.4,
+  "maxReliefHeightMm": 1.5,
+  "minRoofMm": 1.0,
+  "maxUnsupportedBridgeMm": 12,
+  "maxOverhangDeg": 50,
+  "firstLayerChamferMm": 0.2,
+  "studTopChamferMm": 0.25,
+  "wallRoofFilletMm": {
+    "brick": 2.0,
+    "plate": 0.3
+  },
+  "supportsAllowed": false,
+  "horizontalHoleStrategy": "drill"
+}

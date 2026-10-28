@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/standard.schema.json",
+  "title": "OpenBrick3D Dimensional Standard",
+  "description": "The Dimensional Standard (standards/dimensions-v1.json): one row per brick feature with its nominal size, LDraw size, print targets, confidence and source. Read by openbrick-units (crates/openbrick-units/src/standard.rs); see docs/plan/04. A 1.0 document may use only the fields named here ($defs/knownFields).",
+  "type": "object",
+  "required": ["openbrick", "kind", "version", "license", "credit", "ldu_mm", "features"],
+  "properties": {
+    "openbrick": { "$ref": "#/$defs/pragma" },
+    "kind": { "const": "standard" },
+    "version": {
+      "$ref": "#/$defs/semver",
+      "description": "Version of the standard's content, separate from the schema pragma."
+    },
+    "license": { "$ref": "#/$defs/spdx" },
+    "credit": { "$ref": "#/$defs/credit" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "ldu_mm": {
+      "description": "Nominal millimetres per LDraw unit used for every conversion at the file boundary.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "notes": { "description": "Free text. Not read by openbrick-units yet.", "type": "string" },
+    "features": {
+      "description": "Feature rows, looked up by id through STANDARD.get().mm(id). Ids must be unique; JSON Schema cannot say so, so cargo xtask data checks it.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/feature" }
+    },
+    "tolerances": {
+      "description": "Measured manufacturing tolerances and their sources, as numbers or free-text ranges. Not read by openbrick-units yet.",
+      "type": "object",
+      "additionalProperties": { "type": ["number", "string"] }
+    }
+  },
+  "if": { "$ref": "#/$defs/atThisMinor" },
+  "then": { "$ref": "#/$defs/knownFields" },
+  "$defs": {
+    "knownFields": {
+      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error: serde would drop it silently, so a misspelt optional field would change nothing. Objects not listed here are open on purpose. cargo xtask data checks that these lists match the properties the schema declares.",
+      "properties": {
+        "openbrick": true,
+        "kind": true,
+        "version": true,
+        "license": true,
+        "credit": { "properties": { "author": true, "url": true }, "additionalProperties": false },
+        "provenance": {
+          "properties": { "source": true, "author": true, "license": true, "url": true, "modified": true, "history": true },
+          "additionalProperties": false
+        },
+        "ldu_mm": true,
+        "notes": true,
+        "features": {
+          "items": {
+            "properties": { "id": true, "name": true, "nominal_mm": true, "ldraw_ldu": true, "print_target": true, "confidence": true, "note": true, "source": true },
+            "additionalProperties": false
+          }
+        },
+        "tolerances": true
+      },
+      "additionalProperties": false
+    },
+    "atThisMinor": {
+      "description": "Matches a document whose pragma names this schema's minor version, 1.0 (or a 1.0.x patch). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9).",
+      "required": ["openbrick"],
+      "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+    },
+    "feature": {
+      "description": "One row of the standard (openbrick_units::standard::Feature).",
+      "type": "object",
+      "required": ["id", "name", "confidence", "source"],
+      "properties": {
+        "id": {
+          "description": "Stable snake_case id, the key code uses to read the value.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "nominal_mm": {
+          "description": "Nominal design value in millimetres (a plain factor for unitless rows); null when the row has no length.",
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "ldraw_ldu": {
+          "description": "The same feature as LDraw models it, in LDU; null when LDraw has no equivalent.",
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "print_target": {
+          "description": "Starting print targets by process profile id, as free-text ranges; fit profiles override them.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/profileId" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "confidence": {
+          "description": "verified: from a primary source or two independent measurements; likely: community consensus; inferred: neither (docs/plan/04 section 2).",
+          "enum": ["verified", "likely", "inferred"]
+        },
+        "note": { "type": "string" },
+        "source": {
+          "description": "Where the number comes from. Required: every geometry number cites its source (CLAUDE.md).",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "pragma": {
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Every 1.x is accepted: readers ignore fields from minors newer than they know, and this schema checks only the fields it names in documents newer than 1.0 (see atThisMinor).",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
+    },
+    "semver": {
+      "description": "A Semantic Versioning 2.0.0 version (pattern from semver.org).",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*)?(\\+[0-9a-zA-Z-]+(\\.[0-9a-zA-Z-]+)*)?$"
+    },
+    "spdx": {
+      "description": "An SPDX licence id, or a simple AND, OR or WITH expression of ids (LICENSE-POLICY.md).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*( (AND|OR|WITH) [A-Za-z0-9][A-Za-z0-9.+-]*)*$"
+    },
+    "credit": {
+      "description": "Who made the document. Keeping it is a community norm, not a legal condition (LICENSE-POLICY.md).",
+      "type": "object",
+      "required": ["author"],
+      "properties": {
+        "author": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" }
+      }
+    },
+    "provenance": {
+      "description": "Where the data came from, so attribution travels with it through conversion, export and printing (LICENSE-POLICY.md, docs/plan/06 section 2).",
+      "type": "object",
+      "properties": {
+        "source": { "description": "original, or the upstream file or project the data derives from.", "type": "string" },
+        "author": { "type": "string" },
+        "license": { "$ref": "#/$defs/spdx" },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" },
+        "modified": { "type": "boolean" },
+        "history": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "profileId": {
+      "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+(\\.[a-z0-9]+)*)*$"
+    }
+  }
+}

@@ -11,5 +11,6 @@ These rules apply to every contributor, human or AI-assisted. The full reasoning
 - Use "brick-compatible". The LEGO word mark appears only in the disclaimer and in docs/plan/12. Never generate minifigure geometry; never emboss text on stud tops.
 - No GPL, AGPL or LGPL code or data in client crates or packages. LDCad shadow data is off limits. Cite the source of every geometry number.
 - Commits: conventional titles, signed off (`git commit -s`). Keep pull requests small; add a changelog line.
-- Run `cargo xtask check` before pushing (fmt, clippy -D warnings, tests, data validation). From M2 also `pnpm test`.
+- Run `cargo xtask check` before pushing (fmt, clippy -D warnings, tests, data validation). Also run `pnpm test` when you touch `bench/` (it runs the device harness tests), and always from M2.
+- Commit with the environment's configured git identity; do not override `user.name` or `user.email` (overrides make commits show as unverified).
 - Be kind in reviews and in generated messages; explain the rule, link the document, do not scold.

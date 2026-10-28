@@ -7,3 +7,5 @@ dist
 /apps/desktop/src-tauri/gen
 /packages/core-wasm/pkg
 .cache
+# TLS keys for serving the device harness to phones (bench/devices/README.md); keep them out of the tree.
+*.pem

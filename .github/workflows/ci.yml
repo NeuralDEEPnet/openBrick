@@ -41,6 +41,88 @@ jobs:
       - run: cargo test --workspace
       - run: cargo run -q -p openbrick -- standard
 
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the kernel WebAssembly probe
+        run: cargo build --release --target wasm32-unknown-unknown -p openbrick-geom --example wasm_probe
+      - name: Run the probe and check it matches the native fingerprint
+        run: |
+          out=$(node scripts/wasm-probe.mjs target/wasm32-unknown-unknown/release/examples/wasm_probe.wasm)
+          echo "$out"
+          native=$(cargo run -q --release -p openbrick-geom --example kernel_timing | awk '$1=="2x4"{print $5}')
+          echo "native 2x4 fingerprint: $native"
+          echo "$out" | grep -q "\"fingerprint\":\"$native\""
+
+  deny:
+    # Licence allowlist, bans, advisories and sources (LICENSE-POLICY.md, deny.toml).
+    # Covers every feature, including the optional manifold-csg backend. The C++
+    # sources that manifold-csg-sys clones at build time are outside Cargo's view;
+    # see docs/spikes/q01b-manifold-csg-comparison.md.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          arguments: --all-features
+          command: check
+
+  geom-manifold-csg:
+    # Second kernel backend (C++ Manifold through manifold-csg) and the
+    # cross-backend conformance comparison; see
+    # docs/spikes/q01b-manifold-csg-comparison.md. The first build clones Manifold
+    # and Clipper2 from GitHub and compiles them with cmake and g++, which
+    # ubuntu-24.04 runners already have; rust-cache keeps the build afterwards.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy with both kernel backends
+        run: cargo clippy -p openbrick-geom --all-targets --features manifold-csg -- -D warnings
+      - name: Conformance corpus on both backends
+        run: cargo test -p openbrick-geom --features manifold-csg
+      - name: Print the cross-backend comparison table
+        run: cargo test -p openbrick-geom --features manifold-csg --test conformance backends_agree -- --nocapture
+      - name: Corpus on manifold-csg alone
+        run: cargo test -p openbrick-geom --no-default-features --features manifold-csg
+
+  harness:
+    # Device render harness (bench/harness): unit tests, including the results.csv
+    # guard, and a headless smoke run. Smoke numbers are software rendering, never
+    # device results. The committed meshes are checked against the kernel by cargo
+    # test in the check job (crates/openbrick-geom/tests/harness_meshes.rs).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Unit tests, including the results.csv guard
+        run: pnpm test
+      - name: Install Chromium for the pinned Playwright (1.63.0)
+        run: pnpm --dir bench/harness exec playwright install --with-deps chromium
+      - name: Smoke test (software rendering, not a device result)
+        run: pnpm --dir bench/harness smoke
+
   docs:
     runs-on: ubuntu-24.04
     steps:
@@ -50,7 +132,7 @@ jobs:
           python3 - <<'EOF'
           import re,os,glob,sys
           bad=0
-          for f in glob.glob('docs/plan/*.md'):
+          for f in glob.glob('docs/plan/*.md')+glob.glob('docs/spikes/*.md'):
               for m in re.finditer(r'\]\(([^)]+)\)', open(f).read()):
                   t=m.group(1)
                   if t.startswith(('http','#')): continue

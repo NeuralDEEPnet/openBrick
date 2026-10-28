@@ -38,6 +38,9 @@ pub struct Standard {
     pub kind: String,
     pub version: String,
     pub license: String,
+    /// Who made the standard; kept so a written copy keeps its attribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit: Option<crate::Credit>,
     pub ldu_mm: f64,
     pub features: Vec<Feature>,
 }

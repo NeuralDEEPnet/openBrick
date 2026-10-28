@@ -5,13 +5,8 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-/// Credit block carried by every data document.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct Credit {
-    pub author: String,
-    #[serde(default)]
-    pub url: String,
-}
+/// Credit block carried by every data document (shared with the standard and the profiles).
+pub use openbrick_units::Credit;
 
 /// Provenance so attribution travels with the data.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -24,45 +19,51 @@ pub struct Provenance {
     pub history: Vec<String>,
 }
 
-/// A typed, UI-bearing parameter.
+/// A typed, UI-bearing parameter. Absent optional fields are omitted when written
+/// rather than written as `null`, so a written document passes `schemas/part.schema.json`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Param {
     #[serde(rename = "type")]
     pub ty: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Value::is_null")]
     pub default: Value,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<Value>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
-    #[serde(default, rename = "visibleWhen")]
+    #[serde(
+        default,
+        rename = "visibleWhen",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub visible_when: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manipulator: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// One feature operation; op-specific fields stay as JSON until the evaluator reads them.
+/// Absent optional fields are omitted when written, as for [`Param`].
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Feature {
     pub id: String,
     pub op: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<String>,
-    #[serde(default, rename = "if")]
+    #[serde(default, rename = "if", skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
-    #[serde(default, rename = "colorRole")]
+    #[serde(default, rename = "colorRole", skip_serializing_if = "Option::is_none")]
     pub color_role: Option<String>,
     #[serde(default, rename = "fitCritical")]
     pub fit_critical: bool,
@@ -89,9 +90,9 @@ pub struct PartDoc {
     pub features: Vec<Feature>,
     #[serde(default = "derived")]
     pub snap: Value,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Value::is_null")]
     pub print: Value,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Value::is_null")]
     pub export: Value,
 }
 
