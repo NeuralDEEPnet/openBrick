@@ -1,2 +1,4 @@
 # Written by `cargo xtask wasm` (wasm-bindgen output); never committed.
 /src/wasm/
+# Written by `node smoke.mjs --screenshots smoke-screenshots` (the CI job keeps them as an artifact).
+/smoke-screenshots/

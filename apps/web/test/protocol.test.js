@@ -4,30 +4,45 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { brick, dispatch, info, parseStuds, PROTOCOL_VERSION, standardSummary, transferables } from "../src/protocol.js";
+import {
+  brick,
+  createHandler,
+  dispatch,
+  info,
+  isTrap,
+  parseStuds,
+  PROTOCOL_VERSION,
+  standardSummary,
+  transferables,
+} from "../src/protocol.js";
 
 const STANDARD_TEXT = readFileSync(new URL("../../../standards/dimensions-v1.json", import.meta.url), "utf8");
 const STANDARD = JSON.parse(STANDARD_TEXT);
 const nominal = (id) => STANDARD.features.find((f) => f.id === id).nominal_mm;
 const MAX = 16;
 
-/** A stand-in for the wasm module: records calls and frees, makes a one-triangle mesh. */
+/**
+ * A stand-in for the wasm module: records calls, takes and frees, makes a
+ * one-triangle mesh. `throws` is an error (or a message) build_nominal_brick throws.
+ */
 function fakeCore({ throws = null } = {}) {
   const calls = [];
   const freed = [];
+  const taken = [];
   return {
     calls,
     freed,
+    taken,
     kernel_id: () => "fake-kernel 1.0",
     max_studs: () => MAX,
     standard_json: () => STANDARD_TEXT,
     check_part_json: (text) => (text.includes("broken") ? JSON.stringify(["missing field `kind`"]) : "[]"),
     build_nominal_brick(width, length) {
       calls.push([width, length]);
-      if (throws) throw new Error(throws);
+      if (throws) throw typeof throws === "string" ? new Error(throws) : throws;
       const mesh = {
-        positions: () => new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
-        indices: () => new Uint32Array([0, 1, 2]),
+        take_positions: () => (taken.push("positions"), new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])),
+        take_indices: () => (taken.push("indices"), new Uint32Array([0, 1, 2])),
         vertex_count: () => 3,
         triangle_count: () => 1,
         volume_mm3: () => width * length,
@@ -87,6 +102,7 @@ test("a brick request returns plain data with transferable arrays and frees the 
   assert.equal(reply.ok, true);
   const r = reply.result;
   assert.deepEqual(core.calls, [[2, 4]]);
+  assert.deepEqual(core.taken, ["positions", "indices"], "each array is moved out once, never cloned");
   assert.equal(core.freed.length, 1, "MeshOut.free() was called");
   assert.deepEqual([r.width, r.length, r.vertices, r.triangles, r.volumeMm3], [2, 4, 3, 1, 8]);
   assert.equal(r.fingerprint, "0x0000000000000001");
@@ -123,6 +139,76 @@ test("a core error becomes an error reply, never an exception", () => {
     length: 2,
   });
   assert.deepEqual(reply, { id: 3, ok: false, error: "manifold-rust 0.19.1 returned a solid that is not manifold" });
+});
+
+test("a WebAssembly trap becomes a fatal error reply; other errors are not fatal", () => {
+  const trap = new WebAssembly.RuntimeError("unreachable");
+  assert.ok(isTrap(trap));
+  assert.equal(isTrap(new Error("unreachable")), false);
+  assert.equal(isTrap("unreachable"), false);
+  const { reply, transfer } = dispatch(fakeCore({ throws: trap }), { id: 4, type: "brick", width: 2, length: 4 });
+  assert.equal(reply.id, 4);
+  assert.equal(reply.ok, false);
+  assert.equal(reply.fatal, true);
+  assert.match(reply.error, /WebAssembly trap \(unreachable\)/);
+  assert.deepEqual(transfer, []);
+  assert.equal("fatal" in dispatch(fakeCore({ throws: "not manifold" }), { id: 5, type: "brick", width: 2, length: 4 }).reply, false);
+});
+
+/** A worker handler over `core`, recording what it posts. */
+function handlerFor(core, { loadFails = null } = {}) {
+  const posted = [];
+  const loads = [];
+  const handle = createHandler(
+    async (module) => {
+      loads.push(module);
+      if (loadFails) throw new Error(loadFails);
+      return core;
+    },
+    (reply, transfer) => posted.push({ reply, transfer }),
+  );
+  return { handle, posted, loads, replies: () => posted.map((p) => p.reply) };
+}
+
+test("the worker handler loads the core once on init, then serves requests", async () => {
+  const core = fakeCore();
+  const h = handlerFor(core);
+  await h.handle({ id: 1, type: "brick", width: 2, length: 4 });
+  assert.deepEqual(h.replies()[0], { id: 1, ok: false, error: "the core is not loaded yet (send init first)" });
+  await h.handle({ id: 2, type: "init", module: "compiled" });
+  await h.handle({ id: 3, type: "init", module: "compiled" });
+  assert.deepEqual(h.loads, ["compiled"], "instantiated once");
+  assert.deepEqual(h.replies()[1], { id: 2, ok: true, result: info(core) });
+  await h.handle({ id: 4, type: "brick", width: 2, length: 4 });
+  const last = h.posted.at(-1);
+  assert.equal(last.reply.ok, true);
+  assert.equal(last.transfer.length, 2, "mesh arrays are transferred");
+});
+
+test("the worker handler reports a failed load and allows another init", async () => {
+  const h = handlerFor(fakeCore(), { loadFails: "bad magic" });
+  await h.handle({ id: 1, type: "init" });
+  assert.deepEqual(h.replies()[0], { id: 1, ok: false, error: "could not load the core: bad magic" });
+  await h.handle({ id: 2, type: "init" });
+  assert.equal(h.loads.length, 2);
+});
+
+test("after a trap the worker handler never calls the core again", async () => {
+  const core = fakeCore({ throws: new WebAssembly.RuntimeError("unreachable") });
+  const h = handlerFor(core);
+  await h.handle({ id: 1, type: "init" });
+  // Both pass the entry check and wait for the load before either runs; the second
+  // must not reach the core after the first traps.
+  const waiting = [h.handle({ id: 2, type: "brick", width: 2, length: 4 }), h.handle({ id: 3, type: "brick", width: 1, length: 1 })];
+  await Promise.all(waiting);
+  await h.handle({ id: 4, type: "checkPart", text: "{}" });
+  await h.handle({ id: 5, type: "init" });
+  assert.deepEqual(core.calls, [[2, 4]], "only the request that trapped reached the core");
+  const [, trapped, ...refused] = h.replies();
+  assert.equal(trapped.fatal, true);
+  assert.match(trapped.error, /trap \(unreachable\)/);
+  assert.deepEqual(refused.map((r) => [r.id, r.ok, r.fatal]), [[3, false, true], [4, false, true], [5, false, true]]);
+  for (const r of refused) assert.match(r.error, /unusable after an earlier trap/);
 });
 
 test("checkPart returns the structural errors as an array", () => {

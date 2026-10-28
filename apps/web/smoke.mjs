@@ -10,8 +10,11 @@
 //    waits for the first brick and checks that its triangle count, fingerprint,
 //    canonical fingerprint and volume equal the native values for 2x4 and that the
 //    viewer drew it; then steps the length down to 2 with the - button and checks the
-//    2x2 values; then asks for 16x16 and, while that runs, for 2x4 again, which must
-//    cancel the long build by replacing the worker and give the native 2x4 again.
+//    2x2 values; then asks for 16x16 and, while that runs, checks that the status
+//    line says the build is slow and how to cancel it, and asks for 2x4 again, which
+//    must cancel the long build by replacing the worker and give the native 2x4
+//    again; then drags the view up until the camera looks at the underside from
+//    below the ground, where the grid and contact shadow must hide.
 // 4. A phone-sized run (390 x 844, touch, dark theme): no horizontal scrolling,
 //    every control on screen, a different background from the light theme, a tap on
 //    a + button, and a one-finger touch drag that orbits the camera.
@@ -107,7 +110,7 @@ async function waitBrick(page, want, timeoutMs, label) {
   while (Date.now() < end) {
     const web = await page.evaluate(() => {
       const w = window.__web;
-      return w && { state: w.state, error: w.error, brick: w.brick, restarts: w.restarts, backend: w.backend, warnings: w.warnings };
+      return w && { state: w.state, error: w.error, brick: w.brick, restarts: w.restarts, traps: w.traps, backend: w.backend, warnings: w.warnings };
     });
     if (web?.state === "error") throw new Error(`${label}: page error: ${web.error}`);
     if (web?.state === "ready" && web.brick && web.brick.width === want.width && web.brick.length === want.length) return web;
@@ -140,6 +143,19 @@ async function drawnStats(page, label) {
     await new Promise((r) => setTimeout(r, 50));
   }
   throw new Error(`${label}: the viewer did not draw the newest brick within 30 s`);
+}
+
+/** Viewer stats once the camera has stopped moving (orbit damping takes a while). */
+async function settledStats(page, label) {
+  const end = Date.now() + 15_000;
+  let last = await stats(page);
+  while (Date.now() < end) {
+    await new Promise((r) => setTimeout(r, 400));
+    const s = await stats(page);
+    if (s.frames === last.frames) return s;
+    last = s;
+  }
+  throw new Error(`${label}: the camera did not settle within 15 s`);
 }
 
 async function backendRun(browser, origin, backend, native) {
@@ -178,6 +194,11 @@ async function backendRun(browser, origin, backend, native) {
   await page.fill("#width", "16");
   await page.fill("#length", "16");
   await new Promise((r) => setTimeout(r, 1500));
+  const slow = await page.textContent("#status");
+  check(
+    /Building 16 × 16…\s*\d+ s/.test(slow) && slow.includes("Change the size to cancel."),
+    `${label}: after 1.5 s the 16x16 status line says "${slow}", without the elapsed seconds and the cancel note`,
+  );
   const t1 = Date.now();
   await page.fill("#width", "2");
   await page.fill("#length", "4");
@@ -185,14 +206,32 @@ async function backendRun(browser, origin, backend, native) {
   const cancelMs = Date.now() - t1;
   check(web.restarts >= 1, `${label}: the 16x16 build was not cancelled (restarts ${web.restarts})`);
   checkBrick(web.brick, native["2x4"], `${label} 2x4 from a fresh worker`);
+  check(web.traps === 0, `${label}: ${web.traps} WebAssembly trap(s)`);
   if (shots) await page.screenshot({ path: join(shots, `${backend}-after-cancel.png`) });
+
+  // Drag up by a quarter of the view: OrbitControls turns the camera down by
+  // 2 pi * 1/4 = 90 degrees, from about 63 degrees off the zenith (FIRST_VIEW in
+  // src/viewer.js) to about 153, which is below the ground.
+  s = await drawnStats(page, `${label} underside`);
+  check(!s.below && s.camera[1] > 0, `${label}: the first view is not from above (${JSON.stringify(s)})`);
+  const box = await page.locator("#stage canvas").boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy + box.height / 8);
+  await page.mouse.down();
+  await page.mouse.move(cx, cy - box.height / 8, { steps: 12 });
+  await page.mouse.up();
+  const settled = await settledStats(page, `${label} underside`);
+  check(settled.below && settled.camera[1] < 0, `${label}: dragging up did not take the camera below the ground (${JSON.stringify(settled)})`);
+  if (shots) await page.screenshot({ path: join(shots, `${backend}-underside.png`) });
 
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
   check(web.warnings.length === 0, `${label}: page warnings: ${web.warnings.join(" | ")}`);
   console.log(
     `# ${label}: first brick after ${(firstMs / 1000).toFixed(1)} s (built in ${Math.round(web.brick.buildMs)} ms), ` +
       `2x4 ${web.brick.triangles} triangles ${web.brick.fingerprint}, 2x2 ${native["2x2"].triangles} triangles, ` +
-      `16x16 cancelled after ${(cancelMs / 1000).toFixed(1)} s with ${web.restarts} worker restart(s)`,
+      `16x16 cancelled after ${(cancelMs / 1000).toFixed(1)} s with ${web.restarts} worker restart(s), ` +
+      `underside view from camera y ${settled.camera[1].toFixed(1)} mm`,
   );
   await context.close();
 }

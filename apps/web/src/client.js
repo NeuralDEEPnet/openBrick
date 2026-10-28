@@ -8,6 +8,10 @@
 // compiled module; a large brick (16x16 takes tens of seconds, Q01 finding 2 in
 // docs/spikes/q01-kernel-conformance.md) then never holds up the next request.
 //
+// A reply marked `fatal` means the core trapped (src/protocol.js). The request it
+// answers fails, and the client replaces the worker at once and sends the fresh one
+// everything the old one still owed, so no later request runs on a broken instance.
+//
 // The worker factory, clock and timers are injected so the unit tests drive the
 // client with fake workers and a fake clock.
 
@@ -35,8 +39,10 @@ export class CoreClient {
   /** The newest brick request, not yet sent: { width, length, resolve, reject }. */
   #queued = null;
   #failure = null;
-  /** How many times a worker was replaced to cancel a build. */
+  /** How many times the worker was replaced: to cancel a build, or after a trap. */
   restarts = 0;
+  /** How many of those replacements followed a trap. */
+  traps = 0;
 
   /**
    * @param {object} options
@@ -109,10 +115,10 @@ export class CoreClient {
         running.superseded = true;
         const age = this.#now() - running.startedAt;
         if (age >= this.#restartAfterMs) {
-          this.#restart();
+          this.#restart({ cancelBuild: true });
         } else if (running.timer === undefined) {
           running.timer = this.#setTimeout(() => {
-            if (this.#inflight === running) this.#restart();
+            if (this.#inflight === running) this.#restart({ cancelBuild: true });
           }, this.#restartAfterMs - age);
         }
       }
@@ -152,8 +158,14 @@ export class CoreClient {
 
   #onReply(reply) {
     const entry = this.#pending.get(reply?.id);
+    if (entry) this.#pending.delete(reply.id);
+    if (reply?.fatal) {
+      // Replace the worker before settling, so whatever the settled request
+      // triggers next already goes to the fresh one.
+      this.traps++;
+      this.#restart({ cancelBuild: false });
+    }
     if (!entry) return; // the reply to a request that was dropped
-    this.#pending.delete(reply.id);
     if (reply.ok) entry.resolve(reply.result);
     else entry.reject(new CoreError(reply.error));
   }
@@ -179,17 +191,20 @@ export class CoreClient {
   }
 
   /**
-   * Cancel the running build: terminate the worker, start a fresh one from the same
-   * module, and send it everything the old one still owed except the cancelled build.
+   * Terminate the worker, start a fresh one from the same module, and send it
+   * everything the old one still owed, with the original ids. With `cancelBuild`
+   * the running build is dropped (it resolves null) instead of re-sent.
    */
-  #restart() {
-    const running = this.#inflight;
-    this.#inflight = null;
-    if (running) {
-      if (running.timer !== undefined) this.#clearTimeout(running.timer);
-      running.resolve(null);
+  #restart({ cancelBuild }) {
+    if (cancelBuild) {
+      const running = this.#inflight;
+      this.#inflight = null;
+      if (running) {
+        if (running.timer !== undefined) this.#clearTimeout(running.timer);
+        running.resolve(null);
+      }
     }
-    const owed = [...this.#pending.values()].filter((entry) => entry.request.type !== "brick");
+    const owed = [...this.#pending.values()].filter((entry) => !(cancelBuild && entry.request.type === "brick"));
     this.#pending.clear();
     this.#worker.terminate();
     this.restarts++;

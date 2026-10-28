@@ -1,9 +1,10 @@
 // The three.js viewer (decision D10): WebGPURenderer from 'three/webgpu', which
 // falls back to WebGL2 by itself where WebGPU is missing, orbit controls (mouse
-// and touch), a ground grid on the stud lattice, studio lighting and a soft
-// contact shadow. It only displays meshes built by the core; the one transform it
-// applies is the kernel-to-three.js frame rotation of packages/viewport and the
-// lattice placement of src/placement.js.
+// and touch) all the way round so the underside shows too, a ground grid on the
+// stud lattice, studio lighting and a soft contact shadow. It only displays
+// meshes built by the core; the one transform it applies is the kernel-to-three.js
+// frame rotation of packages/viewport and the lattice placement of
+// src/placement.js.
 
 import * as THREE from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -40,18 +41,25 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
   const camera = new THREE.PerspectiveCamera(FOV_DEG, 1, 1, 1000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  // Stay above the ground plane; the underside is for a later "flip" view.
-  controls.maxPolarAngle = Math.PI * 0.49;
+  // Orbit below the ground too: the underside (tubes, or pins under 1-wide bricks)
+  // is where footprints differ most. The grid and the contact shadow hide while
+  // the camera is below the ground (see the render loop).
+  controls.minPolarAngle = 0;
+  controls.maxPolarAngle = Math.PI;
 
   // Studio lighting: a sky/ground fill, a key light that casts the contact shadow,
-  // a cool fill from the other side and a rim light from behind.
+  // a cool fill from the other side, a rim light from behind, and a soft light
+  // from below so the underside reads (every other direct light comes from above,
+  // so faces pointing down would get only the dim ground colour).
   const hemisphere = new THREE.HemisphereLight(0xffffff, 0x3a4250, 1.1);
   const key = new THREE.DirectionalLight(0xffffff, 2.4);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
   const fill = new THREE.DirectionalLight(0xdbe8ff, 0.6);
   const rim = new THREE.DirectionalLight(0xffffff, 0.9);
-  scene.add(hemisphere, key, key.target, fill, rim);
+  const under = new THREE.DirectionalLight(0xfff4e8, 0.9);
+  under.target = key.target; // both aim at the brick's centre
+  scene.add(hemisphere, key, key.target, fill, rim, under);
 
   // Everything below `world` is in the kernel frame (mm, +Z up).
   const world = new THREE.Group();
@@ -81,7 +89,7 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
   let frames = 0;
   /** How many bricks were shown, and which of them the last frame drew. */
   let shown = 0;
-  let lastFrame = { triangles: 0, drawCalls: 0, drawn: 0 };
+  let lastFrame = { triangles: 0, drawCalls: 0, drawn: 0, below: false };
   let standard = null;
   let current = null;
 
@@ -133,6 +141,7 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
     key.position.copy(center).add(new THREE.Vector3(0.55, 1, 0.4).normalize().multiplyScalar(4 * r));
     fill.position.copy(center).add(new THREE.Vector3(-1, 0.45, -0.2).multiplyScalar(4 * r));
     rim.position.copy(center).add(new THREE.Vector3(-0.2, 0.7, -1).multiplyScalar(4 * r));
+    under.position.copy(center).add(new THREE.Vector3(0.3, -1, 0.5).multiplyScalar(4 * r));
     const shadowCamera = key.shadow.camera;
     shadowCamera.left = shadowCamera.bottom = -1.5 * r;
     shadowCamera.right = shadowCamera.top = 1.5 * r;
@@ -163,11 +172,16 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
     const moved = controls.update();
     if (!moved && !dirty) return;
     dirty = false;
+    // Seen from below, the grid would cut across the open underside and the
+    // shadow would sit in front of it; both belong to the floor, so they hide.
+    const below = camera.position.y < 0;
+    ground.visible = !below;
+    if (grid) grid.visible = !below;
     renderer.render(scene, camera);
     frames++;
     // info is reset at the start of each animation frame, so this is the whole
     // frame: shadow pass, scene and the output pass.
-    lastFrame = { triangles: renderer.info.render.triangles, drawCalls: renderer.info.render.drawCalls, drawn: shown };
+    lastFrame = { triangles: renderer.info.render.triangles, drawCalls: renderer.info.render.drawCalls, drawn: shown, below };
   });
 
   return {
@@ -203,9 +217,10 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
     applyTheme,
 
     /**
-     * For the smoke test: frames drawn; the last frame's renderer.info counts and
-     * the number of the brick it showed (`drawn`, equal to `shown` once the newest
-     * brick is on screen); the camera position.
+     * For the smoke test: frames drawn; the last frame's renderer.info counts, the
+     * number of the brick it showed (`drawn`, equal to `shown` once the newest
+     * brick is on screen) and whether it looked from below the ground (`below`);
+     * the camera position.
      */
     stats() {
       return { frames, shown, ...lastFrame, camera: camera.position.toArray() };

@@ -8,7 +8,17 @@ import { test } from "node:test";
 import { Object3D, Vector3 } from "three";
 import { KERNEL_TO_THREE_EULER_X } from "@openbrick3d/viewport/frame.js";
 import { brickOffset, framingDistance, gridCells, placedBounds } from "../src/placement.js";
-import { DEFAULT_SIZE, readBackend, readSize, statusParts, stepStuds, writeQuery } from "../src/ui.js";
+import {
+  buildingParts,
+  DEFAULT_SIZE,
+  elapsedText,
+  readBackend,
+  readSize,
+  SLOW_BUILD_MS,
+  statusParts,
+  stepStuds,
+  writeQuery,
+} from "../src/ui.js";
 import { standardSummary } from "../src/protocol.js";
 
 const standard = standardSummary(readFileSync(new URL("../../../standards/dimensions-v1.json", import.meta.url), "utf8"));
@@ -133,4 +143,14 @@ test("the status line names size, triangles, volume, fingerprint, kernel and bac
     "WebGPU",
   ]);
   assert.equal(statusParts({ width: 1, length: 1, triangles: 1, volumeMm3: 1, fingerprint: "0x0", buildMs: 1, kernel: "k" }, "webgl2").at(-1), "WebGL 2");
+});
+
+test("a slow build gets a note on cancelling, and its seconds", () => {
+  const size = { width: 16, length: 16 };
+  assert.deepEqual(buildingParts(size, 0), ["Building 16 × 16…"]);
+  assert.deepEqual(buildingParts(size, SLOW_BUILD_MS - 1), ["Building 16 × 16…"]);
+  assert.deepEqual(buildingParts(size, SLOW_BUILD_MS), ["Building 16 × 16…", "Large bricks take a while. Change the size to cancel."]);
+  assert.equal(elapsedText(999), "0 s");
+  assert.equal(elapsedText(12_345), "12 s");
+  assert.equal(elapsedText(-5), "0 s");
 });

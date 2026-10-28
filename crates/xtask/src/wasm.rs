@@ -6,7 +6,10 @@
 //! 2. `cargo build --release --target wasm32-unknown-unknown -p openbrick-wasm`.
 //! 3. `wasm-bindgen --target web` into `apps/web/src/wasm/` (generated, gitignored).
 //! 4. Print the module size raw and gzipped, and fail above the size budget of the
-//!    `wasm` CI job in docs/plan/10 section 5 (core under 2.5 MB gzip).
+//!    `wasm` CI job in docs/plan/10 section 5 (core under 2.5 MB gzip). The gzip
+//!    size is flate2 (miniz_oxide) at its best compression; GNU `gzip -9` uses a
+//!    different deflate encoder and differs by a few kilobytes either way, which
+//!    is far inside the budget.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -73,7 +76,8 @@ fn target_dir(root: &Path) -> Result<PathBuf, String> {
         .ok_or_else(|| "cargo metadata has no target_directory".into())
 }
 
-/// Size of `bytes` after gzip at the highest level.
+/// Size of `bytes` gzipped by flate2 at `Compression::best()` (level 9 of
+/// miniz_oxide, not GNU gzip; see the module documentation).
 pub fn gzip_len(bytes: &[u8]) -> usize {
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
     gz.write_all(bytes).expect("gzip to memory");
@@ -145,7 +149,7 @@ fn build(root: &Path) -> Result<(), String> {
         std::fs::read(&module).map_err(|e| format!("cannot read {}: {e}", module.display()))?;
     let gz = gzip_len(&bytes);
     println!(
-        "wasm: {} is {} bytes, {} bytes gzip -9 (budget {} bytes, docs/plan/10 section 5)",
+        "wasm: {} is {} bytes, {} bytes gzipped by flate2 at best compression (budget {} bytes, docs/plan/10 section 5)",
         Path::new(OUT_DIR)
             .join(format!("{OUT_NAME}_bg.wasm"))
             .display(),

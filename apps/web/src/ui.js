@@ -47,6 +47,25 @@ export function stepStuds(current, step, maxStuds) {
   return Math.min(maxStuds, Math.max(1, n + step));
 }
 
+/**
+ * After this long a build counts as slow: the status line adds how long it has run
+ * and how to cancel it. Large footprints take seconds to tens of seconds with the
+ * pure-Rust kernel (Q01 finding 2 in docs/spikes/q01-kernel-conformance.md).
+ */
+export const SLOW_BUILD_MS = 1000;
+
+/** Status line parts while a build runs; a slow one gets a note on cancelling. */
+export function buildingParts({ width, length }, elapsedMs) {
+  const parts = [`Building ${width} × ${length}…`];
+  if (elapsedMs >= SLOW_BUILD_MS) parts.push("Large bricks take a while. Change the size to cancel.");
+  return parts;
+}
+
+/** How long a build has run, for the status line: whole seconds. */
+export function elapsedText(ms) {
+  return `${Math.floor(Math.max(0, ms) / 1000)} s`;
+}
+
 const integer = new Intl.NumberFormat("en-US");
 const volume = new Intl.NumberFormat("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 

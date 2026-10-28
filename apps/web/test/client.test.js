@@ -39,6 +39,11 @@ function setup({ restartAfterMs = 250 } = {}) {
     fail(id, error) {
       this.onmessage({ data: { id, ok: false, error } });
     }
+    /** Answer with the fatal reply the worker sends after a WebAssembly trap. */
+    trap(idOrType) {
+      const id = typeof idOrType === "number" ? idOrType : this.sent.findLast((m) => m.type === idOrType).id;
+      this.onmessage({ data: { id, ok: false, fatal: true, error: "the core stopped with a WebAssembly trap (unreachable)" } });
+    }
   }
   env.client = new CoreClient({
     createWorker: () => {
@@ -143,6 +148,7 @@ test("superseding a build that has run restartAfterMs replaces the worker at onc
   const small = env.client.buildBrick(2, 4);
   assert.equal(await big, null, "the cancelled build resolves null");
   assert.equal(env.client.restarts, 1);
+  assert.equal(env.client.traps, 0, "a cancel is not a trap");
   assert.equal(env.workers.length, 2);
   const [old, fresh] = env.workers;
   assert.ok(old.terminated);
@@ -210,6 +216,53 @@ test("a replacement worker also answers the other requests the old one owed", as
   fresh.reply("brick", { size: "1x1" });
   assert.deepEqual(await check, []);
   assert.deepEqual(await small, { size: "1x1" });
+});
+
+test("a trap fails its request and replaces the worker before the next build", async () => {
+  const env = await started();
+  const build = env.client.buildBrick(2, 4);
+  const old = env.worker;
+  old.trap("brick");
+  await assert.rejects(build, (err) => err instanceof CoreError && /WebAssembly trap/.test(err.message));
+  assert.ok(old.terminated, "the trapped instance is never used again");
+  assert.equal(env.client.restarts, 1);
+  assert.equal(env.client.traps, 1);
+  const fresh = env.worker;
+  assert.notEqual(fresh, old);
+  assert.deepEqual(fresh.sent, [{ id: 3, type: "init", module: MODULE }], "the failed build is not retried");
+  assert.equal(env.client.busy, false);
+  fresh.reply("init", INFO);
+  const next = env.client.buildBrick(2, 2);
+  assert.deepEqual(bricks(fresh), [{ id: 4, type: "brick", width: 2, length: 2 }]);
+  fresh.reply("brick", { size: "2x2" });
+  assert.deepEqual(await next, { size: "2x2" });
+});
+
+test("after a trap the fresh worker gets everything else the old one owed", async () => {
+  const env = await started();
+  const check = env.client.checkPart("{}");
+  const build = env.client.buildBrick(2, 4);
+  const queued = env.client.buildBrick(1, 1);
+  const old = env.worker;
+  assert.deepEqual(old.sent.map((m) => [m.id, m.type]), [[1, "init"], [2, "checkPart"], [3, "brick"]]);
+  old.trap(2);
+  await assert.rejects(check, /WebAssembly trap/);
+  assert.ok(old.terminated);
+  const fresh = env.worker;
+  assert.deepEqual(
+    fresh.sent.map((m) => [m.id, m.type]),
+    [[4, "init"], [3, "brick"]],
+    "init first, then the build the old worker owed, with its original id",
+  );
+  // A late reply from the old worker is ignored.
+  old.onmessage({ data: { id: 3, ok: true, result: { size: "stale" } } });
+  fresh.reply(4, INFO);
+  fresh.reply(3, { size: "2x4" });
+  assert.equal(await build, null, "superseded by the queued 1x1");
+  await settle();
+  fresh.reply("brick", { size: "1x1" });
+  assert.deepEqual(await queued, { size: "1x1" });
+  assert.deepEqual([env.client.restarts, env.client.traps], [1, 1]);
 });
 
 test("a crashed worker rejects everything waiting and every later call", async () => {

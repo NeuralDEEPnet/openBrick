@@ -17,8 +17,11 @@
 //! # Adding an export
 //!
 //! Small inputs and outputs cross as JSON text and numbers; meshes cross as
-//! [`MeshOut`], whose arrays arrive in JavaScript as `Float32Array` and
-//! `Uint32Array` that the worker transfers to the page without another copy.
+//! [`MeshOut`]. Its arrays are moved out of Rust ([`MeshOut::take_positions`],
+//! [`MeshOut::take_indices`]), so each is copied exactly once, from WebAssembly
+//! memory into a JavaScript `Float32Array` or `Uint32Array` (that memory cannot be
+//! handed over itself), and the worker then transfers those to the page without
+//! another copy (docs/plan/02 section 3).
 //! `evaluate_part(doc, params, process, fit, assets)` arrives with the part
 //! evaluator (docs/plan/06): it takes the part document, params, process profile
 //! and fit profile as JSON text and the assets as bytes, and returns one
@@ -91,12 +94,15 @@ pub fn max_studs() -> u32 {
 
 /// A triangle mesh for display, in the kernel frame: millimetres, right-handed, +Z
 /// up. Triangles are counter-clockwise seen from outside. In JavaScript this is a
-/// class; call `free()` once its arrays have been read.
+/// class; take its arrays once, then call `free()`.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshOut {
     positions: Vec<f32>,
     indices: Vec<u32>,
+    /// Counts at construction; they stay valid after the arrays are taken.
+    vertex_count: u32,
+    triangle_count: u32,
     volume_mm3: f64,
     fingerprint: u64,
     canonical_fingerprint: u64,
@@ -112,22 +118,24 @@ fn hex(x: u64) -> String {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl MeshOut {
-    /// Vertex positions x, y, z in millimetres (a `Float32Array` in JavaScript).
-    pub fn positions(&self) -> Vec<f32> {
-        self.positions.clone()
+    /// Move the vertex positions out: x, y, z in millimetres (a `Float32Array` in
+    /// JavaScript). The array is not cloned; a second call returns an empty one.
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
     }
 
-    /// Triangle vertex indices, three per triangle (a `Uint32Array` in JavaScript).
-    pub fn indices(&self) -> Vec<u32> {
-        self.indices.clone()
+    /// Move the triangle vertex indices out, three per triangle (a `Uint32Array` in
+    /// JavaScript). The array is not cloned; a second call returns an empty one.
+    pub fn take_indices(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.indices)
     }
 
     pub fn vertex_count(&self) -> u32 {
-        (self.positions.len() / 3) as u32
+        self.vertex_count
     }
 
     pub fn triangle_count(&self) -> u32 {
-        (self.indices.len() / 3) as u32
+        self.triangle_count
     }
 
     /// Volume of the solid in mm³, from the kernel (not from the f32 mesh).
@@ -170,13 +178,20 @@ impl MeshOut {
         }
         let mesh = solid.to_mesh();
         let (lo, hi) = mesh.bounds();
+        let count = |n: usize, what: &str| {
+            u32::try_from(n).map_err(|_| CoreError(format!("the mesh has too many {what} ({n})")))
+        };
         Ok(MeshOut {
-            positions: mesh.positions.iter().flatten().copied().collect(),
+            vertex_count: count(mesh.positions.len(), "vertices")?,
+            triangle_count: count(mesh.triangle_count(), "triangles")?,
             volume_mm3: solid.volume_mm3(),
             fingerprint: mesh.fingerprint(),
             canonical_fingerprint: mesh.canonical_fingerprint(),
             bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]],
             kernel: k.id(),
+            // Both arrays are moved, not copied: `into_flattened` reuses the
+            // allocation of the `[f32; 3]` vector.
+            positions: mesh.positions.into_flattened(),
             indices: mesh.indices,
         })
     }
@@ -235,14 +250,21 @@ mod tests {
 
     #[test]
     fn nominal_2x4_is_the_shared_construction() {
-        let out = build_nominal_brick(2, 4).expect("2x4");
+        let mut out = build_nominal_brick(2, 4).expect("2x4");
         let d = NominalDims::from_standard(STANDARD.get());
         let solid = nominal_brick(&ManifoldRust, &d, [2, 4], &Detail::full()).unwrap();
         let mesh = solid.to_mesh();
         assert_eq!(out.triangle_count() as usize, mesh.triangle_count());
         assert_eq!(out.vertex_count() as usize, mesh.positions.len());
-        assert_eq!(out.positions().len(), 3 * mesh.positions.len());
-        assert_eq!(out.indices(), mesh.indices);
+        let positions = out.take_positions();
+        let indices = out.take_indices();
+        assert_eq!(positions, mesh.positions.as_flattened());
+        assert_eq!(indices, mesh.indices);
+        assert!(indices.iter().all(|&i| i < out.vertex_count()));
+        // Taking moves the arrays out; the counts and numbers stay.
+        assert!(out.take_positions().is_empty() && out.take_indices().is_empty());
+        assert_eq!(out.triangle_count() as usize, mesh.triangle_count());
+        assert_eq!(out.vertex_count() as usize, mesh.positions.len());
         assert_eq!(out.fingerprint(), hex(mesh.fingerprint()));
         assert_eq!(
             out.canonical_fingerprint(),
@@ -256,7 +278,6 @@ mod tests {
         for (got, want) in out.bounds().iter().zip(want) {
             assert!((*got as f64 - want).abs() < 1e-5, "{got} vs {want}");
         }
-        assert!(out.indices().iter().all(|&i| i < out.vertex_count()));
     }
 
     /// The value the browser smoke test (apps/web/smoke.mjs) compares with the

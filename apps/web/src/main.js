@@ -5,7 +5,16 @@
 import wasmUrl from "./wasm/openbrick_wasm_bg.wasm?url";
 import { CoreClient } from "./client.js";
 import { parseStuds } from "./protocol.js";
-import { readBackend, readSize, statusParts, stepStuds, writeQuery } from "./ui.js";
+import {
+  buildingParts,
+  elapsedText,
+  readBackend,
+  readSize,
+  SLOW_BUILD_MS,
+  statusParts,
+  stepStuds,
+  writeQuery,
+} from "./ui.js";
 import { createViewer } from "./viewer.js";
 
 const $ = (id) => document.getElementById(id);
@@ -24,6 +33,7 @@ const page = {
   brick: null,
   builds: 0,
   restarts: 0,
+  traps: 0,
   warnings: [],
   error: null,
   stats: () => null,
@@ -46,7 +56,38 @@ function showStatus(parts, kind = "") {
   );
 }
 
+/** Updates the status line while the newest build runs; one at a time. */
+let ticker = null;
+
+function stopTicker() {
+  clearInterval(ticker);
+  ticker = null;
+}
+
+/**
+ * Show "Building w × l…" and, once the build is slow, a note on cancelling and the
+ * seconds it has run. The note is added once, so the live region announces it
+ * once; the seconds then change only in a span hidden from assistive technology.
+ */
+function showBuilding(size, startedAt) {
+  stopTicker();
+  showStatus(buildingParts(size, 0));
+  let seconds = null;
+  ticker = setInterval(() => {
+    const ms = performance.now() - startedAt;
+    if (ms < SLOW_BUILD_MS) return;
+    if (!seconds) {
+      showStatus(buildingParts(size, ms));
+      seconds = document.createElement("span");
+      seconds.setAttribute("aria-hidden", "true");
+      status.firstElementChild.after(seconds);
+    }
+    seconds.textContent = elapsedText(ms);
+  }, 250);
+}
+
 function fail(err) {
+  stopTicker();
   page.error = err.message;
   setState("error");
   showStatus([`Error: ${err.message}`], "bad");
@@ -118,12 +159,13 @@ async function main() {
   async function build() {
     const size = sizeFromInputs();
     if (!size) {
+      stopTicker();
       showStatus([`Width and length must be whole numbers from 1 to ${info.maxStuds}.`], "bad");
       return;
     }
     history.replaceState(null, "", writeQuery(location.search, size));
     setState("building");
-    showStatus([`Building ${size.width} × ${size.length}…`]);
+    showBuilding(size, performance.now());
     let result;
     try {
       result = await client.buildBrick(size.width, size.length);
@@ -132,8 +174,10 @@ async function main() {
       return;
     } finally {
       page.restarts = client.restarts;
+      page.traps = client.traps;
     }
-    if (result === null) return; // superseded by a newer request
+    if (result === null) return; // superseded by a newer request, which owns the status line
+    stopTicker();
     viewer.showBrick(result);
     const { positions, indices, ...summary } = result;
     page.brick = summary;
