@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <!-- Fixture: text is ignored with a warning (no fonts are loaded); the square builds. -->
+  <rect width="10" height="10"/>
+  <text x="1" y="5" font-size="3">Hi</text>
+</svg>

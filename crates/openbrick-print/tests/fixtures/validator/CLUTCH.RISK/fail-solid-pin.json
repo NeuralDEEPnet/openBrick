@@ -1,0 +1,52 @@
+{
+  "description": "A 1-wide part on the example fit profile: pinDiameter -0.10 mm (pin cell 4.70 on the Technic pin row) makes the solid pin 3.08 mm instead of its 3.18 mm nominal, and no coupon cell tests that pin: warning.",
+  "rule": "CLUTCH.RISK",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "pinDiameterMm": 3.08,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "studDiameterMm": 4.8,
+    "triangleCount": 2640,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "print the part once and check how its pin holds between studs; if it is too loose or too tight, move pinDiameter in fit profile `example-mk4s-petg-0.4` towards 0 (it also sizes Technic pins)",
+        "message": "the solid pin under the 1-wide part is 3.08 mm after offsets, 0.1 mm under its 3.18 mm nominal: the pinDiameter offset of fit profile `example-mk4s-petg-0.4` is calibrated on coupon cell `pin` (Technic pins (male), outer diameter, 4.65 to 4.9 mm), and no coupon cell tests the solid pin, so no printed cell has shown how it grips",
+        "rule": "CLUTCH.RISK",
+        "severity": "warning",
+        "threshold": 3.18,
+        "value": 3.08
+      }
+    ]
+  }
+}

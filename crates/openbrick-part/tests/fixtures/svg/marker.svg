@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <!-- Hostile fixture: markers repeat their content at every vertex, so they are refused. -->
+  <defs><marker id="m"><rect width="1" height="1"/></marker></defs>
+  <path d="M0 0 L10 0 L10 10 Z" marker-mid="url(#m)"/>
+</svg>

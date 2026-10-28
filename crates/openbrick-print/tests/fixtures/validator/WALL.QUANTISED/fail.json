@@ -1,0 +1,54 @@
+{
+  "description": "A 1.1 mm wall is 2.75 lines of 0.4 mm and prints hollow (docs/plan/04 section 6): warning.",
+  "rule": "WALL.QUANTISED",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.7,
+    "minBodyWallMm": 1.1,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "use a 1.2 mm wall (3 lines of 0.4 mm)",
+        "message": "the side wall is 1.1 mm, which is 2.75 lines of 0.4 mm (wallQuantiseMm of process `fdm-0.4`); walls print solid only as whole lines",
+        "rule": "WALL.QUANTISED",
+        "severity": "warning",
+        "threshold": 0.4,
+        "value": 1.1
+      }
+    ]
+  }
+}

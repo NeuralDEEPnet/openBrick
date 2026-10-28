@@ -42,7 +42,7 @@ Two documents, both JSON, both versioned, both shareable in the community datase
 
 ```json
 {
-  "openbrick": "1.0",
+  "openbrick": "1.1",
   "kind": "process",
   "id": "fdm-0.4",
   "name": "FDM, 0.4 mm nozzle, 0.16-0.2 mm layers",
@@ -52,7 +52,9 @@ Two documents, both JSON, both versioned, both shareable in the community datase
   "wallQuantiseMm": 0.4,
   "minFeatureMm": 0.8,
   "minFeatureRule": "2 x lineWidthMm",
+  "maxRemovedAreaPct": 1.0,
   "minTubeWallMm": 0.7,
+  "recommendedTubeWallMm": 0.8,
   "minCavityDepthMm": 1.8,
   "minReliefHeightMm": 0.4,
   "maxReliefHeightMm": 1.5,
@@ -73,7 +75,7 @@ Two documents, both JSON, both versioned, both shareable in the community datase
 
 ```json
 {
-  "openbrick": "1.0",
+  "openbrick": "1.1",
   "kind": "fit",
   "id": "ndn-mk4s-petg-0.4",
   "process": "fdm-0.4",
@@ -85,19 +87,20 @@ Two documents, both JSON, both versioned, both shareable in the community datase
   "offsetsMm": {
     "studDiameter": 0.00,
     "tubeInnerDiameter": 0.15,
-    "tubeOuterDiameter": 0.15,
-    "ribDepth": 0.10,
+    "tubeOuterDiameter": 0.136,
+    "ribDepth": 0.00,
     "pinDiameter": -0.10,
     "horizontalHoleDiameter": 0.20,
-    "axleHole": 0.06,
+    "axleHole": 0.05,
     "barDiameter": -0.04,
-    "clipOpening": 0.04,
+    "clipOpening": 0.02,
     "firstLayerChamfer": 0.2,
     "xyScale": 1.0
   },
   "calibration": {
     "couponVersion": 1,
-    "chosenCells": { "stud": 4.80, "tube": 4.95, "pocketTubeOD": 6.65, "pocketRib": 0.40, "technicH": 5.00, "pin": 4.70, "axle": 4.86, "bar": 3.14, "clip": 3.22 },
+    "pocketSet": "cross",
+    "chosenCells": { "stud": 4.80, "tube": 4.95, "pocketTubeOD": 6.65, "pocketRib": 0.30, "technicH": 5.00, "pin": 4.70, "axle": 4.85, "bar": 3.14, "clip": 3.22 },
     "date": "2026-11-12",
     "pullTestN": 2.7
   },
@@ -124,7 +127,9 @@ Rules: part files never contain printer offsets; fit-critical features are liste
 
 The pocket row matters most: in aligned stacking a stud of the brick below sits between the tube outside and the wall ribs (stud-to-tube centre distance 4 x sqrt 2 = 5.657 mm minus stud radius 2.4 mm = 3.257 mm, the tube radius), so the pull test in section 12 measures tube OD and rib depth, not the bore. The bore row matters when a printed brick sits on top of genuine studs.
 
-Each cell has an embossed label (relief 0.6 mm, stroke 0.8 mm). The user prints it, pushes genuine bricks and pins onto each cell, and records the best fit in the wizard (tap the cell, or `openbrick calibrate record --stud 4.80 --tube 4.95 ...`). The wizard writes the `FitProfile` with offsets = chosen cell minus nominal (in the example above: stud 4.80 minus 4.80 = 0.00; tube 4.95 minus 4.80 = plus 0.15; pin 4.70 minus 4.80 = minus 0.10). An optional fine pass regenerates a coupon in 0.02 mm steps around the chosen cells; 0.01 mm steps are below FDM repeatability and are not offered.
+Each cell has an embossed label (relief 0.6 mm, stroke 0.8 mm). The user prints it, pushes genuine bricks and pins onto each cell, and records the best fit in the wizard (tap the cell, or `openbrick calibrate record --stud 4.80 --tube 4.95 ...`). A pocket is one choice: one stud presses on the tube and the ribs at once, so the wizard records the tube OD and the rib depth of the one pocket that fits best (pocketTubeOD and pocketRib together), never the best OD of one line with the best rib of another. It refuses a pocket the printed pocket set (`cross` by default, `crossAndDiagonal` or `full`) does not have, and writes the set as `calibration.pocketSet` (fit-profile schema 1.1). The wizard writes the `FitProfile` with offsets = chosen cell minus nominal (in the example above: stud 4.80 minus 4.80 = 0.00; tube 4.95 minus 4.80 = plus 0.15; pocket 6.65/0.30: tube OD 6.65 minus 6.514 = plus 0.136 and rib depth 0.30 minus 0.30 = 0.00; pin 4.70 minus 4.80 = minus 0.10). An optional fine pass regenerates a coupon in 0.02 mm steps around the chosen cells; 0.01 mm steps are below FDM repeatability and are not offered. The sweep is data: `standards/coupon-v1.json` (couponVersion 1, `schemas/coupon.schema.json`), read by `openbrick_print::coupon_v1()`; the coupon generator, `openbrick calibrate record` (`openbrick_print::record`) and rule `CLUTCH.RISK` use the same numbers. The chosen cell `axle` is the axle-hole row (offset `axleHole`, nominal axle across tips); the male axle row is printed for reference only until a fit offset takes it.
+
+Every cell opens upward, so the coupon prints flat with no supports or bridges. The base is as thick as a plate's roof, and the bore and pocket cells stand a plate cavity tall on it, so each of them is plate height. Stud cells take a genuine 1x1 plate pressed on. Bore cells are free tubes (not holes in solid plastic, so they keep a real tube's spring); a turned-over genuine 1x1 plate's stud goes in from above. Pocket cells are a 2x2 plate's underside turned up, and a turned-over genuine 2x2 plate or brick is pressed in. Fit offsets are never applied to the coupon. Instead, each cell is built exactly as a part is built with the offset the wizard records for it (chosen cell minus the standard nominal). A pocket's rib depth is therefore measured against the standard side wall: its tip sits side_wall + value from the outer face, and on a process that quantises the wall thinner (fdm-0.2: 1.1 mm) the rib is built deeper by the difference, as a part's is. Each cell holds one offset: a bore cell keeps the standard tube outer diameter, and a pocket cell keeps the standard bore. A part that takes both offsets therefore has a tube wall that neither cell shows: with the example cells, 0.85 mm against 0.782 and 0.925 mm. The pull test checks the combined grip, and the fine pass may rebuild bore cells at the chosen outer diameter and pocket tubes at the chosen bore. The cells are printed at xyScale 1, so the recorded offsets assume a fit profile with xyScale 1, which `record` writes. A hand-set xyScale also scales the calibrated diameters. Open question: scale positions only, or print the coupon at that scale. Labels show each value in millimetres, a pocket's tube OD over its rib depth, in a 3 x 5 pixel font drawn for the project. Cell positions are whole LDU. The full pocket cross (42 pockets, 84 with the second copy) fits neither a 180 x 180 mm bed nor a two-hour print. The default therefore carries its nominal row and column: every OD at the nominal rib depth and every rib depth at the nominal OD, 13 pockets per copy. The diagonal and the full cross are options for larger beds. On fdm-0.4 the default coupon is 118.4 x 160.8 x 3.2 mm, about 32 g of PLA and about 1.8 hours at an assumed 4 mm3/s.
 
 First-run: the desktop app and PWA show the wizard before the first export. "Skip for now" is allowed for non-fit-critical parts (a mosaic with no studs) and blocked otherwise.
 
@@ -138,32 +143,32 @@ Every rule has an id, severity, threshold source and a fix hint. Blockers disabl
 | `MESH.SELF_INTERSECT` | no self-intersections after union | must pass | blocker |
 | `MESH.VOLUME` | volume > 0 and matches expected within 5 percent of the nominal feature sum | 5 % | warning |
 | `WALL.MIN` | thinnest body wall (2D offset test: inset by minWall/2 removes no region); tube and hollow-stud walls are excluded here and tested by `TUBE.WALL` | ProcessProfile.minWallMm | blocker |
-| `TUBE.WALL` | tube wall (OD minus ID) / 2 and hollow-stud wall after offsets | minTubeWallMm 0.7 (warning below 0.8) | blocker below threshold |
+| `TUBE.WALL` | tube wall (OD minus ID) / 2 and hollow-stud wall after offsets | minTubeWallMm 0.7 (warning below recommendedTubeWallMm, 0.8) | blocker below threshold |
 | `CAVITY.DEPTH` | cavity depth under the roof, including locally thickened regions under deboss or serial | minCavityDepthMm 1.8 (stud 1.7 plus 0.1) | blocker |
 | `WALL.QUANTISED` | side walls are multiples of lineWidth | wallQuantiseMm | warning |
-| `ROOF.MIN` | top thickness over cavities, measured after the body thickens the roof locally under deboss and serial regions by their depth | minRoofMm | blocker |
+| `ROOF.MIN` | top thickness over cavities, measured after the body thickens the roof under deboss and serial regions by their depth (`Measurements.roof_mm` is the roof under the artwork, `cavity_depth_mm` the cavity under the thickened roof) | minRoofMm | blocker |
 | `ROOF.BRIDGE` | unsupported span over tubes | maxUnsupportedBridgeMm | warning |
 | `OVERHANG.MAX` | faces below the roof exceed maxOverhangDeg without support; faces whose bridge span is at most maxUnsupportedBridgeMm (horizontal holes, counterbores, short bridges) are exempt and reported by `OVERHANG.BRIDGED` | maxOverhangDeg | blocker if supportsAllowed is false |
 | `OVERHANG.BRIDGED` | short bridged overhangs such as the ceiling of a horizontal Technic hole | maxUnsupportedBridgeMm | warning |
-| `FEATURE.MIN` | emboss or deboss stroke after morphological opening | minFeatureMm; report removed area percent | blocker if a fit-critical label; warning otherwise |
+| `FEATURE.MIN` | emboss or deboss stroke after morphological opening; for deboss and inlay also face material strictly thinner than minFeatureMm between recesses or at the body edge, measured at the bottom of the cut (counted in the removed area; the rounding of the face material's corners is not counted); artwork whose stroke the estimate could not measure (too detailed for its work limit) is reported too, with minFeatureMm as its threshold | minFeatureMm; removed area percent more than maxRemovedAreaPct (1 %; exactly 1 % passes, in the validator and in the evaluator's warning alike) | blocker if a fit-critical label; warning otherwise |
 | `RELIEF.HEIGHT` | relief within [minReliefHeightMm, maxReliefHeightMm] | | warning |
-| `FIT.PROCESS` | the FitProfile process matches the part's allowed processes | | blocker |
+| `FIT.PROCESS` | the FitProfile process matches the part's allowed processes, and the part was built with the process and the fit profile it is validated against: its id and its offsets (Measurements.fit_offsets), because recording the coupon again keeps the id | | blocker |
 | `FIT.MISSING` | a fit-critical feature of connector type T is present and `calibration.chosenCells[T]` is absent (studs need `stud`; tube fields need `tube`, `pocketTubeOD` and `pocketRib`; Technic holes need `technicH`; pins `pin`; axles `axle`; bars and clips `bar` and `clip`) | | blocker |
-| `CLUTCH.RISK` | stud or tube geometry falls outside the coupon sweep (stud 4.60 to 4.95, bore 4.80 to 5.05, tube OD 6.40 to 6.65) after offsets | | warning |
+| `CLUTCH.RISK` | stud or tube geometry falls outside the coupon sweep (stud 4.60 to 4.95, bore 4.80 to 5.05, tube OD 6.40 to 6.65) after offsets; the solid pin under 1-wide parts is not at its nominal (no coupon cell tests it; pinDiameter is calibrated on Technic pins) | | warning |
 | `ORIENT.FACE` | the declared "up" face is flat and has no studs when inlay mode | | blocker |
 | `TRADEMARK.LOGO` | uploaded artwork matches the blocklist (LEGO marks, minifigure silhouette) | | warning until the Q16 spike passes; then blocker (see [12](12-legal-and-naming.md)) |
 | `SIZE.BED` | part fits the bed in the chosen orientation | bed size | blocker |
 
-The validator runs on the compensated mesh and on the 2D cross-sections (cheaper and more precise for wall and feature checks). The evaluator's `Measurements` give each wall twice. `minBodyWallMm` and `minTubeWallMm` are the full walls above the first-layer chamfer, which `WALL.MIN` and `TUBE.WALL` test. `minBodyWallAtBedMm` and `minTubeWallAtBedMm` are the walls in the bed plane, after the chamfers on both faces. The evaluator warns when a chamfered wall's first layer is narrower than one line. Rules that would merely re-check geometry the evaluator built from the profile (for example that a stud equals its chosen cell) are evaluator unit tests, not user-facing rules. Signature: `validate(&Built, &ProcessProfile, Option<&FitProfile>) -> Report`.
+The validator runs on the compensated mesh and on the 2D cross-sections (cheaper and more precise for wall and feature checks). The evaluator's `Measurements` give each wall twice. `minBodyWallMm` and `minTubeWallMm` are the full walls above the first-layer chamfer, which `WALL.MIN` and `TUBE.WALL` test. `minBodyWallAtBedMm` and `minTubeWallAtBedMm` are the walls in the bed plane, after the chamfers on both faces. The evaluator warns when a chamfered wall's first layer is narrower than one line. Rules that would merely re-check geometry the evaluator built from the profile (for example that a stud equals its chosen cell) are evaluator unit tests, not user-facing rules. Lengths in the bed plane are compared as drawn plus fit offsets: the measured length divided by the fit profile's xyScale, which the print undoes. Signature: `validate(&Built, &ProcessProfile, Option<&FitProfile>) -> Report` (done 2026-10-28: `openbrick_part::validate` wraps `openbrick_print::validate` on the `Measurements`; the JSON report contract is `schemas/report.schema.json`. MESH.SELF_INTERSECT, ROOF.BRIDGE, OVERHANG.MAX, OVERHANG.BRIDGED, ORIENT.FACE, TRADEMARK.LOGO and SIZE.BED are not implemented yet: they need mesh analysis, the up face, the Q16 matcher or a bed size in the process profile).
 
 ## 6. Orientation, supports, hollow roofs
 
 - Default: studs up, flat bottom on the bed, **no supports**. Tubes and pins print as vertical cylinders; the roof bridges between tube tops and walls. On brick-height bodies a 2 mm fillet (or 45° chamfer when fillets are off) at the wall-to-roof joint anchors bridges (Strathclyde tested a 9.6 mm brick); on plate-height bodies the cavity is only about 2.2 mm deep and the stud top sits 0.5 mm below the roof, so the fillet is capped at 0.3 mm or omitted.
-- Deboss and serials on thin bodies: the body thickens the roof locally under a deboss or serial region by the relief depth, and `CAVITY.DEPTH` requires at least 1.8 mm of cavity to remain (stud 1.7 mm plus 0.1 mm). On plate-height parts that caps deboss and underside serials at 0.4 mm; the designer clamps `reliefHeight` accordingly when `relief` is `deboss`.
-- Inlay mode (two-colour logo): face **down** on the bed. For a single-extruder filament swap the exported `accent` object is the face slab (thickness = relief depth) **minus** the logo, and the logo is a recess that shows the body colour, so a swap after the slab layers colours the face and leaves the logo in the body colour (if both the slab and the logo lay on the bed in the same layers, a swap would colour them identically). For multi-material units the logo fill is exported as its own object instead, so each gets a slot. The validator requires the face to be flat and stud-free.
+- Deboss and serials on thin bodies: the body thickens the roof under a deboss or serial region by the relief depth (the evaluator lowers the whole cavity ceiling: a pad in the shape of the artwork would be an unsupported island when the part prints face up, while a lowered ceiling stays one flat bridge between walls and tubes), and `CAVITY.DEPTH` requires at least 1.8 mm of cavity to remain (stud 1.7 mm plus 0.1 mm). On plate-height parts that caps deboss and underside serials at 0.4 mm; the designer clamps `reliefHeight` accordingly when `relief` is `deboss`.
+- Inlay mode (two-colour logo): face **down** on the bed. For a single-extruder filament swap the exported `accent` object is the face slab (thickness = relief depth) **minus** the logo, and the logo is a recess that shows the body colour, so a swap after the slab layers colours the face and leaves the logo in the body colour (if both the slab and the logo lay on the bed in the same layers, a swap would colour them identically). For multi-material units the logo fill is exported as its own object instead, so each gets a slot (not built yet: M1 builds the single-extruder variant, the inlay warning says so, and a follow-up item adds the fill object). The filament change goes before the first layer the slicer shows as the body: with a 0.2 mm first layer and 0.16 mm layers, layers end at 0.36 and 0.52 mm, never at a 0.4 mm slab. The validator requires the face to be flat and stud-free.
 - Keychain loops and off-grid decorations are generated with a 45° chamfer underneath so they print without supports.
 - Horizontal Technic holes: `polyhole` (polygon with corrected circumradius), `ellipse` (0.2 mm taller) or `teardrop` (pointed ceiling, no overhang); chosen by the ProcessProfile. Polyhole corrects diameter, not overhang; the hole ceiling is a bridge of at most 4.8 mm and is reported by `OVERHANG.BRIDGED`, never blocked.
-- First layer: a 0.2 mm 45° chamfer on bottom edges replaces slicer elephant-foot compensation.
+- First layer: a 0.2 mm 45° chamfer on the edges that sit on the bed replaces slicer elephant-foot compensation. Those are the bottom edges, and for an inlay (printed face down) also the top edges: the evaluator raises the top chamfer to the first-layer chamfer with a warning. The `Measurements` at-bed fields describe the bottom edges at z = 0. `Built.artwork.faceChamferMm` is the chamfer of the face an inlay puts on the bed.
 
 ## 7. Colour and multi-material in 3MF
 

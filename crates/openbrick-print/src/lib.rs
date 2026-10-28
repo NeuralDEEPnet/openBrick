@@ -1,9 +1,28 @@
 //! Print pipeline data model (docs/plan/05): process profiles, fit profiles,
-//! validator report types, and the bundled default profiles.
+//! validator report types, and the bundled default profiles; the validator
+//! ([`validate()`]), the calibration coupon sweep ([`coupon_v1`]) and the coupon
+//! record that turns chosen cells into a fit profile ([`record()`]).
 
 use std::collections::BTreeMap;
 
 pub use openbrick_units::Credit;
+
+mod coupon;
+mod record;
+mod validate;
+
+pub use coupon::{
+    coupon_v1, CouponCell, CouponLabel, CouponSpec, DEFAULT_POCKET_SET, GRID_TOLERANCE_MM,
+    POCKET_CELLS, POCKET_SETS,
+};
+pub use record::{
+    is_profile_id, record, record_with, slug_id, RecordError, RecordInput, ANONYMOUS_AUTHOR,
+    FIT_INTENTS, RECORD_DECIMALS,
+};
+pub use validate::{
+    validate, validate_with, FeatureNames, IMPLEMENTED_RULES, LENGTH_TOLERANCE_MM,
+    MESH_VOLUME_TOLERANCE_PCT, PLANNED_RULES,
+};
 
 /// What a manufacturing process can resolve.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -21,7 +40,19 @@ pub struct ProcessProfile {
     pub wall_quantise_mm: f64,
     pub min_feature_mm: f64,
     pub min_tube_wall_mm: f64,
+    /// Tube walls from `min_tube_wall_mm` up to this print but get a
+    /// `TUBE.WALL` warning ("minTubeWallMm 0.7 (warning below 0.8)",
+    /// docs/plan/05 section 5); absent means no warning band.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_tube_wall_mm: Option<f64>,
     pub min_cavity_depth_mm: f64,
+    /// Share of artwork area, in percent, the morphological opening may remove:
+    /// rule `FEATURE.MIN` reports more than this (a blocker on fit-critical
+    /// artwork, a warning otherwise; docs/plan/05 section 5 asks the rule to
+    /// report the removed area), and exactly this passes. Absent means the
+    /// removed area is never a trigger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_removed_area_pct: Option<f64>,
     pub min_relief_height_mm: f64,
     pub max_relief_height_mm: f64,
     pub min_roof_mm: f64,
@@ -158,6 +189,59 @@ impl TubeSize {
 }
 
 impl Offsets {
+    /// The `offsetsMm` keys of the diameter and depth offsets, as written in a
+    /// fit profile (the cells of the coupon calibrate these).
+    pub const KEYS: [&'static str; 9] = [
+        "studDiameter",
+        "tubeInnerDiameter",
+        "tubeOuterDiameter",
+        "ribDepth",
+        "pinDiameter",
+        "horizontalHoleDiameter",
+        "axleHole",
+        "barDiameter",
+        "clipOpening",
+    ];
+
+    /// The offset with this `offsetsMm` key (camelCase, as in the JSON): any of
+    /// [`Offsets::KEYS`], `firstLayerChamfer` or `xyScale`; `None` for an
+    /// unknown key.
+    pub fn get(&self, key: &str) -> Option<f64> {
+        Some(match key {
+            "studDiameter" => self.stud_diameter,
+            "tubeInnerDiameter" => self.tube_inner_diameter,
+            "tubeOuterDiameter" => self.tube_outer_diameter,
+            "ribDepth" => self.rib_depth,
+            "pinDiameter" => self.pin_diameter,
+            "horizontalHoleDiameter" => self.horizontal_hole_diameter,
+            "axleHole" => self.axle_hole,
+            "barDiameter" => self.bar_diameter,
+            "clipOpening" => self.clip_opening,
+            "firstLayerChamfer" => self.first_layer_chamfer,
+            "xyScale" => self.xy_scale,
+            _ => return None,
+        })
+    }
+
+    /// Mutable access to the offset with this `offsetsMm` key (see
+    /// [`Offsets::get`]).
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut f64> {
+        Some(match key {
+            "studDiameter" => &mut self.stud_diameter,
+            "tubeInnerDiameter" => &mut self.tube_inner_diameter,
+            "tubeOuterDiameter" => &mut self.tube_outer_diameter,
+            "ribDepth" => &mut self.rib_depth,
+            "pinDiameter" => &mut self.pin_diameter,
+            "horizontalHoleDiameter" => &mut self.horizontal_hole_diameter,
+            "axleHole" => &mut self.axle_hole,
+            "barDiameter" => &mut self.bar_diameter,
+            "clipOpening" => &mut self.clip_opening,
+            "firstLayerChamfer" => &mut self.first_layer_chamfer,
+            "xyScale" => &mut self.xy_scale,
+            _ => return None,
+        })
+    }
+
     /// The offsets of an optional fit profile; no profile means nominal geometry.
     pub fn of(fit: Option<&FitProfile>) -> Offsets {
         fit.map(|f| f.offsets_mm.clone()).unwrap_or_default()
@@ -180,7 +264,9 @@ impl Offsets {
 
 /// What the part evaluator measured on a built part, for the validator
 /// (docs/plan/05 section 5). Lengths are millimetres on the compensated mesh
-/// (after fit offsets and `xyScale`); `None` means the part has no such feature.
+/// (after fit offsets and `xyScale`); the validator divides lengths in the bed
+/// plane by `xyScale` before comparing them (see [`validate()`]). `None` means
+/// the part has no such feature.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Measurements {
@@ -189,16 +275,26 @@ pub struct Measurements {
     /// Fit profile id, if one was applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fit_profile: Option<String>,
+    /// The offsets of that fit profile, as the part was built with them. A
+    /// profile recorded again keeps its id ([`crate::record`] derives it from
+    /// printer, material and process), so rule `FIT.PROCESS` compares these
+    /// with the given profile's offsets too. `None` without a fit profile, and
+    /// in measurements written before the field existed (then only the ids
+    /// are compared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_offsets: Option<Offsets>,
     /// Process ids the part document allows (`print.profiles`); empty means any
     /// (rule `FIT.PROCESS`).
     #[serde(default)]
     pub allowed_processes: Vec<String>,
     pub triangle_count: usize,
     pub volume_mm3: f64,
-    /// Sum of the volumes of the feature solids before the union. Solids that
-    /// only touch add up to the union volume exactly; the few that overlap (wall
-    /// ribs inside the wall-to-roof chamfer) count twice, so the union is slightly
-    /// smaller. Rule `MESH.VOLUME` compares the two.
+    /// Sum of the volumes of the feature solids before the union, less the
+    /// designed overlap of tubes, pins and ribs that reach into a deboss or
+    /// inlay's thickened roof. Solids that only touch add up to the union volume
+    /// exactly; the few that overlap (wall ribs inside the wall-to-roof chamfer)
+    /// count twice, so the union is slightly smaller. Rule `MESH.VOLUME` compares
+    /// the two.
     pub feature_volume_sum_mm3: f64,
     pub bounds_min_mm: [f64; 3],
     pub bounds_max_mm: [f64; 3],
@@ -215,7 +311,9 @@ pub struct Measurements {
     /// is [`Measurements::min_body_wall_at_bed_mm`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_body_wall_mm: Option<f64>,
-    /// Thinnest body side wall in the bed plane (z = 0), after the 45 degree
+    /// Thinnest body side wall at z = 0, the bottom edges (the bed plane, except
+    /// for an inlay printed face down, whose face on the bed
+    /// `Built.artwork.faceChamferMm` describes), after the 45 degree
     /// first-layer chamfers on its outer face and on the cavity rim:
     /// `min_body_wall_mm` minus twice the chamfer. Equal to `min_body_wall_mm`
     /// when the process has no first-layer chamfer.
@@ -226,7 +324,8 @@ pub struct Measurements {
     /// chamfer; see [`Measurements::min_tube_wall_at_bed_mm`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_tube_wall_mm: Option<f64>,
-    /// Thinnest tube wall in the bed plane, after the first-layer chamfers on
+    /// Thinnest tube wall at z = 0 (see `min_body_wall_at_bed_mm`), after the
+    /// first-layer chamfers on
     /// the outside and in the bore: `min_tube_wall_mm` minus twice the tube's
     /// chamfer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -254,7 +353,15 @@ pub struct Measurements {
     /// Solid pin diameter under 1-wide parts after the `pinDiameter` offset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_diameter_mm: Option<f64>,
-    /// Wall rib depth after the `ribDepth` offset.
+    /// Wall rib depth as built, after the `ribDepth` offset: measured from the
+    /// wall the rib stands on, so on a process that quantises the side wall
+    /// thinner than the standard `side_wall` the rib is built deeper by the
+    /// difference (docs/plan/04 section 6; fdm-0.2: 0.1 mm deeper). The coupon's
+    /// `pocketRib` values are measured against the standard side wall instead,
+    /// so the comparable value is `min_body_wall_mm + rib_depth_mm - side_wall`
+    /// (lengths divided by `xyScale`). No rule reads it yet: `CLUTCH.RISK` covers
+    /// the stud, the tube bore and the tube outer diameter (the rule table of
+    /// docs/plan/05 section 5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rib_depth_mm: Option<f64>,
     /// Connector kinds of fit-critical features (for example `tubeF`, `studM`),
@@ -262,15 +369,28 @@ pub struct Measurements {
     #[serde(default)]
     pub fit_critical_connectors: Vec<String>,
     /// Reserved for artwork (filled by `relief.*`): thinnest stroke after the
-    /// morphological opening (rule `FEATURE.MIN`).
+    /// morphological opening (rule `FEATURE.MIN`). `None` on a part with
+    /// artwork (`removed_area_pct` or `relief_height_mm` set) means the stroke
+    /// was not measured, because the estimate ran out of its work budget; rule
+    /// `FEATURE.MIN` then reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_stroke_mm: Option<f64>,
-    /// Reserved for artwork: area removed by the opening, in percent.
+    /// Reserved for artwork: the area that does not print as drawn, in percent
+    /// of the artwork area. This is what the opening removed, plus, for deboss
+    /// and inlay, face material strictly thinner than minFeature measured at the
+    /// bottom of the cut (still built).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed_area_pct: Option<f64>,
     /// Reserved for artwork: relief height (rule `RELIEF.HEIGHT`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relief_height_mm: Option<f64>,
+    /// The part's artwork is fit-critical: a `relief.*` feature the part lists
+    /// as fit-critical (`fitCritical`), such as a label someone reads to
+    /// calibrate. The evaluator sets it from the part document, so it does not
+    /// depend on how the artwork op measures strokes. Rule `FEATURE.MIN` then
+    /// blocks where it would otherwise warn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fit_critical_artwork: bool,
 }
 
 /// The calibration record written by the coupon wizard.
@@ -281,6 +401,13 @@ pub struct Calibration {
     pub coupon_version: u32,
     /// Chosen coupon cells by connector type: stud, tube, pocketTubeOD, pocketRib, technicH, pin, axle, bar, clip.
     pub chosen_cells: BTreeMap<String, f64>,
+    /// The pocket set of the coupon the pocket was chosen from (one of
+    /// [`POCKET_SETS`]; since schema 1.1). `pocketTubeOD` and `pocketRib` are
+    /// one pocket of that set, not the best of each line. Absent in profiles
+    /// without pocket cells and in 1.0 profiles, which do not say (the default
+    /// coupon prints [`DEFAULT_POCKET_SET`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pocket_set: Option<String>,
     /// Calendar date, YYYY-MM-DD; omitted when written if unknown.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub date: String,
@@ -293,7 +420,7 @@ pub struct Calibration {
 /// A whole number in `u32` range, written either as `1` or as `1.0`. JSON does not
 /// tell the two apart and neither does JSON Schema (draft 2020-12 counts `1.0` as an
 /// integer), so a document that passes `schemas/fit-profile.schema.json` must load.
-fn whole_u32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+pub(crate) fn whole_u32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
     use serde::de::{Deserialize, Error};
     let v = f64::deserialize(d)?;
     if v.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&v) {
@@ -343,6 +470,7 @@ pub fn required_cells(connector: &str) -> &'static [&'static str] {
     }
 }
 
+/// How a finding affects export: blockers disable it, warnings never do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -351,19 +479,32 @@ pub enum Severity {
 }
 
 /// One validator message; every message carries rule, value, threshold and a fix hint.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+/// The JSON form is `$defs/finding` in `schemas/report.schema.json`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
+    /// Rule id from docs/plan/05 section 5 (`WALL.MIN`, ...).
     pub rule: String,
     pub severity: Severity,
+    /// What was measured, with its value and unit, and the threshold.
     pub message: String,
+    /// The measured value (millimetres unless the rule says otherwise, see
+    /// [`validate()`]); `None` when the rule measures no number.
     pub value: Option<f64>,
+    /// The threshold the value broke, in the unit of `value`; `None` when the
+    /// rule has no numeric threshold. A rule with a threshold but no measured
+    /// value (`FEATURE.MIN` on an artwork stroke that was not measured) keeps
+    /// the threshold.
     pub threshold: Option<f64>,
+    /// What to change, kindly worded.
     pub fix: String,
+    /// The part feature concerned, when known.
     #[serde(default)]
     pub feature: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+/// What [`validate()`] found; the JSON form is `schemas/report.schema.json`,
+/// the contract of `openbrick validate --json`.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Report {
     pub findings: Vec<Finding>,
 }
@@ -412,10 +553,20 @@ pub fn check_fit_missing(connector_types: &[&str], fit: Option<&FitProfile>) -> 
                 out.push(Finding {
                     rule: "FIT.MISSING".into(),
                     severity: Severity::Blocker,
-                    message: format!("fit-critical connector {ct} needs calibration cell `{cell}`"),
+                    message: match fit {
+                        Some(f) => format!(
+                            "fit-critical connector {ct} needs the calibration cell `{cell}`, which fit profile `{}` does not record",
+                            f.id
+                        ),
+                        None => format!(
+                            "fit-critical connector {ct} needs the calibration cell `{cell}`, and no fit profile was given"
+                        ),
+                    },
                     value: None,
                     threshold: None,
-                    fix: "print the calibration coupon and record the best-fitting cells (openbrick calibrate)".into(),
+                    fix: format!(
+                        "print the calibration coupon (openbrick calibrate coupon) and record the best-fitting `{cell}` cell (openbrick calibrate record)"
+                    ),
                     feature: None,
                 });
             }
@@ -439,6 +590,16 @@ mod tests {
             );
             assert!(p.min_tube_wall_mm <= p.min_wall_mm);
             assert!(p.min_cavity_depth_mm >= 1.8 - 1e-9);
+            if let Some(pct) = p.max_removed_area_pct {
+                assert!((0.0..=100.0).contains(&pct), "{}: a percentage", p.id);
+            }
+            if let Some(r) = p.recommended_tube_wall_mm {
+                assert!(
+                    r >= p.min_tube_wall_mm,
+                    "{}: warning band above the blocker",
+                    p.id
+                );
+            }
         }
     }
 
@@ -453,6 +614,18 @@ mod tests {
         assert!((f.offsets_mm.stud_diameter - stud).abs() < 1e-9);
         assert!((f.offsets_mm.tube_inner_diameter - tube).abs() < 1e-9);
         assert!((f.offsets_mm.tube_outer_diameter - od).abs() < 0.01);
+        let rib = c.chosen_cells["pocketRib"] - s.mm("rib_depth");
+        assert!((f.offsets_mm.rib_depth - rib).abs() < 1e-9);
+        // Its pocket is one the coupon of its pocket set printed.
+        let set = c.pocket_set.as_deref().unwrap_or(DEFAULT_POCKET_SET);
+        let printed = coupon_v1().printed_pockets(set).expect("a pocket set");
+        let pocket = (c.chosen_cells["pocketTubeOD"], c.chosen_cells["pocketRib"]);
+        assert!(
+            printed
+                .iter()
+                .any(|&(o, r)| (o - pocket.0).abs() < 1e-9 && (r - pocket.1).abs() < 1e-9),
+            "{pocket:?} is not a pocket of `{set}`"
+        );
         let wall = (s.mm("tube_outer_diameter") + f.offsets_mm.tube_outer_diameter
             - (s.mm("tube_inner_diameter") + f.offsets_mm.tube_inner_diameter))
             / 2.0;
@@ -534,6 +707,10 @@ mod tests {
         assert!(
             v.get("minStrokeMm").is_none(),
             "reserved artwork fields are omitted"
+        );
+        assert!(
+            v.get("fitCriticalArtwork").is_none(),
+            "false is the default and is omitted"
         );
         let back: Measurements = serde_json::from_value(v).expect("reads back");
         assert_eq!(back, m);

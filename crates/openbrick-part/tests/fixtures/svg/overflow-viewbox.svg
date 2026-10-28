@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1e39 1e39">
+  <!-- Hostile fixture: a viewBox wider than f32 can hold (it overflows to infinity). -->
+  <rect width="1e39" height="1e39"/>
+</svg>

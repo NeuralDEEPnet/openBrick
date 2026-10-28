@@ -1,0 +1,54 @@
+{
+  "description": "A 0.4 mm body wall (one whole line, so WALL.QUANTISED passes) under the 0.8 mm minimum: blocker.",
+  "rule": "WALL.MIN",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.0,
+    "minBodyWallMm": 0.4,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "make the side wall at least 0.8 mm thick",
+        "message": "the thinnest body wall is 0.4 mm, below the 0.8 mm minimum wall of process `fdm-0.4`",
+        "rule": "WALL.MIN",
+        "severity": "blocker",
+        "threshold": 0.8,
+        "value": 0.4
+      }
+    ]
+  }
+}

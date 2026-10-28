@@ -1,0 +1,57 @@
+{
+  "description": "Decorative artwork whose hairlines the opening removed, 3.1 % of its area (the example of docs/plan/02), above maxRemovedAreaPct 1 %: warning.",
+  "rule": "FEATURE.MIN",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "minStrokeMm": 0.8,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "process": "fdm-0.4",
+    "reliefHeightMm": 0.6,
+    "removedAreaPct": 3.1,
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "if the red regions matter, make those lines wider than 0.8 mm or the artwork larger, until the opening removes at most 1 % (the rule reports more than maxRemovedAreaPct); otherwise you may export as it is",
+        "message": "the morphological opening removed 3.1 % of the artwork area, more than the 1 % allowed (maxRemovedAreaPct of process `fdm-0.4`): strokes thinner than the 0.8 mm minimum feature do not print, and the removed regions are shown in red in the preview",
+        "rule": "FEATURE.MIN",
+        "severity": "warning",
+        "threshold": 1.0,
+        "value": 3.1
+      }
+    ]
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "description": "Fit-critical tubes and no fit profile: one blocker per missing cell.",
+  "rule": "FIT.MISSING",
+  "process": "fdm-0.4",
+  "fit": null,
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "print the calibration coupon (openbrick calibrate coupon) and record the best-fitting `pocketRib` cell (openbrick calibrate record)",
+        "message": "fit-critical connector tubeF needs the calibration cell `pocketRib`, and no fit profile was given",
+        "rule": "FIT.MISSING",
+        "severity": "blocker",
+        "threshold": null,
+        "value": null
+      },
+      {
+        "feature": null,
+        "fix": "print the calibration coupon (openbrick calibrate coupon) and record the best-fitting `pocketTubeOD` cell (openbrick calibrate record)",
+        "message": "fit-critical connector tubeF needs the calibration cell `pocketTubeOD`, and no fit profile was given",
+        "rule": "FIT.MISSING",
+        "severity": "blocker",
+        "threshold": null,
+        "value": null
+      },
+      {
+        "feature": null,
+        "fix": "print the calibration coupon (openbrick calibrate coupon) and record the best-fitting `tube` cell (openbrick calibrate record)",
+        "message": "fit-critical connector tubeF needs the calibration cell `tube`, and no fit profile was given",
+        "rule": "FIT.MISSING",
+        "severity": "blocker",
+        "threshold": null,
+        "value": null
+      }
+    ]
+  }
+}

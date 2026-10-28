@@ -132,9 +132,16 @@ impl Kernel for ManifoldRust {
         MrSolid(solid.0.translate(Vec3::new(v_mm[0], v_mm[1], v_mm[2])))
     }
 
-    fn offset2d(&self, section: &CrossSection, delta_mm: f64) -> Result<CrossSection, GeomError> {
+    fn offset2d_round(
+        &self,
+        section: &CrossSection,
+        delta_mm: f64,
+        circle_segments: u32,
+    ) -> Result<CrossSection, GeomError> {
+        // Manifold reads a count of 2 or less as "use the default quality".
+        let n = i32::try_from(circle_segments).unwrap_or(i32::MAX);
         let cs =
-            MrCrossSection::new(to_mr(section)).offset_with_params(delta_mm, JOIN_ROUND, 2.0, 0);
+            MrCrossSection::new(to_mr(section)).offset_with_params(delta_mm, JOIN_ROUND, 2.0, n);
         Ok(from_mr(cs.to_polygons()))
     }
 }

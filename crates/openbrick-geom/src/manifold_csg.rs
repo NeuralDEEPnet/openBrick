@@ -149,10 +149,16 @@ impl Kernel for ManifoldCsg {
         CsgSolid(solid.0.translate(v_mm[0], v_mm[1], v_mm[2]))
     }
 
-    fn offset2d(&self, section: &CrossSection, delta_mm: f64) -> Result<CrossSection, GeomError> {
+    fn offset2d_round(
+        &self,
+        section: &CrossSection,
+        delta_mm: f64,
+        circle_segments: u32,
+    ) -> Result<CrossSection, GeomError> {
         // Same parameters as the manifold-rust backend: round joins, miter limit 2,
-        // and 0 circular segments, which means the global default quality.
-        let cs = to_csg(section).offset(delta_mm, JoinType::Round, 2.0, 0);
+        // and the circle segment count (2 or less means the default quality).
+        let n = i32::try_from(circle_segments).unwrap_or(i32::MAX);
+        let cs = to_csg(section).offset(delta_mm, JoinType::Round, 2.0, n);
         Ok(from_csg(&cs))
     }
 }

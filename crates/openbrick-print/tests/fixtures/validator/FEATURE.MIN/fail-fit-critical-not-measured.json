@@ -1,0 +1,57 @@
+{
+  "description": "Fit-critical artwork (a label someone reads to calibrate) whose thinnest stroke was not measured: nothing shows that it prints as drawn: blocker.",
+  "rule": "FEATURE.MIN",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalArtwork": true,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "process": "fdm-0.4",
+    "reliefHeightMm": 0.6,
+    "removedAreaPct": 0.4,
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "fit-critical artwork, such as a label someone reads to calibrate, must be shown to print as drawn: simplify it (fewer, smoother outlines; Inkscape: Path > Simplify, and no texture finer than the minimum feature) until its strokes are measured",
+        "message": "the thinnest stroke of the fit-critical artwork was not measured: the artwork is too detailed for the stroke estimate's work limit, so nothing shows that its strokes reach the 0.8 mm minimum feature of process `fdm-0.4`",
+        "rule": "FEATURE.MIN",
+        "severity": "blocker",
+        "threshold": 0.8,
+        "value": null
+      }
+    ]
+  }
+}

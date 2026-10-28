@@ -31,6 +31,20 @@ thiserror = "2"
 # Content hashes of evaluated parts (docs/plan/06 section 10); pure Rust, builds for wasm32.
 sha2 = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive"] }
+# SVG artwork for relief.svg (docs/plan/06 section 5); Apache-2.0 OR MIT, pure Rust.
+# No default features: no system fonts, no text shaping, no SVGZ, no writer, so it
+# builds for wasm32-unknown-unknown. Pinned exactly: parsed artwork becomes
+# geometry, and content hashes name the evaluator, not this crate.
+usvg = { version = "=0.49.0", default-features = false }
+# The CSS parser usvg uses (Apache-2.0 OR MIT, already in the tree through usvg),
+# pinned to usvg's version: the artwork guards in openbrick-part read `<style>`
+# rules the way usvg does, to follow url() references set by CSS and to bound
+# usvg's selector matching before usvg runs.
+simplecss = "=0.2.2"
+# 2D fill rules and polygon booleans (openbrick-geom `region`); BSL-1.0, pure Rust,
+# the Clipper2 port manifold-rust already uses for its cross-sections. Pinned
+# exactly like the kernel, since its output becomes geometry.
+clipper2-rust = "=1.2.0"
 openbrick-units = { path = "crates/openbrick-units" }
 openbrick-geom = { path = "crates/openbrick-geom" }
 openbrick-part = { path = "crates/openbrick-part" }

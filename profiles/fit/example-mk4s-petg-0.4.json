@@ -1,5 +1,5 @@
 {
-  "openbrick": "1.0",
+  "openbrick": "1.1",
   "kind": "fit",
   "id": "example-mk4s-petg-0.4",
   "credit": { "author": "OpenBrick3D contributors" },
@@ -13,18 +13,19 @@
     "studDiameter": 0.00,
     "tubeInnerDiameter": 0.15,
     "tubeOuterDiameter": 0.136,
-    "ribDepth": 0.10,
+    "ribDepth": 0.00,
     "pinDiameter": -0.10,
     "horizontalHoleDiameter": 0.20,
-    "axleHole": 0.06,
+    "axleHole": 0.05,
     "barDiameter": -0.04,
-    "clipOpening": 0.04,
+    "clipOpening": 0.02,
     "firstLayerChamfer": 0.2,
     "xyScale": 1.0
   },
   "calibration": {
     "couponVersion": 1,
-    "chosenCells": { "stud": 4.80, "tube": 4.95, "pocketTubeOD": 6.65, "pocketRib": 0.40, "technicH": 5.00, "pin": 4.70, "axle": 4.86, "bar": 3.14, "clip": 3.22 },
+    "pocketSet": "cross",
+    "chosenCells": { "stud": 4.80, "tube": 4.95, "pocketTubeOD": 6.65, "pocketRib": 0.30, "technicH": 5.00, "pin": 4.70, "axle": 4.85, "bar": 3.14, "clip": 3.22 },
     "date": "2026-10-27",
     "pullTestN": null,
     "controlPullTestN": null

@@ -1,12 +1,21 @@
-//! `openbrick/part@1` documents: parse, validate structure, and evaluate into
-//! geometry, connectors and measurements ([`eval`]). See docs/plan/06.
+//! `openbrick/part@1` documents: parse, validate structure, evaluate into
+//! geometry, connectors and measurements ([`eval`]), and check a built part
+//! against the print rules ([`validate()`], docs/plan/05 section 5). See
+//! docs/plan/06. The calibration coupon ([`coupon`], docs/plan/05 section 4) is
+//! built here too, from the same stud, tube and rib code as the evaluator.
 
+pub mod coupon;
 pub mod eval;
+mod validate;
 
+pub use coupon::{
+    build_coupon, coupon_layout, Coupon, CouponCellLayout, CouponLayout, CouponOptions, PocketSet,
+};
 pub use eval::{
-    evaluate, AssetResolver, Built, Connector, ConnectorSection, EvalError, EvalInput,
+    evaluate, Artwork, AssetResolver, Built, Connector, ConnectorSection, EvalError, EvalInput,
     MemoryAssets, ParamValues, ResolvedParams, RoleMesh, SectionShape,
 };
+pub use validate::validate;
 
 use std::collections::BTreeMap;
 

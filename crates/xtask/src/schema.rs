@@ -25,6 +25,10 @@ pub type Reader = fn(&str) -> Result<Value, String>;
 pub struct DataSet {
     /// Directory of the data files, relative to the repository root.
     pub dir: &'static str,
+    /// File-name prefix of the data files in `dir` that belong to this set; empty
+    /// for every `.json` file there. Every data file must belong to exactly one
+    /// set ([`unclaimed_data_files`]).
+    pub files: &'static str,
     /// Expected `kind` field (parts carry none yet).
     pub kind: Option<&'static str>,
     /// Schema file name inside `schemas/`.
@@ -39,6 +43,7 @@ pub struct DataSet {
 pub const DATA_SETS: &[DataSet] = &[
     DataSet {
         dir: "standards",
+        files: "dimensions-",
         kind: Some("standard"),
         schema: "standard.schema.json",
         prefix: "standard-",
@@ -46,7 +51,17 @@ pub const DATA_SETS: &[DataSet] = &[
         reader: read_standard,
     },
     DataSet {
+        dir: "standards",
+        files: "coupon-",
+        kind: Some("coupon"),
+        schema: "coupon.schema.json",
+        prefix: "coupon-",
+        reader_name: "openbrick_print::CouponSpec",
+        reader: read_coupon,
+    },
+    DataSet {
         dir: "profiles/process",
+        files: "",
         kind: Some("process"),
         schema: "process-profile.schema.json",
         prefix: "process-",
@@ -55,6 +70,7 @@ pub const DATA_SETS: &[DataSet] = &[
     },
     DataSet {
         dir: "profiles/fit",
+        files: "",
         kind: Some("fit"),
         schema: "fit-profile.schema.json",
         prefix: "fit-",
@@ -63,6 +79,7 @@ pub const DATA_SETS: &[DataSet] = &[
     },
     DataSet {
         dir: "parts",
+        files: "",
         kind: None,
         schema: "part.schema.json",
         prefix: "part-",
@@ -72,9 +89,10 @@ pub const DATA_SETS: &[DataSet] = &[
 ];
 
 /// `$defs` that every schema repeats so each file stands alone; they must not drift.
+/// `atThisMinor` is repeated too but follows each schema's own minor version
+/// ([`check_minor_version`]).
 pub const SHARED_DEFS: &[&str] = &[
     "pragma",
-    "atThisMinor",
     "semver",
     "spdx",
     "credit",
@@ -111,6 +129,59 @@ fn read_process(text: &str) -> Result<Value, String> {
 fn read_fit(text: &str) -> Result<Value, String> {
     let f: openbrick_print::FitProfile = serde_json::from_str(text).map_err(|e| e.to_string())?;
     written(serde_json::to_value(&f))
+}
+
+/// The coupon sweep, plus what its schema cannot state (`CouponSpec::check`):
+/// unique cell ids, standard ids with a nominal, one cell per offset field and
+/// whole numbers of steps.
+fn read_coupon(text: &str) -> Result<Value, String> {
+    let c: openbrick_print::CouponSpec = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let problems = c.check();
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+    written(serde_json::to_value(&c))
+}
+
+impl DataSet {
+    /// The data files of this set, sorted.
+    pub fn data_files(&self, root: &Path) -> Result<Vec<PathBuf>, String> {
+        Ok(json_files(&root.join(self.dir))?
+            .into_iter()
+            .filter(|p| file_name(p).starts_with(self.files))
+            .collect())
+    }
+}
+
+/// `.json` files in a data directory that no data set, or more than one, claims;
+/// one line per problem.
+pub fn unclaimed_data_files(root: &Path) -> Vec<String> {
+    let dirs: BTreeSet<&str> = DATA_SETS.iter().map(|s| s.dir).collect();
+    let mut problems = Vec::new();
+    for dir in dirs {
+        let Ok(files) = json_files(&root.join(dir)) else {
+            continue; // validate_json_dir reports a missing directory
+        };
+        for p in files {
+            let name = file_name(&p);
+            let claims = DATA_SETS
+                .iter()
+                .filter(|s| s.dir == dir && name.starts_with(s.files))
+                .count();
+            if claims != 1 {
+                problems.push(format!(
+                    "{dir}/{name}: {claims} data sets claim it; name it so exactly one schema validates it (in {dir}/: {})",
+                    DATA_SETS
+                        .iter()
+                        .filter(|s| s.dir == dir)
+                        .map(|s| format!("{}* -> {}", s.files, s.schema))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+    }
+    problems
 }
 
 /// Parts also get `PartDoc::check`: unique feature ids, known ops, anchors defined
@@ -273,7 +344,7 @@ fn set_for_fixture(file_name: &str) -> Option<&'static DataSet> {
     DATA_SETS.iter().find(|s| file_name.starts_with(s.prefix))
 }
 
-fn file_name(p: &Path) -> String {
+pub fn file_name(p: &Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
@@ -360,7 +431,12 @@ pub fn check_fixtures(root: &Path, schemas: &BTreeMap<&'static str, Schema>) -> 
             let shown = format!("schemas/fixtures/{sub}/{name}");
             let Some(set) = set_for_fixture(&name) else {
                 problems.push(format!(
-                    "{shown}: name must start with one of standard-, process-, fit-, part-"
+                    "{shown}: name must start with one of {}",
+                    DATA_SETS
+                        .iter()
+                        .map(|s| s.prefix)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
                 continue;
             };
@@ -452,6 +528,51 @@ pub fn check_shared_defs(schemas: &BTreeMap<&'static str, Schema>) -> Vec<String
         }
     }
     problems
+}
+
+/// The `pattern` of `$defs/atThisMinor` for a schema at version 1.`minor`: the
+/// pragmas 1.0 to 1.`minor` and their patches (docs/plan/08 section 9; minor
+/// versions only add fields, so the schema of the newest minor checks the
+/// documents of every older one strictly).
+pub fn at_this_minor_pattern(minor: u32) -> String {
+    if minor == 0 {
+        r"^1\.0(\.|$)".to_string()
+    } else {
+        let minors: Vec<String> = (0..=minor).map(|m| m.to_string()).collect();
+        format!(r"^1\.({})(\.|$)", minors.join("|"))
+    }
+}
+
+/// A schema's `$id` names its version (`.../schemas/1.1/process-profile.schema.json`),
+/// and its `$defs/atThisMinor` must match exactly the pragmas of that version
+/// and the minors before it ([`at_this_minor_pattern`]). Returns one line per
+/// problem.
+pub fn check_minor_version(schema: &Schema) -> Vec<String> {
+    let id = schema.raw.get("$id").and_then(Value::as_str).unwrap_or("");
+    let minor = id
+        .rsplit('/')
+        .nth(1)
+        .and_then(|v| v.strip_prefix("1."))
+        .and_then(|m| m.parse::<u32>().ok());
+    let Some(minor) = minor else {
+        return vec![format!(
+            "{}: $id `{id}` does not name a 1.x schema version (.../schemas/1.<minor>/<file>)",
+            schema.name
+        )];
+    };
+    let want = at_this_minor_pattern(minor);
+    let got = schema
+        .raw
+        .pointer("/$defs/atThisMinor/properties/openbrick/pattern")
+        .and_then(Value::as_str);
+    if got == Some(want.as_str()) {
+        Vec::new()
+    } else {
+        vec![format!(
+            "{}: $id names version 1.{minor}, so $defs/atThisMinor must match the pragmas 1.0 to 1.{minor} with the pattern {want:?}, not {got:?}",
+            schema.name
+        )]
+    }
 }
 
 /// Follow local `$ref`s (`#/$defs/...`) until a schema without one.
@@ -609,13 +730,32 @@ mod tests {
         let schemas = schemas();
         let mut problems = Vec::new();
         for set in DATA_SETS {
-            for path in json_files(&root().join(set.dir)).expect("data directory") {
+            for path in set.data_files(&root()).expect("data directory") {
                 let text = std::fs::read_to_string(&path).expect("data file reads");
                 let shown = path.display().to_string();
                 problems.extend(check_document(&shown, set, &schemas[set.schema], &text));
             }
         }
         assert!(problems.is_empty(), "{problems:#?}");
+    }
+
+    #[test]
+    fn every_data_file_is_claimed_by_exactly_one_schema() {
+        let problems = unclaimed_data_files(&root());
+        assert!(problems.is_empty(), "{problems:#?}");
+        // A stray file in standards/ would otherwise go unchecked.
+        let dir =
+            std::env::temp_dir().join(format!("openbrick-xtask-unclaimed-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("standards")).expect("temp dir");
+        std::fs::write(dir.join("standards/coupon-v9.json"), "{}").expect("writes");
+        std::fs::write(dir.join("standards/stray.json"), "{}").expect("writes");
+        let problems = unclaimed_data_files(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(problems.len(), 1, "{problems:#?}");
+        assert!(
+            problems[0].starts_with("standards/stray.json: 0 data sets"),
+            "{problems:#?}"
+        );
     }
 
     #[test]
@@ -630,6 +770,50 @@ mod tests {
                 .count();
             assert!(users >= 2, "$defs/{def} is shared by {users} schema(s)");
         }
+    }
+
+    #[test]
+    fn at_this_minor_follows_the_schema_version() {
+        for schema in schemas().values() {
+            let problems = check_minor_version(schema);
+            assert!(problems.is_empty(), "{problems:#?}");
+        }
+        assert_eq!(at_this_minor_pattern(0), r"^1\.0(\.|$)");
+        assert_eq!(at_this_minor_pattern(2), r"^1\.(0|1|2)(\.|$)");
+        // A schema bumped to 1.1 that still applies its field list to 1.0 only.
+        let mut raw =
+            read_json(&root().join("schemas/process-profile.schema.json")).expect("schema");
+        raw["$defs"]["atThisMinor"]["properties"]["openbrick"]["pattern"] =
+            Value::String(at_this_minor_pattern(0));
+        let schema = Schema::from_value("process-profile.schema.json", raw).expect("compiles");
+        let problems = check_minor_version(&schema);
+        assert_eq!(problems.len(), 1, "{problems:#?}");
+        assert!(problems[0].contains("version 1.1"), "{problems:#?}");
+    }
+
+    #[test]
+    fn process_profiles_at_1_1_are_strict_and_later_minors_are_open() {
+        let schemas = schemas();
+        let process = &schemas["process-profile.schema.json"];
+        let mut doc = fixture("process-minimal.json");
+        doc["openbrick"] = serde_json::json!("1.1");
+        doc["recommendedTubeWallMm"] = serde_json::json!(0.8);
+        doc["maxRemovedAreaPct"] = serde_json::json!(1.0);
+        assert!(process.failures(&doc).is_empty(), "1.1 names both fields");
+        doc["maxRemovedAreaPtc"] = serde_json::json!(1.0);
+        let failures = process.failures(&doc);
+        assert_eq!(failures.len(), 1, "{failures:#?}");
+        assert_eq!(failures[0].keyword, "additionalProperties");
+        doc["openbrick"] = serde_json::json!("1.2");
+        assert!(process.failures(&doc).is_empty(), "1.2 may add fields");
+        doc["maxRemovedAreaPct"] = serde_json::json!(101);
+        let failures = process.failures(&doc);
+        assert_eq!(
+            failures.len(),
+            1,
+            "known fields stay checked: {failures:#?}"
+        );
+        assert_eq!(failures[0].keyword, "maximum");
     }
 
     #[test]
@@ -669,8 +853,11 @@ mod tests {
         assert_eq!(failures.len(), 1, "{failures:#?}");
         assert_eq!(failures[0].pointer, "/offsetsMm");
         assert_eq!(failures[0].keyword, "additionalProperties");
+        // Fit profiles are at schema 1.1, so 1.2 is the first later minor.
         doc["openbrick"] = serde_json::json!("1.1");
-        assert!(fit.failures(&doc).is_empty(), "1.1 may add offsets");
+        assert_eq!(fit.failures(&doc).len(), 1, "1.1 is strict too");
+        doc["openbrick"] = serde_json::json!("1.2");
+        assert!(fit.failures(&doc).is_empty(), "1.2 may add offsets");
         doc["offsetsMm"]["studDiameter"] = serde_json::json!(5.0);
         let failures = fit.failures(&doc);
         assert_eq!(
