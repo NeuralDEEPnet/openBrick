@@ -2,7 +2,7 @@
 
 **Question** ([13, Q01](../plan/13-risks-and-open-questions.md#2-open-questions-with-spikes)): is `manifold-rust`, the pure-Rust port of Manifold 3.5.0 chosen as the default kernel in decision D02, correct, deterministic and fast enough on brick geometry, and does it really run in WebAssembly?
 
-**Answer so far: yes for `manifold-rust` on the M0 corpus.** The comparison against `manifold-csg` (backlog item 2 in [14](../plan/14-lean-ai-agent-development.md#9-first-agent-ready-backlog-m0-and-m1)) and on-device phone timings are still open.
+**Answer so far: yes for `manifold-rust` on the M0 corpus.** The comparison against `manifold-csg` (backlog item 2 in [14](../plan/14-lean-ai-agent-development.md#9-first-agent-ready-backlog-m0-and-m1)) is now in [Q01b](q01b-manifold-csg-comparison.md): volumes and topology agree exactly, the 2x4 brick mesh differs, and C++ Manifold is 3.5 to 10 times faster. On-device phone timings are still open.
 
 **Date:** 2026-10-28. **Kernel:** `manifold-rust` 0.19.1 (Apache-2.0). **Host:** Linux x86-64 cloud container, Rust 1.97, Node 22.22.
 
@@ -48,7 +48,7 @@ The 2x4 brick builds in 107 to 119 ms on first call inside WebAssembly under Nod
 
 ## Still open
 
-- Backlog item 2: the same corpus on `manifold-csg` (C++ via FFI) behind a feature flag, to confirm hashes match or document divergences.
+- ~~Backlog item 2: the same corpus on `manifold-csg` (C++ via FFI) behind a feature flag, to confirm hashes match or document divergences.~~ Done; the divergences are documented in [Q01b](q01b-manifold-csg-comparison.md).
 - Timing on a real mid-range phone in a WebView (needs the device harness, backlog item 3).
 - Ribs, chamfers and fit offsets are not in the corpus yet; they arrive with the part evaluator in M1 and extend this corpus.
 

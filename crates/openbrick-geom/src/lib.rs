@@ -1,13 +1,22 @@
 //! Geometry kernel abstraction (decision D02 in docs/plan/03).
 //!
 //! The `Kernel` trait is implemented by `manifold-rust` (default, feature
-//! `manifold-rust`, see [`manifold_rust`]). A `manifold-csg` backend for CLI and
-//! desktop and a `manifold-3d` WASM backend for web and mobile follow behind the
-//! same interface. This crate holds the trait and the plain mesh and polygon types
-//! so that no other crate depends on a kernel directly.
+//! `manifold-rust`, module `manifold_rust`) and by `manifold-csg`, the C++ Manifold
+//! library through FFI, for CLI and desktop builds (opt-in feature `manifold-csg`,
+//! module `manifold_csg`). A `manifold-3d` WASM backend for web and mobile follows
+//! behind the same interface. This crate holds the trait and the plain mesh and
+//! polygon types so that no other crate depends on a kernel directly.
+//!
+//! Backends agree on volume and topology but may tessellate differently, so a mesh
+//! fingerprint is only meaningful together with its kernel id: never mix content
+//! hashes from two backends in one registry
+//! (docs/spikes/q01b-manifold-csg-comparison.md).
 
 #[cfg(feature = "manifold-rust")]
 pub mod manifold_rust;
+
+#[cfg(feature = "manifold-csg")]
+pub mod manifold_csg;
 
 /// A closed polygon in millimetres (counter-clockwise outer, clockwise holes).
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -119,6 +128,38 @@ impl Mesh {
         }
         h
     }
+
+    /// FNV-1a hash of the triangles as position triples, independent of vertex
+    /// numbering and triangle order. Each triangle is rotated to start at its
+    /// smallest corner (keeping its winding, so a flipped triangle hashes
+    /// differently) and the list is sorted.
+    ///
+    /// [`Mesh::fingerprint`] changes when the same solid is built from inputs created
+    /// in a different order, because the kernel numbers vertices and groups
+    /// triangles by input; this one does not. It still differs between kernels that
+    /// triangulate a face differently (docs/spikes/q01b-manifold-csg-comparison.md).
+    pub fn canonical_fingerprint(&self) -> u64 {
+        // -0.0 and 0.0 are the same point.
+        let key = |i: u32| self.positions[i as usize].map(|c| (c + 0.0).to_bits());
+        let mut tris: Vec<[[u32; 3]; 3]> = self
+            .indices
+            .chunks_exact(3)
+            .map(|t| {
+                let c = [key(t[0]), key(t[1]), key(t[2])];
+                let first = (0..3).min_by_key(|&i| c[i]).unwrap_or(0);
+                [c[first], c[(first + 1) % 3], c[(first + 2) % 3]]
+            })
+            .collect();
+        tris.sort_unstable();
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for word in tris.iter().flatten().flatten() {
+            for b in word.to_le_bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        h
+    }
 }
 
 /// Tessellation settings applied per export profile.
@@ -180,4 +221,53 @@ pub trait Kernel: Send + Sync {
     /// 2D offset (positive outset, negative inset) with round joins; used for fit
     /// compensation and the morphological opening of artwork.
     fn offset2d(&self, section: &CrossSection, delta_mm: f64) -> Result<CrossSection, GeomError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Mesh;
+
+    /// A unit square as two triangles (an abstract mesh, not a brick dimension).
+    fn square() -> Mesh {
+        Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+        }
+    }
+
+    #[test]
+    fn canonical_fingerprint_ignores_numbering_and_order_but_not_winding() {
+        let a = square();
+        // The same two triangles with the vertices renumbered, the triangles
+        // swapped and each triangle starting at a different corner.
+        let b = Mesh {
+            positions: vec![
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            indices: vec![1, 2, 0, 3, 0, 2],
+        };
+        assert_ne!(a.fingerprint(), b.fingerprint());
+        assert_eq!(a.canonical_fingerprint(), b.canonical_fingerprint());
+
+        let flipped = Mesh {
+            indices: vec![0, 2, 1, 0, 2, 3],
+            ..square()
+        };
+        assert_ne!(a.canonical_fingerprint(), flipped.canonical_fingerprint());
+
+        let mut negative_zero = square();
+        negative_zero.positions[0] = [-0.0, -0.0, -0.0];
+        assert_eq!(
+            a.canonical_fingerprint(),
+            negative_zero.canonical_fingerprint()
+        );
+    }
 }
