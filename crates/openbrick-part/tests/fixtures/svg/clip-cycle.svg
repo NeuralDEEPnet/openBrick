@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <!-- Test fixture (CC0-1.0): three clip paths that clip each other in a
+       cycle. usvg repairs a link back to the clip path itself or one step
+       away, not this one, and would recurse until the stack overflows.
+       Refused: a reference refers back to itself. -->
+  <defs>
+    <clipPath id="a" clip-path="url(#b)"><rect width="10" height="10"/></clipPath>
+    <clipPath id="b" clip-path="url(#c)"><rect width="10" height="10"/></clipPath>
+    <clipPath id="c" clip-path="url(#a)"><rect width="10" height="10"/></clipPath>
+  </defs>
+  <rect width="10" height="10" clip-path="url(#a)"/>
+</svg>

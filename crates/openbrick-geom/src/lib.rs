@@ -233,14 +233,68 @@ pub trait Kernel: Send + Sync {
     /// Union of many solids in one batch (much faster than pairwise for stud fields).
     fn union_all(&self, solids: &[Self::Solid]) -> Result<Self::Solid, GeomError>;
     fn translate(&self, solid: &Self::Solid, v_mm: [f64; 3]) -> Self::Solid;
-    /// 2D offset (positive outset, negative inset) with round joins; used for fit
-    /// compensation and the morphological opening of artwork.
-    fn offset2d(&self, section: &CrossSection, delta_mm: f64) -> Result<CrossSection, GeomError>;
+    /// 2D offset (positive outset, negative inset) with round joins drawn at the
+    /// backend's default circle quality, which is coarse at small radii (on
+    /// manifold-rust 0.19.1 a quarter turn of radius 0.4 mm is one chord); use
+    /// [`Kernel::offset2d_round`] where the joins must follow the arc.
+    fn offset2d(&self, section: &CrossSection, delta_mm: f64) -> Result<CrossSection, GeomError> {
+        self.offset2d_round(section, delta_mm, 0)
+    }
+    /// 2D offset with round joins drawn as `circle_segments` chords per full turn
+    /// (0: the backend's default quality); [`round_segments`] gives the count for
+    /// a chord tolerance. Used for the morphological opening of artwork.
+    fn offset2d_round(
+        &self,
+        section: &CrossSection,
+        delta_mm: f64,
+        circle_segments: u32,
+    ) -> Result<CrossSection, GeomError>;
+}
+
+/// Chords per full turn so that no point of a circle of `radius_mm` lies farther
+/// than `tolerance_mm` from its chords: the sagitta r (1 - cos(pi / n)) is at most
+/// the tolerance when n >= pi / acos(1 - t / r). Rounded up to a multiple of 4,
+/// so a quarter turn is whole chords (as Manifold's own circle quality does), at
+/// least 4 and at most 4096. Radius 0.4 mm at 0.05 mm gives 8.
+pub fn round_segments(radius_mm: f64, tolerance_mm: f64) -> u32 {
+    let r = radius_mm.abs();
+    if !(tolerance_mm > 0.0 && r > tolerance_mm) {
+        return 4;
+    }
+    let n = (std::f64::consts::PI / (1.0 - tolerance_mm / r).acos()).ceil();
+    if !n.is_finite() {
+        return 4096;
+    }
+    // In range, so the cast is exact.
+    let n = n.clamp(4.0, 4096.0) as u32;
+    n.div_ceil(4) * 4
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Mesh;
+    use super::{round_segments, Mesh};
+
+    #[test]
+    fn round_segments_meet_the_tolerance() {
+        // Unit-free radii and tolerances (no brick dimension is involved).
+        for (r, t) in [(0.4, 0.05), (1.0, 0.05), (6.6, 0.05), (10.0, 0.001)] {
+            let n = round_segments(r, t);
+            assert_eq!(n % 4, 0);
+            let sagitta = r * (1.0 - (std::f64::consts::PI / f64::from(n)).cos());
+            assert!(
+                sagitta <= t * (1.0 + 1e-12),
+                "r {r}: {n} chords, sagitta {sagitta}"
+            );
+            // The next multiple of 4 down would not do (unless at the minimum).
+            if n > 4 {
+                let fewer = r * (1.0 - (std::f64::consts::PI / f64::from(n - 4)).cos());
+                assert!(fewer > t, "r {r}: {} chords would do", n - 4);
+            }
+        }
+        assert_eq!(round_segments(0.4, 0.05), 8);
+        assert_eq!(round_segments(0.03, 0.05), 4, "smaller than the tolerance");
+        assert_eq!(round_segments(0.4, 0.0), 4, "no tolerance: the minimum");
+    }
 
     /// A unit square as two triangles (an abstract mesh, not a brick dimension).
     fn square() -> Mesh {

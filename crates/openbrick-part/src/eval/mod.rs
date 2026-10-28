@@ -44,9 +44,12 @@ use serde_json::{json, Value};
 
 pub use hash::{canonical_json, sha256_hex};
 pub use params::{resolve_params, ResolvedParams};
-pub use relief::{Artwork, FLATTEN_TOLERANCE_MM, MAX_ARTWORK_POINTS, REMOVED_WARN_PCT};
+pub use relief::{
+    Artwork, FLATTEN_TOLERANCE_MM, MAX_ARTWORK_POINTS, MAX_ARTWORK_SWEEP, REMOVED_WARN_PCT,
+};
 pub use svg::{
-    MAX_SVG_BYTES, MAX_SVG_DEPTH, MAX_SVG_ELEMENTS, MAX_SVG_NODES, MAX_SVG_PATHS, MAX_SVG_WORK,
+    MAX_CSS_SELECTOR_PARTS, MAX_SVG_ATTRIBUTES, MAX_SVG_BYTES, MAX_SVG_CSS_DECLARATIONS,
+    MAX_SVG_CSS_WORK, MAX_SVG_DEPTH, MAX_SVG_ELEMENTS, MAX_SVG_NODES, MAX_SVG_PATHS, MAX_SVG_WORK,
 };
 
 use geometry::{BodyGeom, Geo, Rib, StudGeom, TubeGeom};

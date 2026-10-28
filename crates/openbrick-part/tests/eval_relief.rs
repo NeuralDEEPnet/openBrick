@@ -11,7 +11,9 @@
 //! square's corners with the kernel's polygonal round joins, whose vertices lie
 //! on the true arc, so the square's area lies between the bevelled square
 //! (side^2 - 2 r^2) and the exactly rounded one (side^2 - (4 - pi) r^2), r being
-//! half of minFeature; the tests use that interval.
+//! half of minFeature; the tests use that interval, and the emboss test checks
+//! the exact polygon: `round_segments` chords per turn, so each corner keeps a
+//! fan of chords of a quarter circle.
 //!
 //! Fingerprints are recorded for `manifold-rust 0.19.1` and asserted on x86-64
 //! Linux only, like the other golden tests (see tests/eval_golden.rs).
@@ -22,10 +24,11 @@ use std::f64::consts::PI;
 use std::path::Path;
 
 use common::*;
-use openbrick_geom::Mesh;
+use openbrick_geom::{round_segments, Mesh};
 use openbrick_io::{write_3mf, write_stl_binary, ExportMeta, ExportObject, GENERATOR};
 use openbrick_part::eval::{
-    EVALUATOR_REVISION, FLATTEN_TOLERANCE_MM, MAX_SVG_BYTES, MAX_SVG_DEPTH,
+    EVALUATOR_REVISION, FLATTEN_TOLERANCE_MM, MAX_ARTWORK_POINTS, MAX_ARTWORK_SWEEP,
+    MAX_SVG_ATTRIBUTES, MAX_SVG_BYTES, MAX_SVG_DEPTH,
 };
 use openbrick_part::{Built, EvalError, MemoryAssets, ParamValues, PartDoc};
 use openbrick_print::{Offsets, ProcessProfile};
@@ -306,12 +309,32 @@ fn emboss_square_golden() {
         assert!((art.box_max_mm[k] - f.box_max[k]).abs() < 1e-12);
     }
 
-    // The accent is a square with its corners bevelled by the opening: an
-    // octagonal prism of 28 triangles (see the module comment of `relief`).
-    assert_eq!(accent.mesh.triangle_count(), 28);
+    // The opening rounds each corner with chords of a quarter circle of radius
+    // r: round_segments(r, 0.05 mm) = 8 per turn at r = 0.4 mm, so 2 per
+    // corner, whose sagitta r (1 - cos 22.5 deg) = 0.030 mm stays within the
+    // flattening tolerance (one chord, a 45 degree bevel, was 0.117 mm off).
+    // The accent is the exact 12-sided polygon: each corner keeps the fan of
+    // its 2 chords, area r^2 sin(45 deg), instead of the full r^2 square.
+    let r = r0();
+    let n = round_segments(r, FLATTEN_TOLERANCE_MM);
+    assert_eq!(n, 8);
+    let chords = f64::from(n / 4);
+    let fan = chords * r * r * (std::f64::consts::FRAC_PI_2 / chords).sin() / 2.0;
+    let exact = s * s - 4.0 * (r * r - fan);
+    assert!(
+        (accent.volume_mm3 / h - exact).abs() < 1e-6,
+        "{} vs {exact}",
+        accent.volume_mm3 / h
+    );
+    // Within the tolerance of true arcs: the area between each quarter arc and
+    // its chords is under the arc length times the sagitta bound.
+    let true_round = s * s - (4.0 - PI) * r * r;
+    assert!(true_round - accent.volume_mm3 / h < 2.0 * PI * r * FLATTEN_TOLERANCE_MM);
+    // A 12-sided prism: 10 + 10 triangles for top and bottom, 24 for the sides.
+    assert_eq!(accent.mesh.triangle_count(), 44);
     check_fingerprint("emboss body", &body.mesh, 0x0cd4_561e_4989_fbd0);
-    check_fingerprint("emboss accent", &accent.mesh, 0xaec0_5e9c_9f3e_869d);
-    check_fingerprint("emboss fused", &fused.mesh, 0x3e9d_b449_3b23_68d9);
+    check_fingerprint("emboss accent", &accent.mesh, 0xa5bb_6b50_033e_0c81);
+    check_fingerprint("emboss fused", &fused.mesh, 0x195b_5430_f6d4_a511);
 }
 
 #[test]
@@ -411,10 +434,11 @@ fn deboss_on_a_plate_keeps_the_cavity_and_clamps() {
         Some(roof),
         "the roof under the artwork keeps its thickness"
     );
+    let clamped = format!("clamped to {room:.3} mm");
     assert!(
-        b.warnings.iter().any(|w| w.contains("`art`")
-            && w.contains("clamped to 0.400 mm")
-            && w.contains("CAVITY.DEPTH")),
+        b.warnings
+            .iter()
+            .any(|w| w.contains("`art`") && w.contains(&clamped) && w.contains("CAVITY.DEPTH")),
         "{:?}",
         b.warnings
     );
@@ -453,7 +477,7 @@ fn deboss_on_a_plate_keeps_the_cavity_and_clamps() {
     );
     let recess = section_area(&body.mesh, f.h - depth + 0.05, |_| true);
     assert_between("recess slice", recess, (outer - a_hi, outer - a_lo));
-    check_fingerprint("deboss body", &body.mesh, 0xf2c8_b394_5c01_9f73);
+    check_fingerprint("deboss body", &body.mesh, 0x5cb4_8925_a718_ab13);
 }
 
 #[test]
@@ -541,7 +565,7 @@ fn inlay_splits_off_the_face_slab_minus_the_logo() {
     assert_eq!(m.components, 2);
     assert_eq!(m.genus, 1, "the slab is a frame around the square");
     check_fingerprint("inlay body", &body.mesh, 0x2300_1b60_c274_3581);
-    check_fingerprint("inlay slab", &slab.mesh, 0xc744_bb95_39c3_e61c);
+    check_fingerprint("inlay slab", &slab.mesh, 0xf569_6c2c_0869_0014);
 }
 
 #[test]
@@ -687,7 +711,7 @@ fn the_example_logo_tile_builds_with_its_own_artwork() {
             < 1e-6 * fused.volume_mm3
     );
     assert_eq!(shells(&fused.mesh), 1, "one solid, not two touching shells");
-    check_fingerprint("mark accent", &b.objects[1].mesh, 0xb741_5d83_0512_2971);
+    check_fingerprint("mark accent", &b.objects[1].mesh, 0x9505_1b0a_e141_ba4d);
 
     // Each relief mode builds the example part.
     for mode in ["deboss", "inlay"] {
@@ -932,4 +956,225 @@ fn relief_objects_export_as_closed_meshes() {
         std::fs::write(dir.join("logo-tile-fused.3mf"), &single).expect("write");
         std::fs::write(dir.join("logo-tile-fused.stl"), &stl).expect("write");
     }
+}
+
+/// The asset error `tile` returns for `svg`, and how long it took.
+fn refused(svg: Vec<u8>) -> (String, std::time::Duration) {
+    let start = std::time::Instant::now();
+    match tile(svg, ParamValues::new()) {
+        Err(EvalError::Asset { message, .. }) => (message, start.elapsed()),
+        Err(other) => panic!("expected an asset error, got {other}"),
+        Ok(_) => panic!("expected an asset error, got a part"),
+    }
+}
+
+#[test]
+fn reference_chains_cycles_and_css_bombs_are_refused() {
+    // A chain of 100 clip paths: usvg recurses once per link; chains of about
+    // 1000 links overflowed a 1 MiB stack, which aborts the process.
+    let (e, _) = refused(fixture("clip-chain.svg"));
+    assert!(
+        e.contains(&format!("more than {MAX_SVG_DEPTH} levels deep")),
+        "{e}"
+    );
+    // A cycle of three clip paths, which usvg's own repair misses.
+    let (e, _) = refused(fixture("clip-cycle.svg"));
+    assert!(e.contains("refers back"), "{e}");
+    // A 1.4 KB stylesheet whose one selector backtracks through 30 ancestors:
+    // usvg spent 44 s on it. Refused before usvg runs.
+    let (e, took) = refused(fixture("css-backtrack.svg"));
+    assert!(e.contains("selector steps"), "{e}");
+    assert!(took.as_secs() < 10, "{took:?}");
+    // One element with too many attributes: roxmltree checks each against the
+    // earlier ones (40,000 took 2.4 s, growing with the square).
+    let mut many = String::from(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" "#,
+    );
+    for i in 0..=MAX_SVG_ATTRIBUTES {
+        many.push_str(&format!("a{i}=\"\" "));
+    }
+    many.push_str("/></svg>");
+    let (e, _) = refused(many.into_bytes());
+    assert!(e.contains("attributes"), "{e}");
+}
+
+/// The tile with an SVG that chains `<use>` (or patterns) `n` deep.
+fn use_chain(n: usize) -> String {
+    let mut s = String::from(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"><defs>"#,
+    );
+    for i in 0..n {
+        s.push_str(&format!(r##"<use id="g{i}" xlink:href="#g{}"/>"##, i + 1));
+    }
+    s.push_str(&format!(
+        r##"<rect id="g{n}" width="10" height="10"/></defs><use xlink:href="#g0"/></svg>"##
+    ));
+    s
+}
+
+fn pattern_chain(n: usize) -> String {
+    let mut s =
+        String::from(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><defs>"#);
+    for i in 0..n {
+        s.push_str(&format!(
+            r##"<pattern id="p{i}" width="1" height="1" patternUnits="userSpaceOnUse"><rect width="1" height="1" fill="url(#p{})"/></pattern>"##,
+            i + 1
+        ));
+    }
+    s.push_str(&format!(
+        r##"<pattern id="p{n}" width="1" height="1" patternUnits="userSpaceOnUse"><rect width="1" height="1"/></pattern></defs><rect width="10" height="10" fill="url(#p0)"/></svg>"##
+    ));
+    s
+}
+
+#[test]
+fn the_longest_accepted_chains_evaluate_on_a_wasm_sized_stack() {
+    // The whole evaluation, on a 1 MiB thread (the wasm32 default stack), with
+    // the longest `<use>` and pattern chains the limit accepts: the two kinds
+    // that take the most stack per level in usvg. This debug build's frames are
+    // larger than a release build's.
+    let worker = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(|| {
+            for (kind, make) in [
+                ("use", use_chain as fn(usize) -> String),
+                ("pattern", pattern_chain),
+            ] {
+                let n = (1..=2 * MAX_SVG_DEPTH)
+                    .rev()
+                    .find(|&n| tile(make(n).into_bytes(), ParamValues::new()).is_ok())
+                    .unwrap_or_else(|| panic!("{kind}: no chain accepted"));
+                eprintln!("{kind}: longest accepted chain {n}");
+                assert!(n >= 20, "{kind}: {n}");
+                let e = tile(make(n + 1).into_bytes(), ParamValues::new()).expect_err("refused");
+                assert!(e.to_string().contains("levels deep"), "{e}");
+            }
+        })
+        .expect("thread");
+    worker.join().expect("no stack overflow on a 1 MiB stack");
+}
+
+#[test]
+fn invisible_shapes_are_left_out_and_paints_counted() {
+    // Only the visible 10 x 10 square counts, fitted to the face box; a shape
+    // made invisible by its own or a group's opacity neither builds nor changes
+    // the fit.
+    let s = face().box_size()[0];
+    for hidden in [
+        r#"<rect y="-20" width="10" height="10" opacity="0"/>"#,
+        r#"<g opacity="0"><rect y="-20" width="10" height="10"/></g>"#,
+        r#"<g opacity="0.5"><g opacity="0"><rect y="-20" width="10" height="10"/></g></g>"#,
+        r#"<rect y="-20" width="10" height="10" fill-opacity="0"/>"#,
+        r#"<rect y="-20" width="10" height="10" visibility="hidden"/>"#,
+        r#"<rect y="-20" width="10" height="10" display="none"/>"#,
+    ] {
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/>{hidden}</svg>"#
+        );
+        let b = tile(svg.into_bytes(), ParamValues::new()).expect("builds");
+        let area = b.artwork.as_ref().expect("report").area_before_mm2;
+        assert!((area - s * s).abs() < 1e-6, "{hidden}: {area}");
+        assert!(
+            b.warnings.iter().all(|w| !w.contains("paints")),
+            "{:?}",
+            b.warnings
+        );
+    }
+    // A half-transparent group still builds (it is visible).
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><g opacity="0.5"><rect width="10" height="10"/></g></svg>"#;
+    let b = tile(svg.to_vec(), ParamValues::new()).expect("builds");
+    assert!((b.artwork.as_ref().expect("report").area_before_mm2 - s * s).abs() < 1e-6);
+    // Knockout artwork: a white disc painted over a black square is built as
+    // the whole square (paint order is ignored), with a warning.
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="black"/><circle cx="5" cy="5" r="3" fill="white"/></svg>"#;
+    let b = tile(svg.to_vec(), ParamValues::new()).expect("builds");
+    assert!((b.artwork.as_ref().expect("report").area_before_mm2 - s * s).abs() < 1e-6);
+    assert!(
+        b.warnings
+            .iter()
+            .any(|w| w.contains("2 different paints") && w.contains("paint order is ignored")),
+        "{:?}",
+        b.warnings
+    );
+}
+
+/// One closed path through `points` (SVG units).
+fn path_svg(points: &[[f64; 2]], view: [f64; 2]) -> Vec<u8> {
+    let mut s = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {} {}"><path d="M"#,
+        view[0], view[1]
+    );
+    for (i, p) in points.iter().enumerate() {
+        if i > 0 {
+            s.push('L');
+        }
+        s.push_str(&format!("{:.4} {:.4}", p[0], p[1]));
+    }
+    s.push_str(r#"Z"/></svg>"#);
+    s.into_bytes()
+}
+
+#[test]
+fn outlines_too_complex_to_sweep_are_refused_quickly() {
+    use std::f64::consts::TAU;
+    // A star of long thin spikes, the radius alternating 40 and 20 units (the
+    // reviewer's probe): 20,000 points took 178 s and 150,000 points did not
+    // finish in 12 minutes, because Clipper2's sweep meets thousands of edges
+    // on every scanline. Each is now refused in well under a second.
+    let star = |n: usize| -> Vec<u8> {
+        let points: Vec<[f64; 2]> = (0..n)
+            .map(|i| {
+                let a = i as f64 / n as f64 * TAU;
+                let r = if i % 2 == 0 { 40.0 } else { 20.0 };
+                [50.0 + r * a.cos(), 50.0 + r * a.sin()]
+            })
+            .collect();
+        path_svg(&points, [100.0, 100.0])
+    };
+    let (e, took) = refused(star(20_000));
+    assert!(
+        e.contains("too complex") && e.contains(&format!("limit {MAX_ARTWORK_SWEEP}")),
+        "{e}"
+    );
+    eprintln!("20,000-point star refused in {took:?}");
+    assert!(took.as_secs() < 10, "{took:?}");
+    let (e, took) = refused(star(150_000));
+    assert!(
+        e.contains(&format!("more than {MAX_ARTWORK_POINTS} points")),
+        "{e}"
+    );
+    eprintln!("150,000-point star refused in {took:?}");
+    assert!(took.as_secs() < 10, "{took:?}");
+
+    // 1,000 lines that all cross each other between two heights: 1,995,003
+    // crossings (the reviewer's sweep would add half a million output points).
+    let mut zig = Vec::new();
+    for i in 0..1000 {
+        let t = f64::from(i) / 10.0;
+        zig.push([t, 0.0]);
+        zig.push([100.0 - t, 100.0]);
+    }
+    let (e, took) = refused(path_svg(&zig, [100.0, 100.0]));
+    assert!(e.contains("too complex") && e.contains("crossings"), "{e}");
+    assert!(took.as_secs() < 10, "{took:?}");
+
+    // A comb of 4,000 teeth on a solid bar: its outline sweeps cheaply, but the
+    // opening's inset folds every tooth (0.0017 mm wide, under minFeature) over
+    // hundreds of neighbours: about 8.5 million crossings in Clipper2's raw
+    // offset path. That one inset takes 1.7 s in a release build and grows
+    // with the square of the teeth (by that law 12,000 teeth, still under the
+    // point limit, would take about 15 s per offset), so it is refused first.
+    let mut comb = vec![[0.0, 50.0], [0.0, 30.0]];
+    for i in 0..4000 {
+        let x = f64::from(i) * 0.025;
+        comb.extend([[x, 30.0], [x, 0.0], [x + 0.0125, 0.0], [x + 0.0125, 30.0]]);
+    }
+    comb.extend([[100.0, 30.0], [100.0, 50.0]]);
+    let (e, took) = refused(path_svg(&comb, [100.0, 50.0]));
+    assert!(
+        e.contains("too detailed for the") && e.contains("minFeature"),
+        "{e}"
+    );
+    eprintln!("4,000-tooth comb refused in {took:?}");
+    assert!(took.as_secs() < 10, "{took:?}");
 }

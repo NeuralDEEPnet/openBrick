@@ -1,7 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
   <!-- Test fixture (CC0-1.0): two 3 x 10 blocks joined by a 4 x 0.2 hairline.
-       Fitted to a 13.6 mm wide face box (1.36 mm per unit) the hairline is
-       0.272 mm wide, under the 0.8 mm minimum feature, so the opening removes it. -->
+       Fitted to the 13.2 mm wide face box of the 2x4 logo tile (1.32 mm per
+       unit) the hairline is 0.264 mm wide, under the 0.8 mm minimum feature,
+       so the opening removes it. -->
   <rect x="0" y="0" width="3" height="10"/>
   <rect x="7" y="0" width="3" height="10"/>
   <rect x="3" y="4.9" width="4" height="0.2"/>

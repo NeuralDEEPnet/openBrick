@@ -19,19 +19,24 @@
 //!    the proportions, else each axis fills the box.
 //! 3. Flatten: curves become polylines at [`FLATTEN_TOLERANCE_MM`] on the part
 //!    (after fitting), from the second-derivative bound of each Bezier segment.
+//!    Outlines with more than [`MAX_ARTWORK_POINTS`] points, or whose scanline
+//!    sweep would need more than [`MAX_ARTWORK_SWEEP`] work, are refused before
+//!    any polygon operation runs (untrusted input: a few thousand points drawn
+//!    as long thin spikes would otherwise block the evaluator for minutes).
 //! 4. Fill rules: each SVG path is resolved under its own `fill-rule` (nonzero
 //!    or evenodd, through `openbrick_geom::region`, so two nested circles drawn
 //!    the same way make a ring under evenodd and a disc under nonzero), then all
 //!    paths are unioned.
 //! 5. Morphological opening with `minFeature` (default: the process's
 //!    `minFeatureMm`): inset by half of it, then outset by half of it, with
-//!    `Kernel::offset2d` (round joins), clipped to the artwork. Strokes thinner
-//!    than `minFeature` disappear; the removed region is kept for the preview and
-//!    its share of the area is `removed_area_pct`. The round joins follow the
-//!    kernel's default circle quality, which is coarse for small radii: on
-//!    manifold-rust 0.19.1 a 0.4 mm quarter circle is a single chord, so the
-//!    opening bevels convex corners at 45 degrees rather than rounding them
-//!    (0.4 mm legs; invisible at a 0.4 mm nozzle).
+//!    `Kernel::offset2d_round` (round joins drawn within [`FLATTEN_TOLERANCE_MM`]
+//!    of the true arc: 8 chords per turn at 0.4 mm), clipped to the artwork.
+//!    Strokes thinner than `minFeature` disappear; the removed region is kept
+//!    for the preview and its share of the area is `removed_area_pct`. Each
+//!    offset is estimated first (`region::offset_sweep_cost`) and refused past
+//!    [`MAX_ARTWORK_SWEEP`]: insetting dense outlines past their width folds
+//!    them over each other. The thinnest stroke is then estimated within a work
+//!    budget (see [`min_stroke`]).
 //! 6. The mode: `emboss` extrudes the artwork by `height` on top of the face, as
 //!    a separate object of `colorRole` that touches the body without overlapping
 //!    it; `deboss` cuts it `height` deep into the face; `inlay` cuts it the same
@@ -47,7 +52,7 @@
 //! still one flat bridge between the walls and the tubes.
 
 use openbrick_geom::region::{self, FillRule};
-use openbrick_geom::{CrossSection, GeomError, Kernel, Polygon};
+use openbrick_geom::{round_segments, CrossSection, GeomError, Kernel, Polygon};
 use openbrick_print::ProcessProfile;
 
 use super::geometry::{Geo, OVERSHOOT_MM};
@@ -60,13 +65,30 @@ use super::{BodyPlan, EvalError, Feat, RecordingAssets, MIN_LENGTH_MM};
 pub const FLATTEN_TOLERANCE_MM: f64 = 0.05;
 
 /// Most points of the flattened artwork: a resource guard (the kernel
-/// triangulates every point twice), not a brick dimension.
-pub const MAX_ARTWORK_POINTS: usize = 200_000;
+/// triangulates every point twice, and the opening and the stroke estimate
+/// offset the outline about 40 times), not a brick dimension.
+pub const MAX_ARTWORK_POINTS: usize = 50_000;
+
+/// Most sweep work, by `openbrick_geom::region` (`SweepCost::work`: edge-band
+/// pairs plus 20 per crossing), that the flattened artwork, and each offset of
+/// the opening, may need: a resource guard. Polygon booleans and offsets sweep
+/// a scanline over the outlines, and their time grows with the edges every
+/// scanline meets and with the crossings, not with the point count, so a few
+/// thousand points drawn as long thin spikes, as lines that all cross each
+/// other, or as dense outlines inset past their width would block the
+/// evaluator for minutes. Measured in a release build on x86-64 (clipper2-rust
+/// 1.2.0), one unit of work costs about 30 to 70 ns, so an operation at the
+/// limit takes well under a second. For scale: the sample mark needs 384 for
+/// its outline (12 crossings where its shapes overlap) and 908 for its inset at
+/// 0.4 mm; a star of 1,000 thin spikes (2,000 points) needs 291,048 and 6.2
+/// million (213 ms); 1,000 lines that all cross each other need 39.9 million
+/// and are refused.
+pub const MAX_ARTWORK_SWEEP: u64 = 10_000_000;
 
 /// Share of the artwork area the opening may remove before the evaluator warns,
-/// in percent. Opening a 13.2 mm square at 0.8 mm only bevels its corners and
-/// removes 0.18 %, which is not worth a warning; a hairline usually removes more
-/// (the sample mark's 1.1 %).
+/// in percent. Opening a 13.2 mm square at 0.8 mm only rounds its corners and
+/// removes 0.11 %, which is not worth a warning; a hairline usually removes more
+/// (the sample mark's 1.03 %).
 pub const REMOVED_WARN_PCT: f64 = 1.0;
 
 /// A deboss or inlay depth that has to be clamped is rounded down to this grid
@@ -353,23 +375,70 @@ fn flatten(
     Ok(out)
 }
 
-/// Morphological opening by a disc of radius `r`: inset by `r`, outset by `r`,
-/// clipped to the input so the polygonal round joins never add area.
-fn opening<K: Kernel>(k: &K, s: &CrossSection, r: f64) -> Result<CrossSection, GeomError> {
-    if r <= 0.0 || s.polygons.is_empty() {
-        return Ok(s.clone());
-    }
-    let inset = k.offset2d(s, -r)?;
-    if inset.polygons.is_empty() {
-        return Ok(CrossSection::default());
-    }
-    Ok(region::intersection(&k.offset2d(&inset, r)?, s))
+/// The result of [`offset_within`].
+enum Offset {
+    /// The offset region, and the sweep work it was estimated to need.
+    Done(CrossSection, u64),
+    /// Not run: Clipper2's sweep of the raw offset path would need about this
+    /// much work, more than the limit.
+    TooComplex(u64),
 }
 
-fn bounds_of(s: &CrossSection) -> Option<([f64; 2], [f64; 2])> {
+/// `s` offset by `delta` (negative: inset) with `Kernel::offset2d_round`, its
+/// round joins drawn within [`FLATTEN_TOLERANCE_MM`] of the arc, unless the
+/// sweep of the raw offset path would need more than `limit` work
+/// (`region::offset_sweep_cost`). Before an inset, regions too small to hold a
+/// disc of radius `-delta` are dropped: their inset is empty anyway, and a small
+/// region inset far past its size folds every edge over the others.
+fn offset_within<K: Kernel>(
+    k: &K,
+    s: &CrossSection,
+    delta: f64,
+    limit: u64,
+) -> Result<Offset, GeomError> {
+    if delta == 0.0 || s.polygons.is_empty() {
+        return Ok(Offset::Done(s.clone(), 0));
+    }
+    let kept;
+    let s = if delta < 0.0 {
+        kept = without_islands_under(s, -2.0 * delta);
+        &kept
+    } else {
+        s
+    };
+    if s.polygons.iter().all(|p| p.signed_area() <= 0.0) {
+        return Ok(Offset::Done(CrossSection::default(), 0));
+    }
+    let n = round_segments(delta, FLATTEN_TOLERANCE_MM);
+    let work = region::offset_sweep_cost(s, delta, n, limit).work();
+    if work > limit {
+        return Ok(Offset::TooComplex(work));
+    }
+    Ok(Offset::Done(k.offset2d_round(s, delta, n)?, work))
+}
+
+/// `s` without its outer (counter-clockwise) contours whose bounding box is
+/// narrower than `width` in x or y. Holes stay: a hole whose outer contour went
+/// is dropped by the kernel, whose offsets read regions under the Positive fill
+/// rule, and a hole inside a kept contour still matters.
+fn without_islands_under(s: &CrossSection, width: f64) -> CrossSection {
+    CrossSection::from(
+        s.polygons
+            .iter()
+            .filter(|p| {
+                p.signed_area() <= 0.0
+                    || bounds_of(std::slice::from_ref(p))
+                        .is_some_and(|(lo, hi)| hi[0] - lo[0] >= width && hi[1] - lo[1] >= width)
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
+fn bounds_of(polygons: &[Polygon]) -> Option<([f64; 2], [f64; 2])> {
     let mut lo = [f64::INFINITY; 2];
     let mut hi = [f64::NEG_INFINITY; 2];
-    for p in s.polygons.iter().flat_map(|p| &p.points) {
+    for p in polygons.iter().flat_map(|p| &p.points) {
         for k in 0..2 {
             lo[k] = lo[k].min(p[k]);
             hi[k] = hi[k].max(p[k]);
@@ -385,70 +454,133 @@ const STROKE_SCAN_STEP: f64 = 1.25;
 /// stroke width).
 const STROKE_RESOLUTION_MM: f64 = 0.005;
 
+/// Sweep work [`min_stroke`] may spend in all (its offsets, by
+/// `region::offset_sweep_cost`, and two sweeps of the artwork per step): twice
+/// what one operation on the artwork may need. Measured in a release build, the
+/// estimate then takes at most about 1.5 s (a star of 1,000 thin spikes, which
+/// runs out of budget) and 7 ms for the sample mark. Past the budget the
+/// estimate is not made, and `min_stroke_mm` stays empty.
+pub(crate) const STROKE_WORK_BUDGET: u64 = 2 * MAX_ARTWORK_SWEEP;
+
 /// An estimate of the thinnest stroke of `art`, which has already been opened
-/// at radius `r0`; `None` when `art` is empty.
+/// at radius `r0`, given `eroded`, the inset of the original artwork by `r0`;
+/// `None` when `art` is empty or when the estimate would need more than
+/// [`STROKE_WORK_BUDGET`] (then it is not measured).
 ///
 /// Every point of an opened shape lies in a disc of diameter `2 r0` inside it,
 /// so its plain minimum width is `2 r0` by construction (at the corners); this
 /// measures the strokes instead. Opening `art` again at a radius r > r0 removes
 /// two kinds of region: small pieces at convex corners, which the joins cut back
 /// further (for a corner of opening angle a, area (r^2 - r0^2) times
-/// 1 / tan(a / 2) - (pi - a) / 2 with true arcs, or sin(a) / (2 tan^2(a / 2))
-/// with the bevels the kernel makes at small radii, so under r^2 for corners of
-/// about 70 degrees or more); and whole strokes or necks narrower than 2 r,
-/// whose area is about their width times their length, at least r^2 just above
-/// their half width for a stroke at least half as long as it is wide. So the
-/// estimate is twice the smallest r at which one removed piece reaches r^2 of
-/// area: radii from r0 up grow by [`STROKE_SCAN_STEP`] until that happens (from
-/// the thin end, so a thin stroke is found before larger radii remove
-/// everything), then bisection refines it to [`STROKE_RESOLUTION_MM`]. A piece
-/// is an outer contour of the removed region with its holes not subtracted,
-/// which can only make it look larger, so the estimate errs thin, except that a
-/// stub shorter than half its width is not counted as a stroke. Sharp corners
-/// count as thin: near their tip they are narrower than 2 r. A solid disc of
-/// diameter D measures D, a square of side s measures s, a ring its width, the
-/// blocks of the hairline fixture their width (tests/eval_relief.rs). When no
-/// piece ever counts as a stroke the result is `2 r0`, what the opening
-/// guarantees. Cost: one opening per step, about 20 for a 13 mm wide face.
+/// 1 / tan(a / 2) - (pi - a) / 2 with true arcs, a little more with the chords
+/// of the joins, and at most sin(a) / (2 tan^2(a / 2)) with single-chord joins,
+/// so under r^2 for corners of about 70 degrees or more, 50 with true arcs);
+/// and whole strokes or necks narrower than 2 r, whose area is about their width
+/// times their length, at least r^2 just above their half width for a stroke at
+/// least half as long as it is wide. So the estimate is twice the smallest r at
+/// which one removed piece reaches r^2 of area: radii from r0 up grow by
+/// [`STROKE_SCAN_STEP`] until that happens (from the thin end, so a thin stroke
+/// is found before larger radii remove everything), then bisection refines it
+/// to [`STROKE_RESOLUTION_MM`]. A piece is an outer contour of the removed
+/// region with its holes not subtracted, which can only make it look larger, so
+/// the estimate errs thin, except that a stub shorter than half its width is
+/// not counted as a stroke. Sharp corners count as thin: near their tip they are
+/// narrower than 2 r. A solid disc of diameter D measures D, a square of side s
+/// measures s, a ring its width, the blocks of the hairline fixture their width
+/// (tests/eval_relief.rs). When no piece ever counts as a stroke the result is
+/// `2 r0`, what the opening guarantees.
+///
+/// Each step insets `eroded` further, by r - r0, rather than the artwork by r:
+/// insetting by discs adds up (a disc of radius r is one of r0 swept by one of
+/// r - r0), and the opening's inset equals the inset of what it opened, so this
+/// is the same region, while the thin parts that make a deep inset costly are
+/// already gone. Cost: about 20 steps for a 13 mm wide face.
 pub(crate) fn min_stroke<K: Kernel>(
     k: &K,
     art: &CrossSection,
+    eroded: &CrossSection,
     r0: f64,
 ) -> Result<Option<f64>, GeomError> {
-    let Some((lo, hi)) = bounds_of(art) else {
+    min_stroke_within(k, art, eroded, r0, STROKE_WORK_BUDGET)
+}
+
+/// [`min_stroke`] with a work budget of `budget`.
+fn min_stroke_within<K: Kernel>(
+    k: &K,
+    art: &CrossSection,
+    eroded: &CrossSection,
+    r0: f64,
+    mut budget: u64,
+) -> Result<Option<f64>, GeomError> {
+    let Some((lo, hi)) = bounds_of(&art.polygons) else {
         return Ok(None);
     };
-    let removes_a_stroke = |r: f64| -> Result<bool, GeomError> {
-        let removed = region::difference(art, &opening(k, art, r)?);
-        Ok(removed
-            .polygons
-            .iter()
-            .map(Polygon::signed_area)
-            .any(|a| a >= r * r))
+    let r0 = r0.max(0.0);
+    // Each step clips against `art` and takes the difference: two sweeps.
+    let art_work = region::sweep_cost(&art.polygons, budget)
+        .work()
+        .saturating_mul(2);
+    // Whether opening at `r` removes a stroke; `None` when over budget.
+    let mut removes_a_stroke = |r: f64| -> Result<Option<bool>, GeomError> {
+        let e = match offset_within(k, eroded, -(r - r0), budget)? {
+            Offset::Done(e, work) => {
+                budget -= work;
+                e
+            }
+            Offset::TooComplex(_) => return Ok(None),
+        };
+        let mut opened = CrossSection::default();
+        if !e.polygons.is_empty() {
+            match offset_within(k, &e, r, budget)? {
+                Offset::Done(d, work) => {
+                    budget -= work;
+                    opened = d;
+                }
+                Offset::TooComplex(_) => return Ok(None),
+            }
+        }
+        if art_work > budget {
+            return Ok(None);
+        }
+        budget -= art_work;
+        // Clipped to `art`, so the polygonal joins never add area.
+        let removed = region::difference(art, &region::intersection(&opened, art));
+        Ok(Some(
+            removed
+                .polygons
+                .iter()
+                .map(Polygon::signed_area)
+                .any(|a| a >= r * r),
+        ))
     };
-    // No disc wider than the bounding box fits inside the artwork, so opening
-    // at `top` removes all of it.
-    let top = (hi[0] - lo[0]).min(hi[1] - lo[1]) / 2.0 + 2.0 * STROKE_RESOLUTION_MM;
+    // No disc wider than the bounding box fits inside the artwork, and the
+    // chords of the two insets' round joins keep at most the tolerance each
+    // that a true inset would remove, so opening at `top` removes all of it.
+    let top = (hi[0] - lo[0]).min(hi[1] - lo[1]) / 2.0
+        + 2.0 * FLATTEN_TOLERANCE_MM
+        + 2.0 * STROKE_RESOLUTION_MM;
     // Scan up from the thin end: `below` removes no stroke, `above` does.
-    let mut below = r0.max(STROKE_RESOLUTION_MM);
+    let mut below = r0;
     let mut above = loop {
-        let r = (below * STROKE_SCAN_STEP).min(top);
-        if removes_a_stroke(r)? {
-            break r;
+        let r = (below.max(STROKE_RESOLUTION_MM) * STROKE_SCAN_STEP).min(top);
+        match removes_a_stroke(r)? {
+            None => return Ok(None),
+            Some(true) => break r,
+            Some(false) => {}
         }
         if r >= top {
             // No removed piece ever counted as a stroke: nothing measured, so
             // report what the opening guarantees.
-            return Ok(Some(2.0 * r0.max(0.0)));
+            return Ok(Some(2.0 * r0));
         }
         below = r;
     };
     while above - below > STROKE_RESOLUTION_MM {
         let mid = (above + below) / 2.0;
-        if removes_a_stroke(mid)? {
-            above = mid;
-        } else {
-            below = mid;
+        match removes_a_stroke(mid)? {
+            None => return Ok(None),
+            Some(true) => above = mid,
+            Some(false) => below = mid,
         }
     }
     Ok(Some(2.0 * below))
@@ -609,6 +741,13 @@ pub(crate) fn plan_relief<K: Kernel>(
             ));
         }
     }
+    if parsed.fill_paints > 1 {
+        warnings.push(format!(
+            "feature `{}`: `{name}` fills its shapes with {} different paints (colours, gradients or patterns); relief artwork is one colour: every filled shape is built whatever its colour, and paint order is ignored, so a white shape painted over a dark one does not cut a hole; draw holes as holes (Inkscape: Path > Difference)",
+            feat.id(),
+            parsed.fill_paints
+        ));
+    }
     let no_fill = || {
         asset_err(
             "the SVG has no filled shapes to build (v1 builds fills; strokes, text and images are ignored)"
@@ -639,6 +778,16 @@ pub(crate) fn plan_relief<K: Kernel>(
         ty: centre[1] + sy * (lo[1] + hi[1]) / 2.0,
     };
     let flat = flatten(&parsed.shapes, fit, FLATTEN_TOLERANCE_MM).map_err(asset_err)?;
+    // Refuse outlines whose sweeps would take minutes, before any sweep runs.
+    let contours: Vec<Polygon> = flat.iter().flat_map(|(_, c)| c.iter().cloned()).collect();
+    let sweep = region::sweep_cost(&contours, MAX_ARTWORK_SWEEP);
+    if sweep.work() > MAX_ARTWORK_SWEEP {
+        return Err(asset_err(format!(
+            "the artwork is too complex to build: a scanline sweep of its outlines needs about {} steps (limit {MAX_ARTWORK_SWEEP}), from long thin spikes that span the same heights or lines that cross each other ({} crossings); simplify it in your editor (Inkscape: Path > Simplify) or remove fine texture",
+            sweep.work(),
+            sweep.crossings
+        )));
+    }
     let filled: Vec<CrossSection> = flat
         .iter()
         .map(|(rule, contours)| region::fill(contours, *rule))
@@ -653,7 +802,31 @@ pub(crate) fn plan_relief<K: Kernel>(
     // The opening.
     let r0 = min_feature / 2.0;
     let what = format!("the artwork opening of `{}`", feat.id());
-    let opened = opening(kernel, &art, r0).map_err(super::kernel_err(&what))?;
+    let too_detailed = |work: u64| {
+        asset_err(format!(
+            "the artwork is too detailed for the {min_feature} mm opening (minFeature): offsetting its outlines by {r0} mm needs a scanline sweep of about {work} steps (limit {MAX_ARTWORK_SWEEP}), from dense outlines thinner than minFeature; simplify it in your editor (Inkscape: Path > Simplify) or remove texture finer than {min_feature} mm"
+        ))
+    };
+    // The inset (erosion) by r0, then the outset of that, clipped to the
+    // artwork so the polygonal joins never add area.
+    let eroded = match offset_within(kernel, &art, -r0, MAX_ARTWORK_SWEEP)
+        .map_err(super::kernel_err(&what))?
+    {
+        Offset::Done(e, _) => e,
+        Offset::TooComplex(work) => return Err(too_detailed(work)),
+    };
+    let opened = if r0 <= 0.0 {
+        art.clone()
+    } else if eroded.polygons.is_empty() {
+        CrossSection::default()
+    } else {
+        match offset_within(kernel, &eroded, r0, MAX_ARTWORK_SWEEP)
+            .map_err(super::kernel_err(&what))?
+        {
+            Offset::Done(d, _) => region::intersection(&d, &art),
+            Offset::TooComplex(work) => return Err(too_detailed(work)),
+        }
+    };
     let area_after = opened.area();
     if opened.polygons.is_empty() || area_after <= MIN_LENGTH_MM * MIN_LENGTH_MM {
         return Err(feat.fail(format!(
@@ -670,7 +843,13 @@ pub(crate) fn plan_relief<K: Kernel>(
         ));
     }
     let removed = region::difference(&art, &opened);
-    let min_stroke = min_stroke(kernel, &opened, r0).map_err(super::kernel_err(&what))?;
+    let min_stroke = min_stroke(kernel, &opened, &eroded, r0).map_err(super::kernel_err(&what))?;
+    if min_stroke.is_none() {
+        warnings.push(format!(
+            "feature `{}`: the thinnest stroke of `{name}` was not measured (min_stroke_mm is empty): the artwork is too detailed for the estimate's work limit; the opening still removed every stroke under {min_feature} mm",
+            feat.id()
+        ));
+    }
 
     // The depth of a cut keeps the cavity (docs/plan/05 section 6).
     let mut height = requested;
@@ -841,6 +1020,29 @@ impl ReliefPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_stroke_estimate_keeps_to_its_budget() {
+        use openbrick_geom::manifold_rust::ManifoldRust;
+        // A unit-free 10 x 4 rectangle opened at radius 0.5 (no brick
+        // dimension is involved): its eroded core is 9 x 3.
+        let art = CrossSection::from(vec![Polygon::rect([0.0, 0.0], [10.0, 4.0])]);
+        let eroded = CrossSection::from(vec![Polygon::rect([0.5, 0.5], [9.0, 3.0])]);
+        let k = ManifoldRust;
+        let w = min_stroke_within(&k, &art, &eroded, 0.5, STROKE_WORK_BUDGET)
+            .expect("kernel")
+            .expect("measured");
+        assert!((w - 4.0).abs() < 0.02, "a 4 wide bar measures {w}");
+        // Without budget it is not measured, rather than run long.
+        assert_eq!(
+            min_stroke_within(&k, &art, &eroded, 0.5, 0).expect("kernel"),
+            None
+        );
+        assert_eq!(
+            min_stroke(&k, &CrossSection::default(), &eroded, 0.5).expect("kernel"),
+            None
+        );
+    }
 
     #[test]
     fn cubic_extrema_are_found() {
