@@ -282,4 +282,7 @@ jobs:
               for m in re.finditer(r'\]\(([^)]+)\)', open(f).read()):
                   t=m.group(1)
                   if t.startswith(('http','#')): continue
-                  p=os.path.join(os.path.dirname(f), t.split
+                  p=os.path.join(os.path.dirname(f), t.split('#')[0])
+                  if not os.path.exists(p): print('broken', f, t); bad+=1
+          sys.exit(1 if bad else 0)
+          EOF
