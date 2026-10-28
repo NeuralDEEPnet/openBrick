@@ -9,7 +9,7 @@
   "format_version": 1,
   "frame": "kernel frame: right-handed, +Z up; body minimum corner at the origin, body from z = 0 to brick_height_mm, studs on top",
   "generator": "cargo run --release -p openbrick-geom --example export_lods",
-  "kernel": "manifold-rust 0.19",
+  "kernel": "manifold-rust 0.19.1",
   "lods": [
     {
       "bounds_mm": {

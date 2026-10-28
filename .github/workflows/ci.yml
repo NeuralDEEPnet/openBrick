@@ -99,6 +99,30 @@ jobs:
       - name: Corpus on manifold-csg alone
         run: cargo test -p openbrick-geom --no-default-features --features manifold-csg
 
+  harness:
+    # Device render harness (bench/harness): unit tests, including the results.csv
+    # guard, and a headless smoke run. Smoke numbers are software rendering, never
+    # device results. The committed meshes are checked against the kernel by cargo
+    # test in the check job (crates/openbrick-geom/tests/harness_meshes.rs).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Unit tests, including the results.csv guard
+        run: pnpm test
+      - name: Install Chromium for the pinned Playwright (1.63.0)
+        run: pnpm --dir bench/harness exec playwright install --with-deps chromium
+      - name: Smoke test (software rendering, not a device result)
+        run: pnpm --dir bench/harness smoke
+
   docs:
     runs-on: ubuntu-24.04
     steps:
@@ -108,7 +132,7 @@ jobs:
           python3 - <<'EOF'
           import re,os,glob,sys
           bad=0
-          for f in glob.glob('docs/plan/*.md'):
+          for f in glob.glob('docs/plan/*.md')+glob.glob('docs/spikes/*.md'):
               for m in re.finditer(r'\]\(([^)]+)\)', open(f).read()):
                   t=m.group(1)
                   if t.startswith(('http','#')): continue

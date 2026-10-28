@@ -38,5 +38,14 @@ name = "wasm_probe"
 crate-type = ["cdylib"]
 required-features = ["manifold-rust"]
 
+# The harness meshes are defined as manifold-rust output (the default kernel).
+[[example]]
+name = "export_lods"
+required-features = ["manifold-rust"]
+
+[[test]]
+name = "harness_meshes"
+required-features = ["manifold-rust"]
+
 [lints]
 workspace = true

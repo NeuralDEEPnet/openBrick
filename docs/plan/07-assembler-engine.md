@@ -58,7 +58,7 @@ Immutable and content-addressed (hash of geometry plus metadata). Per part, bake
 | Collision proxy (box set or convex decomposition) | free-pose and custom parts |
 | Compatibility class (A to D) | warnings |
 
-Official parts: connectors derived by scanning LDraw primitive references (`stud.dat`, `stud4.dat`, `axlehole.dat`, `peghole.dat`, `clh*.dat`, bar primitives); contributors refine the rest in the SNAP vocabulary under CC BY 4.0. Custom parts bring their own connectors from the part designer. The library is downloaded at first run (140 MiB) and packed into a versioned cache; a small CC0 starter set is bundled.
+Official parts: connectors derived by scanning LDraw primitive references (`stud.dat`, `stud4.dat`, `axlehole.dat`, `peghole.dat`, `clip*.dat`, `clh*.dat`, `phandle*.dat`). LDraw has no bar primitive, and some gear holes, clips, old hinges and towballs are drawn from plain geometry; these come from a CC BY 4.0 override table in the SNAP vocabulary, and contributors refine the rest the same way. Female studs are not primitives: they are synthesised from the part's geometry, as a stud-sized, stud-deep cavity with a wall, tube or pin that grips the stud. Clip and hinge axes come from a per-primitive calibration table ([Q04 spike](../spikes/q04-ldraw-connectivity.md)). Custom parts bring their own connectors from the part designer. The library is downloaded at first run (140 MiB) and packed into a versioned cache; a small CC0 starter set is bundled.
 
 ## 4. Spatial indexes
 
@@ -111,7 +111,7 @@ Rotation handling: the user's current rotation is tried first, then the other th
 - Edges: screen-space normal/depth edge detection (O(pixels)), not per-edge line geometry.
 - Stud logos only at LOD0 within a few metres; LOD2 beyond.
 - Budgets (from the frameworks research, FLOPS-scaled from a three.js 0.186.1 harness that renders 100k x 6,056-triangle instances at about 20 fps on an RTX 5070 Ti): integrated-GPU laptop 10 to 20 M triangles per frame at 60 fps; mid-range 2024 to 2025 phone 3 to 6 M at 60 fps (6 to 12 M at 30 fps). Hence: 10k bricks at 60 fps everywhere; 100k at 60 fps on laptops with LOD (average under 300 triangles per instance); 30 fps on phones with LOD2, chunk culling and rendering at 0.5 to 0.75 device pixel ratio.
-- Week-1 harness: fork the published three.js instancing benchmark, swap in brick geometry, run on an Iris Xe laptop, a Radeon 780M laptop, a base M-series Mac, a Pixel 8a or 9a, a Galaxy A5x (Xclipse) and an iPhone 16e; publish the CSV in `bench/devices/`.
+- Week-1 harness (`bench/harness`, written in M0 instead of forking the three.js instancing benchmark): N instanced 2x4 bricks built by the kernel at three LODs (3,620, 548 and 12 triangles), `WebGPURenderer` on WebGPU or forced WebGL2, chunked `InstancedMesh` with per-chunk culling, one CSV row per run (columns, validation rules and phone instructions in `bench/devices/README.md`). Run the standard suite (`?suite=1&device=...`) on an Iris Xe laptop, a Radeon 780M laptop, a base M-series Mac, a Pixel 8a or 9a, a Galaxy A5x (Xclipse) and an iPhone 16e; publish the CSV in `bench/devices/`.
 
 ## 10. Interaction: desktop and touch
 
