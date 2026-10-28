@@ -45,13 +45,13 @@ openBrick/
     xtask/                      # cargo xtask: check, dist, bench, corpus
   packages/
     core-wasm/                  # built artefact + TS types + worker wrapper
-    viewport/                   # three.js scene, chunks, LOD, picking, edges
+    viewport/                   # three.js scene, chunks, LOD, picking, edges (today: the kernel-to-three.js frame)
     ui/                         # panels, wizards, designer, assembler tools
     state/                      # document store mirroring the command log
     part-api/                   # @openbrick/part TS API for scripted parts (M5)
   apps/
     desktop/                    # Tauri 2 project (desktop + Android + iOS)
-    web/                        # PWA shell
+    web/                        # PWA shell; today the M1 browser pipeline (core in a Web Worker, three.js viewer)
   standards/
     dimensions-v1.json          # Dimensional Standard v1 (CC0)
     measurements/               # raw measurement CSVs (CC0)
@@ -72,7 +72,7 @@ openBrick/
 ## 2. Build system
 
 - Rust: Cargo workspace; `cargo xtask check` runs fmt, clippy, tests and schema validation; `cargo xtask dist --unsigned` builds every artifact locally; `cargo xtask corpus` regenerates golden meshes (reviewed diffs).
-- TypeScript: pnpm workspace, Vite, `wasm-pack`/`wasm-bindgen` output consumed by `packages/core-wasm`; Playwright for browser tests.
+- TypeScript: pnpm workspace, Vite, `wasm-bindgen` output consumed by `packages/core-wasm`. Until that package exists, `cargo xtask wasm` writes it into `apps/web/src/wasm/`, with the wasm-bindgen CLI pinned to the crate version in `Cargo.lock`. Playwright for browser tests.
 - Tauri: `pnpm tauri dev`, `pnpm tauri build`, `pnpm tauri android build`, `pnpm tauri ios build`.
 - Caching: sccache in CI; pnpm store cache; Cargo registry cache.
 
@@ -101,7 +101,7 @@ rustfmt; clippy with `-D warnings`; biome for TypeScript; prettier and markdownl
 |-----|--------|------|
 | check | ubuntu-24.04 | fmt, clippy, cargo test, schema validation, biome, markdownlint |
 | test-cross | ubuntu-24.04, ubuntu-24.04-arm, windows-2025, windows-11-arm, macos-26 | cargo test per target; CLI smoke |
-| wasm | ubuntu-24.04 | wasm build, size budget (core under 2.5 MB gzip), Playwright on Chromium and WebKit |
+| wasm, web | ubuntu-24.04 | wasm build, size budget (core under 2.5 MB gzip, `cargo xtask wasm`), Playwright smoke of `apps/web` on Chromium (WebGL2 and WebGPU); WebKit to follow |
 | corpus | ubuntu-24.04 | golden meshes, LDraw round-trip, 3MF conformance (lib3mf, OrcaSlicer CLI) |
 | bench | ubuntu-24.04 (scheduled) | criterion and web harness; regression gate |
 | fuzz | ubuntu-24.04 (nightly) | cargo-fuzz on readers |

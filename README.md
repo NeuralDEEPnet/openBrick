@@ -27,8 +27,8 @@
 
 ```
 crates/        Rust workspace: units, geom, part, print, engine, catalog, io, openbrick (CLI), openbrick-wasm, xtask
-packages/      TypeScript packages (core-wasm, viewport, ui, state) — scaffolded in M2
-apps/          desktop (Tauri 2) and web (PWA) shells — scaffolded in M2
+packages/      TypeScript packages: viewport (kernel-to-three.js frame so far); core-wasm, ui, state from M2
+apps/          web (Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (Tauri 2, from M2)
 standards/     Dimensional Standard v1 (CC0) and measurement data
 profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla) and example fit profiles
 parts/         openBrick-native part documents (CC0)
@@ -42,10 +42,11 @@ docs/spikes/   M0 spike reports (kernels, LDraw connectivity)
 
 ```
 cargo xtask check      # fmt, clippy, tests, data validation
+cargo xtask wasm       # WebAssembly core into apps/web/src/wasm/ (pinned wasm-bindgen CLI, size budget)
 cargo run -p openbrick -- standard   # print the Dimensional Standard
 ```
 
-Requires Rust 1.90 or newer (`rust-toolchain.toml` selects stable). Node 22 and pnpm are needed for the device render harness (`pnpm --dir bench/harness dev`; `pnpm test` runs its unit tests) now and for the apps from M2.
+Requires Rust 1.90 or newer (`rust-toolchain.toml` selects stable). Node 22 and pnpm are needed for the device render harness (`pnpm --dir bench/harness dev`) and the web app (`pnpm --dir apps/web start`, which first runs `cargo xtask wasm`; that needs the `wasm32-unknown-unknown` target and `cargo install wasm-bindgen-cli --version =0.2.129 --locked`). `pnpm test` runs their unit tests. See [apps/web/README.md](apps/web/README.md).
 
 ## Install (planned)
 

@@ -154,7 +154,7 @@ Every rule has an id, severity, threshold source and a fix hint. Blockers disabl
 | `TRADEMARK.LOGO` | uploaded artwork matches the blocklist (LEGO marks, minifigure silhouette) | | warning until the Q16 spike passes; then blocker (see [12](12-legal-and-naming.md)) |
 | `SIZE.BED` | part fits the bed in the chosen orientation | bed size | blocker |
 
-The validator runs on the compensated mesh and on the 2D cross-sections (cheaper and more precise for wall and feature checks). Rules that would merely re-check geometry the evaluator built from the profile (for example that a stud equals its chosen cell) are evaluator unit tests, not user-facing rules. Signature: `validate(&Built, &ProcessProfile, Option<&FitProfile>) -> Report`.
+The validator runs on the compensated mesh and on the 2D cross-sections (cheaper and more precise for wall and feature checks). The evaluator's `Measurements` give each wall twice. `minBodyWallMm` and `minTubeWallMm` are the full walls above the first-layer chamfer, which `WALL.MIN` and `TUBE.WALL` test. `minBodyWallAtBedMm` and `minTubeWallAtBedMm` are the walls in the bed plane, after the chamfers on both faces. The evaluator warns when a chamfered wall's first layer is narrower than one line. Rules that would merely re-check geometry the evaluator built from the profile (for example that a stud equals its chosen cell) are evaluator unit tests, not user-facing rules. Signature: `validate(&Built, &ProcessProfile, Option<&FitProfile>) -> Report`.
 
 ## 6. Orientation, supports, hollow roofs
 
@@ -169,9 +169,14 @@ The validator runs on the compensated mesh and on the 2D cross-sections (cheaper
 
 - Writer targets 3MF Core 1.4.0 (3MF is standardised as ISO/IEC 25422:2025), Materials and Properties 1.2.1 (colour groups, per-object and per-triangle colour), Production 1.1.2 (whose text calls itself v1.2; UUIDs). Units millimetres; Z-up.
 - One object per colour role (`body`, `accent`, `serial`) in the part designer; per-part objects under one component object in whole-model export, with an explicit **fuse** option that unions same-colour groups for single-material printing. The spec says producers should not emit overlapping objects, so fuse is a boolean union, not an overlap.
-- Metadata: `openbrick:partId`, `openbrick:version`, `openbrick:contentHash`, `openbrick:fitProfile`, `openbrick:generator`, `openbrick:serial`.
+- Metadata (namespace `https://openbrick3d.org/3mf/metadata/1.0`):
+  - Required: `openbrick:partId`, `openbrick:version`, `openbrick:contentHash`, `openbrick:fitProfile`, `openbrick:process`, `openbrick:generator` and `openbrick:kernel`. The writer refuses blank values.
+  - `openbrick:serial` when the part has one, plus `Title` and `Application`.
+  - Each object names its colour role in `openbrick:role`, and colours are one `m:colorgroup` entry per role.
+  - UUIDs are name-based (v5). They are derived from this metadata and from every object's name, role, colour and stored mesh fingerprint, so a re-export is byte-identical and two different exports never share UUIDs.
+  - Neither extension is listed in `requiredextensions`.
 - Vendor flavours (Bambu/Orca project 3MF with painted colours) are a plugin, version-pinned to the slicer release they were reverse-engineered from, off by default.
-- CI validates every exporter fixture with lib3mf 2.5.0 (BSD-2) and opens it in OrcaSlicer CLI as a smoke test.
+- CI validates every exporter fixture with lib3mf 2.5.0 (BSD-2) in strict mode (`scripts/validate-3mf.py`, job `io-3mf`), which also re-derives every UUID from what lib3mf read. Opening each fixture in OrcaSlicer CLI as a smoke test is backlog item 18.
 
 ## 8. Batch print plates
 
