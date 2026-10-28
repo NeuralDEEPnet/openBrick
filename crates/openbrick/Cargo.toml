@@ -15,9 +15,16 @@ path = "src/main.rs"
 clap = { workspace = true }
 serde_json = { workspace = true }
 openbrick-units = { workspace = true }
+openbrick-geom = { workspace = true }
 openbrick-part = { workspace = true }
 openbrick-print = { workspace = true }
 openbrick-io = { workspace = true }
+
+[dev-dependencies]
+# tests/cli.rs checks the --json output against schemas/report.schema.json and
+# the recorded fit profile against schemas/fit-profile.schema.json. MIT, already
+# in the tree through xtask, with the same features (no remote $ref fetching).
+jsonschema = { version = "0.60.2", default-features = false }
 
 [lints]
 workspace = true

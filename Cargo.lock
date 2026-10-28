@@ -759,6 +759,8 @@ name = "openbrick"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "jsonschema",
+ "openbrick-geom",
  "openbrick-io",
  "openbrick-part",
  "openbrick-print",

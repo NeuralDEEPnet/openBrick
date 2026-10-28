@@ -14,7 +14,12 @@ Usage:
 Each TARGET is either
     fixtures.json   the manifest written by
                     `cargo run -p openbrick-io --example write_fixtures`; every
-                    3MF and STL it lists is checked against its expectations, or
+                    3MF and STL it lists is checked against its expectations,
+    CLI.json        the JSON object of `openbrick build --json` or
+                    `openbrick calibrate coupon --json`, or the coupon's
+                    `--manifest`: every 3MF and STL in its "outputs" is checked
+                    against what the CLI says it wrote (relative paths are
+                    relative to the JSON file), or
     FILE.3mf        any OpenBrick3D export, checked with the generic rules only.
 
 Generic rules for every 3MF, read in lib3mf strict mode:
@@ -58,7 +63,12 @@ UUIDs, the components object's name and each component's object and
 transform, and the model metadata value by value; per STL (read with lib3mf's
 STL reader): triangle count and volume, for the merged file and each per-role
 file. Manifests written before the layout existed are read as the separate
-layout.
+layout. A CLI JSON gets the same 3MF checks
+against the "objects", "buildUuid" and "metadata" of each output; its STL must
+hold exactly the reported triangles (header and size), and lib3mf must read a
+closed, oriented solid of the reported volume (its reader drops triangles that
+become degenerate when it welds vertices, so it may count fewer). A CLI JSON
+whose command failed ("ok": false) fails.
 
 --self-test first writes broken copies of the first 3MF (a flipped triangle, a
 malformed UUID, a missing build item, another unit, a missing and a blank
@@ -771,8 +781,100 @@ class Report:
 
 
 def validate_manifest(path, report):
+    """A write_fixtures manifest or an openbrick CLI JSON object; returns the
+    3MF paths it checked."""
     with open(path, encoding="utf-8") as f:
         manifest = json.load(f)
+    if isinstance(manifest, dict) and "fixtures" in manifest:
+        return validate_fixtures(path, manifest, report)
+    if isinstance(manifest, dict) and "outputs" in manifest:
+        return validate_cli_outputs(path, manifest, report)
+    report.result(
+        path,
+        [
+            "neither a write_fixtures manifest (no \"fixtures\") nor an openbrick "
+            "CLI JSON object (no \"outputs\")"
+        ],
+    )
+    return []
+
+
+def validate_cli_outputs(path, manifest, report):
+    """The 3MF and STL files an `openbrick ... --json` object (or a coupon
+    --manifest) lists, each against the objects, UUIDs and metadata the CLI
+    reports for it."""
+    if manifest.get("ok") is False:
+        report.result(
+            path,
+            [
+                f"the command did not write its output (exit code {manifest.get('exitCode')}): "
+                f"{manifest.get('error') or 'see its report'}"
+            ],
+        )
+        return []
+    base = os.path.dirname(os.path.abspath(path))
+    outputs = [o for o in manifest["outputs"] if o.get("format") in ("3mf", "stl")]
+    if not outputs:
+        report.result(path, ["lists no 3MF or STL output"])
+        return []
+    files = []
+    for o in outputs:
+        file = os.path.join(base, o["path"])
+        label = os.path.relpath(file)
+        if o["format"] == "3mf":
+            files.append(file)
+            model, problems, summary = check_3mf_generic(file)
+            if model is not None:
+                problems += check_3mf_expected(model, o)
+            report.result(label, problems, summary + f", matches {os.path.basename(path)}")
+        else:
+            problems, merged = check_cli_stl(file, o)
+            report.result(
+                label,
+                problems,
+                f"{o['triangles']} triangles ({merged} degenerate once lib3mf's STL reader welds "
+                f"vertices), matches {os.path.basename(path)}",
+            )
+    return files
+
+
+def check_cli_stl(path, entry):
+    """A binary STL the CLI wrote: its header and size hold exactly the
+    triangles the CLI reports, and lib3mf reads a closed, oriented solid of the
+    reported volume. lib3mf's STL reader welds vertices that fall on the same
+    point of its grid and drops the triangles that become degenerate. Kernel
+    meshes carry a few zero-area triangles (coincident vertices that kept
+    separate indices; the 3MF of the same mesh keeps them), so lib3mf may count
+    fewer triangles than the file holds, never more. Returns (problems,
+    triangles dropped)."""
+    problems = []
+    with open(path, "rb") as f:
+        data = f.read()
+    if len(data) < 84:
+        return [f"{len(data)} bytes, shorter than a binary STL header"], 0
+    (count,) = struct.unpack_from("<I", data, 80)
+    if count != entry["triangles"]:
+        problems.append(f"the header counts {count} triangles, the CLI wrote {entry['triangles']}")
+    if len(data) != 84 + 50 * count:
+        problems.append(f"{len(data)} bytes, expected {84 + 50 * count} for {count} triangles")
+    model, read_problems = read(path, "stl")
+    problems += read_problems
+    if model is None:
+        return problems, 0
+    meshes = mesh_objects(model)
+    got = sum(m.GetTriangleCount() for m in meshes)
+    if got > count:
+        problems.append(f"lib3mf read {got} triangles from a file with {count}")
+    for m in meshes:
+        if not m.IsManifoldAndOriented():
+            problems.append("lib3mf finds the mesh not manifold and consistently oriented")
+    volume = sum(geometry(m)[0] for m in meshes)
+    if not close(volume, entry["volumeMm3"]):
+        problems.append(f"volume {volume} mm3, expected {entry['volumeMm3']}")
+    return problems, count - got
+
+
+def validate_fixtures(path, manifest, report):
     if manifest.get("openbrickNamespace") != OPENBRICK_NS:
         report.result(path, [f"manifest namespace {manifest.get('openbrickNamespace')!r}"])
         return []
@@ -1005,7 +1107,10 @@ def main(argv):
             report.result(target, problems, summary)
             threemfs.append(target)
         else:
-            print(f"unknown target {target!r}: pass a fixtures.json or a .3mf", file=sys.stderr)
+            print(
+                f"unknown target {target!r}: pass a fixtures.json, an openbrick CLI .json or a .3mf",
+                file=sys.stderr,
+            )
             return 2
     if run_self_test:
         if not threemfs:
