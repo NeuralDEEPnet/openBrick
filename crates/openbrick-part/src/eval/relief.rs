@@ -86,9 +86,10 @@ pub const MAX_ARTWORK_POINTS: usize = 50_000;
 pub const MAX_ARTWORK_SWEEP: u64 = 10_000_000;
 
 /// Share of the artwork area the opening may remove before the evaluator warns,
-/// in percent. Opening a 13.2 mm square at 0.8 mm only rounds its corners and
-/// removes 0.11 %, which is not worth a warning; a hairline usually removes more
-/// (the sample mark's 1.03 %).
+/// in percent, for a process profile without `maxRemovedAreaPct` (the profile's
+/// value, which rule FEATURE.MIN also uses, wins). Opening a 13.2 mm square at
+/// 0.8 mm only rounds its corners and removes 0.11 %, which is not worth a
+/// warning; a hairline usually removes more (the sample mark's 1.03 %).
 pub const REMOVED_WARN_PCT: f64 = 1.0;
 
 /// A deboss or inlay depth that has to be clamped is rounded down to this grid
@@ -835,7 +836,7 @@ pub(crate) fn plan_relief<K: Kernel>(
         )));
     }
     let removed_pct = (100.0 * (area_before - area_after) / area_before).max(0.0);
-    if removed_pct >= REMOVED_WARN_PCT {
+    if removed_pct >= process.max_removed_area_pct.unwrap_or(REMOVED_WARN_PCT) {
         warnings.push(format!(
             "feature `{}`: the {min_feature} mm opening (minFeature) removed {removed_pct:.1} % of the artwork area: strokes thinner than {min_feature} mm cannot print on {}; the removed regions are in the preview",
             feat.id(),

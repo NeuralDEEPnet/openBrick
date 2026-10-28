@@ -109,10 +109,9 @@
 mod font;
 
 use std::collections::BTreeSet;
-use std::sync::OnceLock;
 
 use openbrick_geom::{CrossSection, GeomError, Kernel, Polygon, Solid};
-use openbrick_print::{Measurements, Offsets, ProcessProfile};
+use openbrick_print::{coupon_v1, CouponCell, CouponSpec, Measurements, Offsets, ProcessProfile};
 use openbrick_units::{ldu_to_mm, LDU_MM, STANDARD};
 use serde_json::json;
 
@@ -137,96 +136,9 @@ pub const MAX_COPIES: u32 = 16;
 pub const PLA_DENSITY_G_CM3: f64 = 1.24;
 
 // ---------------------------------------------------------------------------
-// Coupon data.
-//
-// TODO(integrator): replace CouponSpec, CouponCell and coupon_spec() (with
-// cells_from_plan() and its numbers) by openbrick_print::coupon_v1(), which
-// loads standards/coupon-v1.json into types with the same fields and the same
-// values() method. Until then the sweeps are the table of docs/plan/05
-// section 4, and they appear nowhere else in the code.
+// Coupon data: standards/coupon-v1.json through `openbrick_print::coupon_v1()`,
+// the same sweeps `openbrick calibrate record` and rule CLUTCH.RISK read.
 // ---------------------------------------------------------------------------
-
-/// The coupon data: mirrors `openbrick_print::CouponSpec`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-struct CouponSpec {
-    version: u32,
-    cells: Vec<CouponCell>,
-}
-
-/// One swept quantity: mirrors `openbrick_print::CouponCell`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CouponCell {
-    /// The `chosenCells` key: stud, tube, pocketTubeOD, pocketRib, technicH, ...
-    id: String,
-    label: String,
-    /// The nominal's id in standards/dimensions-v1.json.
-    standard_id: String,
-    start_mm: f64,
-    end_mm: f64,
-    step_mm: f64,
-}
-
-impl CouponCell {
-    /// The swept values from start to end in steps, rounded to a nanometre so
-    /// that start + n x step lands on end exactly.
-    fn values(&self) -> Vec<f64> {
-        if self.step_mm.is_nan() || self.step_mm <= 0.0 || self.end_mm < self.start_mm {
-            return Vec::new();
-        }
-        let n = ((self.end_mm - self.start_mm) / self.step_mm).round() as usize;
-        (0..=n)
-            .map(|i| ((self.start_mm + i as f64 * self.step_mm) * 1e6).round() / 1e6)
-            .collect()
-    }
-}
-
-/// The sweeps of docs/plan/05 section 4 that M1 builds.
-fn cells_from_plan() -> Vec<CouponCell> {
-    let cell = |id: &str, label: &str, standard_id: &str, start, end, step| CouponCell {
-        id: id.into(),
-        label: label.into(),
-        standard_id: standard_id.into(),
-        start_mm: start,
-        end_mm: end,
-        step_mm: step,
-    };
-    vec![
-        cell("stud", "Stud OD", "stud_diameter", 4.60, 4.95, 0.05),
-        cell(
-            "tube",
-            "Tube bore ID",
-            "tube_inner_diameter",
-            4.80,
-            5.05,
-            0.05,
-        ),
-        cell(
-            "pocketTubeOD",
-            "2x2 pocket tube OD",
-            "tube_outer_diameter",
-            6.40,
-            6.65,
-            0.05,
-        ),
-        cell(
-            "pocketRib",
-            "2x2 pocket rib depth",
-            "rib_depth",
-            0.2,
-            0.5,
-            0.05,
-        ),
-    ]
-}
-
-fn coupon_spec() -> &'static CouponSpec {
-    static SPEC: OnceLock<CouponSpec> = OnceLock::new();
-    SPEC.get_or_init(|| CouponSpec {
-        version: 1,
-        cells: cells_from_plan(),
-    })
-}
 
 /// The coupon-wide settings of the coupon data.
 struct PlanDefaults {
@@ -236,16 +148,15 @@ struct PlanDefaults {
     label_stroke_mm: f64,
 }
 
-/// Docs/plan/05 section 4: "two identical rows (repeatability)" and "Each cell
-/// has an embossed label (relief 0.6 mm, stroke 0.8 mm)".
-// TODO(integrator): read these from openbrick_print::coupon_v1() as well
-// (`copies` and `label.reliefMm` / `label.strokeMm` in coupon-v1.json), so the
-// coupon data is the one source of the copies and the label size.
+/// `copies` and the embossed label of the coupon data (docs/plan/05 section 4:
+/// "two identical rows (repeatability)" and "Each cell has an embossed label
+/// (relief 0.6 mm, stroke 0.8 mm)").
 fn defaults_from_plan() -> PlanDefaults {
+    let spec = coupon_v1();
     PlanDefaults {
-        copies: 2,
-        label_relief_mm: 0.6,
-        label_stroke_mm: 0.8,
+        copies: spec.copies,
+        label_relief_mm: spec.label.relief_mm,
+        label_stroke_mm: spec.label.stroke_mm,
     }
 }
 
@@ -839,7 +750,7 @@ fn plan_coupon(process: &ProcessProfile, opts: &CouponOptions) -> Result<Plan, E
         )));
     }
 
-    let spec = coupon_spec();
+    let spec = coupon_v1();
     let (lines, unbuilt) = plan_lines(spec, opts.pockets)?;
     let lines = lines
         .into_iter()
@@ -1181,7 +1092,7 @@ fn content_hash(kernel_id: &str, process: &ProcessProfile, opts: &CouponOptions)
         "process": process.id,
         "processProfile": serde_json::to_value(process).unwrap_or(serde_json::Value::Null),
         "options": options,
-        "couponData": serde_json::to_value(coupon_spec()).unwrap_or(serde_json::Value::Null),
+        "couponData": serde_json::to_value(coupon_v1()).unwrap_or(serde_json::Value::Null),
     });
     sha256_hex(canonical_json(&content).as_bytes())
 }
@@ -1292,6 +1203,8 @@ pub fn build_coupon<K: Kernel>(
             warnings,
             kernel_id: kernel.id(),
             content_hash,
+            fused: None,
+            artwork: None,
         },
         cells: layout.cells,
         summary: layout.summary,
@@ -1306,7 +1219,7 @@ mod tests {
     #[test]
     fn sweeps_run_from_start_to_end_in_steps() {
         // tests/coupon.rs checks the values against docs/plan/05 itself.
-        for c in &coupon_spec().cells {
+        for c in &coupon_v1().cells {
             let v = c.values();
             assert!(v.len() > 1, "{}", c.id);
             assert_eq!(v[0], c.start_mm, "{}", c.id);
@@ -1321,7 +1234,7 @@ mod tests {
         // Every row the generator builds finds its sweeps.
         for row in ROWS {
             for id in row.sweeps {
-                assert!(coupon_spec().cells.iter().any(|c| c.id == *id), "{id}");
+                assert!(coupon_v1().cells.iter().any(|c| c.id == *id), "{id}");
             }
         }
     }
@@ -1347,7 +1260,7 @@ mod tests {
 
     #[test]
     fn every_standard_id_names_a_dimension() {
-        for c in &coupon_spec().cells {
+        for c in &coupon_v1().cells {
             assert!(
                 STANDARD.get().feature(&c.standard_id).is_some(),
                 "{}: {}",
@@ -1358,13 +1271,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_and_backward_sweeps_have_no_values() {
-        let mut c = cells_from_plan().remove(0);
-        c.step_mm = 0.0;
-        assert!(c.values().is_empty());
-        c.step_mm = 0.05;
-        c.end_mm = c.start_mm - 1.0;
-        assert!(c.values().is_empty());
+    fn a_sweep_without_positive_values_is_refused() {
+        let mut c = coupon_v1().cells[0].clone();
+        c.start_mm = -0.2;
+        c.end_mm = -0.1;
         assert!(sweep_values(&c).is_err());
     }
 

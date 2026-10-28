@@ -1178,3 +1178,36 @@ fn outlines_too_complex_to_sweep_are_refused_quickly() {
     eprintln!("4,000-tooth comb refused in {took:?}");
     assert!(took.as_secs() < 10, "{took:?}");
 }
+
+/// Rule FEATURE.MIN blocks damaged artwork only when the artwork is
+/// fit-critical (a label someone reads to calibrate); the evaluator tells the
+/// validator which through `Measurements::fit_critical_artwork`.
+#[test]
+fn fit_critical_artwork_turns_feature_min_into_a_blocker() {
+    let mark = include_bytes!("../../../parts/assets/mark.svg").to_vec();
+    let fit = openbrick_print::example_fit_profile();
+    let p = fdm();
+    let check = |doc: &PartDoc| {
+        let assets = MemoryAssets::new().with("art.svg", mark.clone());
+        let params = ParamValues::default().with("logo", json!("art.svg"));
+        let built = run_with_assets(doc, &params, &p, Some(&fit), &assets, false).expect("builds");
+        let report = openbrick_part::validate(&built, &p, Some(&fit));
+        let feature_min: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.rule == "FEATURE.MIN")
+            .map(|f| f.severity)
+            .collect();
+        (built.measurements.fit_critical_artwork, feature_min)
+    };
+
+    // The sample mark loses 1.03 % of its area to the opening, above the 1 %
+    // maxRemovedAreaPct of fdm-0.4, so FEATURE.MIN fires either way.
+    let (critical, severities) = check(&logo_tile());
+    assert!(!critical);
+    assert_eq!(severities, vec![openbrick_print::Severity::Warning]);
+
+    let (critical, severities) = check(&logo_tile_with_art_field("fitCritical", json!(true)));
+    assert!(critical);
+    assert_eq!(severities, vec![openbrick_print::Severity::Blocker]);
+}

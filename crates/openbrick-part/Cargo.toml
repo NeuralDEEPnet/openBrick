@@ -22,11 +22,8 @@ simplecss = { workspace = true }
 
 [dev-dependencies]
 # tests/eval_relief.rs writes the relief objects with the 3MF and STL writers,
-# whose closed-mesh checks prove the objects touch without breaking a shell.
-openbrick-io = { workspace = true }
-
-[dev-dependencies]
-# The coupon example writes the coupon as 3MF and STL.
+# whose closed-mesh checks prove the objects touch without breaking a shell; the
+# coupon example writes the coupon as 3MF and STL.
 openbrick-io = { workspace = true }
 
 [lints]
