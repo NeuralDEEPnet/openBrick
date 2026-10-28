@@ -48,7 +48,7 @@
         "message": "the thinnest stroke of the artwork was not measured: the artwork is too detailed for the stroke estimate's work limit, so nothing shows that its strokes reach the 0.8 mm minimum feature of process `fdm-0.4`",
         "rule": "FEATURE.MIN",
         "severity": "warning",
-        "threshold": null,
+        "threshold": 0.8,
         "value": null
       }
     ]

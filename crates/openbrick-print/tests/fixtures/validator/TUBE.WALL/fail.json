@@ -1,5 +1,5 @@
 {
-  "description": "A 0.65 mm tube wall under minTubeWallMm 0.7: blocker. The rule reads only minTubeWallMm, so the tube diameters are left out rather than contradict it.",
+  "description": "A 0.65 mm tube wall under minTubeWallMm 0.7: blocker. The finding reads only the measured minTubeWallMm (the warning hint also reads tubeOuterDiameterMm when it is present, see fail-warning-grown), so the tube diameters are left out rather than contradict the wall.",
   "rule": "TUBE.WALL",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",

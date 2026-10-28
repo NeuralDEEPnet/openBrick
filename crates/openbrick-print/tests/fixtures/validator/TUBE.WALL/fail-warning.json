@@ -1,5 +1,5 @@
 {
-  "description": "A 0.75 mm tube wall: printable (at least 0.7) but under the recommended 0.8 mm: warning. The rule reads only minTubeWallMm, so the tube diameters are left out rather than contradict it.",
+  "description": "A 0.75 mm tube wall: printable (at least 0.7) but under the recommended 0.8 mm: warning. The finding reads only the measured minTubeWallMm, and its hint also reads tubeOuterDiameterMm when it is present (see fail-warning-grown), so the tube diameters are left out rather than contradict the wall.",
   "rule": "TUBE.WALL",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",

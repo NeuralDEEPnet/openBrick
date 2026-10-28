@@ -482,7 +482,10 @@ pub struct Finding {
     /// The measured value (millimetres unless the rule says otherwise, see
     /// [`validate()`]); `None` when the rule measures no number.
     pub value: Option<f64>,
-    /// The threshold the value broke, in the unit of `value`.
+    /// The threshold the value broke, in the unit of `value`; `None` when the
+    /// rule has no numeric threshold. A rule with a threshold but no measured
+    /// value (`FEATURE.MIN` on an artwork stroke that was not measured) keeps
+    /// the threshold.
     pub threshold: Option<f64>,
     /// What to change, kindly worded.
     pub fix: String,

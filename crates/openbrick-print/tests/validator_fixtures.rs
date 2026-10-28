@@ -168,12 +168,35 @@ fn write_fixture(doc: &Value) -> String {
     format!("{{\n{}\n}}\n", fields.join(",\n"))
 }
 
-/// Whether `message` shows `x` as a number of its own, written with zero to
-/// six decimals, with or without trailing zeros (the validator writes lengths
-/// with at most three decimals and trailing zeros dropped, and percentages
-/// with one decimal or more): `0.8` is found in "is 0.8 mm" but not in
-/// "is 0.85 mm" or "10.8".
-fn shows_number(message: &str, x: f64) -> bool {
+/// A length as the validator writes it (`mm()` in validate.rs): at most three
+/// decimals, trailing zeros dropped (0.8, 0.857, 4.95).
+fn as_mm(x: f64) -> String {
+    let s = format!("{x:.3}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" {
+        "0".into()
+    } else {
+        s.into()
+    }
+}
+
+/// A percentage above `max` as the validator writes it (`pct_above()` in
+/// validate.rs): one decimal, or as many more as it takes to read as above
+/// `max` (1.03, not 1.0, against 1); `None` when `x` is not above `max`.
+fn as_pct_above(x: f64, max: f64) -> Option<String> {
+    (1..=12usize)
+        .map(|places| format!("{x:.places$}"))
+        .find(|s| s.parse::<f64>().is_ok_and(|v| v > max))
+}
+
+/// Whether `message` shows `x` as a number of its own, in a form the validator
+/// writes: as a length ([`as_mm`]) anywhere, or, when `above` is given, as a
+/// percentage above it ([`as_pct_above`]) followed by ` %`. No other rounding
+/// counts, so a value whose coarser rounding equals another number of the
+/// message (0.65 as the "0.7" of its threshold, 1.03 % as the "1" of "1 %") is
+/// not found there. `0.8` is found in "is 0.8 mm" but not in "is 0.85 mm",
+/// "10.8" or `fdm-0.8`.
+fn shows_number(message: &str, x: f64, above: Option<f64>) -> bool {
     let bytes = message.as_bytes();
     // Digits inside a word or an id such as `fdm-0.4` are not a number of their own.
     let joined = |i: usize| {
@@ -183,7 +206,7 @@ fn shows_number(message: &str, x: f64) -> bool {
             || c == b'_'
             || (c == b'-' && i > 0 && bytes[i - 1].is_ascii_alphanumeric())
     };
-    let found = |s: &str| {
+    let found = |s: &str, suffix: &str| {
         message.match_indices(s).any(|(at, _)| {
             let end = at + s.len();
             let before = at == 0 || !joined(at - 1);
@@ -191,33 +214,61 @@ fn shows_number(message: &str, x: f64) -> bool {
             let after = end == bytes.len()
                 || !(bytes[end].is_ascii_digit()
                     || (bytes[end] == b'.' && bytes.get(end + 1).is_some_and(u8::is_ascii_digit)));
-            before && after
+            before && after && message[end..].starts_with(suffix)
         })
     };
-    (0..=6).any(|places| {
-        let s = format!("{x:.places$}");
-        let trimmed = if s.contains('.') {
-            s.trim_end_matches('0').trim_end_matches('.').to_string()
-        } else {
-            s.clone()
-        };
-        found(&s) || found(&trimmed)
-    })
+    found(&as_mm(x), "")
+        || above
+            .and_then(|max| as_pct_above(x, max))
+            .is_some_and(|s| found(&s, " %"))
 }
 
 #[test]
-fn numbers_are_found_only_on_their_own() {
-    assert!(shows_number("the wall is 0.8 mm", 0.8));
-    assert!(shows_number("the wall is 0.80 mm", 0.8));
-    assert!(shows_number("removed 1.03 % of it", 1.0324211814310704));
-    assert!(shows_number("ends at 4.95.", 4.95));
-    assert!(shows_number("the volume is -5 mm3", -5.0));
-    assert!(!shows_number("the wall is 0.85 mm", 0.8));
-    assert!(!shows_number("process `fdm-0.4`", 0.8));
-    assert!(!shows_number("process `fdm-0.4`", 0.4));
-    assert!(!shows_number("profile `mk4s-petg`", 4.0));
-    assert!(!shows_number("is 10.8 mm", 0.8));
-    assert!(!shows_number("is 0.8.1", 0.8));
+fn numbers_are_found_only_on_their_own_and_as_the_validator_writes_them() {
+    assert!(shows_number("the wall is 0.8 mm", 0.8, None));
+    assert!(shows_number(
+        "the wall is 0.857 mm",
+        0.857_142_857,
+        Some(0.8)
+    ));
+    assert!(shows_number("ends at 4.95.", 4.95, None));
+    assert!(shows_number("the volume is -5 mm3", -5.0, Some(0.0)));
+    assert!(shows_number(
+        "removed 1.03 % of it",
+        1.0324211814310704,
+        Some(1.0)
+    ));
+    assert!(shows_number("by 10.0 %, more than 5 %", 10.0, Some(5.0)));
+    assert!(shows_number("by 10.0 %, more than 5 %", 5.0, None));
+    assert!(!shows_number("the wall is 0.85 mm", 0.8, None));
+    assert!(!shows_number("process `fdm-0.4`", 0.8, None));
+    assert!(!shows_number("process `fdm-0.4`", 0.4, None));
+    assert!(!shows_number("profile `mk4s-petg`", 4.0, None));
+    assert!(!shows_number("is 10.8 mm", 0.8, None));
+    assert!(!shows_number("is 0.8.1", 0.8, None));
+    // A message that lost its value must not pass on its threshold: these are
+    // the TUBE.WALL and FEATURE.MIN fixture messages without their values.
+    assert!(!shows_number(
+        "below the 0.7 mm minimum tube wall",
+        0.65,
+        Some(0.7)
+    ));
+    assert!(!shows_number(
+        "below the recommended 0.8 mm",
+        0.75,
+        Some(0.8)
+    ));
+    assert!(!shows_number(
+        "removed  % of the artwork area, more than the 1 % allowed",
+        1.0324211814310704,
+        Some(1.0)
+    ));
+    // A percentage form counts only as a percentage.
+    assert!(!shows_number(
+        "removed 1.03 mm",
+        1.0324211814310704,
+        Some(1.0)
+    ));
 }
 
 fn json_files(dir: &Path) -> Vec<PathBuf> {
@@ -287,11 +338,15 @@ fn every_rule_passes_and_fails_its_fixtures() {
                 for f in findings {
                     // A finding's message shows the value and the threshold it
                     // carries (CLAUDE.md), as numbers of their own.
-                    for (what, x) in [("value", f.value), ("threshold", f.threshold)] {
+                    let forms = [
+                        ("value", f.value, f.threshold),
+                        ("threshold", f.threshold, None),
+                    ];
+                    for (what, x, above) in forms {
                         let Some(x) = x else { continue };
                         if !x.is_finite() {
                             problems.push(format!("{shown}: {what} {x} is not finite"));
-                        } else if !shows_number(&f.message, x) {
+                        } else if !shows_number(&f.message, x, above) {
                             problems.push(format!(
                                 "{shown}: message does not show its {what} {x}: {}",
                                 f.message

@@ -1,5 +1,5 @@
 {
-  "description": "A tube wall of exactly the recommended 0.8 mm. The rule reads only minTubeWallMm, so the tube diameters are left out rather than contradict it.",
+  "description": "A tube wall of exactly the recommended 0.8 mm. The rule's findings read only the measured minTubeWallMm (the warning hint also reads tubeOuterDiameterMm when it is present, see fail-warning-grown), so the tube diameters are left out rather than contradict the wall.",
   "rule": "TUBE.WALL",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",

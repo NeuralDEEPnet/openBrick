@@ -14,7 +14,10 @@
 //! deviation and percent tolerance; on a volume that is not positive, the volume
 //! in mm3 against 0, and on one that is not a finite number, both null),
 //! `FEATURE.MIN` on the removed area (percent of the artwork area) and
-//! `MESH.MANIFOLD` on an empty mesh (component count).
+//! `MESH.MANIFOLD` on an empty mesh (component count). A rule that measured
+//! no number has a null value; its threshold is null too, except on an artwork
+//! stroke that was not measured, which carries the `minFeatureMm` it could not
+//! be compared with.
 //!
 //! **One frame for lengths in the bed plane.** The measurements are taken on the
 //! compensated mesh, after fit offsets and the fit profile's `xyScale`. `xyScale`
@@ -54,8 +57,11 @@
 //!   no `min_stroke_mm`, because the estimate ran out of its work budget); and
 //!   the share of the artwork area the opening removed
 //!   ([`Measurements::removed_area_pct`]) more than the process's
-//!   `maxRemovedAreaPct` (exactly that much passes; the evaluator's
-//!   removed-area warning uses the same boundary). All three are blockers when
+//!   `maxRemovedAreaPct` (exactly that much passes). The evaluator's
+//!   removed-area warning in openbrick-part is meant to use the same boundary,
+//!   but until its comparison changes from `>=` to `>` (the part lane's change
+//!   to `eval/relief.rs`) it also warns at exactly `maxRemovedAreaPct`, where
+//!   this rule passes. All three are blockers when
 //!   the part's artwork is fit-critical ([`Measurements::fit_critical_artwork`],
 //!   a label someone reads to calibrate, which must print as drawn) and
 //!   warnings otherwise. The opening also rounds convex corners (round joins of
@@ -207,13 +213,35 @@ impl Report {
 /// A length for messages: at most three decimals, trailing zeros dropped
 /// (0.8, 0.857, 4.95).
 fn mm(x: f64) -> String {
-    let s = format!("{x:.3}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
+    decimals(x, 3)
+}
+
+/// `x` with at most `places` decimals, trailing zeros dropped.
+fn decimals(x: f64, places: usize) -> String {
+    let s = format!("{x:.places$}");
+    let s = if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        &s
+    };
     if s == "-0" {
         "0".into()
     } else {
         s.into()
     }
+}
+
+/// Two different numbers written as [`mm`] writes them, or with as many more
+/// decimals as it takes to tell them apart (xyScale 0.9998 against 1, not 1
+/// against 1): a message never shows a difference as two equal numbers.
+fn apart(a: f64, b: f64) -> (String, String) {
+    for places in 3..=12 {
+        let (x, y) = (decimals(a, places), decimals(b, places));
+        if x != y {
+            return (x, y);
+        }
+    }
+    (format!("{a}"), format!("{b}"))
 }
 
 /// `1 component`, `2 components`.
@@ -402,10 +430,10 @@ impl Validator<'_> {
                 "MESH.VOLUME",
                 Severity::Warning,
                 format!(
-                    "the mesh volume {} mm3 differs from the sum of its feature volumes {} mm3 by {:.1} %, more than {} %",
+                    "the mesh volume {} mm3 differs from the sum of its feature volumes {} mm3 by {} %, more than {} %",
                     mm(m.volume_mm3),
                     mm(expected),
-                    deviation,
+                    pct_above(deviation, tol),
                     mm(tol)
                 ),
                 Some(deviation),
@@ -660,7 +688,8 @@ impl Validator<'_> {
             }
         } else if has_artwork {
             // The stroke estimate ran out of its work budget: no number shows
-            // that the strokes reach the minimum, so the rule measured nothing.
+            // that the strokes reach the minimum. The value is null, and the
+            // threshold is the minimum it could not be compared with.
             let msg = format!(
                 "the thinnest stroke of the {artwork} was not measured: the artwork is too detailed for the stroke estimate's work limit, so nothing shows that its strokes reach the {} mm minimum feature {}",
                 mm(min),
@@ -671,7 +700,7 @@ impl Validator<'_> {
             } else {
                 "simplify the artwork (fewer, smoother outlines; Inkscape: Path > Simplify) if you want its strokes checked; the opening still removed every stroke thinner than the relief.svg feature's minFeature (the process minimum unless the feature sets one), so you may export as it is".to_string()
             };
-            self.push("FEATURE.MIN", severity, msg, None, None, fix);
+            self.push("FEATURE.MIN", severity, msg, None, Some(min), fix);
         }
         if let (Some(pct), Some(max)) = (self.m.removed_area_pct, self.p.max_removed_area_pct) {
             // More than maxRemovedAreaPct is reported; exactly that much passes.
@@ -804,14 +833,16 @@ impl Validator<'_> {
                 });
             if let Some(key) = differs {
                 let unit = if key == "xyScale" { "" } else { " mm" };
+                let (b, g) = apart(
+                    built.get(key).unwrap_or(f64::NAN),
+                    given.get(key).unwrap_or(f64::NAN),
+                );
                 self.push(
                     "FIT.PROCESS",
                     Severity::Blocker,
                     format!(
-                        "the part was built with other offsets than fit profile `{}` holds now (for example {key} {}{unit} built, {}{unit} given): it was built with another recording of that profile",
-                        fit.id,
-                        mm(built.get(key).unwrap_or(f64::NAN)),
-                        mm(given.get(key).unwrap_or(f64::NAN))
+                        "the part was built with other offsets than fit profile `{}` holds now (for example {key} {b}{unit} built, {g}{unit} given): it was built with another recording of that profile",
+                        fit.id
                     ),
                     None,
                     None,
@@ -1025,10 +1056,51 @@ mod tests {
         assert_eq!(pct_above(3.1, 1.0), "3.1");
         assert_eq!(pct_above(40.0, 1.0), "40.0");
         assert_eq!(pct_above(1.0000004, 1.0), "1.0000004");
+        // MESH.VOLUME: a 5.04 % deviation against 5 %, not "5.0 %, more than 5 %".
+        assert_eq!(pct_above(5.04, 5.0), "5.04");
         for (pct, max) in [(1.0 + 2e-9, 1.0), (0.11, 0.1), (99.99, 99.9)] {
             let shown: f64 = pct_above(pct, max).parse().expect("a number");
             assert!(shown > max, "{pct} against {max}");
         }
+    }
+
+    #[test]
+    fn different_numbers_read_as_different() {
+        assert_eq!(apart(0.1, 0.0), ("0.1".into(), "0".into()));
+        assert_eq!(apart(0.9998, 1.0), ("0.9998".into(), "1".into()));
+        assert_eq!(apart(0.15, 0.150002), ("0.15".into(), "0.150002".into()));
+        assert_eq!(apart(-0.0000004, 0.0), ("-0.0000004".into(), "0".into()));
+    }
+
+    #[test]
+    fn same_profile_id_with_a_slightly_other_scale_shows_both_scales() {
+        // A hand-edited xyScale 0.9998 against the profile's 1: mm() would
+        // write both as 1.
+        let fit = example_fit_profile();
+        let mut built = fit.offsets_mm.clone();
+        built.xy_scale = 0.9998;
+        let m = Measurements {
+            process: "fdm-0.4".into(),
+            fit_profile: Some(fit.id.clone()),
+            fit_offsets: Some(built),
+            components: 1,
+            is_manifold: true,
+            volume_mm3: 100.0,
+            feature_volume_sum_mm3: 100.0,
+            ..Measurements::default()
+        };
+        let r = validate(&m, &fdm04(), Some(&fit));
+        assert_eq!(r.findings.len(), 1, "{:#?}", r.findings);
+        let f = &r.findings[0];
+        assert_eq!(
+            (f.rule.as_str(), f.severity),
+            ("FIT.PROCESS", Severity::Blocker)
+        );
+        assert!(
+            f.message.contains("xyScale 0.9998 built, 1 given"),
+            "{}",
+            f.message
+        );
     }
 
     #[test]

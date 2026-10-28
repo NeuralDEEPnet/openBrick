@@ -56,7 +56,7 @@
           "type": ["number", "null"]
         },
         "threshold": {
-          "description": "The threshold the value broke, in the unit of value (0 for a volume that is not positive); null with a null value.",
+          "description": "The threshold the value broke, in the unit of value (0 for a volume that is not positive). Null when the rule has no numeric threshold (FIT.PROCESS, FIT.MISSING, a non-manifold mesh, a volume that is not a finite number); an artwork stroke that was not measured has a null value but keeps its threshold, minFeatureMm.",
           "type": ["number", "null"]
         },
         "fix": {
