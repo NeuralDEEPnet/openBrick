@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- Hostile fixture: the billion laughs entity expansion. -->
+<!DOCTYPE svg [
+  <!ENTITY a "aaaaaaaaaa">
+  <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+  <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">
+  <!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">
+  <!ENTITY e "&d;&d;&d;&d;&d;&d;&d;&d;&d;&d;">
+  <!ENTITY f "&e;&e;&e;&e;&e;&e;&e;&e;&e;&e;">
+]>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <title>&f;&f;&f;&f;&f;&f;&f;&f;&f;&f;</title>
+  <rect width="10" height="10"/>
+</svg>

@@ -22,6 +22,8 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 # Nominal brick dimensions (module `nominal`) come from the Dimensional Standard.
 openbrick-units = { workspace = true }
+# Fill rules and booleans of plain 2D regions (module `region`), for every backend.
+clipper2-rust = { workspace = true }
 # Pinned exactly: the kernel id in content hashes names this version.
 manifold-rust = { version = "=0.19.1", optional = true }
 # Both pinned exactly because the kernel id in content hashes names these versions

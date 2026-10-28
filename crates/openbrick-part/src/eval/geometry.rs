@@ -17,7 +17,7 @@ use openbrick_geom::{CrossSection, GeomError, Kernel, Polygon};
 
 /// How far a cutter reaches past the solid it cuts. Any positive length works;
 /// it is not a brick dimension.
-const OVERSHOOT_MM: f64 = 1.0;
+pub(crate) const OVERSHOOT_MM: f64 = 1.0;
 
 /// Kernel calls with the `xyScale` applied to every horizontal coordinate.
 pub(crate) struct Geo<'k, K: Kernel> {

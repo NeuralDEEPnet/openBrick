@@ -8,6 +8,8 @@
 //! polygon types so that no other crate depends on a kernel directly. Module
 //! `nominal` builds nominal bricks from the Dimensional Standard over any kernel,
 //! for the render harness and the browser pipeline until the part evaluator exists.
+//! Module `region` resolves fill rules and booleans of plain 2D regions (artwork)
+//! through Clipper2, the same way for every backend.
 //!
 //! Backends agree on volume and topology but may tessellate differently, so a mesh
 //! fingerprint is only meaningful together with its kernel id: never mix content
@@ -21,6 +23,7 @@ pub mod manifold_rust;
 pub mod manifold_csg;
 
 pub mod nominal;
+pub mod region;
 
 /// A closed polygon in millimetres (counter-clockwise outer, clockwise holes).
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]

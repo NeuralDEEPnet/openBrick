@@ -60,7 +60,34 @@ pub fn run(
     fit: Option<&FitProfile>,
     skip_unsupported: bool,
 ) -> Result<Built, EvalError> {
-    let assets = MemoryAssets::new();
+    run_with_assets(
+        doc,
+        params,
+        process,
+        fit,
+        &MemoryAssets::new(),
+        skip_unsupported,
+    )
+}
+
+/// The sample artwork the logo tile names by default.
+pub fn mark_svg() -> Vec<u8> {
+    include_bytes!("../../../../parts/assets/mark.svg").to_vec()
+}
+
+/// The assets of the example parts in parts/, by the names the parts use.
+pub fn example_assets() -> MemoryAssets {
+    MemoryAssets::new().with("assets/mark.svg", mark_svg())
+}
+
+pub fn run_with_assets(
+    doc: &PartDoc,
+    params: &ParamValues,
+    process: &ProcessProfile,
+    fit: Option<&FitProfile>,
+    assets: &MemoryAssets,
+    skip_unsupported: bool,
+) -> Result<Built, EvalError> {
     evaluate(
         &ManifoldRust,
         &EvalInput {
@@ -68,7 +95,7 @@ pub fn run(
             params,
             process,
             fit,
-            assets: &assets,
+            assets,
             skip_unsupported,
         },
     )

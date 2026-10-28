@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10">
+  <!-- Hostile fixture: images pointing at a local file, a URL and inline data.
+       None is ever resolved; the square still builds, with a warning. -->
+  <rect width="10" height="10"/>
+  <image href="/etc/hostname" width="10" height="10"/>
+  <image xlink:href="https://example.com/logo.png" width="10" height="10"/>
+  <image href="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg'&gt;&lt;rect width='5' height='5'/&gt;&lt;/svg&gt;" width="10" height="10"/>
+</svg>

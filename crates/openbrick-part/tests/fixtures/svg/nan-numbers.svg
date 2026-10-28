@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <!-- Hostile fixture: numbers that are not numbers, or overflow. -->
+  <rect x="NaN" y="nan" width="inf" height="Infinity"/>
+  <rect width="1e999" height="-1e999"/>
+  <path d="M 0 0 L NaN 5 L 1e400 1e400 Z"/>
+  <circle cx="5" cy="5" r="NaN"/>
+  <g transform="scale(NaN)"><rect width="1" height="1"/></g>
+</svg>

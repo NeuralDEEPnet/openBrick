@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OpenBrick3D sample mark: a hexagon ring with a hub and an axle.
+  An original geometric design by the OpenBrick3D contributors, dedicated to the
+  public domain under CC0 1.0 (SPDX-License-Identifier: CC0-1.0).
+  It is the default artwork of parts/ndn.logo-tile.obpart.json. The ring is one
+  even-odd path (two hexagons drawn the same way round); the hub is a circle, so
+  its curves are flattened; the 1.5-unit spoke above the hub is a hairline that
+  the 0.8 mm morphological opening removes on a 2x4 tile (about 0.25 mm wide
+  there), to show the removed region in the preview.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <title>OpenBrick3D sample mark</title>
+  <g fill="#1f2937">
+    <path fill-rule="evenodd"
+          d="M50 2 L91.569 26 L91.569 74 L50 98 L8.431 74 L8.431 26 Z
+             M50 14 L81.177 32 L81.177 68 L50 86 L18.823 68 L18.823 32 Z"/>
+    <circle cx="50" cy="50" r="14"/>
+    <rect x="18" y="46" width="20" height="8"/>
+    <rect x="62" y="46" width="20" height="8"/>
+    <rect x="49.25" y="13.5" width="1.5" height="23"/>
+  </g>
+</svg>

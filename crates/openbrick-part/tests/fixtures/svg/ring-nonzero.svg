@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Test fixture (CC0-1.0): the same two circles as ring-evenodd.svg under the
+       nonzero rule. The inner circle has winding number 2, so it is filled: a disc. -->
+  <path fill-rule="nonzero"
+        d="M90 50 A40 40 0 1 1 10 50 A40 40 0 1 1 90 50 Z
+           M70 50 A20 20 0 1 1 30 50 A20 20 0 1 1 70 50 Z"/>
+</svg>

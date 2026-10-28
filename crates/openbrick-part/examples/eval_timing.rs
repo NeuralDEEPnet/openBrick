@@ -5,16 +5,24 @@
 //! ```text
 //! cargo run --release -p openbrick-part --example eval_timing
 //! cargo run --release -p openbrick-part --example eval_timing -- 2x4:brick 6x16:plate
+//! cargo run --release -p openbrick-part --example eval_timing -- logo logo:deboss
 //! ```
 //!
-//! Each argument is `<x>x<y>:<tile|plate|brick>`. Every part is built with studs
-//! (except tiles) and a tube field on the nominal fdm-0.4 process with the example
-//! fit profile, three times; the table shows the fastest run.
+//! Each argument is `<x>x<y>:<tile|plate|brick>`, or `logo[:<emboss|deboss|inlay>]`
+//! for the example 2x4 logo tile (parts/ndn.logo-tile.obpart.json) with its
+//! artwork parts/assets/mark.svg (relief.svg, backlog item 9). Every brick or
+//! plate is built with studs (except tiles) and a tube field on the nominal
+//! fdm-0.4 process with the example fit profile, three times; the table shows
+//! the fastest run.
 
 use std::time::Instant;
 
 use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_part::{evaluate, EvalInput, MemoryAssets, ParamValues, PartDoc};
+use serde_json::json;
+
+const LOGO_TILE: &str = include_str!("../../../parts/ndn.logo-tile.obpart.json");
+const MARK_SVG: &[u8] = include_bytes!("../../../parts/assets/mark.svg");
 use openbrick_print::{default_process_profiles, example_fit_profile};
 
 fn doc(x: u32, y: u32, kind: &str) -> PartDoc {
@@ -47,6 +55,9 @@ fn main() {
             "2x4:brick",
             "1x4:plate",
             "6x16:plate",
+            "logo",
+            "logo:deboss",
+            "logo:inlay",
         ]
         .map(String::from)
         .to_vec();
@@ -63,11 +74,19 @@ fn main() {
         "part", "best ms", "tris", "volume mm3", "genus", "comps", "connectors"
     );
     for arg in args {
-        let (size, kind) = arg.split_once(':').unwrap_or((arg.as_str(), "brick"));
-        let (x, y) = size.split_once('x').expect("size like 2x4");
-        let d = doc(x.parse().expect("x"), y.parse().expect("y"), kind);
-        let params = ParamValues::new();
-        let assets = MemoryAssets::new();
+        let (size, kind) = arg.split_once(':').unwrap_or((arg.as_str(), ""));
+        let mut params = ParamValues::new();
+        let assets = MemoryAssets::new().with("assets/mark.svg", MARK_SVG.to_vec());
+        let d = if size == "logo" {
+            if !kind.is_empty() {
+                params = params.with("relief", json!(kind));
+            }
+            PartDoc::parse(LOGO_TILE).expect("the logo tile parses")
+        } else {
+            let (x, y) = size.split_once('x').expect("size like 2x4");
+            let kind = if kind.is_empty() { "brick" } else { kind };
+            doc(x.parse().expect("x"), y.parse().expect("y"), kind)
+        };
         let input = EvalInput {
             doc: &d,
             params: &params,
@@ -96,5 +115,12 @@ fn main() {
             m.components,
             b.connectors.len()
         );
+        if let (Some(pct), Some(h)) = (m.removed_area_pct, m.relief_height_mm) {
+            println!(
+                "{:<12} relief {h:.3} mm, opening removed {pct:.2} %, thinnest stroke {:.3} mm",
+                "",
+                m.min_stroke_mm.unwrap_or(f64::NAN)
+            );
+        }
     }
 }

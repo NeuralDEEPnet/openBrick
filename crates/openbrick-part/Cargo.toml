@@ -15,6 +15,13 @@ sha2 = { workspace = true }
 openbrick-units = { workspace = true }
 openbrick-geom = { workspace = true }
 openbrick-print = { workspace = true }
+# SVG artwork of relief.svg (src/eval/relief.rs), without fonts or image decoding.
+usvg = { workspace = true }
+
+[dev-dependencies]
+# tests/eval_relief.rs writes the relief objects with the 3MF and STL writers,
+# whose closed-mesh checks prove the objects touch without breaking a shell.
+openbrick-io = { workspace = true }
 
 [lints]
 workspace = true

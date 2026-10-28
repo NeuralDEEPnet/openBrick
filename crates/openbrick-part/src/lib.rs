@@ -7,7 +7,7 @@ pub mod eval;
 mod validate;
 
 pub use eval::{
-    evaluate, AssetResolver, Built, Connector, ConnectorSection, EvalError, EvalInput,
+    evaluate, Artwork, AssetResolver, Built, Connector, ConnectorSection, EvalError, EvalInput,
     MemoryAssets, ParamValues, ResolvedParams, RoleMesh, SectionShape,
 };
 pub use validate::validate;

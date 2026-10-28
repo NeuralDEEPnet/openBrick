@@ -37,32 +37,44 @@ fn unsupported(r: Result<openbrick_part::Built, EvalError>) -> (String, String, 
 }
 
 #[test]
-fn logo_tile_reports_its_svg_relief_as_unsupported() {
+fn logo_tile_needs_its_artwork_asset() {
+    // relief.svg is built now (tests/eval_relief.rs); without the asset the
+    // evaluator names the missing file instead of guessing.
     let p = process("fdm-0.4");
-    let (feature, op, text) = unsupported(run(&logo_tile(), &ParamValues::new(), &p, None, false));
-    assert_eq!((feature.as_str(), op.as_str()), ("art", "relief.svg"));
-    assert!(
-        text.contains("relief.svg") && text.contains("skip_unsupported"),
-        "{text}"
-    );
+    for skip in [false, true] {
+        match run(&logo_tile(), &ParamValues::new(), &p, None, skip) {
+            Err(EvalError::Asset { name, message }) => {
+                assert_eq!(name, "assets/mark.svg");
+                assert!(message.contains("no asset named"), "{message}");
+            }
+            Err(other) => panic!("expected an asset error, got {other}"),
+            Ok(_) => panic!("expected an asset error, got a part"),
+        }
+    }
 }
 
 #[test]
-fn logo_tile_builds_without_its_relief_for_a_preview() {
+fn logo_tile_body_matches_the_analytic_model() {
     // docs/plan/06 section 7: a 15.8 x 31.8 x 3.2 mm tile with three tubes, a
-    // 0.3 mm top chamfer (`round`), and eight female sockets underneath.
+    // 0.3 mm top chamfer (`round`), and eight female sockets underneath. The
+    // embossed artwork is its own object, so the body is the plain tile.
     let p = process("fdm-0.4");
     let fit = example_fit_profile();
-    let b = run(&logo_tile(), &ParamValues::new(), &p, Some(&fit), true).expect("builds");
-    assert!(
-        b.warnings
-            .iter()
-            .any(|w| w.contains("`art`") && w.contains("relief.svg")),
-        "{:?}",
-        b.warnings
-    );
+    let assets = example_assets();
+    let b = run_with_assets(
+        &logo_tile(),
+        &ParamValues::new(),
+        &p,
+        Some(&fit),
+        &assets,
+        false,
+    )
+    .expect("builds");
     let m = &b.measurements;
-    assert!(m.is_manifold && m.components == 1 && m.genus == 0);
+    assert!(m.is_manifold);
+    assert_eq!(b.objects[0].role, "body");
+    let body = &b.objects[0];
+    let fused = b.fused.as_ref().expect("two objects have a fused one");
     let shape = Shape {
         size: [2, 4],
         plates: 1,
@@ -72,14 +84,16 @@ fn logo_tile_builds_without_its_relief_for_a_preview() {
     };
     let v = analytic_volume(shape, &p, &fit.offsets_mm);
     assert!(
-        ((m.volume_mm3 - v) / v).abs() < 1e-6,
+        ((body.volume_mm3 - v) / v).abs() < 1e-6,
         "{} vs {v}",
-        m.volume_mm3
+        body.volume_mm3
     );
+    let (_, body_hi) = body.mesh.bounds();
     assert!(
-        (m.bounds_max_mm[2] - mm("plate_height")).abs() < 1e-4,
+        (f64::from(body_hi[2]) - mm("plate_height")).abs() < 1e-4,
         "a tile has no studs"
     );
+    assert!((fused.volume_mm3 - m.volume_mm3).abs() < 1e-6 * m.volume_mm3);
     assert_eq!(b.connectors.len(), 8);
     assert!(b
         .connectors
@@ -95,10 +109,11 @@ fn logo_tile_builds_without_its_relief_for_a_preview() {
     let params = ParamValues::new()
         .with("size", json!([4, 4]))
         .with("height", json!("brick"));
-    let b = run(&logo_tile(), &params, &p, Some(&fit), true).expect("builds");
+    let b = run_with_assets(&logo_tile(), &params, &p, Some(&fit), &assets, false).expect("builds");
     assert_eq!(b.connectors.len(), 16);
     assert!(b.connectors.iter().all(|c| c.pos[1] == BRICK_LDU));
-    assert!((b.measurements.bounds_max_mm[2] - mm("brick_height")).abs() < 1e-4);
+    let (_, body_hi) = b.objects[0].mesh.bounds();
+    assert!((f64::from(body_hi[2]) - mm("brick_height")).abs() < 1e-4);
 }
 
 #[test]

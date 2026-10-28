@@ -3,9 +3,11 @@
 //! optional [`FitProfile`] become printable meshes, derived connectors and the
 //! measurements the validator reads.
 //!
-//! Implemented ops: `body.tile`, `body.plate`, `body.brick`, `stud.field` and
-//! `tube.field`. Every other op is reported as [`EvalError::Unsupported`], or
-//! skipped with a warning when [`EvalInput::skip_unsupported`] is set.
+//! Implemented ops: `body.tile`, `body.plate`, `body.brick`, `stud.field`,
+//! `tube.field` and `relief.svg` (module `relief`: SVG artwork embossed, debossed
+//! or inlaid on the top face). Every other op is reported as
+//! [`EvalError::Unsupported`], or skipped with a warning when
+//! [`EvalInput::skip_unsupported`] is set.
 //!
 //! Where the numbers come from:
 //!
@@ -29,6 +31,8 @@ mod expr;
 mod geometry;
 mod hash;
 mod params;
+mod relief;
+mod svg;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -40,9 +44,14 @@ use serde_json::{json, Value};
 
 pub use hash::{canonical_json, sha256_hex};
 pub use params::{resolve_params, ResolvedParams};
+pub use relief::{Artwork, FLATTEN_TOLERANCE_MM, MAX_ARTWORK_POINTS, REMOVED_WARN_PCT};
+pub use svg::{
+    MAX_SVG_BYTES, MAX_SVG_DEPTH, MAX_SVG_ELEMENTS, MAX_SVG_NODES, MAX_SVG_PATHS, MAX_SVG_WORK,
+};
 
 use geometry::{BodyGeom, Geo, Rib, StudGeom, TubeGeom};
 use params::{FVal, Scope};
+use relief::ReliefPlan;
 
 use crate::{Feature, PartDoc, PartError};
 
@@ -57,6 +66,7 @@ pub const SUPPORTED_OPS: &[&str] = &[
     "body.brick",
     "stud.field",
     "tube.field",
+    "relief.svg",
 ];
 
 /// Largest footprint side, in studs, the evaluator accepts: a resource guard
@@ -205,6 +215,18 @@ pub struct Built {
     /// skipped as unsupported and the hashes of assets read. Equal inputs give
     /// equal hashes on every target (docs/plan/06 section 10).
     pub content_hash: String,
+    /// Every object unioned by the kernel into one solid, in the body's role:
+    /// the single-colour print (one watertight shell set for a single-material
+    /// STL or a fused 3MF, docs/plan/05 section 7). Present only when the part
+    /// has more than one object: merging the objects' meshes instead would leave
+    /// two shells touching where an embossed relief meets the body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fused: Option<RoleMesh>,
+    /// What the `relief.svg` feature did with its artwork (the removed regions
+    /// for the preview, the face on the bed, the depth after clamping), when the
+    /// part has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artwork: Option<Artwork>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -257,9 +279,7 @@ struct RecordingAssets<'a> {
 }
 
 impl RecordingAssets<'_> {
-    /// Read an asset for a feature; ops that use artwork call this (none of the
-    /// ops implemented so far do).
-    #[allow(dead_code)]
+    /// Read an asset for a feature (`relief.svg` reads its artwork here).
     fn read(&self, name: &str) -> Result<Vec<u8>, EvalError> {
         let bytes = self.inner.read(name).map_err(|message| EvalError::Asset {
             name: name.to_string(),
@@ -552,19 +572,15 @@ fn plan_body(
         top_chamfer = roof;
     }
 
-    let mut fillet = process.wall_roof_fillet(plates >= brick_plates);
-    // Keep the depth a stud needs clear, and some flat ceiling between the walls.
-    let depth_cap = (cavity - process.min_cavity_depth_mm).max(0.0);
-    let width_cap = ((narrow - 2.0 * wall) / 2.0 - process.line_width_mm).max(0.0);
-    let cap = depth_cap.min(width_cap);
-    if fillet > cap {
-        warnings.push(format!(
-            "feature `{}`: wall-to-roof chamfer {fillet} mm is capped at {cap:.3} mm so the cavity keeps {} mm of depth and a flat ceiling",
-            feat.id(),
-            process.min_cavity_depth_mm
-        ));
-        fillet = cap;
-    }
+    let fillet = cap_wall_roof_chamfer(
+        feat.id(),
+        process.wall_roof_fillet(plates >= brick_plates),
+        cavity,
+        narrow,
+        wall,
+        process,
+        warnings,
+    );
 
     Ok(BodyPlan {
         id: feat.id().to_string(),
@@ -582,6 +598,37 @@ fn plan_body(
             wall_roof_chamfer: fillet,
         },
     })
+}
+
+/// The wall-to-roof chamfer `want` of a body, capped so the cavity of depth
+/// `cavity` keeps the depth a stud needs clear and some flat ceiling between
+/// walls `wall` thick across a body `narrow` wide; a chamfer under
+/// [`MIN_LENGTH_MM`] is none.
+fn cap_wall_roof_chamfer(
+    feature: &str,
+    want: f64,
+    cavity: f64,
+    narrow: f64,
+    wall: f64,
+    process: &ProcessProfile,
+    warnings: &mut Vec<String>,
+) -> f64 {
+    let depth_cap = (cavity - process.min_cavity_depth_mm).max(0.0);
+    let width_cap = ((narrow - 2.0 * wall) / 2.0 - process.line_width_mm).max(0.0);
+    let cap = depth_cap.min(width_cap);
+    let mut fillet = want;
+    if fillet > cap {
+        warnings.push(format!(
+            "feature `{feature}`: wall-to-roof chamfer {fillet} mm is capped at {cap:.3} mm so the cavity keeps {} mm of depth and a flat ceiling",
+            process.min_cavity_depth_mm
+        ));
+        fillet = cap;
+    }
+    if fillet < MIN_LENGTH_MM {
+        0.0
+    } else {
+        fillet
+    }
 }
 
 /// The `grid` field: only `auto` (every stud position) so far.
@@ -915,6 +962,7 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
     let mut body: Option<BodyPlan> = None;
     let mut studs: Option<(String, StudPlan)> = None;
     let mut tubes: Option<(String, TubePlan)> = None;
+    let mut relief: Option<ReliefPlan> = None;
     for feat in &active {
         let fit_critical = fit_critical_ids.iter().any(|i| i == feat.id());
         match feat.f.op.as_str() {
@@ -949,6 +997,24 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
                 )?;
                 studs = Some((feat.id().to_string(), plan));
             }
+            "relief.svg" => {
+                let b = body.as_ref().ok_or(EvalError::NoBody)?;
+                if let Some(other) = &relief {
+                    return Err(feat.fail(format!(
+                        "the body already has the relief `{}`; one relief.svg per part is built so far, so combine the artwork into one SVG",
+                        other.id
+                    )));
+                }
+                relief = Some(relief::plan_relief(
+                    kernel,
+                    feat,
+                    b,
+                    process,
+                    offsets.xy_scale,
+                    &assets,
+                    &mut warnings,
+                )?);
+            }
             _ => {
                 let b = body.as_ref().ok_or(EvalError::NoBody)?;
                 if let Some((other, _)) = &tubes {
@@ -967,19 +1033,73 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
             }
         }
     }
-    let body = body.ok_or(EvalError::NoBody)?;
+    let mut body = body.ok_or(EvalError::NoBody)?;
+
+    // Artwork never shares a face with studs (docs/plan/06 section 5: text and
+    // artwork on flat top or bottom faces; docs/plan/05 section 6: the inlay
+    // face is flat and stud-free). The top is the only face either is built on
+    // so far, so the two together are an error with a fix hint.
+    if let (Some(r), Some((stud_id, _))) = (&relief, &studs) {
+        return Err(EvalError::Feature {
+            feature: r.id.clone(),
+            message: format!(
+                "relief.svg and the stud field `{stud_id}` are both on the top face of `{}`, and artwork cannot share a face with studs; use body.tile (a smooth top) for a logo tile, or turn the stud field off with its `if`",
+                body.id
+            ),
+        });
+    }
+
+    // A deboss or inlay thickens the roof by its depth, so the roof under the
+    // artwork keeps its thickness; the whole ceiling moves down (see the module
+    // comment of `relief`).
+    let mut roof_under_artwork = None;
+    if let Some(r) = relief.as_ref().filter(|r| r.mode.cuts()) {
+        let roof = body.geom.roof;
+        roof_under_artwork = Some(roof);
+        body.geom.roof += r.height;
+        let narrow = body.geom.size[0].min(body.geom.size[1]);
+        body.geom.wall_roof_chamfer = cap_wall_roof_chamfer(
+            &body.id,
+            body.geom.wall_roof_chamfer,
+            body.geom.cavity_depth(),
+            narrow,
+            body.geom.wall,
+            process,
+            &mut warnings,
+        );
+        // Tubes, pins and ribs reach past the new ceiling into the thickened
+        // roof (by the depth, at most half the roof, so never up to the cut)
+        // rather than ending in the ceiling plane, so the union merges them
+        // through an overlap. Solids that only touch in a plane merge or stay
+        // apart depending on rounding: measured on manifold-rust 0.19.1, a plain
+        // 2x4 tile with a 1.4 mm roof keeps its three tubes as loose solids.
+        if let Some((_, plan)) = &mut tubes {
+            plan.geom.top = body.geom.cavity_depth() + r.height.min(roof / 2.0);
+        }
+    }
 
     // Geometry: every solid, tagged with its colour role, in a fixed order (body,
-    // studs, tubes, pins, ribs) so the meshes are reproducible.
+    // studs, tubes, pins, ribs, relief) so the meshes are reproducible.
     let g = Geo {
         k: kernel,
         xy: offsets.xy_scale,
     };
     let mut pieces: Vec<(String, K::Solid)> = Vec::new();
-    pieces.push((
-        body.role.clone(),
-        body.geom.build(&g).map_err(kernel_err("the body"))?,
-    ));
+    let mut body_solid = body.geom.build(&g).map_err(kernel_err("the body"))?;
+    let mut relief_solids = None;
+    if let Some(r) = &relief {
+        let what = format!("the relief of `{}`", r.id);
+        // How far a relief's bonding copy reaches into the body: inside the
+        // roof under the face (half of it, as thick as before any deboss).
+        let roof = roof_under_artwork.unwrap_or(body.geom.roof);
+        let sink = (roof / 2.0).min(geometry::OVERSHOOT_MM / 2.0);
+        let (cut, solids) = r
+            .build(&g, body_solid, body.geom.size, body.geom.height, sink)
+            .map_err(kernel_err(&what))?;
+        body_solid = cut;
+        relief_solids = Some((r.role.clone(), solids));
+    }
+    pieces.push((body.role.clone(), body_solid));
     if let Some((id, plan)) = &studs {
         let what = format!("the studs of `{id}`");
         for s in plan.geom.build(&g).map_err(kernel_err(&what))? {
@@ -992,7 +1112,7 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
             pieces.push((plan.role.clone(), s));
         }
     }
-    let feature_volume_sum: f64 = pieces.iter().map(|(_, s)| s.volume_mm3()).sum();
+    let mut feature_volume_sum: f64 = pieces.iter().map(|(_, s)| s.volume_mm3()).sum();
 
     // Per role: the body (when it has this role) and the feature solids.
     type Group<S> = (Option<S>, Vec<S>);
@@ -1006,18 +1126,65 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
             group.1.push(solid);
         }
     }
+    // The relief: its own object in its colour role, or, in the body's own
+    // role, joined to the body through its bonding copy. `bond_for` names the
+    // role whose object is the relief alone, for the fused part below.
+    let mut bond = None;
+    let mut bond_for = None;
+    if let Some((role, solids)) = relief_solids {
+        if let Some(object) = solids.object {
+            feature_volume_sum += object.volume_mm3();
+            let (rank, name) = role_rank(&role);
+            let group = by_role.entry((rank, name.to_string())).or_default();
+            match solids.bond {
+                Some(b) if role == body.role => group.1.push(b),
+                b => {
+                    if group.0.is_none() && group.1.is_empty() {
+                        bond_for = Some(role.clone());
+                        bond = b;
+                    }
+                    group.1.push(object);
+                }
+            }
+        }
+    }
     let mut objects = Vec::new();
     let mut solids = Vec::new();
     for ((_, role), (base, features)) in by_role {
         let what = format!("the union of the {role} object");
         let solid = geometry::union_onto(kernel, base, features).map_err(kernel_err(&what))?;
         objects.push(RoleMesh {
-            role,
+            role: role.clone(),
             mesh: solid.to_mesh(),
             volume_mm3: solid.volume_mm3(),
         });
-        solids.push(solid);
+        solids.push((role, solid));
     }
+    // The single-colour print: the objects touch but never overlap, so their
+    // union has their total volume. The relief joins through its bonding copy,
+    // so the result is one solid, not two shells touching in a plane.
+    let fused = if solids.len() > 1 {
+        let what = "the fused single-colour object";
+        let parts: Vec<&K::Solid> = solids
+            .iter()
+            .map(|(role, solid)| match &bond {
+                Some(b) if bond_for.as_ref() == Some(role) => b,
+                _ => solid,
+            })
+            .collect();
+        let mut all = kernel.union(parts[0], parts[1]).map_err(kernel_err(what))?;
+        for s in &parts[2..] {
+            all = kernel.union(&all, s).map_err(kernel_err(what))?;
+        }
+        Some(RoleMesh {
+            role: body.role.clone(),
+            mesh: all.to_mesh(),
+            volume_mm3: all.volume_mm3(),
+        })
+    } else {
+        None
+    };
+    let solids: Vec<K::Solid> = solids.into_iter().map(|(_, s)| s).collect();
 
     let xy = offsets.xy_scale;
     let mut lo = [f64::INFINITY; 3];
@@ -1068,7 +1235,9 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         min_tube_wall_at_bed_mm: tube_plan
             .and_then(|p| p.tube_wall.map(|w| (w - 2.0 * p.geom.tube_chamfer) * xy)),
         first_layer_chamfer_mm: Some(flc),
-        roof_mm: Some(body.geom.roof),
+        // Under a deboss or inlay: the thinnest roof (under the artwork, as thick
+        // as before the cut) and the cavity under the thickened roof.
+        roof_mm: Some(roof_under_artwork.unwrap_or(body.geom.roof)),
         cavity_depth_mm: Some(body.geom.cavity_depth()),
         stud_diameter_mm: studs.as_ref().map(|(_, p)| p.geom.diameter * xy),
         tube_outer_diameter_mm: tube_plan
@@ -1082,9 +1251,9 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
             .map(|p| p.geom.pin_diameter * xy),
         rib_depth_mm: tube_plan.and_then(|p| p.rib_depth).map(|d| d * xy),
         fit_critical_connectors,
-        min_stroke_mm: None,
-        removed_area_pct: None,
-        relief_height_mm: None,
+        min_stroke_mm: relief.as_ref().and_then(|r| r.min_stroke).map(|s| s * xy),
+        removed_area_pct: relief.as_ref().map(|r| r.removed_pct),
+        relief_height_mm: relief.as_ref().map(|r| r.height),
     };
 
     let content = json!({
@@ -1109,6 +1278,8 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         warnings,
         kernel_id: kernel.id(),
         content_hash,
+        fused,
+        artwork: relief.map(|r| r.info),
     })
 }
 
