@@ -1,15 +1,29 @@
 [package]
 name = "openbrick-geom"
-description = "Geometry kernel trait for OpenBrick3D (Manifold-backed implementations land in M1)"
+description = "Geometry kernel trait for OpenBrick3D with a pure-Rust Manifold backend"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["manifold-rust"]
+# Pure-Rust port of Manifold 3.5.0 (decision D02 default backend).
+manifold-rust = ["dep:manifold-rust"]
+
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+manifold-rust = { version = "0.19.1", optional = true }
+
+[dev-dependencies]
+openbrick-units = { workspace = true }
+manifold-rust = "0.19.1"
+
+[[example]]
+name = "wasm_probe"
+crate-type = ["cdylib"]
 
 [lints]
 workspace = true

@@ -41,6 +41,27 @@ jobs:
       - run: cargo test --workspace
       - run: cargo run -q -p openbrick -- standard
 
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the kernel WebAssembly probe
+        run: cargo build --release --target wasm32-unknown-unknown -p openbrick-geom --example wasm_probe
+      - name: Run the probe and check it matches the native fingerprint
+        run: |
+          out=$(node scripts/wasm-probe.mjs target/wasm32-unknown-unknown/release/examples/wasm_probe.wasm)
+          echo "$out"
+          native=$(cargo run -q --release -p openbrick-geom --example kernel_timing | awk '$1=="2x4"{print $5}')
+          echo "native 2x4 fingerprint: $native"
+          echo "$out" | grep -q "\"fingerprint\":\"$native\""
+
   docs:
     runs-on: ubuntu-24.04
     steps:

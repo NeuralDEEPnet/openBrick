@@ -28,7 +28,7 @@ Likelihood and impact: L = low, M = medium, H = high.
 
 | ID | Question | Spike or experiment | Success criterion | Decide by |
 |----|----------|---------------------|-------------------|-----------|
-| Q01 | Is manifold-rust close enough to C++ Manifold on brick geometry? | Run the conformance corpus on manifold-rust, manifold-csg and manifold-3d; compare hashes, volumes, watertightness | 100 percent watertight, volumes within 0.1 percent, hashes stable across runs | M0 |
+| Q01 | Is manifold-rust close enough to C++ Manifold on brick geometry? | Run the conformance corpus on manifold-rust, manifold-csg and manifold-3d; compare hashes, volumes, watertightness | 100 percent watertight, volumes within 0.1 percent, hashes stable across runs | M0. **Partly answered 2026-10-28:** manifold-rust passes the M0 corpus, runs in wasm32 and is bit-identical across native and wasm32 ([spike report](../spikes/q01-kernel-conformance.md)); manifold-csg comparison still open |
 | Q02 | React or Svelte for the UI? | One-week spike: param panel plus viewport bridge in each | faster to working panel with manipulators; contributor familiarity tie-break to React | M0 |
 | Q03 | Does Android System WebView and WKWebView on iOS 26 expose WebGPU by default, and does Tauri mobile pass basic file import and export? | Device test in the Tauri shell on a Pixel 8a, Galaxy A5x, iPhone 16e | `navigator.gpu` present and renders the harness; file round-trip works (else Capacitor per D14) | M0 |
 | Q04 | How many LDraw parts get usable connectors from primitive scanning? | Scan 200 common parts; compare against hand-authored expectations | at least 70 percent fully correct, 90 percent partially | M0 |

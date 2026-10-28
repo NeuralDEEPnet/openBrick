@@ -11,9 +11,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Every commit is signed off
+      - name: Every non-merge commit is signed off
         run: |
           set -e
-          for c in $(git rev-list ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}); do
+          # Merge commits are skipped, as the DCO GitHub app does by default.
+          for c in $(git rev-list --no-merges ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}); do
             git log -1 --format=%B "$c" | grep -q '^Signed-off-by: ' || { echo "commit $c lacks Signed-off-by (git commit -s)"; exit 1; }
           done
