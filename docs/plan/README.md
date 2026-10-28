@@ -22,11 +22,12 @@ This folder is the planning record for OpenBrick3D (repository `openBrick`): an 
 | 11 | [Roadmap](11-roadmap.md) | Milestones M0 to M6 with weeks, demo criteria, the MVP definition, what is deferred. |
 | 12 | [Legal and naming](12-legal-and-naming.md) | Trademarks and patents, disclaimer text, naming decision, licences, DCO, toy-safety checklist. |
 | 13 | [Risks and open questions](13-risks-and-open-questions.md) | Risk register, open questions with the spike that resolves each, assumptions log. |
+| 14 | [Lean development with AI agents](14-lean-ai-agent-development.md) | Operating model, the task loop, guard rails, budgets, staffing variants, the first agent-ready backlog. |
 
 ## How to read this plan
 
 1. Read 00 first. If you only have five minutes, that is the page.
-2. 01 says why; 02 and 03 say how; 04 to 08 are the engineering specs; 09 to 11 are delivery; 12 and 13 are the guard rails.
+2. 01 says why; 02 and 03 say how; 04 to 08 are the engineering specs; 09 to 11 are delivery; 12 and 13 are the guard rails; 14 is how a tiny team and AI agents work the backlog.
 3. Numbers are canonical in 04 (geometry) and 05 (printing). Other documents reuse them and must not redefine them.
 4. "We decided" marks a decision. "We assume" marks an assumption that is logged in 13. "OPEN:" marks a question with a spike attached in 13.
 5. Decisions carry IDs (D01 to D24) in 03 so issues and pull requests can reference them.

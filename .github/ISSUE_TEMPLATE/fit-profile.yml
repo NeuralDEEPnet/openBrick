@@ -1,0 +1,14 @@
+name: Fit profile submission
+description: Share your printer's calibration results
+labels: [fit-profile]
+body:
+  - type: input
+    attributes: { label: Printer, nozzle, material, slicer }
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Chosen coupon cells, description: "stud, tube, pocketTubeOD, pocketRib, technicH, pin, axle, bar, clip" }
+    validations: { required: true }
+  - type: input
+    attributes: { label: Pull test median (N) and control median (N) }
+  - type: textarea
+    attributes: { label: Fit profile JSON }

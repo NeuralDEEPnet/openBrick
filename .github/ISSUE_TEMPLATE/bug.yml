@@ -1,0 +1,16 @@
+name: Bug report
+description: Something does not work
+labels: [bug]
+body:
+  - type: input
+    attributes: { label: Version, description: "openbrick --version or the app About screen" }
+    validations: { required: true }
+  - type: input
+    attributes: { label: Platform, description: "OS, GPU string and renderer backend from About (desktop/web/mobile)" }
+  - type: textarea
+    attributes: { label: Steps to reproduce }
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Expected and actual }
+  - type: textarea
+    attributes: { label: Files, description: "Attach a minimal .obpart.json / .obrick / profile if relevant" }

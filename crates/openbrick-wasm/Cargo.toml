@@ -1,0 +1,21 @@
+[package]
+name = "openbrick-wasm"
+description = "wasm-bindgen facade over the OpenBrick3D core (bindings added in M2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+openbrick-units = { workspace = true }
+openbrick-part = { workspace = true }
+openbrick-print = { workspace = true }
+
+[lints]
+workspace = true

@@ -88,6 +88,10 @@ Full tables with sources are in [04](04-brick-geometry-spec.md) and [05](05-3d-p
 4. Is STEP export needed before 1.0? Default no; OCCT service in v2.
 5. Will Roland Melkert license LDCad shadow-library snap data, or do we author clean-room from day one? Default clean-room, ask anyway.
 
+## How we build it lean
+
+Humans decide, agents execute, CI judges. Work is cut into agent-ready issues with acceptance tests written first; every merge is small; nothing physical, legal or financial is delegated. Budget: a few hundred dollars a year in accounts, a one-time device and printer purchase, and 20 to 40 million agent tokens a month during M1 to M3. A one-engineer team is viable at about 1.6 to 2 times the roadmap weeks. See [14](14-lean-ai-agent-development.md).
+
 ## Immediate actions (this week)
 
 - Register the free handles: GitHub org `openbrick3d`, npm `openbrick3d` and the `@openbrick` scope, crates.io `openbrick`, PyPI `openbrick3d`, domains `openbrick3d.com`, `openbrick3d.org`, `openbrick.dev`.

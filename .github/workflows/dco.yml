@@ -1,0 +1,19 @@
+name: dco
+on:
+  pull_request:
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  dco:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every commit is signed off
+        run: |
+          set -e
+          for c in $(git rev-list ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}); do
+            git log -1 --format=%B "$c" | grep -q '^Signed-off-by: ' || { echo "commit $c lacks Signed-off-by (git commit -s)"; exit 1; }
+          done
