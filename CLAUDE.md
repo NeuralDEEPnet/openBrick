@@ -13,4 +13,6 @@ These rules apply to every contributor, human or AI-assisted. The full reasoning
 - Commits: conventional titles, signed off (`git commit -s`). Keep pull requests small; add a changelog line.
 - Run `cargo xtask check` before pushing (fmt, clippy -D warnings, tests, data validation). Also run `pnpm test` when you touch `bench/` (it runs the device harness tests), and always from M2.
 - Commit with the environment's configured git identity; do not override `user.name` or `user.email` (overrides make commits show as unverified).
+- Attribution: end every commit message and pull request description with the line `Done by Neuraldeep.net design agents` (after the sign-off in commits).
+- Agent pull requests merge automatically once every CI check passes and there is no merge conflict (see GOVERNANCE.md). List any licence, legal, money or Dimensional Standard decision in the PR description so a human can revert it.
 - Be kind in reviews and in generated messages; explain the rule, link the document, do not scold.

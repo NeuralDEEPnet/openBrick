@@ -8,6 +8,10 @@ At least two maintainers hold release rights at all times. Maintainers are liste
 
 - Technical decisions are recorded as ADR rows in [docs/plan/03](docs/plan/03-tech-stack-decisions.md) with an id, alternatives, reasons and a "revisit when" trigger.
 - Plan changes come as pull requests titled `plan: <topic>`.
+
+## Merging
+
+Pull requests from the Neuraldeep.net design agents merge automatically once every CI check passes on the current head and there is no merge conflict. Humans review merged work daily and revert or open a follow-up when something is wrong. A pull request that makes a licence, legal, money or Dimensional Standard decision says so under "Open maintainer decisions" in its description, so the decision is visible after the merge. Pull requests from community contributors still need a maintainer's approval.
 - Disagreements are resolved by the maintainers after hearing the arguments; the founder breaks ties on product direction, the geometry lead on the Dimensional Standard.
 
 ## Keys and accounts
