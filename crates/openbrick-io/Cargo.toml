@@ -1,6 +1,6 @@
 [package]
 name = "openbrick-io"
-description = "OpenBrick3D io crate (skeleton; implementation per docs/plan)"
+description = "OpenBrick3D file formats: deterministic 3MF and binary STL writers (more per docs/plan/08)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,29 @@ repository.workspace = true
 serde = { workspace = true }
 thiserror = { workspace = true }
 openbrick-units = { workspace = true }
-openbrick-geom = { workspace = true }
+# Only the plain Mesh type is needed: the writers never build geometry, so the
+# kernel backends stay out (a path dependency, because default-features = false
+# is ignored on a workspace dependency that keeps its defaults).
+openbrick-geom = { path = "../openbrick-geom", default-features = false }
+# Raw DEFLATE for the 3MF zip container. Pure Rust, no_std with alloc, builds for
+# wasm32-unknown-unknown; MIT OR Zlib OR Apache-2.0.
+miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
+# Name-based (version 5) UUIDs for the 3MF Production extension, derived from the
+# export metadata instead of a random source. Pulls sha1_smol (BSD-3-Clause).
+uuid = { version = "1", default-features = false, features = ["v5"] }
+
+[dev-dependencies]
+# The fixtures example builds a 2x4 brick with the default kernel.
+openbrick-geom = { path = "../openbrick-geom", features = ["manifold-rust"] }
+serde_json = { workspace = true }
+# Independent readers for the round-trip tests: none of them share code with the
+# writers. zlib-rs is a pure-Rust inflate (Zlib licence).
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+roxmltree = "0.21"
+stl_io = "0.11"
+
+[[example]]
+name = "write_fixtures"
 
 [lints]
 workspace = true

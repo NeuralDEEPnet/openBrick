@@ -1,0 +1,8 @@
+# Dependencies of scripts/validate-3mf.py (CI only; never shipped).
+# lib3mf 2.5.0, BSD-2-Clause, by the 3MF Consortium (decision D18 in docs/plan/03).
+# Hashes from https://pypi.org/pypi/lib3mf/2.5.0/json; install with
+#   python3 -m pip install --require-hashes -r scripts/requirements-validate-3mf.txt
+lib3mf==2.5.0 \
+    --hash=sha256:b4c00033c47cfeac93b7daa069fb46e8dea4391d5522b79cd6e9f6af75e33013 \
+    --hash=sha256:f7dc57ea22214fa92dac728ba66e58c4b24b775d467888262a820338d7d84145 \
+    --hash=sha256:e378470855d634708c6ae7f2f2c6fcd89e4996350de86020849e7b2d51ffe6ac
