@@ -146,8 +146,12 @@ impl Mesh {
             .chunks_exact(3)
             .map(|t| {
                 let c = [key(t[0]), key(t[1]), key(t[2])];
-                let first = (0..3).min_by_key(|&i| c[i]).unwrap_or(0);
-                [c[first], c[(first + 1) % 3], c[(first + 2) % 3]]
+                // The smallest of the three rotations, so a tie between two corners
+                // with the same position cannot depend on the starting corner.
+                (0..3)
+                    .map(|r| [c[r], c[(r + 1) % 3], c[(r + 2) % 3]])
+                    .min()
+                    .unwrap_or(c)
             })
             .collect();
         tris.sort_unstable();
@@ -269,5 +273,26 @@ mod tests {
             a.canonical_fingerprint(),
             negative_zero.canonical_fingerprint()
         );
+    }
+
+    #[test]
+    fn canonical_fingerprint_handles_triangles_with_tied_corners() {
+        // Two distinct vertices can share a position after f32 narrowing. The same
+        // cyclic triangle must hash the same whichever corner the kernel starts at.
+        let positions = vec![
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ];
+        let a = Mesh {
+            positions: positions.clone(),
+            indices: vec![0, 2, 1, 0, 2, 3],
+        };
+        let b = Mesh {
+            positions,
+            indices: vec![1, 0, 2, 0, 2, 3],
+        };
+        assert_eq!(a.canonical_fingerprint(), b.canonical_fingerprint());
     }
 }

@@ -33,7 +33,7 @@ fn main() {
         other => {
             eprintln!(
                 "unknown or disabled kernel {other:?}; this build has [{}] \
-                 (manifold-csg needs --features manifold-csg)",
+                 (manifold-rust is the default feature; manifold-csg needs --features manifold-csg)",
                 enabled().join(", ")
             );
             std::process::exit(2);

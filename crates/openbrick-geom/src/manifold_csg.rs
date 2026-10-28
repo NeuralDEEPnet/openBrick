@@ -89,7 +89,15 @@ impl Kernel for ManifoldCsg {
     type Solid = CsgSolid;
 
     fn id(&self) -> String {
-        format!("manifold-csg 0.4.1 (Manifold {UPSTREAM})")
+        // manifold-csg-sys skips its pinned clone and links whatever library this
+        // directory holds when MANIFOLD_CSG_LIB_DIR is set at build time, so the
+        // id cannot claim the pinned upstream version in that case.
+        match option_env!("MANIFOLD_CSG_LIB_DIR") {
+            None => format!("manifold-csg 0.4.1 (Manifold {UPSTREAM})"),
+            Some(dir) => {
+                format!("manifold-csg 0.4.1 (Manifold from MANIFOLD_CSG_LIB_DIR={dir}, unverified)")
+            }
+        }
     }
 
     fn extrude(

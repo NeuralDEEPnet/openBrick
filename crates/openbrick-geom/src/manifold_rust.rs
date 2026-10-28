@@ -88,7 +88,7 @@ impl Kernel for ManifoldRust {
     type Solid = MrSolid;
 
     fn id(&self) -> String {
-        "manifold-rust 0.19".to_string()
+        "manifold-rust 0.19.1".to_string()
     }
 
     fn extrude(

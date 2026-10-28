@@ -20,7 +20,8 @@ manifold-csg = ["dep:manifold-csg", "dep:manifold-csg-sys"]
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
-manifold-rust = { version = "0.19.1", optional = true }
+# Pinned exactly: the kernel id in content hashes names this version.
+manifold-rust = { version = "=0.19.1", optional = true }
 # Both pinned exactly because the kernel id in content hashes names these versions
 # (manifold-csg-sys 3.5.105 builds Manifold v3.5.3; it is listed only to pin it).
 # default-features = false drops "parallel", which also fetches and links oneTBB.
@@ -29,7 +30,7 @@ manifold-csg-sys = { version = "=3.5.105", optional = true, default-features = f
 
 [dev-dependencies]
 openbrick-units = { workspace = true }
-manifold-rust = "0.19.1"
+manifold-rust = "=0.19.1"
 
 [[example]]
 name = "wasm_probe"
