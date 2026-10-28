@@ -10,6 +10,12 @@
 //! counts and corner positions; and the canonical mesh fingerprint, recorded
 //! below for `manifold-rust 0.19.1`. A fingerprint change means the mesh changed:
 //! if that was intended, bump `EVALUATOR_REVISION` and record the new value.
+//!
+//! The fingerprints are asserted on x86-64 Linux only, like the bit-exact mesh
+//! check in `openbrick-geom/tests/harness_meshes.rs`: identical output has been
+//! verified there and in wasm32 (docs/spikes/q01-kernel-conformance.md), not
+//! yet on the other targets of the `test-cross` CI job. Everything else in
+//! these tests runs on every target.
 
 mod common;
 
@@ -157,12 +163,14 @@ fn check(g: &Golden) -> Built {
         .collect();
     assert_eq!(kinds, if g.tubes { vec!["tubeF"] } else { vec![] });
 
-    assert_eq!(
-        mesh.canonical_fingerprint(),
-        g.canonical,
-        "{}: mesh changed (see the module comment; evaluator revision {EVALUATOR_REVISION})",
-        g.name
-    );
+    if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
+        assert_eq!(
+            mesh.canonical_fingerprint(),
+            g.canonical,
+            "{}: mesh changed (see the module comment; evaluator revision {EVALUATOR_REVISION})",
+            g.name
+        );
+    }
     b
 }
 
@@ -220,6 +228,14 @@ fn brick_2x4() {
     assert!((m.min_tube_wall_mm.unwrap() - wall).abs() < 1e-12);
     assert!(m.min_tube_wall_mm.unwrap() >= p.min_tube_wall_mm);
     assert_eq!(m.process, "fdm-0.4");
+    // In the bed plane the 45 degree first-layer chamfers on both faces thin the
+    // walls: the body wall by twice the chamfer, the tube wall by twice its
+    // chamfer, which is at most a third of the wall.
+    let c = p.first_layer_chamfer_mm;
+    assert_eq!(m.first_layer_chamfer_mm, Some(c));
+    assert!((m.min_body_wall_at_bed_mm.unwrap() - (mm("side_wall") - 2.0 * c)).abs() < 1e-12);
+    let ct = c.min(wall / 3.0);
+    assert!((m.min_tube_wall_at_bed_mm.unwrap() - (wall - 2.0 * ct)).abs() < 1e-12);
 }
 
 #[test]
@@ -242,16 +258,10 @@ fn plate_1x4_has_pins_not_tubes() {
     let (pitch, gap) = (mm("module"), mm("undersize_per_side"));
     let mesh = &b.objects[0].mesh;
     let z = (mm("plate_height") - mm("roof")) / 2.0;
+    let reach = pin_reach(mm("pin_1wide_diameter"), m.min_body_wall_mm.unwrap());
     for j in 1..4 {
         let centre = [pitch / 2.0 - gap, f64::from(j) * pitch - gap];
-        let (r, _) = ring_radii(
-            mesh,
-            z,
-            centre,
-            0.0,
-            mm("pin_1wide_diameter"),
-            p.stud_segments(),
-        );
+        let (r, _) = ring_radii(mesh, z, centre, 0.0, reach, segments(&p));
         assert!(
             (2.0 * r - mm("pin_1wide_diameter")).abs() < 1e-4,
             "pin {j}: diameter {}",

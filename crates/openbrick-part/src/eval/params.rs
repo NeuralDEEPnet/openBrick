@@ -1,8 +1,8 @@
 //! Parameter resolution (docs/plan/06 section 3) and feature field values.
 //!
 //! Defaults come from the document's `params`, overrides from [`ParamValues`];
-//! every value is checked against its type, `min`, `max`, `options` and (for
-//! strings) `maxLength`. Feature fields may then be literals with unit suffixes
+//! every value is checked against its type, `min`, `max`, `step`, `options` and
+//! (for strings) `maxLength`. Feature fields may then be literals with unit suffixes
 //! (`"0.6mm"`, `"2stud"`, `"1plate"`, `"brick"`), references (`"$size"`), arrays of
 //! those (`["$width", "$length"]`) or expressions (`"$length - 1"`).
 
@@ -307,14 +307,47 @@ fn number_in_unit(name: &str, p: &Param, v: &Value) -> Result<f64, EvalError> {
     }
 }
 
-fn check_bounds(name: &str, p: &Param, n: f64, axis: Option<usize>) -> Result<(), EvalError> {
-    let bound = |b: &Option<Value>| -> Option<f64> {
-        let b = b.as_ref()?;
-        match (axis, b) {
-            (Some(i), Value::Array(a)) => a.get(i).and_then(Value::as_f64),
-            _ => b.as_f64(),
-        }
+/// A `min` or `max` bound, per axis for grid2 (`[1, 1]`) or one number for all.
+fn bound(b: &Option<Value>, axis: Option<usize>) -> Option<f64> {
+    let b = b.as_ref()?;
+    match (axis, b) {
+        (Some(i), Value::Array(a)) => a.get(i).and_then(Value::as_f64),
+        _ => b.as_f64(),
+    }
+}
+
+/// `step`: the value must be `min` (or zero without a minimum) plus a whole
+/// number of steps (docs/plan/06 section 3: "bounds enforced by the UI and the
+/// evaluator"). The tolerance absorbs decimal steps that binary floating point
+/// cannot hold exactly ((0.6 - 0.2) / 0.1 is 3.9999999999999996).
+fn check_step(name: &str, p: &Param, n: f64, axis: Option<usize>) -> Result<(), EvalError> {
+    let Some(step) = p.step.filter(|s| *s > 0.0) else {
+        return Ok(());
     };
+    let base = bound(&p.min, axis).unwrap_or(0.0);
+    let k = (n - base) / step;
+    if (k - k.round()).abs() <= 1e-9 * k.abs().max(1.0) {
+        return Ok(());
+    }
+    let at = axis.map(|i| format!(" (axis {i})")).unwrap_or_default();
+    let (below, above) = (base + k.floor() * step, base + k.ceil() * step);
+    Err(param_err(
+        name,
+        format!(
+            "{n} is not a whole number of {step} steps from {base}{at}; the nearest allowed values are {} and {}",
+            round_display(below),
+            round_display(above)
+        ),
+    ))
+}
+
+/// A value for a message, without binary floating-point tails (5.0000000001).
+fn round_display(v: f64) -> f64 {
+    (v * 1e9).round() / 1e9
+}
+
+fn check_bounds(name: &str, p: &Param, n: f64, axis: Option<usize>) -> Result<(), EvalError> {
+    let bound = |b: &Option<Value>| bound(b, axis);
     let at = axis.map(|i| format!(" (axis {i})")).unwrap_or_default();
     if let Some(min) = bound(&p.min) {
         if n < min {
@@ -332,7 +365,7 @@ fn check_bounds(name: &str, p: &Param, n: f64, axis: Option<usize>) -> Result<()
             ));
         }
     }
-    Ok(())
+    check_step(name, p, n, axis)
 }
 
 fn check_options(name: &str, p: &Param, v: &Value) -> Result<(), EvalError> {

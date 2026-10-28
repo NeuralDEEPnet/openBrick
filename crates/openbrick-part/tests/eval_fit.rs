@@ -30,7 +30,7 @@ fn fit_with(offsets: Offsets) -> FitProfile {
 fn stud_diameter(b: &Built, p: &ProcessProfile, studs: usize) -> f64 {
     let z = mm("plate_height") + (mm("stud_height") - p.stud_top_chamfer_mm) / 2.0;
     let area = section_area(&b.objects[0].mesh, z, |_| true);
-    2.0 * (area / (studs as f64 * ngon(p.stud_segments()))).sqrt()
+    2.0 * (area / (studs as f64 * ngon(segments(p)))).sqrt()
 }
 
 /// (outer, inner) tube diameters from a slice half-way up the cavity, around
@@ -49,7 +49,7 @@ fn tube_diameters(b: &Built, p: &ProcessProfile) -> (f64, f64) {
         centre,
         split,
         pitch / 2.0,
-        p.stud_segments(),
+        segments(p),
     );
     (2.0 * ro, 2.0 * ri)
 }
@@ -154,15 +154,9 @@ fn pin_offset_changes_the_pin_diameter() {
     let (pitch, gap) = (mm("module"), mm("undersize_per_side"));
     let z = (mm("plate_height") - mm("roof")) / 2.0;
     let centre = [pitch / 2.0 - gap, pitch - gap];
-    let (r, _) = ring_radii(
-        &b.objects[0].mesh,
-        z,
-        centre,
-        0.0,
-        mm("pin_1wide_diameter"),
-        p.stud_segments(),
-    );
     let want = mm("pin_1wide_diameter") + offsets.pin_diameter;
+    let reach = pin_reach(want, b.measurements.min_body_wall_mm.unwrap());
+    let (r, _) = ring_radii(&b.objects[0].mesh, z, centre, 0.0, reach, segments(&p));
     assert!(
         (2.0 * r - want).abs() < DIAMETER_TOL,
         "pin {} vs {want}",
@@ -312,4 +306,128 @@ fn brick_height_bodies_get_the_brick_wall_to_roof_chamfer() {
         let v = analytic_volume(shape, &p, &Offsets::default());
         assert!(((b.measurements.volume_mm3 - v) / v).abs() < 1e-6, "{op}");
     }
+}
+
+#[test]
+fn a_rib_offset_that_cancels_the_rib_leaves_the_ribs_out() {
+    // On fdm-0.4 the wall is the standard side_wall, so the rib is the standard
+    // rib_depth; a ribDepth offset of minus that leaves 1.2 + 0.3 - 1.2 - 0.3 =
+    // 5.6e-17 mm in floating point. The ribs are left out with a warning instead
+    // of reaching the kernel as a sliver it cannot extrude.
+    let p = process("fdm-0.4");
+    let doc = part("body.plate", [2, 4], None, true, true);
+    let offsets = Offsets {
+        rib_depth: -mm("rib_depth"),
+        ..Offsets::default()
+    };
+    let b = build(&doc, &p, Some(&fit_with(offsets.clone())));
+    assert!(
+        b.warnings.iter().any(|w| w.contains("ribs are left out")),
+        "{:?}",
+        b.warnings
+    );
+    let m = &b.measurements;
+    assert_eq!(m.rib_depth_mm, None);
+    assert!(m.is_manifold && m.components == 1);
+    let shape = Shape {
+        size: [2, 4],
+        plates: 1,
+        studs: true,
+        tubes: true,
+        top_chamfer: 0.0,
+    };
+    let v = analytic_volume(shape, &p, &offsets);
+    assert!(
+        ((m.volume_mm3 - v) / v).abs() < 1e-6,
+        "{} vs {v}",
+        m.volume_mm3
+    );
+    // The nominal part is larger by exactly its ribs.
+    let nominal = build(&doc, &p, None);
+    assert!(nominal.measurements.volume_mm3 > m.volume_mm3);
+}
+
+#[test]
+fn first_layer_chamfers_are_measured_at_the_bed_and_warned_when_too_thin() {
+    let p = process("fdm-0.4");
+    let wall = mm("side_wall");
+    // Body: the widest chamfer that still leaves some wall (2c < wall) builds,
+    // but its first layer is far narrower than one line.
+    let c = wall / 2.0 - 0.01;
+    let doc = part("body.plate", [2, 2], None, false, false);
+    let offsets = Offsets {
+        first_layer_chamfer: c,
+        ..Offsets::default()
+    };
+    let b = build(&doc, &p, Some(&fit_with(offsets.clone())));
+    let m = &b.measurements;
+    assert_eq!(m.first_layer_chamfer_mm, Some(c));
+    assert_eq!(
+        m.min_body_wall_mm,
+        Some(wall),
+        "the full wall above the chamfer"
+    );
+    assert!((m.min_body_wall_at_bed_mm.unwrap() - (wall - 2.0 * c)).abs() < 1e-12);
+    assert!(
+        b.warnings
+            .iter()
+            .any(|w| w.contains("`body`") && w.contains("narrower than one")),
+        "{:?}",
+        b.warnings
+    );
+    let shape = Shape {
+        size: [2, 2],
+        plates: 1,
+        studs: false,
+        tubes: false,
+        top_chamfer: 0.0,
+    };
+    let v = analytic_volume(shape, &p, &offsets);
+    assert!(((m.volume_mm3 - v) / v).abs() < 1e-6);
+
+    // Tubes: a bore offset that takes the tube wall down to minTubeWallMm, with a
+    // larger chamfer. The tube chamfer is capped at a third of the wall, and the
+    // first layer (half the thinnest layer above the bed) is narrower than a line.
+    let doc = part("body.plate", [2, 4], None, false, true);
+    let grow =
+        2.0 * ((mm("tube_outer_diameter") - mm("tube_inner_diameter")) / 2.0 - p.min_tube_wall_mm);
+    let offsets = Offsets {
+        tube_inner_diameter: grow,
+        first_layer_chamfer: p.first_layer_chamfer_mm + 0.1,
+        ..Offsets::default()
+    };
+    let b = build(&doc, &p, Some(&fit_with(offsets.clone())));
+    let m = &b.measurements;
+    let tube_wall = m.min_tube_wall_mm.unwrap();
+    assert!((tube_wall - p.min_tube_wall_mm).abs() < 1e-12);
+    let ct = offsets.first_layer_chamfer.min(tube_wall / 3.0);
+    assert!((m.min_tube_wall_at_bed_mm.unwrap() - (tube_wall - 2.0 * ct)).abs() < 1e-12);
+    let layer = p
+        .layer_height_mm
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let first = tube_wall - 2.0 * (ct - layer / 2.0);
+    assert!(first < p.line_width_mm, "the case under test: {first}");
+    assert!(
+        b.warnings.iter().any(|w| w.contains("`bottom`")
+            && w.contains("tube wall")
+            && w.contains("narrower than one")),
+        "{:?}",
+        b.warnings
+    );
+    assert!(
+        !b.warnings.iter().any(|w| w.contains("`body`")),
+        "the body wall keeps more than a line: {:?}",
+        b.warnings
+    );
+    let shape = Shape {
+        size: [2, 4],
+        plates: 1,
+        studs: false,
+        tubes: true,
+        top_chamfer: 0.0,
+    };
+    let v = analytic_volume(shape, &p, &offsets);
+    assert!(((m.volume_mm3 - v) / v).abs() < 1e-6);
 }

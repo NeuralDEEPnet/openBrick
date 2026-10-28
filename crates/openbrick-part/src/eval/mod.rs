@@ -63,6 +63,20 @@ pub const SUPPORTED_OPS: &[&str] = &[
 /// (a 64 x 64 plate already has 4,096 studs), not a brick dimension.
 pub const MAX_STUDS_PER_SIDE: u32 = 64;
 
+/// Tallest body, in plates, the evaluator accepts: 64 brick heights, a resource
+/// and sanity guard like [`MAX_STUDS_PER_SIDE`], not a brick dimension. It also
+/// keeps every LDU coordinate far inside `i32`.
+pub const MAX_BODY_PLATES: u32 = 64 * (BRICK_LDU / PLATE_LDU) as u32;
+
+/// Lengths below this many millimetres are treated as zero: one micrometre,
+/// far below what any process prints, and above both the floating-point residue
+/// of offset arithmetic (`1.2 + 0.3 - 1.2 - 0.3` is 5.6e-17 mm) and the `f32`
+/// mesh resolution of the largest part the evaluator accepts (6.1e-5 mm for
+/// coordinates from 512 to 1024 mm). Thinner solids would reach the kernel as
+/// degenerate slivers, which it rejects (on manifold-rust 0.19.1 a 1e-9 mm rib
+/// fails to extrude; 1e-7 mm still builds).
+pub const MIN_LENGTH_MM: f64 = 1e-3;
+
 /// Parameter overrides by name; parameters not named keep their defaults.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -356,21 +370,32 @@ fn std_ldu(id: &str) -> i32 {
     v.round() as i32
 }
 
+/// The width of a wall of `wall` mm with a 45 degree chamfer of `chamfer` mm on
+/// both faces at its foot, where a slicer cuts the first layer: half the
+/// process's thinnest layer height above the bed (the narrowest first layer it
+/// could print).
+fn first_layer_width(process: &ProcessProfile, wall: f64, chamfer: f64) -> f64 {
+    let layer = process
+        .layer_height_mm
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let z = if layer.is_finite() { layer / 2.0 } else { 0.0 };
+    wall - 2.0 * (chamfer - z).max(0.0)
+}
+
 /// The planned body (sizes are known before any geometry is built).
 struct BodyPlan {
     id: String,
     tile: bool,
     studs: [u32; 2],
-    plates: u32,
+    /// Body height in LDU; at most [`MAX_BODY_PLATES`] plates.
+    height_ldu: i32,
     role: String,
     geom: BodyGeom,
 }
 
 impl BodyPlan {
-    fn height_ldu(&self) -> i32 {
-        self.plates as i32 * PLATE_LDU
-    }
-
     /// Kernel-frame centre of stud (i, j) in millimetres.
     fn stud_centre(&self, i: u32, j: u32) -> [f64; 2] {
         let (pitch, gap) = (mm("module"), mm("undersize_per_side"));
@@ -432,6 +457,19 @@ fn plan_body(
         .unwrap_or_else(|| params::literal(default_height))
         .plates()
         .map_err(|m| feat.err("height", m))?;
+    let height_ldu = i32::try_from(plates)
+        .ok()
+        .and_then(|p| p.checked_mul(PLATE_LDU))
+        .filter(|_| plates <= MAX_BODY_PLATES)
+        .ok_or_else(|| {
+            feat.err(
+                "height",
+                format!(
+                    "{plates} plates is taller than the evaluator's limit of {MAX_BODY_PLATES} plates ({} bricks)",
+                    MAX_BODY_PLATES * PLATE_LDU as u32 / BRICK_LDU as u32
+                ),
+            )
+        })?;
     let brick_plates = (BRICK_LDU / PLATE_LDU) as u32;
     // Whole bricks use the brick height row, so a brick is exactly brick_height.
     let height = f64::from(plates / brick_plates) * mm("brick_height")
@@ -495,6 +533,17 @@ fn plan_body(
             "a {chamfer} mm first-layer chamfer on both sides would cut through the {wall} mm wall"
         )));
     }
+    // The chamfer stands in for elephant-foot compensation, so the squashed first
+    // layer spreads back towards the full wall; but a first layer narrower than
+    // one line may be thinned or dropped by the slicer.
+    let first = first_layer_width(process, wall, chamfer);
+    if first < process.line_width_mm - 1e-9 {
+        warnings.push(format!(
+            "feature `{}`: the {chamfer} mm first-layer chamfer on both faces of the {wall} mm wall leaves {first:.3} mm in the first layer, narrower than one {} mm line, so the slicer may thin or drop it there; lower firstLayerChamfer in the fit profile",
+            feat.id(),
+            process.line_width_mm
+        ));
+    }
     if top_chamfer > roof {
         warnings.push(format!(
             "feature `{}`: top chamfer {top_chamfer} mm is capped at the roof thickness {roof} mm",
@@ -503,8 +552,7 @@ fn plan_body(
         top_chamfer = roof;
     }
 
-    let brick_height = plates as i32 * PLATE_LDU >= BRICK_LDU;
-    let mut fillet = process.wall_roof_fillet(brick_height);
+    let mut fillet = process.wall_roof_fillet(plates >= brick_plates);
     // Keep the depth a stud needs clear, and some flat ceiling between the walls.
     let depth_cap = (cavity - process.min_cavity_depth_mm).max(0.0);
     let width_cap = ((narrow - 2.0 * wall) / 2.0 - process.line_width_mm).max(0.0);
@@ -522,7 +570,7 @@ fn plan_body(
         id: feat.id().to_string(),
         tile: feat.f.op == "body.tile",
         studs,
-        plates,
+        height_ldu,
         role: feat.role(),
         geom: BodyGeom {
             size,
@@ -685,7 +733,7 @@ fn plan_tubes(
         mm("tube_inner_diameter"),
         process.min_tube_wall_mm,
     );
-    if !tubes.is_empty() && tube.grown_mm > 0.0 {
+    if !tubes.is_empty() && tube.grown_mm >= MIN_LENGTH_MM {
         warnings.push(format!(
             "feature `{}`: tube outer diameter grown by {:.3} mm so the tube wall stays at {} mm after the bore offset",
             feat.id(),
@@ -698,6 +746,15 @@ fn plan_tubes(
     }
     // A bottom chamfer on both sides of a tube wall must leave most of it standing.
     let tube_chamfer = c.min(tube.wall_mm() / 3.0);
+    let first = first_layer_width(process, tube.wall_mm(), tube_chamfer);
+    if !tubes.is_empty() && first < process.line_width_mm - 1e-9 {
+        warnings.push(format!(
+            "feature `{}`: the {tube_chamfer:.3} mm first-layer chamfer inside and outside the {:.3} mm tube wall leaves {first:.3} mm in the first layer, narrower than one {} mm line, so the slicer may thin or drop it there; lower firstLayerChamfer or the tubeInnerDiameter offset",
+            feat.id(),
+            tube.wall_mm(),
+            process.line_width_mm
+        ));
+    }
     let pin_diameter = mm("pin_1wide_diameter") + offsets.pin_diameter;
     if !pins.is_empty() && pin_diameter <= 0.0 {
         return Err(feat.fail(format!("pin diameter after offsets is {pin_diameter} mm")));
@@ -709,9 +766,11 @@ fn plan_tubes(
     // fit profile's ribDepth offset. One rib on each wall at every stud centre
     // line, where it touches the side of a stud below; as wide as the process's
     // minimum printable feature.
+    // Depths under MIN_LENGTH_MM count as none: 1.2 + 0.3 - 1.2 - 0.3 leaves
+    // 5.6e-17 mm, which the kernel cannot extrude.
     let rib_depth = mm("side_wall") + mm("rib_depth") - b.wall + offsets.rib_depth;
     let mut ribs = Vec::new();
-    if rib_depth > 0.0 {
+    if rib_depth >= MIN_LENGTH_MM {
         let half = process.min_feature_mm / 2.0;
         let [w, d] = b.size;
         let t = b.wall;
@@ -739,13 +798,13 @@ fn plan_tubes(
         }
     } else {
         warnings.push(format!(
-            "feature `{}`: rib depth after offsets is {rib_depth:.3} mm, so the wall ribs are left out",
+            "feature `{}`: rib depth after offsets is {rib_depth:.3} mm (under {MIN_LENGTH_MM} mm), so the wall ribs are left out",
             feat.id()
         ));
     }
 
     if !feat.f.off_grid {
-        let y = body.height_ldu();
+        let y = body.height_ldu;
         for (i, j) in body.stud_positions() {
             let (x, z) = body.stud_ldu(i, j);
             connectors.push(Connector {
@@ -983,6 +1042,7 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         })
         .unwrap_or_default();
     let tube_plan = tubes.as_ref().map(|(_, p)| p);
+    let flc = body.geom.first_layer_chamfer;
     let measurements = Measurements {
         process: process.id.clone(),
         fit_profile: input.fit.map(|f| f.id.clone()),
@@ -997,7 +1057,11 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         components: solids.iter().map(|s| s.component_count()).sum(),
         body_height_mm: Some(body.geom.height),
         min_body_wall_mm: Some(body.geom.wall * xy),
+        min_body_wall_at_bed_mm: Some((body.geom.wall - 2.0 * flc) * xy),
         min_tube_wall_mm: tube_plan.and_then(|p| p.tube_wall).map(|w| w * xy),
+        min_tube_wall_at_bed_mm: tube_plan
+            .and_then(|p| p.tube_wall.map(|w| (w - 2.0 * p.geom.tube_chamfer) * xy)),
+        first_layer_chamfer_mm: Some(flc),
         roof_mm: Some(body.geom.roof),
         cavity_depth_mm: Some(body.geom.cavity_depth()),
         stud_diameter_mm: studs.as_ref().map(|(_, p)| p.geom.diameter * xy),

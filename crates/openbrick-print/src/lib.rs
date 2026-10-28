@@ -208,12 +208,34 @@ pub struct Measurements {
     /// Body height without studs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_height_mm: Option<f64>,
-    /// Thinnest body side wall, wall ribs and tubes excluded (rule `WALL.MIN`).
+    /// Thinnest body side wall, wall ribs and tubes excluded (rule `WALL.MIN`):
+    /// the full wall above the first-layer chamfer. The chamfer replaces slicer
+    /// elephant-foot compensation (docs/plan/05 section 6), so the squashed first
+    /// layer spreads back towards this width; the modelled width in the bed plane
+    /// is [`Measurements::min_body_wall_at_bed_mm`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_body_wall_mm: Option<f64>,
-    /// Thinnest tube wall after offsets (rule `TUBE.WALL`).
+    /// Thinnest body side wall in the bed plane (z = 0), after the 45 degree
+    /// first-layer chamfers on its outer face and on the cavity rim:
+    /// `min_body_wall_mm` minus twice the chamfer. Equal to `min_body_wall_mm`
+    /// when the process has no first-layer chamfer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_body_wall_at_bed_mm: Option<f64>,
+    /// Thinnest tube wall after offsets, (OD - ID) / 2 as rule `TUBE.WALL`
+    /// defines it (docs/plan/05 section 5): the full wall above the first-layer
+    /// chamfer; see [`Measurements::min_tube_wall_at_bed_mm`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_tube_wall_mm: Option<f64>,
+    /// Thinnest tube wall in the bed plane, after the first-layer chamfers on
+    /// the outside and in the bore: `min_tube_wall_mm` minus twice the tube's
+    /// chamfer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_tube_wall_at_bed_mm: Option<f64>,
+    /// Height of the 45 degree first-layer chamfer on the body's bottom edges
+    /// (the larger of the process and fit profile values; `xyScale` stretches
+    /// its width, not its height).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_layer_chamfer_mm: Option<f64>,
     /// Roof (top) thickness over the cavity (rule `ROOF.MIN`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roof_mm: Option<f64>,
@@ -507,6 +529,7 @@ mod tests {
         };
         let v = serde_json::to_value(&m).expect("serialises");
         assert_eq!(v["minTubeWallMm"], 0.85);
+        assert!(v.get("minTubeWallAtBedMm").is_none());
         assert_eq!(v["fitCriticalConnectors"][0], "tubeF");
         assert!(
             v.get("minStrokeMm").is_none(),

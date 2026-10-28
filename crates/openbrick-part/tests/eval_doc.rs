@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use openbrick_part::eval::resolve_params;
+use openbrick_part::eval::{resolve_params, MAX_BODY_PLATES};
 use openbrick_part::{EvalError, ParamValues, PartDoc};
 use openbrick_print::{example_fit_profile, Offsets};
 use openbrick_units::{BRICK_LDU, PLATE_LDU, STUD_PITCH_LDU};
@@ -175,6 +175,14 @@ fn parameter_bounds_are_enforced_with_clear_messages() {
     assert!(m.contains("maximum is 14"), "{m}");
     let m = err(&kc, "studsOnTop", json!("yes"));
     assert!(m.contains("true or false"), "{m}");
+    // `step` counts from `min`: ringHole is 3 to 8 mm in 0.5 mm steps.
+    let m = err(&kc, "ringHole", json!(5.3));
+    assert!(
+        m.contains("`ringHole`") && m.contains("0.5 steps from 3") && m.contains("5 and 5.5"),
+        "{m}"
+    );
+    let m = err(&tile, "reliefHeight", json!("0.65mm"));
+    assert!(m.contains("0.1 steps from 0.2"), "{m}");
     match run(
         &tile,
         &ParamValues::new().with("colour", json!("red")),
@@ -196,6 +204,46 @@ fn quantities_convert_into_the_parameter_unit() {
     let params = ParamValues::new().with("length", json!("120ldu"));
     let r = resolve_params(&keychain(), &params, &p).expect("resolves");
     assert_eq!(r.values["length"], json!(120 / STUD_PITCH_LDU));
+}
+
+#[test]
+fn values_on_the_step_grid_are_accepted() {
+    // Decimal steps that binary floating point cannot hold exactly still pass:
+    // (0.7 - 0.2) / 0.1 is 4.999999999999999.
+    let p = process("fdm-0.4");
+    for v in ["0.2mm", "0.7mm", "1.5mm"] {
+        let params = ParamValues::new().with("reliefHeight", json!(v));
+        resolve_params(&logo_tile(), &params, &p).expect(v);
+    }
+    for v in [3.0, 5.5, 8.0] {
+        let params = ParamValues::new().with("ringHole", json!(v));
+        resolve_params(&keychain(), &params, &p).expect("on the grid");
+    }
+}
+
+#[test]
+fn the_tallest_body_builds_with_its_connectors_in_range() {
+    let p = process("fdm-0.4");
+    let doc = PartDoc::parse(&format!(
+        r#"{{ "openbrick": "1.0", "id": "t.t", "version": "0.1.0", "name": "t",
+              "license": "CC0-1.0", "credit": {{ "author": "t" }},
+              "features": [
+                {{ "id": "body", "op": "body.brick", "size": [1, 1], "height": "{MAX_BODY_PLATES}plate" }},
+                {{ "id": "studs", "op": "stud.field" }},
+                {{ "id": "bottom", "op": "tube.field" }} ] }}"#
+    ))
+    .expect("parses");
+    let b = build(&doc, &p, None);
+    let bricks = MAX_BODY_PLATES / (BRICK_LDU / PLATE_LDU) as u32;
+    let height = f64::from(bricks) * mm("brick_height");
+    assert!((b.measurements.bounds_max_mm[2] - height - mm("stud_height")).abs() < 1e-3);
+    let socket = b
+        .connectors
+        .iter()
+        .find(|c| c.kind == "tubeF")
+        .expect("socket");
+    assert_eq!(socket.pos[1], MAX_BODY_PLATES as i32 * PLATE_LDU);
+    assert!(b.measurements.is_manifold && b.measurements.components == 1);
 }
 
 #[test]
@@ -273,6 +321,18 @@ fn feature_errors_name_the_feature_and_field() {
         matches!(&e, EvalError::Field { field, .. } if field == "height"),
         "{e}"
     );
+    // Heights are capped like footprints: 300,000,000 plates would overflow the
+    // i32 LDU coordinates (x 8 = 2.4e9 > 2^31 - 1), and much less is absurd.
+    for plates in [MAX_BODY_PLATES + 1, 300_000_000] {
+        let e = fails(&format!(
+            r#"{{ "id": "body", "op": "body.plate", "size": [2, 2], "height": "{plates}plate" }}"#
+        ));
+        assert!(
+            matches!(&e, EvalError::Field { field, .. } if field == "height"),
+            "{e}"
+        );
+        assert!(e.to_string().contains("taller than"), "{e}");
+    }
     let e = fails(r#"{ "id": "body", "op": "body.plate", "size": [2, 2], "height": 2 }"#);
     assert!(
         e.to_string().contains("\"2plate\""),
