@@ -23,7 +23,10 @@ authors = ["OpenBrick3D contributors"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: parse every float to the correctly rounded f64, as jsonschema
+# (xtask) requires anyway; without it here, feature unification would make test
+# builds parse floats differently from the shipped CLI and WebAssembly builds.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 openbrick-units = { path = "crates/openbrick-units" }

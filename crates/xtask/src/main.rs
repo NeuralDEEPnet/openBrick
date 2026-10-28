@@ -1,6 +1,7 @@
 //! `cargo xtask <task>`: `check` runs fmt, clippy, tests and data validation; `data`
 //! validates the JSON documents under standards/, profiles/ and parts/ against the
-//! JSON Schemas in schemas/ and self-checks the schema fixtures.
+//! JSON Schemas in schemas/, loads each with its Rust reader and validates what the
+//! reader writes back, and self-checks the schemas and their fixtures.
 
 mod schema;
 
@@ -18,7 +19,8 @@ fn run(args: &[&str]) -> bool {
     status.success()
 }
 
-/// Pragma, kind and credit checks plus full schema validation of one data directory.
+/// Pragma, kind and credit checks, schema validation, and the Rust reader round
+/// trip of one data directory.
 fn validate_json_dir(root: &Path, set: &DataSet, schema: &Schema) -> bool {
     let mut ok = true;
     let files = match schema::json_files(&root.join(set.dir)) {
@@ -30,27 +32,35 @@ fn validate_json_dir(root: &Path, set: &DataSet, schema: &Schema) -> bool {
     };
     for p in files {
         let shown = p.strip_prefix(root).unwrap_or(&p).display().to_string();
-        let v = match schema::read_json(&p) {
-            Ok(v) => v,
+        let text = match std::fs::read_to_string(&p) {
+            Ok(t) => t,
             Err(e) => {
-                eprintln!("data: {e}");
+                eprintln!("data: {shown}: cannot read: {e}");
                 ok = false;
                 continue;
             }
         };
+        let v: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("data: {shown}: is not valid JSON: {e}");
+                ok = false;
+                continue;
+            }
+        };
+        // Every data file carries a pragma, its kind and a credit (LICENSE-POLICY.md).
         let has_pragma = v.get("openbrick").and_then(|x| x.as_str()).is_some();
         let kind_ok = set
             .kind
             .map(|k| v.get("kind").and_then(|x| x.as_str()) == Some(k))
             .unwrap_or(true);
-        let credit_ok =
-            v.get("credit").is_some() || v.get("kind").and_then(|x| x.as_str()) == Some("process");
+        let credit_ok = v.get("credit").is_some();
         if !(has_pragma && kind_ok && credit_ok) {
             eprintln!("data: {shown} fails pragma/kind/credit checks");
             ok = false;
         }
-        for f in schema.failures(&v) {
-            eprintln!("data: {shown} does not match {}: {f}", schema.name);
+        for problem in schema::check_document(&shown, set, schema, &text) {
+            eprintln!("data: {problem}");
             ok = false;
         }
     }
@@ -72,6 +82,10 @@ fn data(root: &Path) -> bool {
         ok &= validate_json_dir(root, set, &schemas[set.schema]);
     }
     for problem in schema::check_shared_defs(&schemas) {
+        eprintln!("data: {problem}");
+        ok = false;
+    }
+    for problem in schemas.values().flat_map(schema::check_known_fields) {
         eprintln!("data: {problem}");
         ok = false;
     }

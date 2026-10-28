@@ -9,6 +9,12 @@ publish = false
 
 [dependencies]
 serde_json = { workspace = true }
+# The Rust readers of each document kind. `cargo xtask data` loads every data
+# file and valid fixture with them, and checks that what they write back still
+# passes its schema.
+openbrick-units = { workspace = true }
+openbrick-part = { workspace = true }
+openbrick-print = { workspace = true }
 # JSON Schema (draft 2020-12) validation for `cargo xtask data`. MIT. Default
 # features are off: they pull reqwest, rustls and aws-lc-rs to fetch remote
 # `$ref`s over HTTP, and our schemas are self-contained and read from disk.

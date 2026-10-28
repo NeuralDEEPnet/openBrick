@@ -11,25 +11,60 @@ One JSON Schema (draft 2020-12) per document kind, published with each release a
 
 Still to come, with their document kinds: `run.schema.json` (`.obrun.json`) and `model.schema.json` (`model.json` inside `.obrick`).
 
+## What `cargo xtask data` checks
+
+For every file in `standards/`, `profiles/process/`, `profiles/fit/` and `parts/`, and for every fixture in `fixtures/valid/`:
+
+1. It passes its schema. Each failure is printed with its JSON pointer and schema location, for example `at /features/0/op: "body.tyle" is not one of [...] [schema #/$defs/feature/properties/op/enum]`.
+2. The Rust reader in the table above loads it. Parts also go through `PartDoc::check` (unique feature ids, known ops, anchors defined before use), and the standard through a check that row ids are unique, because `STANDARD.mm(id)` only ever finds the first row with an id.
+3. What the reader writes back (`serde_json::to_value`) passes the schema too. The writers omit absent optional fields instead of writing `null`, keep the `credit` block, and write no empty `date`, so a document Rust writes is a document the schema accepts.
+
+It also keeps the older checks (every data file has a pragma, its `kind` and a `credit`), meta-validates each schema against draft 2020-12, checks that the shared `$defs` copies are identical and that each `$defs/knownFields` matches its schema (see below), and self-checks the fixtures.
+
+### What the schemas and the readers can still disagree on
+
+Steps 2 and 3 run only on the repository's data and fixtures. For a document from elsewhere, the schema is the contract, so these are the known differences:
+
+- **The schema is stricter in many places, on purpose.** Bounds, enums, patterns, required `credit`, and no `null` for an absent optional field (`"on": null` loads in Rust but fails the schema; leave the field out instead).
+- **Where the schema could be looser, the readers were changed to match.** JSON and JSON Schema do not tell `1` from `1.0` (draft 2020-12 counts `1.0` as an integer), so `couponVersion` is read as a whole number whichever way it is written, and the schema caps it at the `u32` maximum the reader can hold.
+- **Duplicate keys in one object** are invisible to the schema (a parsed JSON value keeps the last one), while serde rejects them for fixed-field objects. Step 2 catches them in the repository.
+- **Readers drop what they do not model yet.** Writing a document back loses `kind`, `presets` and `lock` on parts and `author`, `license` and `url` inside part `provenance`; `provenance` on the other kinds; `notes` and `tolerances` on the standard; and `minFeatureRule`, `horizontalHoleStrategies`, `tessellation` and `notes` on process profiles. The result still passes the schema, but it is not the same document; see the follow-ups below.
+
 ## How the schemas are built
 
-- **Sources.** Each schema is derived from the real data files, the serde structs listed above and docs/plan/05 (profiles) and 06 (parts). Fields documented in the plan but not read by Rust yet are allowed and say so in their description (for example `presets` and `lock` on parts, `tessellation` and `horizontalHoleStrategies` on process profiles, `notes` and `tolerances` on the standard).
-- **Required fields** are the struct fields without `#[serde(default)]`, plus the repository rules: `credit` on every standard, fit profile and part, and `source` on every row of the standard (every geometry number cites its source).
-- **Unknown fields.** Objects that serde reads into fixed fields are closed (`additionalProperties: false`): serde would drop an unknown field without a word, so a typo such as `experimantal` would silently change nothing. Objects that serde keeps open are open in the schema too: `Param` and `Feature` in parts (their extras land in a `#[serde(flatten)]` map, and op-specific values such as `"0.6mm"`, `"$size"` or `"profile.minFeature"` are strings the evaluator reads), and the free-form `serde_json::Value` blocks (`material` in fit profiles, `print`, `export` and `lock` in parts), whose documented fields are typed and whose others are allowed. Adding a field to a closed object therefore means a minor schema version in the same pull request.
-- **Bounds** catch unit and entry mistakes, not design choices: lengths in process profiles are positive (chamfers may be zero), `maxOverhangDeg` is in (0, 90], fit offsets stay within plus or minus 1 mm (coupon sweeps span about 0.3 mm), `xyScale` within 0.9 to 1.1, chosen coupon cells are positive and keyed by the coupon rows (`stud`, `tube`, `pocketTubeOD`, `pocketRib`, `technicH`, `pin`, `axle`, `bar`, `clip`). No brick dimension is hard-coded in a schema; those live in the standard.
+- **Sources.** Each schema is derived from the real data files, the serde structs listed above and docs/plan/05 (profiles) and 06 (parts). Fields documented in the plan but not read by Rust yet are allowed and say so in their description (`presets` and `lock` on parts; `minFeatureRule`, `horizontalHoleStrategies`, `tessellation` and `notes` on process profiles; `notes` and `tolerances` on the standard).
+- **Required fields** are the struct fields without `#[serde(default)]`, plus the repository rules: `credit` on every document (LICENSE-POLICY.md; the process profiles gained one) and `source` on every row of the standard (every geometry number cites its source).
+- **Bounds** catch unit and entry mistakes, not design choices: lengths in process profiles are positive (chamfers may be zero), `maxOverhangDeg` is in (0, 90], fit offsets stay within plus or minus 1 mm (the coupon sweeps of docs/plan/05 section 4 reach at most 0.30 mm from nominal: horizontal Technic holes, 5.10 - 4.80), `xyScale` within 0.9 to 1.1, `couponVersion` from 1 to 4294967295, and chosen coupon cells are positive and keyed by the coupon rows (`stud`, `tube`, `pocketTubeOD`, `pocketRib`, `technicH`, `pin`, `axle`, `bar`, `clip`). No brick dimension is hard-coded in a schema; those live in the standard.
 - **Enums** follow the code and the plan: `confidence` (verified, likely, inferred), the feature `op` list (equal to `openbrick_part::KNOWN_OPS`, enforced by a test in `crates/openbrick-part/tests/schema.rs`), parameter `type`, `unit` and `manipulator`, `colorRole` (body, accent, serial), hole strategies (polyhole, ellipse, teardrop) and fit `intent` (fits-genuine-bricks, fits-itself; open question Q05).
-- **Shared definitions.** `pragma`, `semver`, `spdx`, `credit`, `provenance` and `profileId` are repeated in each schema's `$defs` so every file stands alone (editors and code generators need no network). `cargo xtask data` fails if the copies differ, so edit them everywhere at once.
-- **Ids.** `$id` is `https://openbrick3d.org/schemas/<major.minor>/<file>`. It names the schema; nothing fetches it, and the domain is not live yet.
-- **Not covered by JSON Schema** and left to Rust: unique feature ids and anchors defined before use (`PartDoc::check`, run in CI through `openbrick check`), and cross-field rules such as `minFeatureMm = 2 x lineWidthMm` or offsets equal to chosen cell minus nominal (`openbrick-print` tests).
+- **Ids.** Profile ids are lower-case words joined by hyphens (`fdm-0.4`). Part ids are a namespace, a dot and a name (`ndn.logo-tile`). Feature ids may use letters, digits, `_` and `-` but no dot, because anchors are written `id.face`. Parameter names may not use `-`, because expressions refer to them as `$name`.
+- **Shared definitions.** `pragma`, `atThisMinor`, `semver`, `spdx`, `credit`, `provenance` and `profileId` are repeated in each schema's `$defs` so every file stands alone (editors and code generators need no network). `cargo xtask data` fails if the copies differ, so edit them everywhere at once.
+- **`$id`** is `https://openbrick3d.org/schemas/<major.minor>/<file>`. It names the schema; nothing fetches it, and the domain is not live yet.
+
+## Unknown fields and later minor versions
+
+docs/plan/08 section 9 says minor versions only add fields and stay readable by older minors. The Rust readers ignore fields they do not know (parameters and features keep them in a `#[serde(flatten)]` map). That is forward compatible, but it also means a misspelt optional field (`experimantal`) is silently dropped. The schemas handle both cases with the pragma:
+
+- **A 1.0 document** (pragma `1.0` or `1.0.x`) may use only the fields the 1.0 schema names. Each schema has `"if": { "$ref": "#/$defs/atThisMinor" }, "then": { "$ref": "#/$defs/knownFields" }`; `knownFields` lists, object by object, the property names a 1.0 document may use, with `"additionalProperties": false`. A typo is an error at the pointer of the object that holds it.
+- **A document of a later minor** (`1.1`, ...) may carry fields added since. The 1.0 schema still checks every field it knows and lets the others through, so a tool that only has the 1.0 schema can still validate and read a 1.1 document.
+- **Open on purpose at every version:** parameters and features in parts (op-specific fields such as `"0.6mm"`, `"$size"` or `"profile.minFeature"` are strings the evaluator reads), `material` in fit profiles, and `print`, `export`, `snap` connectors, `presets[].params` and `lock` in parts. These are free-form `serde_json::Value` blocks or flatten maps in Rust; their documented fields are typed and the rest is allowed.
+
+`knownFields` repeats property names, so `cargo xtask data` checks it against the schema: every object with fixed `properties` must be listed in `knownFields` with exactly those names, or be marked open with an explicit `additionalProperties`. Adding a field therefore means adding it in both places, in a new minor version of the schema.
 
 ## Fixtures
 
-`fixtures/valid/` holds documents that must pass and `fixtures/invalid/` documents that must fail. A fixture picks its schema by file-name prefix: `standard-`, `process-`, `fit-` or `part-`. Each invalid fixture is a valid document with exactly one thing broken, named for that rule (`part-unknown-op.json`, `fit-missing-chosen-cells.json`, `process-negative-min-feature.json`, `standard-bad-confidence.json`, ...). `fixtures/expected-failures.json` records, for each invalid fixture, the JSON pointer and schema keyword it breaks; the check requires every error the fixture raises to match that pair, so a fixture that fails for some other reason is reported.
+`fixtures/valid/` holds documents that must pass all three checks above, and `fixtures/invalid/` documents that must fail their schema. A fixture picks its schema by file-name prefix: `standard-`, `process-`, `fit-` or `part-`. Each invalid fixture is a valid document with exactly one thing broken, named for that rule (`part-unknown-op.json`, `fit-missing-chosen-cells.json`, `fit-coupon-version-too-large.json`, `process-negative-min-feature.json`, `standard-bad-confidence.json`, ...). The valid `*-later-minor-*` fixtures show what a 1.1 document may add; `fit-misspelled-offset.json` and `process-misspelled-optional-field.json` show the same additions failing at 1.0.
 
-The self-check runs in `cargo xtask data` and in the xtask unit tests (`cargo test -p xtask`). It also requires at least one valid and two invalid fixtures per schema. Integration tests in `openbrick-units`, `openbrick-print` and `openbrick-part` parse every valid fixture with the real serde structs, so the schemas are never looser than the code.
+`fixtures/expected-failures.json` records, for each invalid fixture, the JSON pointer, the schema keyword and a piece of the validator's message (the broken value or property name) that it breaks. Every error the fixture raises must match all three, so a fixture that also fails for some other reason, such as a second missing property, is reported.
 
-To add a fixture: copy a valid one, change one thing, give it a name that says what is wrong, and add its pointer and keyword to `expected-failures.json`. `cargo xtask data` prints each failure as `at <JSON pointer>: <message> [schema #<keyword location>]`, which is where to copy them from.
+The self-check runs in `cargo xtask data` and in the xtask unit tests (`cargo test -p xtask`), which also cover the rules JSON Schema cannot state (duplicate standard ids, the `knownFields` check) with one passing and one failing case each. It requires at least one valid and two invalid fixtures per schema.
+
+To add a fixture: copy a valid one, change one thing, give it a name that says what is wrong, and add its pointer, keyword and message to `expected-failures.json`. `cargo xtask data` prints each failure as `at <JSON pointer>: <message> [schema #<keyword location>]`, which is where to copy them from.
+
+## Follow-ups
+
+- The Rust structs do not model `provenance` on profiles and the standard, nor the fields listed under "Readers drop what they do not model yet". Writers such as `openbrick calibrate record` (backlog item 11) should keep them before they rewrite files people edit by hand.
+- `Credit` now lives in `openbrick-units` and is shared by all four document kinds; `Provenance` still lives in `openbrick-part` and lacks the `author`, `license` and `url` fields that LICENSE-POLICY.md and the schemas name.
 
 ## Versioning
 
-Schema versions are semver and follow the document pragma `"openbrick": "1.x"`: minor versions only add optional fields, majors ship a migration and `openbrick migrate` (docs/plan/08 section 9).
+Schema versions are semver and follow the document pragma `"openbrick": "1.x"`: minor versions only add optional fields and get a new `$id` (`.../schemas/1.1/...`), whose `atThisMinor` and `knownFields` then cover 1.0 and 1.1 documents; majors ship a migration and `openbrick migrate` (docs/plan/08 section 9).

@@ -61,7 +61,7 @@
       "if": "$finish != 'gloss'"
     },
     {
-      "id": "mark",
+      "id": "serial-mark",
       "op": "relief.text",
       "on": "body.bottom",
       "text": "A",

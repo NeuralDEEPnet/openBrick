@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbrick3d.org/schemas/1.0/process-profile.schema.json",
   "title": "OpenBrick3D process profile",
-  "description": "What a manufacturing process can resolve (profiles/process/*.json, .obprofile.json). Read by openbrick-print as ProcessProfile with camelCase fields; see docs/plan/05 section 3. Validator thresholds come from these values. Unknown fields are rejected because serde would silently drop them.",
+  "description": "What a manufacturing process can resolve (profiles/process/*.json, .obprofile.json). Read by openbrick-print as ProcessProfile with camelCase fields; see docs/plan/05 section 3. Validator thresholds come from these values. A 1.0 document may use only the fields named here ($defs/knownFields).",
   "type": "object",
   "required": [
     "openbrick",
     "kind",
     "id",
+    "credit",
     "name",
     "lineWidthMm",
     "layerHeightMm",
@@ -55,7 +56,7 @@
       "description": "Smallest printable stroke or detail; rule FEATURE.MIN and the morphological opening of artwork use it."
     },
     "minFeatureRule": {
-      "description": "Human-readable derivation of minFeatureMm, for example 2 x lineWidthMm.",
+      "description": "Human-readable derivation of minFeatureMm, for example 2 x lineWidthMm. Not read by openbrick-print yet.",
       "type": "string"
     },
     "minTubeWallMm": {
@@ -96,14 +97,14 @@
       "$ref": "#/$defs/holeStrategy"
     },
     "horizontalHoleStrategies": {
-      "description": "Strategies this process can use; horizontalHoleStrategy is the default.",
+      "description": "Strategies this process can use; horizontalHoleStrategy is the default. Not read by openbrick-print yet.",
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/holeStrategy" }
     },
     "tessellation": {
-      "description": "Mesh resolution defaults for this process.",
+      "description": "Mesh resolution defaults for this process. Not read by openbrick-print yet.",
       "type": "object",
       "minProperties": 1,
       "properties": {
@@ -113,13 +114,55 @@
           "minimum": 3
         },
         "minEdgeMm": { "$ref": "#/$defs/positiveMm" }
+      }
+    },
+    "notes": { "description": "Free text. Not read by openbrick-print yet.", "type": "string" }
+  },
+  "if": { "$ref": "#/$defs/atThisMinor" },
+  "then": { "$ref": "#/$defs/knownFields" },
+  "$defs": {
+    "knownFields": {
+      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error: serde would drop it silently, so a misspelt optional field would change nothing. Objects not listed here are open on purpose. cargo xtask data checks that these lists match the properties the schema declares.",
+      "properties": {
+        "openbrick": true,
+        "kind": true,
+        "id": true,
+        "name": true,
+        "credit": { "properties": { "author": true, "url": true }, "additionalProperties": false },
+        "provenance": {
+          "properties": { "source": true, "author": true, "license": true, "url": true, "modified": true, "history": true },
+          "additionalProperties": false
+        },
+        "experimental": true,
+        "lineWidthMm": true,
+        "layerHeightMm": true,
+        "minWallMm": true,
+        "wallQuantiseMm": true,
+        "minFeatureMm": true,
+        "minFeatureRule": true,
+        "minTubeWallMm": true,
+        "minCavityDepthMm": true,
+        "minReliefHeightMm": true,
+        "maxReliefHeightMm": true,
+        "minRoofMm": true,
+        "maxUnsupportedBridgeMm": true,
+        "maxOverhangDeg": true,
+        "firstLayerChamferMm": true,
+        "studTopChamferMm": true,
+        "wallRoofFilletMm": true,
+        "supportsAllowed": true,
+        "horizontalHoleStrategy": true,
+        "horizontalHoleStrategies": true,
+        "tessellation": { "properties": { "studSegments": true, "minEdgeMm": true }, "additionalProperties": false },
+        "notes": true
       },
       "additionalProperties": false
     },
-    "notes": { "type": "string" }
-  },
-  "additionalProperties": false,
-  "$defs": {
+    "atThisMinor": {
+      "description": "Matches a document whose pragma names this schema's minor version, 1.0 (or a 1.0.x patch). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9).",
+      "required": ["openbrick"],
+      "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+    },
     "positiveMm": {
       "description": "A length in millimetres greater than zero.",
       "type": "number",
@@ -135,7 +178,7 @@
       "enum": ["polyhole", "ellipse", "teardrop"]
     },
     "pragma": {
-      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Readers accept every 1.x.",
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Every 1.x is accepted: readers ignore fields from minors newer than they know, and this schema checks only the fields it names in documents newer than 1.0 (see atThisMinor).",
       "type": "string",
       "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
     },
@@ -151,8 +194,7 @@
       "properties": {
         "author": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "pattern": "^https?://\\S+$" }
-      },
-      "additionalProperties": false
+      }
     },
     "provenance": {
       "description": "Where the data came from, so attribution travels with it through conversion, export and printing (LICENSE-POLICY.md, docs/plan/06 section 2).",
@@ -164,8 +206,7 @@
         "url": { "type": "string", "pattern": "^https?://\\S+$" },
         "modified": { "type": "boolean" },
         "history": { "type": "array", "items": { "type": "string" } }
-      },
-      "additionalProperties": false
+      }
     },
     "profileId": {
       "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",

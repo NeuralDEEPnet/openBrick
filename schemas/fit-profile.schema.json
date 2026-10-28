@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbrick3d.org/schemas/1.0/fit-profile.schema.json",
   "title": "OpenBrick3D fit profile",
-  "description": "One printer, nozzle and material combination after calibration (profiles/fit/*.json, .obprofile.json). Read by openbrick-print as FitProfile with camelCase fields; see docs/plan/05 sections 3 and 4. Fit offsets live here, never in part documents. Unknown fields are rejected because serde would silently drop them; material is free-form beyond its type.",
+  "description": "One printer, nozzle and material combination after calibration (profiles/fit/*.json, .obprofile.json). Read by openbrick-print as FitProfile with camelCase fields; see docs/plan/05 sections 3 and 4. Fit offsets live here, never in part documents. A 1.0 document may use only the fields named here ($defs/knownFields); material is free-form beyond its type.",
   "type": "object",
   "required": ["openbrick", "kind", "id", "credit", "process", "printer", "nozzleMm", "material", "intent", "offsetsMm"],
   "properties": {
@@ -28,7 +28,8 @@
         "type": { "type": "string", "minLength": 1 },
         "brand": { "type": "string" },
         "colour": { "type": "string" }
-      }
+      },
+      "additionalProperties": true
     },
     "slicer": { "type": "string" },
     "intent": {
@@ -39,10 +40,57 @@
     "calibration": { "$ref": "#/$defs/calibration" },
     "notes": { "type": "string" }
   },
-  "additionalProperties": false,
+  "if": { "$ref": "#/$defs/atThisMinor" },
+  "then": { "$ref": "#/$defs/knownFields" },
   "$defs": {
+    "knownFields": {
+      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error: serde would drop it silently, so a misspelt optional field would change nothing. Objects not listed here are open on purpose. cargo xtask data checks that these lists match the properties the schema declares.",
+      "properties": {
+        "openbrick": true,
+        "kind": true,
+        "id": true,
+        "credit": { "properties": { "author": true, "url": true }, "additionalProperties": false },
+        "provenance": {
+          "properties": { "source": true, "author": true, "license": true, "url": true, "modified": true, "history": true },
+          "additionalProperties": false
+        },
+        "process": true,
+        "printer": true,
+        "nozzleMm": true,
+        "material": true,
+        "slicer": true,
+        "intent": true,
+        "offsetsMm": {
+          "properties": {
+            "studDiameter": true,
+            "tubeInnerDiameter": true,
+            "tubeOuterDiameter": true,
+            "ribDepth": true,
+            "pinDiameter": true,
+            "horizontalHoleDiameter": true,
+            "axleHole": true,
+            "barDiameter": true,
+            "clipOpening": true,
+            "firstLayerChamfer": true,
+            "xyScale": true
+          },
+          "additionalProperties": false
+        },
+        "calibration": {
+          "properties": { "couponVersion": true, "chosenCells": true, "date": true, "pullTestN": true, "controlPullTestN": true },
+          "additionalProperties": false
+        },
+        "notes": true
+      },
+      "additionalProperties": false
+    },
+    "atThisMinor": {
+      "description": "Matches a document whose pragma names this schema's minor version, 1.0 (or a 1.0.x patch). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9).",
+      "required": ["openbrick"],
+      "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+    },
     "offsetMm": {
-      "description": "Offset in millimetres on a diameter (or depth for ribs) applied to nominal geometry at export: chosen coupon cell minus nominal. Coupon sweeps stay within 0.35 mm of nominal (docs/plan/05 section 4), so a magnitude above 1 mm is a unit mistake.",
+      "description": "Offset in millimetres on a diameter (or depth for ribs) applied to nominal geometry at export: chosen coupon cell minus nominal. The coupon sweeps of docs/plan/05 section 4 reach at most 0.30 mm from nominal (horizontal Technic holes, 5.10 - 4.80), so a magnitude above 1 mm is a unit mistake.",
       "type": "number",
       "minimum": -1,
       "maximum": 1
@@ -84,15 +132,19 @@
           "minimum": 0.9,
           "maximum": 1.1
         }
-      },
-      "additionalProperties": false
+      }
     },
     "calibration": {
       "description": "The record the coupon wizard writes (openbrick_print::Calibration). Without it, or without the cell a fit-critical connector needs, rule FIT.MISSING blocks export.",
       "type": "object",
       "required": ["couponVersion", "chosenCells"],
       "properties": {
-        "couponVersion": { "type": "integer", "minimum": 1 },
+        "couponVersion": {
+          "description": "Version of the coupon layout that was printed. Read as a u32 by openbrick-print, hence the maximum; 1 and 1.0 are the same number to both.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
         "chosenCells": {
           "description": "Best-fitting coupon cell by row, in millimetres (diameters; pocketRib is a rib depth). Keys are the coupon rows of docs/plan/05 section 4 as required_cells() names them.",
           "type": "object",
@@ -117,11 +169,10 @@
           "type": ["number", "null"],
           "minimum": 0
         }
-      },
-      "additionalProperties": false
+      }
     },
     "pragma": {
-      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Readers accept every 1.x.",
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Every 1.x is accepted: readers ignore fields from minors newer than they know, and this schema checks only the fields it names in documents newer than 1.0 (see atThisMinor).",
       "type": "string",
       "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
     },
@@ -137,8 +188,7 @@
       "properties": {
         "author": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "pattern": "^https?://\\S+$" }
-      },
-      "additionalProperties": false
+      }
     },
     "provenance": {
       "description": "Where the data came from, so attribution travels with it through conversion, export and printing (LICENSE-POLICY.md, docs/plan/06 section 2).",
@@ -150,8 +200,7 @@
         "url": { "type": "string", "pattern": "^https?://\\S+$" },
         "modified": { "type": "boolean" },
         "history": { "type": "array", "items": { "type": "string" } }
-      },
-      "additionalProperties": false
+      }
     },
     "profileId": {
       "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",

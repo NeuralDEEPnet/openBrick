@@ -1,13 +1,9 @@
-//! `schemas/part.schema.json` and this crate must agree: the schema's op enum is
-//! exactly `KNOWN_OPS`, and every valid part fixture parses with `PartDoc::parse`.
+//! `schemas/part.schema.json` and this crate must agree on the feature ops: the
+//! schema's op enum is exactly `KNOWN_OPS`. (`cargo xtask data` checks the rest:
+//! every valid part fixture and every file in parts/ loads with `PartDoc::parse`,
+//! and what it writes back passes the schema.)
 
-use std::path::{Path, PathBuf};
-
-use openbrick_part::{PartDoc, KNOWN_OPS};
-
-fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
+use openbrick_part::KNOWN_OPS;
 
 #[test]
 fn schema_op_enum_equals_known_ops() {
@@ -26,23 +22,4 @@ fn schema_op_enum_equals_known_ops() {
         "the op enum in schemas/part.schema.json and openbrick_part::KNOWN_OPS list different ops; \
          add or remove the op in both places, in the same order"
     );
-}
-
-#[test]
-fn valid_part_fixtures_parse() {
-    let dir = repo().join("schemas/fixtures/valid");
-    let mut parsed = 0;
-    for entry in std::fs::read_dir(&dir).expect("schemas/fixtures/valid exists") {
-        let path = entry.expect("readable entry").path();
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        if !(name.starts_with("part-") && name.ends_with(".json")) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).expect("fixture is readable");
-        if let Err(e) = PartDoc::parse(&text) {
-            panic!("{name} passes the schema but PartDoc::parse rejects it: {e}");
-        }
-        parsed += 1;
-    }
-    assert!(parsed >= 1, "no part fixtures found in {}", dir.display());
 }

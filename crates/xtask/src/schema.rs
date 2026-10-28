@@ -1,13 +1,15 @@
 //! JSON Schema (draft 2020-12) validation of the data documents and the schema
 //! fixtures (docs/plan/08 section 1; backlog item 5 in docs/plan/14 section 9).
 //!
-//! Data directories pick their schema by directory; fixtures under
-//! `schemas/fixtures/` pick it by file-name prefix (`part-`, `fit-`, ...).
-//! Invalid fixtures are listed in `schemas/fixtures/expected-failures.json` with
-//! the one JSON pointer and keyword they are meant to break, so a fixture that
-//! fails for an unrelated reason is caught too.
+//! Every data file and every valid fixture is checked three ways: against its
+//! schema, by loading it with the Rust reader of its kind, and by validating what
+//! that reader writes back. Data directories pick their schema by directory;
+//! fixtures under `schemas/fixtures/` pick it by file-name prefix (`part-`, `fit-`,
+//! ...). Invalid fixtures are listed in `schemas/fixtures/expected-failures.json`
+//! with the one JSON pointer, keyword and message they are meant to break, so a
+//! fixture that fails for an unrelated reason is caught too.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -15,7 +17,11 @@ use serde_json::Value;
 /// The `$schema` every schema in `schemas/` must declare.
 pub const DRAFT_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
 
-/// One family of data documents and the schema that validates it.
+/// Load a document with the Rust reader of its kind and serialize it back.
+pub type Reader = fn(&str) -> Result<Value, String>;
+
+/// One family of data documents, the schema that validates it and the Rust reader
+/// that loads it.
 pub struct DataSet {
     /// Directory of the data files, relative to the repository root.
     pub dir: &'static str,
@@ -25,6 +31,9 @@ pub struct DataSet {
     pub schema: &'static str,
     /// File-name prefix of the fixtures for this schema.
     pub prefix: &'static str,
+    /// The Rust type that reads these documents, for messages.
+    pub reader_name: &'static str,
+    pub reader: Reader,
 }
 
 pub const DATA_SETS: &[DataSet] = &[
@@ -33,36 +42,83 @@ pub const DATA_SETS: &[DataSet] = &[
         kind: Some("standard"),
         schema: "standard.schema.json",
         prefix: "standard-",
+        reader_name: "openbrick_units::Standard",
+        reader: read_standard,
     },
     DataSet {
         dir: "profiles/process",
         kind: Some("process"),
         schema: "process-profile.schema.json",
         prefix: "process-",
+        reader_name: "openbrick_print::ProcessProfile",
+        reader: read_process,
     },
     DataSet {
         dir: "profiles/fit",
         kind: Some("fit"),
         schema: "fit-profile.schema.json",
         prefix: "fit-",
+        reader_name: "openbrick_print::FitProfile",
+        reader: read_fit,
     },
     DataSet {
         dir: "parts",
         kind: None,
         schema: "part.schema.json",
         prefix: "part-",
+        reader_name: "openbrick_part::PartDoc",
+        reader: read_part,
     },
 ];
 
 /// `$defs` that every schema repeats so each file stands alone; they must not drift.
 pub const SHARED_DEFS: &[&str] = &[
     "pragma",
+    "atThisMinor",
     "semver",
     "spdx",
     "credit",
     "provenance",
     "profileId",
 ];
+
+fn written(v: Result<Value, serde_json::Error>) -> Result<Value, String> {
+    v.map_err(|e| format!("cannot be written back: {e}"))
+}
+
+/// The standard, plus the one rule its schema cannot state: row ids are unique,
+/// because `Standard::mm(id)` returns the first row with that id.
+fn read_standard(text: &str) -> Result<Value, String> {
+    let s: openbrick_units::Standard = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let mut seen = BTreeSet::new();
+    for f in &s.features {
+        if !seen.insert(f.id.as_str()) {
+            return Err(format!(
+                "feature id `{}` is used by two rows; STANDARD.mm(\"{}\") only ever finds the first, so rename or merge them",
+                f.id, f.id
+            ));
+        }
+    }
+    written(serde_json::to_value(&s))
+}
+
+fn read_process(text: &str) -> Result<Value, String> {
+    let p: openbrick_print::ProcessProfile =
+        serde_json::from_str(text).map_err(|e| e.to_string())?;
+    written(serde_json::to_value(&p))
+}
+
+fn read_fit(text: &str) -> Result<Value, String> {
+    let f: openbrick_print::FitProfile = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    written(serde_json::to_value(&f))
+}
+
+/// Parts also get `PartDoc::check`: unique feature ids, known ops, anchors defined
+/// before use.
+fn read_part(text: &str) -> Result<Value, String> {
+    let d = openbrick_part::PartDoc::parse(text).map_err(|e| e.to_string())?;
+    written(serde_json::to_value(&d))
+}
 
 /// One schema violation in a document.
 #[derive(Clone, Debug)]
@@ -102,9 +158,17 @@ impl Schema {
     /// Read, meta-validate and compile one schema file.
     pub fn load(path: &Path) -> Result<Schema, String> {
         let raw = read_json(path)?;
-        let shown = path.display();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Schema::from_value(&name, raw).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// Meta-validate and compile a schema already parsed.
+    pub fn from_value(name: &str, raw: Value) -> Result<Schema, String> {
         if raw.get("$schema").and_then(Value::as_str) != Some(DRAFT_2020_12) {
-            return Err(format!("{shown}: $schema must be {DRAFT_2020_12}"));
+            return Err(format!("$schema must be {DRAFT_2020_12}"));
         }
         for key in ["$id", "title", "description"] {
             if raw
@@ -112,19 +176,15 @@ impl Schema {
                 .and_then(Value::as_str)
                 .is_none_or(str::is_empty)
             {
-                return Err(format!("{shown}: missing {key}"));
+                return Err(format!("missing {key}"));
             }
         }
         jsonschema::draft202012::meta::validate(&raw)
-            .map_err(|e| format!("{shown}: not a valid draft 2020-12 schema: {e}"))?;
-        let validator = jsonschema::draft202012::new(&raw)
-            .map_err(|e| format!("{shown}: does not compile: {e}"))?;
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_err(|e| format!("not a valid draft 2020-12 schema: {e}"))?;
+        let validator =
+            jsonschema::draft202012::new(&raw).map_err(|e| format!("does not compile: {e}"))?;
         Ok(Schema {
-            name,
+            name: name.to_string(),
             raw,
             validator,
         })
@@ -183,6 +243,31 @@ pub fn load_all(root: &Path) -> Result<BTreeMap<&'static str, Schema>, Vec<Strin
     }
 }
 
+/// Check one document that must be valid: it passes its schema, the Rust reader
+/// loads it, and what the reader writes back passes the schema too. `shown` names
+/// the document in messages. Returns one line per problem; empty means all good.
+pub fn check_document(shown: &str, set: &DataSet, schema: &Schema, text: &str) -> Vec<String> {
+    let doc: Value = match serde_json::from_str(text) {
+        Ok(d) => d,
+        Err(e) => return vec![format!("{shown}: is not valid JSON: {e}")],
+    };
+    let mut problems: Vec<String> = schema
+        .failures(&doc)
+        .into_iter()
+        .map(|f| format!("{shown} does not match {}: {f}", schema.name))
+        .collect();
+    match (set.reader)(text) {
+        Err(e) => problems.push(format!("{shown}: {} cannot load it: {e}", set.reader_name)),
+        Ok(back) => problems.extend(schema.failures(&back).into_iter().map(|f| {
+            format!(
+                "{shown}: {} writes it back as a document {} rejects: {f}",
+                set.reader_name, schema.name
+            )
+        })),
+    }
+    problems
+}
+
 /// The data set whose fixtures start with the prefix of this file name.
 fn set_for_fixture(file_name: &str) -> Option<&'static DataSet> {
     DATA_SETS.iter().find(|s| file_name.starts_with(s.prefix))
@@ -198,6 +283,20 @@ fn file_name(p: &Path) -> String {
 struct Expected {
     pointer: String,
     keyword: String,
+    /// A substring of the validator's message that names the broken value or
+    /// property, so two errors at the same pointer and keyword (two missing
+    /// required properties, say) are told apart.
+    message: String,
+}
+
+impl std::fmt::Display for Expected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "`{}` at \"{}\" with a message containing {:?}",
+            self.keyword, self.pointer, self.message
+        )
+    }
 }
 
 fn expected_failures(path: &Path) -> Result<BTreeMap<String, Expected>, String> {
@@ -207,27 +306,35 @@ fn expected_failures(path: &Path) -> Result<BTreeMap<String, Expected>, String> 
     };
     let mut out = BTreeMap::new();
     for (name, v) in map {
-        let pointer = v.get("pointer").and_then(Value::as_str);
-        let keyword = v.get("keyword").and_then(Value::as_str);
-        let (Some(pointer), Some(keyword)) = (pointer, keyword) else {
+        let field = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+        let (Some(pointer), Some(keyword), Some(message)) =
+            (field("pointer"), field("keyword"), field("message"))
+        else {
             return Err(format!(
-                "{}: {name} needs string pointer and keyword",
+                "{}: {name} needs string pointer, keyword and message",
                 path.display()
             ));
         };
+        if message.is_empty() {
+            return Err(format!(
+                "{}: {name} needs a non-empty message",
+                path.display()
+            ));
+        }
         out.insert(
             name.clone(),
             Expected {
-                pointer: pointer.to_string(),
-                keyword: keyword.to_string(),
+                pointer,
+                keyword,
+                message,
             },
         );
     }
     Ok(out)
 }
 
-/// Self-check of `schemas/fixtures/`: every valid fixture passes its schema; every
-/// invalid one fails, and only at the pointer and keyword it is labelled with in
+/// Self-check of `schemas/fixtures/`: every valid fixture passes [`check_document`];
+/// every invalid one fails its schema, and only in the way it is labelled with in
 /// `expected-failures.json`. Each schema needs at least one valid and two invalid
 /// fixtures. Returns one line per problem; empty means all good.
 pub fn check_fixtures(root: &Path, schemas: &BTreeMap<&'static str, Schema>) -> Vec<String> {
@@ -258,39 +365,47 @@ pub fn check_fixtures(root: &Path, schemas: &BTreeMap<&'static str, Schema>) -> 
                 continue;
             };
             let schema = &schemas[set.schema];
-            let doc = match read_json(&path) {
-                Ok(d) => d,
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
                 Err(e) => {
-                    problems.push(e);
+                    problems.push(format!("{shown}: cannot read: {e}"));
                     continue;
                 }
             };
-            let failures = schema.failures(&doc);
             if should_pass {
                 *valid_count.entry(set.schema).or_default() += 1;
-                for f in failures {
-                    problems.push(format!("{shown} should pass {} but fails {f}", schema.name));
-                }
+                problems.extend(check_document(&shown, set, schema, &text));
                 continue;
             }
             *invalid_count.entry(set.schema).or_default() += 1;
+            let doc: Value = match serde_json::from_str(&text) {
+                Ok(d) => d,
+                Err(e) => {
+                    problems.push(format!("{shown}: is not valid JSON: {e}"));
+                    continue;
+                }
+            };
             let Some(want) = expected.get(&name) else {
                 problems.push(format!(
-                    "{shown}: add it to schemas/fixtures/expected-failures.json with the pointer and keyword it breaks"
+                    "{shown}: add it to schemas/fixtures/expected-failures.json with the pointer, keyword and message it breaks"
                 ));
                 continue;
             };
+            let failures = schema.failures(&doc);
             if failures.is_empty() {
                 problems.push(format!(
-                    "{shown} should fail {} at {} ({}) but passes",
-                    schema.name, want.pointer, want.keyword
+                    "{shown} should fail {} with {want} but passes",
+                    schema.name
                 ));
             }
             for f in failures {
-                if f.pointer != want.pointer || f.keyword != want.keyword {
+                if f.pointer != want.pointer
+                    || f.keyword != want.keyword
+                    || !f.message.contains(&want.message)
+                {
                     problems.push(format!(
-                        "{shown} should break only `{}` at \"{}\" but fails `{}` {f}",
-                        want.keyword, want.pointer, f.keyword
+                        "{shown} should break only {want} but fails `{}` {f}",
+                        f.keyword
                     ));
                 }
             }
@@ -339,6 +454,127 @@ pub fn check_shared_defs(schemas: &BTreeMap<&'static str, Schema>) -> Vec<String
     problems
 }
 
+/// Follow local `$ref`s (`#/$defs/...`) until a schema without one.
+fn resolve<'a>(root: &'a Value, mut node: &'a Value) -> &'a Value {
+    for _ in 0..16 {
+        let Some(ptr) = node
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(|r| r.strip_prefix('#'))
+        else {
+            break;
+        };
+        match root.pointer(ptr) {
+            Some(target) => node = target,
+            None => break,
+        }
+    }
+    node
+}
+
+/// Walk the main schema next to `$defs/knownFields`. Every object schema with fixed
+/// `properties` is either listed in knownFields with exactly the same property
+/// names, or marked open with an explicit `additionalProperties`.
+fn walk_known(
+    root: &Value,
+    main: &Value,
+    known: Option<&Value>,
+    at: &str,
+    depth: usize,
+    out: &mut Vec<String>,
+) {
+    if depth > 32 {
+        out.push(format!("{at}: schema nests too deeply to check"));
+        return;
+    }
+    let main = resolve(root, main);
+    let known = known.map(|k| resolve(root, k)).filter(|k| k.is_object());
+    let shown = if at.is_empty() { "(document root)" } else { at };
+    let open = main.get("additionalProperties").is_some();
+    let listed = known
+        .and_then(|k| k.get("properties"))
+        .and_then(Value::as_object);
+    if let Some(props) = main.get("properties").and_then(Value::as_object) {
+        match listed {
+            Some(_) if open => out.push(format!(
+                "{shown}: marked open with additionalProperties, but $defs/knownFields closes it; do one or the other"
+            )),
+            Some(listed) => {
+                if known.and_then(|k| k.get("additionalProperties")) != Some(&Value::Bool(false)) {
+                    out.push(format!(
+                        "{shown}: its $defs/knownFields entry must set additionalProperties to false"
+                    ));
+                }
+                let declared: BTreeSet<&str> = props.keys().map(String::as_str).collect();
+                let named: BTreeSet<&str> = listed.keys().map(String::as_str).collect();
+                for missing in declared.difference(&named) {
+                    out.push(format!(
+                        "{shown}: declares `{missing}`, which $defs/knownFields does not list, so 1.0 documents could not use it"
+                    ));
+                }
+                for extra in named.difference(&declared) {
+                    out.push(format!(
+                        "{shown}: $defs/knownFields lists `{extra}`, which the schema does not declare"
+                    ));
+                }
+            }
+            None if !open => out.push(format!(
+                "{shown}: has fixed properties but is neither listed in $defs/knownFields nor marked open with additionalProperties"
+            )),
+            None => {}
+        }
+        for (k, sub) in props {
+            let child_known = listed.and_then(|l| l.get(k));
+            walk_known(root, sub, child_known, &format!("{at}/{k}"), depth + 1, out);
+        }
+    } else if listed.is_some() {
+        out.push(format!(
+            "{shown}: $defs/knownFields lists properties, but the schema declares none here"
+        ));
+    }
+    if let Some(items) = main.get("items") {
+        let child_known = known.and_then(|k| k.get("items"));
+        walk_known(root, items, child_known, &format!("{at}/*"), depth + 1, out);
+    }
+    if let Some(extra) = main.get("additionalProperties").filter(|v| v.is_object()) {
+        walk_known(root, extra, None, &format!("{at}/*"), depth + 1, out);
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        for branch in main
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            walk_known(root, branch, None, at, depth + 1, out);
+        }
+    }
+}
+
+/// `$defs/knownFields` must list exactly the properties each closed object
+/// declares, and the schema must apply it to documents at its own minor version
+/// (docs/plan/08 section 9). Returns one line per problem.
+pub fn check_known_fields(schema: &Schema) -> Vec<String> {
+    let raw = &schema.raw;
+    let mut out = Vec::new();
+    let wiring = [
+        ("if", "#/$defs/atThisMinor"),
+        ("then", "#/$defs/knownFields"),
+    ];
+    for (key, target) in wiring {
+        if raw.get(key) != Some(&serde_json::json!({ "$ref": target })) {
+            out.push(format!("must have \"{key}\": {{ \"$ref\": \"{target}\" }}"));
+        }
+    }
+    match raw.pointer("/$defs/knownFields") {
+        Some(known) => walk_known(raw, raw, Some(known), "", 0, &mut out),
+        None => out.push("lacks $defs/knownFields".to_string()),
+    }
+    out.into_iter()
+        .map(|p| format!("{}: {p}", schema.name))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +587,17 @@ mod tests {
         load_all(&root()).unwrap_or_else(|e| panic!("schemas load: {e:#?}"))
     }
 
+    fn set(schema: &str) -> &'static DataSet {
+        DATA_SETS
+            .iter()
+            .find(|s| s.schema == schema)
+            .expect("data set")
+    }
+
+    fn fixture(name: &str) -> Value {
+        read_json(&root().join("schemas/fixtures/valid").join(name)).expect("fixture")
+    }
+
     #[test]
     fn fixtures_pass_and_fail_as_labelled() {
         let problems = check_fixtures(&root(), &schemas());
@@ -358,15 +605,14 @@ mod tests {
     }
 
     #[test]
-    fn repository_data_matches_its_schemas() {
+    fn repository_data_matches_schemas_and_loads() {
         let schemas = schemas();
         let mut problems = Vec::new();
         for set in DATA_SETS {
             for path in json_files(&root().join(set.dir)).expect("data directory") {
-                let doc = read_json(&path).expect("data file parses");
-                for f in schemas[set.schema].failures(&doc) {
-                    problems.push(format!("{}: {f}", path.display()));
-                }
+                let text = std::fs::read_to_string(&path).expect("data file reads");
+                let shown = path.display().to_string();
+                problems.extend(check_document(&shown, set, &schemas[set.schema], &text));
             }
         }
         assert!(problems.is_empty(), "{problems:#?}");
@@ -384,6 +630,116 @@ mod tests {
                 .count();
             assert!(users >= 2, "$defs/{def} is shared by {users} schema(s)");
         }
+    }
+
+    #[test]
+    fn known_fields_match_the_declared_properties() {
+        for schema in schemas().values() {
+            let problems = check_known_fields(schema);
+            assert!(problems.is_empty(), "{problems:#?}");
+        }
+    }
+
+    #[test]
+    fn known_fields_drift_is_reported() {
+        let mut raw = read_json(&root().join("schemas/fit-profile.schema.json")).expect("schema");
+        let calibration = raw
+            .pointer_mut("/$defs/knownFields/properties/calibration/properties")
+            .and_then(Value::as_object_mut)
+            .expect("calibration is listed");
+        calibration.remove("date");
+        calibration.insert("dat".into(), Value::Bool(true));
+        let schema = Schema::from_value("fit-profile.schema.json", raw).expect("compiles");
+        let problems = check_known_fields(&schema);
+        assert_eq!(problems.len(), 2, "{problems:#?}");
+        assert!(
+            problems[0].contains("/calibration: declares `date`"),
+            "{problems:#?}"
+        );
+        assert!(problems[1].contains("lists `dat`"), "{problems:#?}");
+    }
+
+    #[test]
+    fn unknown_fields_fail_at_1_0_and_pass_at_later_minors() {
+        let schemas = schemas();
+        let fit = &schemas["fit-profile.schema.json"];
+        let mut doc = fixture("fit-calibrated.json");
+        doc["offsetsMm"]["studDiamter"] = serde_json::json!(0.1);
+        let failures = fit.failures(&doc);
+        assert_eq!(failures.len(), 1, "{failures:#?}");
+        assert_eq!(failures[0].pointer, "/offsetsMm");
+        assert_eq!(failures[0].keyword, "additionalProperties");
+        doc["openbrick"] = serde_json::json!("1.1");
+        assert!(fit.failures(&doc).is_empty(), "1.1 may add offsets");
+        doc["offsetsMm"]["studDiameter"] = serde_json::json!(5.0);
+        let failures = fit.failures(&doc);
+        assert_eq!(
+            failures.len(),
+            1,
+            "known fields stay checked: {failures:#?}"
+        );
+        assert_eq!(failures[0].keyword, "maximum");
+    }
+
+    #[test]
+    fn readers_write_back_valid_documents() {
+        // Writers omit absent optional fields instead of writing null, keep the credit,
+        // and write no empty date: each of these used to fail the schema on the way back.
+        let schemas = schemas();
+        for (name, schema) in [
+            ("part-minimal.json", "part.schema.json"),
+            ("fit-uncalibrated.json", "fit-profile.schema.json"),
+            ("standard-minimal.json", "standard.schema.json"),
+            ("process-minimal.json", "process-profile.schema.json"),
+        ] {
+            let text = serde_json::to_string(&fixture(name)).expect("serialises");
+            let back = (set(schema).reader)(&text).expect("reader loads the fixture");
+            let failures = schemas[schema].failures(&back);
+            assert!(failures.is_empty(), "{name}: {failures:#?}");
+            assert!(back.get("credit").is_some(), "{name}: credit survives");
+        }
+    }
+
+    #[test]
+    fn coupon_version_is_read_as_json_schema_counts_it() {
+        let schemas = schemas();
+        let fit = set("fit-profile.schema.json");
+        let mut doc = fixture("fit-calibrated.json");
+        // Draft 2020-12 counts 1.0 as an integer, so the schema accepts it; the
+        // reader must too.
+        doc["calibration"]["couponVersion"] = serde_json::json!(1.0);
+        assert!(schemas[fit.schema].failures(&doc).is_empty());
+        let text = serde_json::to_string(&doc).expect("serialises");
+        let back = (fit.reader)(&text).expect("1.0 loads as coupon version 1");
+        assert_eq!(back["calibration"]["couponVersion"], serde_json::json!(1));
+        // 2^32 is one past u32::MAX: the schema rejects it (fixture
+        // fit-coupon-version-too-large.json) and so does the reader.
+        doc["calibration"]["couponVersion"] = serde_json::json!(4_294_967_296_u64);
+        let text = serde_json::to_string(&doc).expect("serialises");
+        assert!((fit.reader)(&text).is_err());
+        doc["calibration"]["couponVersion"] = serde_json::json!(1.5);
+        let text = serde_json::to_string(&doc).expect("serialises");
+        assert!((fit.reader)(&text).is_err());
+    }
+
+    #[test]
+    fn duplicate_standard_ids_are_reported() {
+        let schemas = schemas();
+        let standard = set("standard.schema.json");
+        let mut doc = fixture("standard-minimal.json");
+        let first = doc["features"][0].clone();
+        doc["features"]
+            .as_array_mut()
+            .expect("features")
+            .push(first);
+        let text = serde_json::to_string(&doc).expect("serialises");
+        assert!(
+            schemas[standard.schema].failures(&doc).is_empty(),
+            "the schema cannot see duplicate ids"
+        );
+        let problems = check_document("dup", standard, &schemas[standard.schema], &text);
+        assert_eq!(problems.len(), 1, "{problems:#?}");
+        assert!(problems[0].contains("is used by two rows"), "{problems:#?}");
     }
 
     #[test]

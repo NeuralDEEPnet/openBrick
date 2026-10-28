@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbrick3d.org/schemas/1.0/part.schema.json",
   "title": "OpenBrick3D part document (openbrick/part@1)",
-  "description": "A parametric brick-compatible part (parts/*.obpart.json): typed parameters plus an ordered list of brick-aware feature operations. Read by openbrick-part as PartDoc; see docs/plan/06 sections 2 to 4. Top-level fields are closed because serde would silently drop unknown ones; params and features carry op-specific fields, so they stay open. Feature values may be literals with unit suffixes (\"0.6mm\", \"2stud\"), references (\"$size\") or small expressions (\"profile.minFeature\"), so op-specific fields are not typed here; the evaluator checks them. Semantic rules (unique feature ids, anchors defined before use) are checked by PartDoc::check.",
+  "description": "A parametric brick-compatible part (parts/*.obpart.json): typed parameters plus an ordered list of brick-aware feature operations. Read by openbrick-part as PartDoc; see docs/plan/06 sections 2 to 4. A 1.0 document may use only the top-level fields named here ($defs/knownFields), because serde would silently drop a misspelt one; params and features carry op-specific fields, so they stay open. Feature values may be literals with unit suffixes (\"0.6mm\", \"2stud\"), references (\"$size\") or small expressions (\"profile.minFeature\"), so op-specific fields are not typed here; the evaluator checks them. Semantic rules (unique feature ids, anchors defined before use) are checked by PartDoc::check.",
   "type": "object",
   "required": ["openbrick", "id", "version", "name", "license", "credit", "features"],
   "properties": {
@@ -39,8 +39,7 @@
         "properties": {
           "name": { "type": "string", "minLength": 1 },
           "params": { "type": "object" }
-        },
-        "additionalProperties": false
+        }
       }
     },
     "features": {
@@ -89,10 +88,12 @@
               "feature": { "$ref": "#/$defs/featureId" },
               "check": { "type": "string", "minLength": 1 },
               "onFail": { "type": "string", "minLength": 1 }
-            }
+            },
+            "additionalProperties": true
           }
         }
-      }
+      },
+      "additionalProperties": true
     },
     "export": {
       "description": "Export formats and batch naming. Free-form beyond formats.",
@@ -105,19 +106,52 @@
           "items": { "type": "string", "pattern": "^[a-z0-9]+$" }
         },
         "batch": { "type": "object" }
-      }
+      },
+      "additionalProperties": true
     },
     "lock": {
       "description": "Reproducibility record: font hashes, process profile id, kernel version (docs/plan/06 section 10). Not read by openbrick-part yet.",
       "type": "object"
     }
   },
-  "additionalProperties": false,
+  "if": { "$ref": "#/$defs/atThisMinor" },
+  "then": { "$ref": "#/$defs/knownFields" },
   "$defs": {
+    "knownFields": {
+      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error: serde would drop it silently, so a misspelt optional field would change nothing. Objects not listed here are open on purpose. cargo xtask data checks that these lists match the properties the schema declares.",
+      "properties": {
+        "openbrick": true,
+        "kind": true,
+        "id": true,
+        "version": true,
+        "name": true,
+        "license": true,
+        "credit": { "properties": { "author": true, "url": true }, "additionalProperties": false },
+        "provenance": {
+          "properties": { "source": true, "author": true, "license": true, "url": true, "modified": true, "history": true },
+          "additionalProperties": false
+        },
+        "params": true,
+        "presets": {
+          "items": { "properties": { "name": true, "params": true }, "additionalProperties": false }
+        },
+        "features": true,
+        "snap": true,
+        "print": true,
+        "export": true,
+        "lock": true
+      },
+      "additionalProperties": false
+    },
+    "atThisMinor": {
+      "description": "Matches a document whose pragma names this schema's minor version, 1.0 (or a 1.0.x patch). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9).",
+      "required": ["openbrick"],
+      "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+    },
     "featureId": {
-      "description": "A feature id; no dots, because anchors are written id.face.",
+      "description": "A feature id: a letter or underscore, then letters, digits, underscores or hyphens. No dots, because anchors are written id.face and PartDoc::check splits them at the first dot.",
       "type": "string",
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
     },
     "param": {
       "description": "One parameter (openbrick_part::Param). Fields beyond those listed (maxLength, bundledOnly, onChange, ...) are kept by serde's flatten, so they are allowed.",
@@ -142,7 +176,8 @@
               {
                 "type": "object",
                 "required": ["value"],
-                "properties": { "label": { "type": "string" } }
+                "properties": { "label": { "type": "string" } },
+                "additionalProperties": true
               }
             ]
           }
@@ -192,7 +227,7 @@
         "on": {
           "description": "Anchor: a face of an earlier feature, written id.face (for example body.top).",
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$"
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$"
         },
         "if": {
           "description": "Expression; the feature is skipped when it is false.",
@@ -225,10 +260,11 @@
           "maxItems": 3,
           "items": { "type": "integer" }
         }
-      }
+      },
+      "additionalProperties": true
     },
     "pragma": {
-      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Readers accept every 1.x.",
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Every 1.x is accepted: readers ignore fields from minors newer than they know, and this schema checks only the fields it names in documents newer than 1.0 (see atThisMinor).",
       "type": "string",
       "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
     },
@@ -249,8 +285,7 @@
       "properties": {
         "author": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "pattern": "^https?://\\S+$" }
-      },
-      "additionalProperties": false
+      }
     },
     "provenance": {
       "description": "Where the data came from, so attribution travels with it through conversion, export and printing (LICENSE-POLICY.md, docs/plan/06 section 2).",
@@ -262,8 +297,7 @@
         "url": { "type": "string", "pattern": "^https?://\\S+$" },
         "modified": { "type": "boolean" },
         "history": { "type": "array", "items": { "type": "string" } }
-      },
-      "additionalProperties": false
+      }
     },
     "profileId": {
       "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
