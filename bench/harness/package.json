@@ -13,6 +13,7 @@
     "smoke": "node smoke.mjs"
   },
   "dependencies": {
+    "@openbrick3d/viewport": "workspace:*",
     "three": "0.186.1"
   },
   "devDependencies": {

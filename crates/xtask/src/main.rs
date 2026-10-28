@@ -1,9 +1,11 @@
 //! `cargo xtask <task>`: `check` runs fmt, clippy, tests and data validation; `data`
 //! validates the JSON documents under standards/, profiles/ and parts/ against the
 //! JSON Schemas in schemas/, loads each with its Rust reader and validates what the
-//! reader writes back, and self-checks the schemas and their fixtures.
+//! reader writes back, and self-checks the schemas and their fixtures; `wasm` builds
+//! `openbrick-wasm` for the browser into `apps/web/src/wasm/` (see `wasm.rs`).
 
 mod schema;
+mod wasm;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -121,8 +123,9 @@ fn main() -> ExitCode {
                 && data(root)
         }
         "data" => data(root),
+        "wasm" => wasm::wasm(root),
         _ => {
-            eprintln!("usage: cargo xtask <check|data>");
+            eprintln!("usage: cargo xtask <check|data|wasm>");
             false
         }
     };

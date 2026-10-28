@@ -114,7 +114,7 @@ Every feature knows its LDU footprint, which faces may touch the bed, which fiel
 
 ## 6. Connectivity derivation and LDraw export
 
-- Each connector-bearing feature emits typed connectors: `{ type: studM | studF | tubeF | pinM | pinF | axleM | axleF | barM | clipF | hingeFinger | ball | socket, pos: [LDU;3], dir: axis, sections: [R|A|S, radius, length], group }`.
+- Each connector-bearing feature emits typed connectors: `{ type: studM | studF | tubeF | pinM | pinF | axleM | axleF | barM | clipF | hingeFinger | ball | socket, pos: [LDU;3], dir: axis, sections: [R|A|S, radius, length], group }`. In `openbrick_part::Connector` the type is the field `kind`, the group is `feature`, `dir` is the unit vector out of the part (studs (0, -1, 0), underside sockets (0, 1, 0)), and each connector carries `fitCritical`; `stud.field` emits `studM` with `R 6 4` and `tube.field` emits one `tubeF` per stud position with `R 6 8`.
 - Features marked `offGrid: true` (keychain loops, decorations) emit none, so the assembler treats them as decoration.
 - On LDraw export the part is written as an unofficial `.dat` (triangles and quads in LDU, BFC CCW, `0 !LICENSE` line, Unofficial header) with inline `0 !LDCAD SNAP_*` metas generated from the connectors, for example a 2x4 tile underside: `0 !LDCAD SNAP_CYL [gender=F] [caps=one] [secs=R 6 8] [grid=C 2 C 4 20 20] [pos=0 0 0] [ori=1 0 0 0 1 0 0 0 1]` (illustrative). The part snaps in LDCad immediately and renders in three.js LDrawLoader.
 - We do not target Studio's binary `.conn` (no community parser as of Feb 2026) and never ship LDCad's shadow library.

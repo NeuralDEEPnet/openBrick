@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Repository tasks: check, data validation"
+description = "Repository tasks: check, data validation, WebAssembly build"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,6 +19,9 @@ openbrick-print = { workspace = true }
 # features are off: they pull reqwest, rustls and aws-lc-rs to fetch remote
 # `$ref`s over HTTP, and our schemas are self-contained and read from disk.
 jsonschema = { version = "0.60.2", default-features = false }
+# Gzip size of the WebAssembly module for `cargo xtask wasm` (budget in
+# docs/plan/10 section 5). MIT OR Apache-2.0; the pure-Rust miniz_oxide backend.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [lints]
 workspace = true

@@ -1,0 +1,56 @@
+// The real core: the wasm-bindgen build in src/wasm/ (from `cargo xtask wasm`),
+// loaded in Node and driven through the same dispatch() as the worker. Its 2x4
+// must equal LOD0 of the harness meshes, which the native kernel wrote
+// (crates/openbrick-geom/tests/harness_meshes.rs keeps those in step). Skipped,
+// with a reason, when the core has not been built; the smoke test always builds it.
+
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { test } from "node:test";
+import { dispatch } from "../src/protocol.js";
+
+const glue = new URL("../src/wasm/openbrick_wasm.js", import.meta.url);
+const skip = existsSync(glue) ? false : "src/wasm/ is not built; run `pnpm --dir apps/web wasm` (cargo xtask wasm)";
+const manifest = JSON.parse(readFileSync(new URL("../../../bench/harness/public/meshes/manifest.json", import.meta.url), "utf8"));
+const lod0 = manifest.lods.find((l) => l.lod === 0);
+
+async function loadCore() {
+  const core = await import(glue);
+  core.initSync({ module: readFileSync(new URL("../src/wasm/openbrick_wasm_bg.wasm", import.meta.url)) });
+  return core;
+}
+
+test("the WebAssembly core builds the native 2x4 bit for bit", { skip }, async () => {
+  const core = await loadCore();
+  const { reply, transfer } = dispatch(core, { id: 1, type: "brick", width: 2, length: 4 });
+  assert.equal(reply.ok, true, reply.error);
+  const r = reply.result;
+  assert.equal(r.kernel, manifest.kernel);
+  assert.equal(r.triangles, lod0.triangles);
+  assert.equal(r.vertices, lod0.vertices);
+  assert.equal(r.fingerprint, lod0.fingerprint);
+  assert.ok(Math.abs(r.volumeMm3 - lod0.volume_mm3) < 5e-4, `${r.volumeMm3} vs ${lod0.volume_mm3}`);
+  assert.equal(r.positions.length, 3 * r.vertices);
+  assert.equal(r.indices.length, 3 * r.triangles);
+  assert.equal(transfer.length, 2);
+  for (let k = 0; k < 3; k++) {
+    assert.ok(Math.abs(r.bounds[k] - lod0.bounds_mm.min[k]) < 5e-4);
+    assert.ok(Math.abs(r.bounds[3 + k] - lod0.bounds_mm.max[k]) < 5e-4);
+  }
+});
+
+test("the WebAssembly core reports its kernel, limits and standard, and refuses bad sizes", { skip }, async () => {
+  const core = await loadCore();
+  const info = dispatch(core, { id: 1, type: "info" }).reply.result;
+  assert.equal(info.kernel, manifest.kernel);
+  assert.equal(info.standard.pitchMm, manifest.pitch_mm);
+  assert.equal(info.standard.undersizeMm, manifest.undersize_per_side_mm);
+  assert.equal(`dimensions-v1 ${info.standard.version}`, manifest.standard);
+  // The JavaScript check and the Rust check agree on the limits.
+  const tooBig = dispatch(core, { id: 2, type: "brick", width: info.maxStuds + 1, length: 1 }).reply;
+  assert.equal(tooBig.ok, false);
+  assert.throws(() => core.build_nominal_brick(info.maxStuds + 1, 1), new RegExp(`1 to ${info.maxStuds} studs`));
+  assert.throws(() => core.build_nominal_brick(0, 1), /1 to \d+ studs, got 0/);
+  const logo = readFileSync(new URL("../../../parts/ndn.logo-tile.obpart.json", import.meta.url), "utf8");
+  assert.deepEqual(dispatch(core, { id: 3, type: "checkPart", text: logo }).reply.result, []);
+});

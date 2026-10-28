@@ -72,14 +72,20 @@ Instances are keyed by ULID; `part` is an LDraw id or a content hash of a custom
 
 - Core 1.4.0 (3MF is ISO/IEC 25422:2025), Materials and Properties 1.2.1 (`basematerials` and `colorgroup`, per-triangle `p1 p2 p3`), Production 1.1.2 (text v1.2; UUIDs, optional `path` split). Units millimetres, Z-up.
 - Part designer: one object per colour role. Assembler: one object per part under a component object by default; `--fuse` unions same-colour groups.
-- Metadata namespace `openbrick:` with part id, version, content hash, fit profile id, generator and serial.
-- Writer: `lib3mf-core` 0.4.0 behind a thin trait (fallback `threemf2` 0.4.1 or our own zip+XML); every CI fixture is validated with `lib3mf` 2.5.0 and opened by OrcaSlicer CLI.
+- Metadata namespace `openbrick:` (`https://openbrick3d.org/3mf/metadata/1.0`):
+  - Required: part id, version, content hash, fit profile id, process id, generator and kernel id.
+  - The serial when the part has one.
+  - Each object names its colour role in `openbrick:role`.
+- Writer: our own zip+XML writer, `openbrick_io::write_3mf(&[ExportObject], &ExportMeta) -> Result<Vec<u8>, IoError>`. This is the fallback named here, chosen for byte-identical output and wasm32 with two small pure-Rust dependencies. Every CI fixture is validated with `lib3mf` 2.5.0 (`scripts/validate-3mf.py`); the OrcaSlicer CLI smoke test is backlog item 18.
 - Reader: 3MF import of meshes for custom parts (core and materials only).
 - Vendor project flavours (Bambu, Orca) are plugins, off by default, version-pinned.
 
 ## 5. STL, OBJ, glTF
 
 - **STL** binary, millimetres, Z-up, no colour; one file per colour role on request.
+  - `write_stl_binary(&[ExportObject]) -> Result<Vec<u8>, IoError>` writes one merged file.
+  - `write_stl_binary_per_role(&[ExportObject]) -> Result<Vec<(String, Vec<u8>)>, IoError>` writes one file per role.
+  - Both return a `Result` so that bad input is an error, never a panic in WebAssembly.
 - **OBJ** with MTL for colour roles; import supported.
 - **glTF 2.0** (`.glb`) with `EXT_mesh_gpu_instancing`: one node per (part, colour) pair carrying instance transforms; a `_COLOR` custom attribute as a hint; LODs as separate meshes with `MSFT_lod` optional. Used for viewers, AR hand-off (USDZ conversion on Apple platforms via the OS) and sharing.
 

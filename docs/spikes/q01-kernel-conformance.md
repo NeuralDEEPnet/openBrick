@@ -51,7 +51,14 @@ The 2x4 brick builds in 107 to 119 ms on first call inside WebAssembly under Nod
 
 - ~~Backlog item 2: the same corpus on `manifold-csg` (C++ via FFI) behind a feature flag, to confirm hashes match or document divergences.~~ Done; the divergences are documented in [Q01b](q01b-manifold-csg-comparison.md).
 - Timing on a real mid-range phone in a WebView (needs the device harness, backlog item 3).
-- Ribs, chamfers and fit offsets are not in the corpus yet; they arrive with the part evaluator in M1 and extend this corpus.
+- ~~Ribs, chamfers and fit offsets are not in the corpus yet; they arrive with the part evaluator in M1 and extend this corpus.~~ Done in the part evaluator (backlog items 6 to 8); see the follow-up below.
+
+## Follow-up: the part evaluator (2026-10-28)
+
+`openbrick-part` now builds tiles, plates and bricks with studs, tubes, 1-wide pins, wall ribs, chamfers and fit offsets (`crates/openbrick-part/src/eval/`). Its golden tests check the exact polyhedral volume (relative error under 1e-6; observed about 1e-9), the bounding box, connectors and a canonical mesh fingerprint. Two findings:
+
+1. **`union_all` on `manifold-rust` 0.19.1 is a sequential fold.** `Manifold::batch_boolean` unions its inputs one after another, so one flat `union_all` over every stud and tube costs about the square of the part size; finding 2 above measured exactly that. The evaluator unions the feature solids among themselves in a balanced tree and the body once at the end. Release, single thread, this container: 2x4 brick 82 ms flat, 36 ms as one tree, 28 to 30 ms features-first; 6x16 plate 8.4 s, 1.5 s and 0.66 to 0.72 s (`cargo run --release -p openbrick-part --example eval_timing`).
+2. **The evaluator is bit-identical in WebAssembly.** The 2x4 brick evaluated in a wasm32 release build under Node gives the same canonical fingerprint (`0x9820f037f760f42b`, the golden value) and the same SHA-256 content hash as the native debug build. This was checked with a throwaway probe, not yet in CI. The first evaluation took 121 to 204 ms in wasm on the shared, loaded container.
 
 ## Reproduce
 

@@ -1,5 +1,12 @@
-//! `openbrick/part@1` documents: parse, validate structure, and (from M1) evaluate
-//! into geometry and connectors. See docs/plan/06.
+//! `openbrick/part@1` documents: parse, validate structure, and evaluate into
+//! geometry, connectors and measurements ([`eval`]). See docs/plan/06.
+
+pub mod eval;
+
+pub use eval::{
+    evaluate, AssetResolver, Built, Connector, ConnectorSection, EvalError, EvalInput,
+    MemoryAssets, ParamValues, ResolvedParams, RoleMesh, SectionShape,
+};
 
 use std::collections::BTreeMap;
 

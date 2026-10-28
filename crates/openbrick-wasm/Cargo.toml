@@ -1,6 +1,6 @@
 [package]
 name = "openbrick-wasm"
-description = "wasm-bindgen facade over the OpenBrick3D core (bindings added in M2)"
+description = "wasm-bindgen facade over the OpenBrick3D core for the browser worker (apps/web)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,8 +14,16 @@ crate-type = ["cdylib", "rlib"]
 serde = { workspace = true }
 serde_json = { workspace = true }
 openbrick-units = { workspace = true }
+openbrick-geom = { workspace = true }
 openbrick-part = { workspace = true }
 openbrick-print = { workspace = true }
+
+# Only the wasm32 build carries bindings; native builds (cargo test, clippy) compile
+# the same functions as plain Rust. Pinned exactly: the generated JavaScript glue
+# must come from wasm-bindgen-cli of the same version, which `cargo xtask wasm`
+# checks against Cargo.lock.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
 
 [lints]
 workspace = true

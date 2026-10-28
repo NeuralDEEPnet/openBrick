@@ -51,7 +51,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use openbrick_geom::manifold_rust::{ManifoldRust, MrSolid};
-use openbrick_geom::{CrossSection, Kernel, Mesh, Polygon, Solid};
+use openbrick_geom::nominal::{nominal_brick, Detail, NominalDims};
+use openbrick_geom::{Kernel, Mesh, Solid};
 use openbrick_units::STANDARD;
 use serde_json::json;
 
@@ -63,44 +64,6 @@ const UNITS_MM: u32 = 1;
 const UP_Z: u32 = 2;
 /// Footprint of the exported part in studs (x, y).
 const STUDS: [u32; 2] = [2, 4];
-
-/// Nominal dimensions read once from the standard.
-struct Dims {
-    pitch: f64,
-    gap: f64,
-    wall: f64,
-    roof: f64,
-    height: f64,
-    stud_d: f64,
-    stud_h: f64,
-    tube_od: f64,
-    tube_id: f64,
-}
-
-impl Dims {
-    fn from_standard() -> Dims {
-        let s = STANDARD.get();
-        Dims {
-            pitch: s.mm("module"),
-            gap: s.mm("undersize_per_side"),
-            wall: s.mm("side_wall"),
-            roof: s.mm("roof"),
-            height: s.mm("brick_height"),
-            stud_d: s.mm("stud_diameter"),
-            stud_h: s.mm("stud_height"),
-            tube_od: s.mm("tube_outer_diameter"),
-            tube_id: s.mm("tube_inner_diameter"),
-        }
-    }
-
-    /// Body size (x, y) of an n x m brick: n studs minus the undersize on both sides.
-    fn body(&self) -> [f64; 2] {
-        [
-            STUDS[0] as f64 * self.pitch - 2.0 * self.gap,
-            STUDS[1] as f64 * self.pitch - 2.0 * self.gap,
-        ]
-    }
-}
 
 /// One level of detail.
 struct Lod {
@@ -132,68 +95,15 @@ const LODS: [Lod; 3] = [
     },
 ];
 
-/// Build one LOD. LOD0 repeats the construction of `kernel_timing.rs` step for step,
-/// so its fingerprint equals the 2x4 row printed there.
-fn build(k: &ManifoldRust, d: &Dims, lod: &Lod) -> MrSolid {
-    let [w, depth] = d.body();
-    let outer = Polygon::rect([0.0, 0.0], [w, depth]);
-    let Some(segments) = lod.stud_segments else {
-        return k
-            .extrude(&CrossSection::from(vec![outer]), d.height, 1.0)
-            .expect("hull box");
+/// Build one LOD with the shared nominal construction (`openbrick_geom::nominal`),
+/// which repeats `kernel_timing.rs` step for step, so LOD0's fingerprint equals the
+/// 2x4 row printed there.
+fn build(k: &ManifoldRust, d: &NominalDims, lod: &Lod) -> MrSolid {
+    let detail = Detail {
+        segments: lod.stud_segments,
+        underside: lod.tubes,
     };
-    let cavity = d.height - d.roof;
-    let inner =
-        Polygon::rect([d.wall, d.wall], [w - 2.0 * d.wall, depth - 2.0 * d.wall]).reversed();
-    // Keep the creation order of kernel_timing.rs (stud, tube, shell, roof): the
-    // vertex order of a batch union follows the order in which the kernel created
-    // its inputs, so a different order gives the same solid with another fingerprint.
-    let stud = k
-        .extrude(
-            &CrossSection::from(vec![Polygon::circle([0.0, 0.0], d.stud_d / 2.0, segments)]),
-            d.stud_h,
-            1.0,
-        )
-        .expect("stud");
-    // Tubes sit between stud columns; a 2-wide brick has one row of them.
-    let tube = lod.tubes.then(|| {
-        k.extrude(
-            &CrossSection::from(vec![
-                Polygon::circle([0.0, 0.0], d.tube_od / 2.0, segments),
-                Polygon::circle([0.0, 0.0], d.tube_id / 2.0, segments).reversed(),
-            ]),
-            cavity,
-            1.0,
-        )
-        .expect("tube")
-    });
-    let mut parts = vec![
-        k.extrude(&CrossSection::from(vec![outer.clone(), inner]), cavity, 1.0)
-            .expect("shell"),
-        k.translate(
-            &k.extrude(&CrossSection::from(vec![outer]), d.roof, 1.0)
-                .expect("roof"),
-            [0.0, 0.0, cavity],
-        ),
-    ];
-    for ix in 0..STUDS[0] {
-        for iy in 0..STUDS[1] {
-            parts.push(k.translate(
-                &stud,
-                [
-                    ix as f64 * d.pitch + d.pitch / 2.0 - d.gap,
-                    iy as f64 * d.pitch + d.pitch / 2.0 - d.gap,
-                    d.height,
-                ],
-            ));
-        }
-    }
-    if let Some(tube) = tube {
-        for iy in 1..STUDS[1] {
-            parts.push(k.translate(&tube, [d.pitch - d.gap, iy as f64 * d.pitch - d.gap, 0.0]));
-        }
-    }
-    k.union_all(&parts).expect("brick union")
+    nominal_brick(k, d, STUDS, &detail).expect("nominal brick")
 }
 
 /// Serialise a mesh in the OBMESH v1 layout documented at the top of this file.
@@ -240,7 +150,7 @@ fn bounds_json(mesh: &Mesh) -> serde_json::Value {
 /// Build every LOD and return (file name, bytes) pairs, manifest last.
 pub fn generate() -> Vec<(String, Vec<u8>)> {
     let s = STANDARD.get();
-    let d = Dims::from_standard();
+    let d = NominalDims::from_standard(s);
     let k = ManifoldRust;
     let mut files = Vec::new();
     let mut lods = Vec::new();
@@ -265,7 +175,7 @@ pub fn generate() -> Vec<(String, Vec<u8>)> {
         }));
         files.push((name, bytes));
     }
-    let body = d.body();
+    let body = d.body(STUDS);
     let manifest = json!({
         "format": "OBMESH",
         "format_version": FORMAT_VERSION,
@@ -278,9 +188,9 @@ pub fn generate() -> Vec<(String, Vec<u8>)> {
         "to_threejs": "three.js is right-handed with +Y up: (x, y, z) -> (x, z, -y), a -90 degree rotation about +X (determinant +1, so triangle winding is kept)",
         "studs": STUDS,
         "pitch_mm": d.pitch,
-        "undersize_per_side_mm": d.gap,
+        "undersize_per_side_mm": d.undersize,
         "brick_height_mm": d.height,
-        "stud_height_mm": d.stud_h,
+        "stud_height_mm": d.stud_height,
         "body_mm": [um(body[0]), um(body[1]), um(d.height)],
         "lods": lods,
     });

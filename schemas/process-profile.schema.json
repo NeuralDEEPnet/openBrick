@@ -104,7 +104,7 @@
       "items": { "$ref": "#/$defs/holeStrategy" }
     },
     "tessellation": {
-      "description": "Mesh resolution defaults for this process. Not read by openbrick-print yet.",
+      "description": "Mesh resolution defaults for this process. openbrick-print reads it (ProcessProfile::tessellation); the part evaluator uses studSegments for studs, tubes and pins, and minEdgeMm is not used yet.",
       "type": "object",
       "minProperties": 1,
       "properties": {

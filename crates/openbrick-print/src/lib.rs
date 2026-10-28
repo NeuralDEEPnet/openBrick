@@ -34,10 +34,73 @@ pub struct ProcessProfile {
     pub horizontal_hole_strategy: String,
     #[serde(default)]
     pub experimental: bool,
+    /// Mesh resolution defaults; absent means the kernel defaults
+    /// ([`openbrick_geom::Tessellation::default`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tessellation: Option<ProcessTessellation>,
+}
+
+/// Mesh resolution defaults of a process (`tessellation` in a process profile).
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessTessellation {
+    /// Segments per full circle of studs, tubes and pins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stud_segments: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_edge_mm: Option<f64>,
+}
+
+impl ProcessProfile {
+    /// Segments per full circle for studs, tubes and pins: the profile's
+    /// `tessellation.studSegments`, else the kernel default.
+    pub fn stud_segments(&self) -> u32 {
+        self.tessellation
+            .and_then(|t| t.stud_segments)
+            .unwrap_or_else(|| openbrick_geom::Tessellation::default().stud_segments)
+            .max(3)
+    }
+
+    /// A wall of `nominal_mm` rounded to the nearest whole number of
+    /// `wallQuantiseMm` lines, and never below `minWallMm` (docs/plan/05 section 5,
+    /// rule `WALL.QUANTISED`; docs/plan/04 section 6: walls are multiples of a
+    /// line, because 1.1 mm prints hollow on a 0.4 mm nozzle).
+    pub fn quantise_wall(&self, nominal_mm: f64) -> f64 {
+        let q = self.wall_quantise_mm;
+        if q <= 0.0 {
+            return nominal_mm.max(self.min_wall_mm);
+        }
+        // round() keeps 1.2 / 0.4 = 2.9999999999999996 at three lines; the slack
+        // keeps a minimum that is itself a whole number of lines from rounding up.
+        let lines = (nominal_mm / q).round().max(1.0);
+        let min_lines = (self.min_wall_mm / q - 1e-9).ceil();
+        let wall = lines.max(min_lines) * q;
+        // A wall that already is whole lines keeps its exact value (3 x 0.4 is
+        // 1.2000000000000002 in binary floating point).
+        if (wall - nominal_mm).abs() < 1e-9 {
+            nominal_mm
+        } else {
+            wall
+        }
+    }
+
+    /// The wall-to-roof chamfer for a body: `wallRoofFilletMm.brick` on
+    /// brick-height bodies, `wallRoofFilletMm.plate` otherwise (docs/plan/05
+    /// section 6). A missing key means no chamfer.
+    pub fn wall_roof_fillet(&self, brick_height: bool) -> f64 {
+        let key = if brick_height { "brick" } else { "plate" };
+        self.wall_roof_fillet_mm
+            .get(key)
+            .copied()
+            .unwrap_or(0.0)
+            .max(0.0)
+    }
 }
 
 /// Offsets applied to nominal geometry at export, in millimetres on diameter (or depth for ribs).
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+///
+/// `Default` is the uncompensated set: every offset zero and `xy_scale` 1.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Offsets {
     pub stud_diameter: f64,
@@ -56,6 +119,158 @@ pub struct Offsets {
 
 fn one() -> f64 {
     1.0
+}
+
+impl Default for Offsets {
+    fn default() -> Self {
+        Offsets {
+            stud_diameter: 0.0,
+            tube_inner_diameter: 0.0,
+            tube_outer_diameter: 0.0,
+            rib_depth: 0.0,
+            pin_diameter: 0.0,
+            horizontal_hole_diameter: 0.0,
+            axle_hole: 0.0,
+            bar_diameter: 0.0,
+            clip_opening: 0.0,
+            first_layer_chamfer: 0.0,
+            xy_scale: 1.0,
+        }
+    }
+}
+
+/// Underside tube diameters after fit offsets (see [`Offsets::tube`]).
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TubeSize {
+    pub outer_mm: f64,
+    pub inner_mm: f64,
+    /// How much the outer diameter grew beyond nominal plus offset to keep the
+    /// wall at the process minimum; zero when it did not need to.
+    pub grown_mm: f64,
+}
+
+impl TubeSize {
+    /// Wall thickness, (outer minus inner) / 2.
+    pub fn wall_mm(&self) -> f64 {
+        (self.outer_mm - self.inner_mm) / 2.0
+    }
+}
+
+impl Offsets {
+    /// The offsets of an optional fit profile; no profile means nominal geometry.
+    pub fn of(fit: Option<&FitProfile>) -> Offsets {
+        fit.map(|f| f.offsets_mm.clone()).unwrap_or_default()
+    }
+
+    /// Underside tube diameters: nominal plus the `tubeOuterDiameter` and
+    /// `tubeInnerDiameter` offsets, with the outer diameter grown with the bore so
+    /// the wall never drops below `min_wall_mm` (docs/plan/05 section 3).
+    pub fn tube(&self, nominal_outer_mm: f64, nominal_inner_mm: f64, min_wall_mm: f64) -> TubeSize {
+        let inner = nominal_inner_mm + self.tube_inner_diameter;
+        let outer = nominal_outer_mm + self.tube_outer_diameter;
+        let grown = (inner + 2.0 * min_wall_mm - outer).max(0.0);
+        TubeSize {
+            outer_mm: outer + grown,
+            inner_mm: inner,
+            grown_mm: grown,
+        }
+    }
+}
+
+/// What the part evaluator measured on a built part, for the validator
+/// (docs/plan/05 section 5). Lengths are millimetres on the compensated mesh
+/// (after fit offsets and `xyScale`); `None` means the part has no such feature.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Measurements {
+    /// Process profile id the part was built for.
+    pub process: String,
+    /// Fit profile id, if one was applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_profile: Option<String>,
+    /// Process ids the part document allows (`print.profiles`); empty means any
+    /// (rule `FIT.PROCESS`).
+    #[serde(default)]
+    pub allowed_processes: Vec<String>,
+    pub triangle_count: usize,
+    pub volume_mm3: f64,
+    /// Sum of the volumes of the feature solids before the union. Solids that
+    /// only touch add up to the union volume exactly; the few that overlap (wall
+    /// ribs inside the wall-to-roof chamfer) count twice, so the union is slightly
+    /// smaller. Rule `MESH.VOLUME` compares the two.
+    pub feature_volume_sum_mm3: f64,
+    pub bounds_min_mm: [f64; 3],
+    pub bounds_max_mm: [f64; 3],
+    pub is_manifold: bool,
+    pub genus: i32,
+    pub components: usize,
+    /// Body height without studs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_height_mm: Option<f64>,
+    /// Thinnest body side wall, wall ribs and tubes excluded (rule `WALL.MIN`):
+    /// the full wall above the first-layer chamfer. The chamfer replaces slicer
+    /// elephant-foot compensation (docs/plan/05 section 6), so the squashed first
+    /// layer spreads back towards this width; the modelled width in the bed plane
+    /// is [`Measurements::min_body_wall_at_bed_mm`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_body_wall_mm: Option<f64>,
+    /// Thinnest body side wall in the bed plane (z = 0), after the 45 degree
+    /// first-layer chamfers on its outer face and on the cavity rim:
+    /// `min_body_wall_mm` minus twice the chamfer. Equal to `min_body_wall_mm`
+    /// when the process has no first-layer chamfer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_body_wall_at_bed_mm: Option<f64>,
+    /// Thinnest tube wall after offsets, (OD - ID) / 2 as rule `TUBE.WALL`
+    /// defines it (docs/plan/05 section 5): the full wall above the first-layer
+    /// chamfer; see [`Measurements::min_tube_wall_at_bed_mm`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_tube_wall_mm: Option<f64>,
+    /// Thinnest tube wall in the bed plane, after the first-layer chamfers on
+    /// the outside and in the bore: `min_tube_wall_mm` minus twice the tube's
+    /// chamfer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_tube_wall_at_bed_mm: Option<f64>,
+    /// Height of the 45 degree first-layer chamfer on the body's bottom edges
+    /// (the larger of the process and fit profile values; `xyScale` stretches
+    /// its width, not its height).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_layer_chamfer_mm: Option<f64>,
+    /// Roof (top) thickness over the cavity (rule `ROOF.MIN`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roof_mm: Option<f64>,
+    /// Cavity depth under the flat part of the roof (rule `CAVITY.DEPTH`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cavity_depth_mm: Option<f64>,
+    /// Stud diameter after the `studDiameter` offset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stud_diameter_mm: Option<f64>,
+    /// Tube outer diameter after offsets and growth (rule `CLUTCH.RISK`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tube_outer_diameter_mm: Option<f64>,
+    /// Tube bore after the `tubeInnerDiameter` offset (rule `CLUTCH.RISK`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tube_inner_diameter_mm: Option<f64>,
+    /// Solid pin diameter under 1-wide parts after the `pinDiameter` offset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_diameter_mm: Option<f64>,
+    /// Wall rib depth after the `ribDepth` offset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rib_depth_mm: Option<f64>,
+    /// Connector kinds of fit-critical features (for example `tubeF`, `studM`),
+    /// sorted and without repeats (rule `FIT.MISSING`).
+    #[serde(default)]
+    pub fit_critical_connectors: Vec<String>,
+    /// Reserved for artwork (filled by `relief.*`): thinnest stroke after the
+    /// morphological opening (rule `FEATURE.MIN`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_stroke_mm: Option<f64>,
+    /// Reserved for artwork: area removed by the opening, in percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_area_pct: Option<f64>,
+    /// Reserved for artwork: relief height (rule `RELIEF.HEIGHT`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relief_height_mm: Option<f64>,
 }
 
 /// The calibration record written by the coupon wizard.
@@ -249,5 +464,78 @@ mod tests {
         let f = example_fit_profile();
         assert!(check_fit_missing(&["tubeF", "studM"], Some(&f)).is_empty());
         assert_eq!(check_fit_missing(&["tubeF"], None).len(), 3);
+    }
+
+    fn process(id: &str) -> ProcessProfile {
+        default_process_profiles()
+            .into_iter()
+            .find(|p| p.id == id)
+            .expect("bundled profile")
+    }
+
+    #[test]
+    fn walls_are_quantised_to_whole_lines() {
+        let wall = openbrick_units::STANDARD.get().mm("side_wall");
+        // fdm-0.4: the standard wall is exactly three 0.4 mm lines.
+        let p = process("fdm-0.4");
+        assert!((p.quantise_wall(wall) - wall).abs() < 1e-12);
+        // fdm-0.2: wall / 0.22 = 5.45 lines, which rounds to five lines.
+        let p = process("fdm-0.2");
+        let lines = (wall / p.wall_quantise_mm).round();
+        assert_eq!(lines, 5.0);
+        assert!((p.quantise_wall(wall) - lines * p.wall_quantise_mm).abs() < 1e-12);
+        // Never below the process minimum wall, even for a tiny nominal.
+        assert!(p.quantise_wall(p.wall_quantise_mm / 10.0) >= p.min_wall_mm - 1e-12);
+    }
+
+    #[test]
+    fn tube_outer_diameter_grows_with_the_bore() {
+        let s = openbrick_units::STANDARD.get();
+        let (od, id) = (s.mm("tube_outer_diameter"), s.mm("tube_inner_diameter"));
+        let p = process("fdm-0.4");
+        // Nominal: the wall is the standard tube wall and nothing grows.
+        let nominal = Offsets::default().tube(od, id, p.min_tube_wall_mm);
+        assert_eq!(nominal.grown_mm, 0.0);
+        assert!((nominal.wall_mm() - (od - id) / 2.0).abs() < 1e-12);
+        // A bore offset larger than the wall can spare: the outer diameter grows so
+        // the wall stays at the process minimum.
+        let wide_bore = Offsets {
+            tube_inner_diameter: 0.4,
+            ..Offsets::default()
+        };
+        let t = wide_bore.tube(od, id, p.min_tube_wall_mm);
+        assert!(t.grown_mm > 0.0);
+        assert!((t.wall_mm() - p.min_tube_wall_mm).abs() < 1e-12);
+        assert!((t.inner_mm - (id + 0.4)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn default_offsets_are_nominal_and_tessellation_is_read() {
+        assert_eq!(Offsets::default().xy_scale, 1.0);
+        assert_eq!(Offsets::of(None), Offsets::default());
+        assert_eq!(process("fdm-0.4").stud_segments(), 64);
+        assert_eq!(process("fdm-0.2").stud_segments(), 96);
+        let written = serde_json::to_value(process("fdm-0.4")).expect("serialises");
+        assert_eq!(written["tessellation"]["studSegments"], 64);
+    }
+
+    #[test]
+    fn measurements_serialise_in_camel_case_without_absent_fields() {
+        let m = Measurements {
+            process: "fdm-0.4".into(),
+            min_tube_wall_mm: Some(0.85),
+            fit_critical_connectors: vec!["tubeF".into()],
+            ..Measurements::default()
+        };
+        let v = serde_json::to_value(&m).expect("serialises");
+        assert_eq!(v["minTubeWallMm"], 0.85);
+        assert!(v.get("minTubeWallAtBedMm").is_none());
+        assert_eq!(v["fitCriticalConnectors"][0], "tubeF");
+        assert!(
+            v.get("minStrokeMm").is_none(),
+            "reserved artwork fields are omitted"
+        );
+        let back: Measurements = serde_json::from_value(v).expect("reads back");
+        assert_eq!(back, m);
     }
 }

@@ -3,9 +3,14 @@
 //! compiles) in a browser-class runtime. Build and run:
 //!   cargo build --release --target wasm32-unknown-unknown -p openbrick-geom --example wasm_probe
 //!   node scripts/wasm-probe.mjs target/wasm32-unknown-unknown/release/examples/wasm_probe.wasm
+//!
+//! The brick comes from the shared nominal construction (`openbrick_geom::nominal`);
+//! CI compares its fingerprint with the 2x4 row of `kernel_timing.rs`, which builds
+//! the same brick independently.
 
-use openbrick_geom::manifold_rust::ManifoldRust;
-use openbrick_geom::{CrossSection, Kernel, Polygon, Solid};
+use openbrick_geom::manifold_rust::{ManifoldRust, MrSolid};
+use openbrick_geom::nominal::{nominal_brick, Detail, NominalDims};
+use openbrick_geom::Solid;
 use openbrick_units::STANDARD;
 
 /// Build a nominal 2x4 brick and return its volume in mm3 (negative on failure).
@@ -35,65 +40,8 @@ fn brick() -> Option<(f64, usize)> {
     Some((b.volume_mm3(), b.to_mesh().triangle_count()))
 }
 
-fn build() -> Option<openbrick_geom::manifold_rust::MrSolid> {
-    let s = STANDARD.get();
-    let k = ManifoldRust;
-    let (pitch, gap, wall, roof, height) = (
-        s.mm("module"),
-        s.mm("undersize_per_side"),
-        s.mm("side_wall"),
-        s.mm("roof"),
-        s.mm("brick_height"),
-    );
-    let cavity = height - roof;
-    let (w, d) = (2.0 * pitch - 2.0 * gap, 4.0 * pitch - 2.0 * gap);
-    let outer = Polygon::rect([0.0, 0.0], [w, d]);
-    let inner = Polygon::rect([wall, wall], [w - 2.0 * wall, d - 2.0 * wall]).reversed();
-    let stud = k
-        .extrude(
-            &CrossSection::from(vec![Polygon::circle(
-                [0.0, 0.0],
-                s.mm("stud_diameter") / 2.0,
-                64,
-            )]),
-            s.mm("stud_height"),
-            1.0,
-        )
-        .ok()?;
-    let tube = k
-        .extrude(
-            &CrossSection::from(vec![
-                Polygon::circle([0.0, 0.0], s.mm("tube_outer_diameter") / 2.0, 64),
-                Polygon::circle([0.0, 0.0], s.mm("tube_inner_diameter") / 2.0, 64).reversed(),
-            ]),
-            cavity,
-            1.0,
-        )
-        .ok()?;
-    let mut parts = vec![
-        k.extrude(&CrossSection::from(vec![outer.clone(), inner]), cavity, 1.0)
-            .ok()?,
-        k.translate(
-            &k.extrude(&CrossSection::from(vec![outer]), roof, 1.0)
-                .ok()?,
-            [0.0, 0.0, cavity],
-        ),
-    ];
-    for ix in 0..2 {
-        for iy in 0..4 {
-            parts.push(k.translate(
-                &stud,
-                [
-                    ix as f64 * pitch + pitch / 2.0 - gap,
-                    iy as f64 * pitch + pitch / 2.0 - gap,
-                    height,
-                ],
-            ));
-        }
-    }
-    for iy in 1..4 {
-        parts.push(k.translate(&tube, [pitch - gap, iy as f64 * pitch - gap, 0.0]));
-    }
-    let b = k.union_all(&parts).ok()?;
+fn build() -> Option<MrSolid> {
+    let d = NominalDims::from_standard(STANDARD.get());
+    let b = nominal_brick(&ManifoldRust, &d, [2, 4], &Detail::full()).ok()?;
     b.is_manifold().then_some(b)
 }
