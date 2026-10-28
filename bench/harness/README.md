@@ -5,7 +5,7 @@ A web page that renders N instanced 2x4 bricks at one level of detail with the t
 ```sh
 pnpm install                       # once, from the repository root
 pnpm --dir bench/harness dev       # local page; add --host for phones on the LAN
-pnpm --dir bench/harness test      # unit tests (Node only, no browser)
+pnpm --dir bench/harness test      # unit tests (Node only, no browser); the root pnpm test runs them too
 pnpm --dir bench/harness smoke     # build, serve and run headless Chromium
 ```
 
@@ -33,6 +33,8 @@ cargo run --release -p openbrick-geom --example export_lods             # regene
 cargo run --release -p openbrick-geom --example export_lods -- --check  # verify the committed files
 ```
 
+`cargo test --workspace` (and so `cargo xtask check`) runs the same comparison in `crates/openbrick-geom/tests/harness_meshes.rs`: byte for byte on x86-64 Linux, where the Q01 spike verified bit-identical kernel output, and counts, sizes, volumes and bounds on other platforms.
+
 | LOD | Content | Triangles |
 |-----|---------|-----------|
 | 0 | shell, roof, 64-segment studs and tubes (the brick of `examples/kernel_timing.rs`; same fingerprint) | 3,620 |
@@ -57,6 +59,6 @@ Kernel meshes are millimetres in a right-handed frame with +Z up and the body's 
 
 ## Smoke test
 
-`smoke.mjs` builds the page, serves `dist/` on 127.0.0.1, opens it in headless Chromium through Playwright and checks that each run fills every CSV column with fps above zero: 1000 LOD0 bricks on the WebGL2 backend, the same on the WebGPU backend, a short WebGPU run with the GPU timer (both WebGPU runs can be skipped with `--no-webgpu`), and a two-run suite that exercises the page reloads. It also checks that the download button hands out exactly the CSV on the page. Runs use a 640 x 360 viewport and no MSAA to keep software rendering fast. Chromium renders with SwiftShader there, so its numbers describe a CPU, not a GPU; they are printed for information only and never belong in `bench/devices/results.csv`.
+`smoke.mjs` builds the page, serves `dist/` on 127.0.0.1, opens it in headless Chromium through Playwright and checks every row each run produces, both `window.__harnessResult` and the CSV text on the page, with `rowProblems()` from `src/csv.js`: every column filled except `device`, `warnings` and (without a GPU timer) the `gpu_*` columns, numbers finite and in range, and the columns consistent with each other (for example `fps_p5` = 1000 / `frame_ms_p95`). It also checks fps above zero, the mesh fingerprint and the `renderer.info` counts against the manifest. Runs: 1000 LOD0 bricks on the WebGL2 backend, the same on the WebGPU backend, a short WebGPU run with the GPU timer (both WebGPU runs can be skipped with `--no-webgpu`), and a two-run suite that exercises the page reloads. It also checks that the download button hands out exactly the CSV on the page. Runs use a 640 x 360 viewport and no MSAA to keep software rendering fast. Chromium renders with SwiftShader there, so its numbers describe a CPU, not a GPU; they are printed for information only and never belong in `bench/devices/results.csv`.
 
 Playwright is a pinned dev dependency (1.63.0). Its browsers are not downloaded by `pnpm install`; on a fresh machine run `pnpm --dir bench/harness exec playwright install chromium` once (CI adds `--with-deps`).

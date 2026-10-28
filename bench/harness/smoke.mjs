@@ -1,10 +1,13 @@
 // Smoke test of the device render harness (backlog item 3 in docs/plan/14).
 //
 // Builds the page with vite, serves dist/ on 127.0.0.1, opens it in headless
-// Chromium through Playwright and checks that a run finishes with every CSV column
-// filled and fps > 0, on the WebGL2 backend and (unless --no-webgpu) on the WebGPU
-// backend, including a short run with the GPU timer, and runs a two-step suite to
-// check the reload chain of suite mode.
+// Chromium through Playwright and checks every row a run produces, both
+// window.__harnessResult and the CSV text on the page, with rowProblems() from
+// src/csv.js: every column filled except device, warnings and (without a GPU timer)
+// the gpu_* columns, numbers finite and in range, and the columns consistent with
+// each other. It also checks fps > 0 and the renderer.info counts against the mesh
+// manifest. Runs: WebGL2 and (unless --no-webgpu) WebGPU, a short WebGPU run with
+// the GPU timer, and a two-step suite to check the reload chain of suite mode.
 //
 // Usage: node smoke.mjs [--no-webgpu] [--no-build]
 //
@@ -17,7 +20,7 @@ import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { COLUMN_NAMES, csvHeader, missingColumns } from "./src/csv.js";
+import { COLUMN_NAMES, csvHeader, parseCsv, rowFromFields, rowProblems } from "./src/csv.js";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const dist = join(here, "dist");
@@ -109,14 +112,14 @@ function check(condition, message, failures) {
 function checkRow(row, expect, manifest, failures, label) {
   check(row && !row.error, `${label}: page reported an error: ${row?.error}`, failures);
   if (!row || row.error) return;
-  const missing = missingColumns(row);
-  check(missing.length === 0, `${label}: missing columns ${missing.join(", ")}`, failures);
+  // Empty, missing, malformed, out-of-range and inconsistent values (src/csv.js).
+  for (const problem of rowProblems(row)) failures.push(`${label}: ${problem}`);
   for (const [k, v] of Object.entries(expect)) check(row[k] === v, `${label}: ${k} is ${row[k]}, expected ${v}`, failures);
   const lod = manifest.lods.find((l) => l.lod === row.lod);
-  check(row.triangles_per_brick === lod.triangles, `${label}: triangles_per_brick ${row.triangles_per_brick} vs manifest ${lod.triangles}`, failures);
-  check(row.fps_median > 0 && row.fps_p5 > 0 && row.fps_mean > 0, `${label}: fps must be > 0`, failures);
-  check(row.frames > 0, `${label}: no frames measured`, failures);
-  check(row.frame_ms_p95 >= row.frame_ms_p50, `${label}: frame_ms_p95 < frame_ms_p50`, failures);
+  check(row.triangles_per_brick === lod?.triangles, `${label}: triangles_per_brick ${row.triangles_per_brick} vs manifest ${lod?.triangles}`, failures);
+  check(row.mesh_fingerprint === lod?.fingerprint, `${label}: mesh_fingerprint ${row.mesh_fingerprint} vs manifest ${lod?.fingerprint}`, failures);
+  const fps = [row.fps_median, row.fps_p5, row.fps_mean];
+  check(fps.every((f) => typeof f === "number" && f > 0), `${label}: fps must be numbers > 0, got ${fps.join(", ")}`, failures);
   const maxTriangles = row.count * row.triangles_per_brick + OUTPUT_PASS.triangles;
   check(row.triangles_per_frame > 0 && row.triangles_per_frame <= maxTriangles,
     `${label}: triangles_per_frame ${row.triangles_per_frame} outside (0, ${maxTriangles}]`, failures);
@@ -181,6 +184,11 @@ async function main() {
       const lines = (csv ?? "").trimEnd().split("\n");
       check(lines[0] === csvHeader(), `${label}: CSV header differs from the schema`, failures);
       check(lines.length === rows.length + 1, `${label}: CSV has ${lines.length - 1} rows, expected ${rows.length}`, failures);
+      // The same rules on the text a person copies or downloads.
+      parseCsv(csv ?? "").slice(1).forEach((fields, i) => {
+        check(fields.length === COLUMN_NAMES.length, `${label}: CSV row ${i + 1} has ${fields.length} fields`, failures);
+        for (const problem of rowProblems(rowFromFields(fields))) failures.push(`${label}: CSV row ${i + 1}: ${problem}`);
+      });
       // The download button must hand out exactly the CSV shown.
       const [download] = await Promise.all([page.waitForEvent("download"), page.click("#download")]);
       const downloaded = await readFile(await download.path(), "utf8");
@@ -204,7 +212,7 @@ async function main() {
     server.close();
   }
   console.log(`\nAll numbers above are SOFTWARE RENDERING in headless Chromium, not device results.`);
-  console.log(`Checked ${COLUMN_NAMES.length} CSV columns per row.`);
+  console.log(`Checked every row against the ${COLUMN_NAMES.length}-column rules of src/csv.js, as objects and as CSV text.`);
   if (failures.length > 0) {
     console.error(`\nSMOKE FAILED:\n- ${failures.join("\n- ")}`);
     process.exit(1);

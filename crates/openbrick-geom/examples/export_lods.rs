@@ -23,7 +23,12 @@
 //!
 //! An optional directory argument replaces the default output directory
 //! `bench/harness/public/meshes`. `--check` rebuilds everything in memory and
-//! exits with status 1 if a committed file differs from the kernel output.
+//! exits with status 1 if a committed file differs from the kernel output. Any
+//! other argument starting with `-` is an error (status 2), so a mistyped option
+//! cannot become an output directory; write `./-name` for a directory named so.
+//!
+//! `cargo test` runs the same comparison: `tests/harness_meshes.rs` includes this
+//! file as a module and checks the committed files against `generate()`.
 //!
 //! # Binary mesh format (`.bin`, "OBMESH" version 1), all little-endian
 //!
@@ -50,6 +55,7 @@ use openbrick_geom::{CrossSection, Kernel, Mesh, Polygon, Solid};
 use openbrick_units::STANDARD;
 use serde_json::json;
 
+const USAGE: &str = "usage: export_lods [--check] [output-dir]";
 const MAGIC: &[u8; 8] = b"OBMESH\0\0";
 const FORMAT_VERSION: u32 = 1;
 const HEADER_BYTES: usize = 32;
@@ -232,7 +238,7 @@ fn bounds_json(mesh: &Mesh) -> serde_json::Value {
 }
 
 /// Build every LOD and return (file name, bytes) pairs, manifest last.
-fn generate() -> Vec<(String, Vec<u8>)> {
+pub fn generate() -> Vec<(String, Vec<u8>)> {
     let s = STANDARD.get();
     let d = Dims::from_standard();
     let k = ManifoldRust;
@@ -285,7 +291,7 @@ fn generate() -> Vec<(String, Vec<u8>)> {
 }
 
 /// `bench/harness/public/meshes` under the workspace root (two levels above this crate).
-fn default_dir() -> PathBuf {
+pub fn default_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
@@ -293,19 +299,54 @@ fn default_dir() -> PathBuf {
         .join("bench/harness/public/meshes")
 }
 
-fn main() -> ExitCode {
+/// What the command line asks for.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Command {
+    Help,
+    /// Write the files into `dir`, or with `check` compare them with what is there.
+    Run {
+        check: bool,
+        dir: PathBuf,
+    },
+}
+
+/// Parse the arguments after the program name.
+pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut check = false;
-    let mut dir = default_dir();
-    for arg in std::env::args().skip(1) {
+    let mut dir = None;
+    for arg in args {
         match arg.as_str() {
             "--check" => check = true,
-            "-h" | "--help" => {
-                println!("usage: export_lods [--check] [output-dir]");
-                return ExitCode::SUCCESS;
+            "-h" | "--help" => return Ok(Command::Help),
+            option if option.starts_with('-') => {
+                return Err(format!("unknown option {option}\n{USAGE}"));
             }
-            other => dir = PathBuf::from(other),
+            path => {
+                if dir.is_some() {
+                    return Err(format!("more than one output directory ({path})\n{USAGE}"));
+                }
+                dir = Some(PathBuf::from(path));
+            }
         }
     }
+    Ok(Command::Run {
+        check,
+        dir: dir.unwrap_or_else(default_dir),
+    })
+}
+
+fn main() -> ExitCode {
+    let (check, dir) = match parse_args(std::env::args().skip(1)) {
+        Ok(Command::Help) => {
+            println!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
+        Ok(Command::Run { check, dir }) => (check, dir),
+        Err(message) => {
+            eprintln!("export_lods: {message}");
+            return ExitCode::from(2);
+        }
+    };
     let files = generate();
     let mut stale = 0;
     for (name, bytes) in &files {

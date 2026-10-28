@@ -28,9 +28,18 @@ Vite prints a `Network:` URL such as `http://192.168.1.20:5173/`. Open it on the
 **WebGPU needs a secure context.** `http://192.168.1.20:5173/` is not one, so the phone falls back to WebGL2; the row then says `backend=webgl2` and has a warning. To measure WebGPU on a phone, use one of these:
 
 1. **Android over USB:** `adb reverse tcp:5173 tcp:5173`, then open http://localhost:5173/ on the phone. `localhost` counts as a secure context.
-2. **HTTPS with a locally trusted certificate (Android and iOS):** create one with [mkcert](https://github.com/FiloSottile/mkcert) (`mkcert -install`, then `mkcert 192.168.1.20`), install mkcert's root certificate on the phone, and start the server with
-   `HARNESS_TLS_CERT=$PWD/192.168.1.20.pem HARNESS_TLS_KEY=$PWD/192.168.1.20-key.pem pnpm --dir bench/harness dev --host`.
-   Open `https://192.168.1.20:5173/`.
+2. **HTTPS with a locally trusted certificate (Android and iOS):** create one with [mkcert](https://github.com/FiloSottile/mkcert) in a directory outside the repository, so the private key can never be committed, and install mkcert's root certificate on the phone:
+
+   ```sh
+   mkcert -install
+   mkdir -p ~/.config/openbrick-harness
+   (cd ~/.config/openbrick-harness && mkcert 192.168.1.20)
+   HARNESS_TLS_CERT="$HOME"/.config/openbrick-harness/192.168.1.20.pem \
+   HARNESS_TLS_KEY="$HOME"/.config/openbrick-harness/192.168.1.20-key.pem \
+   pnpm --dir bench/harness dev --host
+   ```
+
+   Open `https://192.168.1.20:5173/`. (The repository's `.gitignore` also ignores `*.pem` as a safety net.)
 3. **Chrome on Android, for a quick check only:** add the LAN URL to `chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
 
 Keep the page in front and the screen on for the whole run; a hidden tab pauses rendering and the row gets a warning.
@@ -69,11 +78,12 @@ The reference devices named in 07 section 9 are an Iris Xe laptop, a Radeon 780M
 
 1. Copy the data rows (not the header) from the page, or download the CSV.
 2. Append them to `results.csv` in a pull request, one row per run, unchanged except for the `device` label if you forgot to set it.
-3. Do not add rows whose `software` column is `yes` or whose `warnings` start with `error:`. Rows from a software rasteriser or a headless browser describe the CI machine, not a device, and the harness unit test rejects software rows in `results.csv`. A row with other warnings (for example a WebGPU fallback) is fine; the warning explains it.
+3. Do not add rows whose `software` column is `yes` or whose `warnings` contain a note starting with `error:` (notes are listed in the order they arose, so the error is not always first). Rows from a software rasteriser or a headless browser describe the CI machine, not a device. A row with other warnings (for example a WebGPU fallback) is fine; the warning explains it.
+4. Run `pnpm test` from the repository root. The harness unit test checks every row of `results.csv` against the column rules in `bench/harness/src/csv.js` (every column filled except `device`, `warnings` and the `gpu_*` columns, numbers in range, columns consistent with each other) and rejects software and failed rows.
 
 ## How the numbers are measured
 
-- **Frame time** is the interval between successive `requestAnimationFrame` timestamps (three.js `setAnimationLoop` drives rAF and passes its timestamp). Browsers cap it at the display refresh rate, so a median of 60 or 120 fps means "at least this fast"; raise `count` or pick a heavier LOD to find the limit. `fps_median` and `fps_p5` are percentiles of per-frame fps; `frame_ms_*` are percentiles of the intervals (linear interpolation between closest ranks).
+- **Frame time** is the interval between successive `requestAnimationFrame` timestamps (three.js `setAnimationLoop` drives rAF and passes its timestamp). Browsers cap it at the display refresh rate, so a median of 60 or 120 fps means "at least this fast"; raise `count` or pick a heavier LOD to find the limit. `frame_ms_p50` and `frame_ms_p95` are percentiles of the intervals with linear interpolation between closest ranks (the "linear" method of NumPy, R type 7). `fps_median` is 1000 / `frame_ms_p50` and `fps_p5` is 1000 / `frame_ms_p95`: frame rate falls as frame time rises, so the 5th percentile of frame rate is the 95th percentile of frame time, and deriving one from the other keeps both columns describing the same frames, also on a short run with one long stall. `fps_mean` is frames divided by measured seconds.
 - **Triangles and draw calls** come from `renderer.info` after each frame, so they reflect per-chunk frustum culling. They include the renderer's output pass, which converts to the sRGB output colour space by drawing one full-screen triangle (one draw call).
 - **CPU time** (`cpu_ms_*`) is the JavaScript time spent inside `renderer.render()`. Browsers coarsen `performance.now()` (often to 0.1 ms), so small values are approximate.
 - **GPU time** (`gpu_ms_*`, only with `gpu=1`) comes from three.js timestamp queries, read back asynchronously, so it samples some frames rather than all of them. It is not capped by the refresh rate, which makes it the better headroom measure when `fps_median` sits at 60 or 120. Browsers may quantise these timers too.
@@ -82,7 +92,7 @@ The reference devices named in 07 section 9 are an Iris Xe laptop, a Radeon 780M
 
 ## CSV columns
 
-`results.csv` starts with this header; `bench/harness/src/csv.js` is the source of truth and a unit test keeps this table, that file and the header in step.
+`results.csv` starts with this header; `bench/harness/src/csv.js` is the source of truth, including the rule each value must meet, and a unit test keeps this table, that file and the header in step. Every column is filled in a finished run except `device` (optional label), `warnings` (empty when clean) and the `gpu_*` columns (empty without `gpu=1`; `gpu_ms_*` also empty when `gpu_samples` is 0).
 
 | Column | Meaning |
 |--------|---------|
@@ -103,13 +113,13 @@ The reference devices named in 07 section 9 are an Iris Xe laptop, a Radeon 780M
 | `frames` | frames measured after warm-up |
 | `seconds` | measured duration in seconds |
 | `warmup` | warm-up in seconds, not measured (at least 3 frames unless 0) |
-| `fps_median` | median of per-frame fps (1000 / frame ms) |
+| `fps_median` | 1000 / `frame_ms_p50`: frame rate of the median frame |
 | `fps_mean` | frames divided by measured seconds |
-| `fps_p5` | 5th percentile of per-frame fps (the slow frames) |
+| `fps_p5` | 1000 / `frame_ms_p95`: frame rate of the slow frames (5th percentile of frame rate) |
 | `frame_ms_p50` | median frame time in milliseconds |
 | `frame_ms_p95` | 95th percentile frame time in milliseconds |
 | `frame_ms_max` | longest frame in milliseconds |
-| `cpu_ms_p50` | median JavaScript time inside `renderer.render()` in milliseconds |
+| `cpu_ms_p50` | median JavaScript time inside `renderer.render()` in milliseconds (can read 0 where the browser coarsens its clock) |
 | `cpu_ms_p95` | 95th percentile JavaScript time inside `renderer.render()` in milliseconds |
 | `gpu_samples` | GPU timer readings taken; empty when `gpu=0`, 0 when the browser offers no GPU timer |
 | `gpu_ms_p50` | median GPU time per frame from timestamp queries in milliseconds (`gpu=1` only), all render passes of a frame summed |
@@ -124,6 +134,6 @@ The reference devices named in 07 section 9 are an Iris Xe laptop, a Radeon 780M
 | `kernel` | geometry kernel that built the meshes (from the mesh manifest) |
 | `mesh_fingerprint` | fingerprint of the LOD mesh (from the mesh manifest) |
 | `user_agent` | `navigator.userAgent` |
-| `warnings` | semicolon-separated notes that qualify the row, empty when clean: backend fallback, insecure context, software rasteriser, hidden tab, resize, few frames, missing GPU timer, errors |
+| `warnings` | notes separated by `; ` that qualify the row, in the order they arose, empty when clean: backend fallback, insecure context, software rasteriser, hidden tab, resize, few frames, missing GPU timer, and `error: ...` when the run failed |
 
 Values are plain numbers or text; text containing a comma, quote or line break is quoted as in RFC 4180.

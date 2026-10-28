@@ -156,11 +156,37 @@ test("summarize: a steady 60 Hz run with one hitch", () => {
   assert.equal(s.frame_ms_max, 100);
   // 100 frames in 1750 ms: 99 x 16.667 + 100 = 1750.
   assert.equal(s.fps_mean, 57.14);
-  assert.ok(s.fps_p5 <= 60 && s.fps_p5 >= 10);
+  // p95 of the frame times: rank 0.95 x 99 = 94.05 lies among the 16.667 ms frames.
+  assert.equal(s.frame_ms_p95, 16.67);
+  assert.equal(s.fps_p5, 60);
   assert.equal(s.triangles_per_frame, 1234);
   assert.equal(s.draw_calls, 7);
   assert.equal(s.cpu_ms_p50, 0.5);
   assert.deepEqual([s.gpu_samples, s.gpu_ms_p50, s.gpu_ms_p95], ["", "", ""], "GPU columns stay empty when timing is off");
+});
+
+test("summarize: fps columns are 1000 / the frame-time percentiles, also with a stall", () => {
+  // 11 frames of 16.7 ms, then 28 ms and a 20 s stall (13 frames). Sorted frame
+  // times: p50 is rank 6 = 16.7 ms; p95 is rank 0.95 x 12 = 11.4, so
+  // 28 + 0.4 x (20000 - 28) = 8016.8 ms, and fps_p5 = 1000 / 8016.8 = 0.1247.
+  // Interpolating in fps space instead gave 21.45 for the same frames.
+  const frameMs = Array(11).fill(16.7).concat([28, 20000]);
+  const s = summarize({
+    frameMs,
+    cpuMs: Array(13).fill(1),
+    triangles: Array(13).fill(1),
+    drawCalls: Array(13).fill(1),
+    measuredMs: frameMs.reduce((a, b) => a + b, 0),
+  });
+  assert.equal(s.frame_ms_p50, 16.7);
+  assert.equal(s.fps_median, 59.88);
+  assert.equal(s.frame_ms_p95, 8016.8);
+  assert.equal(s.fps_p5, 0.12);
+  assert.equal(s.frame_ms_max, 20000);
+  // An even count: the median frame time is interpolated, then inverted.
+  const even = summarize({ frameMs: [10, 20], cpuMs: [1, 1], triangles: [1, 1], drawCalls: [1, 1], measuredMs: 30 });
+  assert.equal(even.frame_ms_p50, 15);
+  assert.equal(even.fps_median, 66.67);
 });
 
 test("summarize: GPU timer readings", () => {
