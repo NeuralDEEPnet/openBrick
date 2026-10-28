@@ -1,0 +1,23 @@
+{
+  "openbrick": "1.0",
+  "kind": "coupon",
+  "version": 1,
+  "license": "CC0-1.0",
+  "credit": { "author": "OpenBrick3D contributors" },
+  "source": "docs/plan/05 section 4",
+  "copies": 2,
+  "label": { "reliefMm": 0.6, "strokeMm": 0.8 },
+  "cells": [
+    {
+      "id": "stud",
+      "label": "Studs (male), outer diameter",
+      "row": "stud",
+      "standardId": "stud_diameter",
+      "startMm": 4.60,
+      "endMm": 4.95,
+      "stepMm": 0,
+      "offsetField": "studDiameter",
+      "source": "docs/plan/05 section 4, row Studs (male)"
+    }
+  ]
+}

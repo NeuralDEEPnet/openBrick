@@ -63,6 +63,10 @@
       "$ref": "#/$defs/positiveMm",
       "description": "Thinnest underside tube wall after fit offsets (rule TUBE.WALL)."
     },
+    "recommendedTubeWallMm": {
+      "$ref": "#/$defs/positiveMm",
+      "description": "Tube walls from minTubeWallMm up to this value print but get a TUBE.WALL warning (docs/plan/05 section 5: minTubeWallMm 0.7, warning below 0.8). Optional: without it there is no warning band. Should be at least minTubeWallMm."
+    },
     "minCavityDepthMm": {
       "$ref": "#/$defs/positiveMm",
       "description": "Cavity depth a deboss must leave so studs below still enter (rule CAVITY.DEPTH)."
@@ -141,6 +145,7 @@
         "minFeatureMm": true,
         "minFeatureRule": true,
         "minTubeWallMm": true,
+        "recommendedTubeWallMm": true,
         "minCavityDepthMm": true,
         "minReliefHeightMm": true,
         "maxReliefHeightMm": true,

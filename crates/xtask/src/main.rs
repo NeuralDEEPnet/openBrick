@@ -1,10 +1,13 @@
 //! `cargo xtask <task>`: `check` runs fmt, clippy, tests and data validation; `data`
 //! validates the JSON documents under standards/, profiles/ and parts/ against the
 //! JSON Schemas in schemas/, loads each with its Rust reader and validates what the
-//! reader writes back, and self-checks the schemas and their fixtures; `wasm` builds
-//! `openbrick-wasm` for the browser into `apps/web/src/wasm/` (see `wasm.rs`).
+//! reader writes back, and self-checks the schemas and their fixtures; it also checks
+//! the validator fixtures' expected reports against `schemas/report.schema.json` and
+//! that every coupon cell records a valid fit profile (see `validator.rs`); `wasm`
+//! builds `openbrick-wasm` for the browser into `apps/web/src/wasm/` (see `wasm.rs`).
 
 mod schema;
+mod validator;
 mod wasm;
 
 use std::collections::BTreeMap;
@@ -25,7 +28,7 @@ fn run(args: &[&str]) -> bool {
 /// trip of one data directory.
 fn validate_json_dir(root: &Path, set: &DataSet, schema: &Schema) -> bool {
     let mut ok = true;
-    let files = match schema::json_files(&root.join(set.dir)) {
+    let files = match set.data_files(root) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("data: {e}");
@@ -92,6 +95,31 @@ fn data(root: &Path) -> bool {
         ok = false;
     }
     for problem in schema::check_fixtures(root, &schemas) {
+        eprintln!("data: {problem}");
+        ok = false;
+    }
+    for problem in schema::unclaimed_data_files(root) {
+        eprintln!("data: {problem}");
+        ok = false;
+    }
+    // The validator report contract and the coupon sweep (docs/plan/05 sections 4
+    // and 5).
+    match Schema::load(&root.join("schemas").join(validator::REPORT_SCHEMA)) {
+        Ok(report) => {
+            for problem in validator::check_validator_reports(root, &report)
+                .into_iter()
+                .chain(validator::check_rule_ids(&report))
+            {
+                eprintln!("data: {problem}");
+                ok = false;
+            }
+        }
+        Err(e) => {
+            eprintln!("data: schema {e}");
+            ok = false;
+        }
+    }
+    for problem in validator::check_coupon_records(root, &schemas["fit-profile.schema.json"]) {
         eprintln!("data: {problem}");
         ok = false;
     }

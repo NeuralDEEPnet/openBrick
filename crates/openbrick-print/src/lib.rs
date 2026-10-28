@@ -1,9 +1,24 @@
 //! Print pipeline data model (docs/plan/05): process profiles, fit profiles,
-//! validator report types, and the bundled default profiles.
+//! validator report types, and the bundled default profiles; the validator
+//! ([`validate()`]), the calibration coupon sweep ([`coupon_v1`]) and the coupon
+//! record that turns chosen cells into a fit profile ([`record()`]).
 
 use std::collections::BTreeMap;
 
 pub use openbrick_units::Credit;
+
+mod coupon;
+mod record;
+mod validate;
+
+pub use coupon::{coupon_v1, CouponCell, CouponLabel, CouponSpec, GRID_TOLERANCE_MM};
+pub use record::{
+    is_profile_id, record, record_with, slug_id, RecordError, RecordInput, ANONYMOUS_AUTHOR,
+    FIT_INTENTS, RECORD_DECIMALS,
+};
+pub use validate::{
+    validate, IMPLEMENTED_RULES, LENGTH_TOLERANCE_MM, MESH_VOLUME_TOLERANCE_PCT, PLANNED_RULES,
+};
 
 /// What a manufacturing process can resolve.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -21,6 +36,11 @@ pub struct ProcessProfile {
     pub wall_quantise_mm: f64,
     pub min_feature_mm: f64,
     pub min_tube_wall_mm: f64,
+    /// Tube walls from `min_tube_wall_mm` up to this print but get a
+    /// `TUBE.WALL` warning ("minTubeWallMm 0.7 (warning below 0.8)",
+    /// docs/plan/05 section 5); absent means no warning band.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_tube_wall_mm: Option<f64>,
     pub min_cavity_depth_mm: f64,
     pub min_relief_height_mm: f64,
     pub max_relief_height_mm: f64,
@@ -158,6 +178,59 @@ impl TubeSize {
 }
 
 impl Offsets {
+    /// The `offsetsMm` keys of the diameter and depth offsets, as written in a
+    /// fit profile (the cells of the coupon calibrate these).
+    pub const KEYS: [&'static str; 9] = [
+        "studDiameter",
+        "tubeInnerDiameter",
+        "tubeOuterDiameter",
+        "ribDepth",
+        "pinDiameter",
+        "horizontalHoleDiameter",
+        "axleHole",
+        "barDiameter",
+        "clipOpening",
+    ];
+
+    /// The offset with this `offsetsMm` key (camelCase, as in the JSON): any of
+    /// [`Offsets::KEYS`], `firstLayerChamfer` or `xyScale`; `None` for an
+    /// unknown key.
+    pub fn get(&self, key: &str) -> Option<f64> {
+        Some(match key {
+            "studDiameter" => self.stud_diameter,
+            "tubeInnerDiameter" => self.tube_inner_diameter,
+            "tubeOuterDiameter" => self.tube_outer_diameter,
+            "ribDepth" => self.rib_depth,
+            "pinDiameter" => self.pin_diameter,
+            "horizontalHoleDiameter" => self.horizontal_hole_diameter,
+            "axleHole" => self.axle_hole,
+            "barDiameter" => self.bar_diameter,
+            "clipOpening" => self.clip_opening,
+            "firstLayerChamfer" => self.first_layer_chamfer,
+            "xyScale" => self.xy_scale,
+            _ => return None,
+        })
+    }
+
+    /// Mutable access to the offset with this `offsetsMm` key (see
+    /// [`Offsets::get`]).
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut f64> {
+        Some(match key {
+            "studDiameter" => &mut self.stud_diameter,
+            "tubeInnerDiameter" => &mut self.tube_inner_diameter,
+            "tubeOuterDiameter" => &mut self.tube_outer_diameter,
+            "ribDepth" => &mut self.rib_depth,
+            "pinDiameter" => &mut self.pin_diameter,
+            "horizontalHoleDiameter" => &mut self.horizontal_hole_diameter,
+            "axleHole" => &mut self.axle_hole,
+            "barDiameter" => &mut self.bar_diameter,
+            "clipOpening" => &mut self.clip_opening,
+            "firstLayerChamfer" => &mut self.first_layer_chamfer,
+            "xyScale" => &mut self.xy_scale,
+            _ => return None,
+        })
+    }
+
     /// The offsets of an optional fit profile; no profile means nominal geometry.
     pub fn of(fit: Option<&FitProfile>) -> Offsets {
         fit.map(|f| f.offsets_mm.clone()).unwrap_or_default()
@@ -271,6 +344,13 @@ pub struct Measurements {
     /// Reserved for artwork: relief height (rule `RELIEF.HEIGHT`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relief_height_mm: Option<f64>,
+    /// Reserved for artwork: thinnest stroke among fit-critical artwork (a
+    /// relief feature listed in the part's `fitCritical`, such as the cell labels
+    /// of the calibration coupon, which someone reads to calibrate). Rule
+    /// `FEATURE.MIN` blocks when it is below `minFeatureMm`, where a thin stroke
+    /// elsewhere ([`Measurements::min_stroke_mm`]) only warns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_fit_critical_stroke_mm: Option<f64>,
 }
 
 /// The calibration record written by the coupon wizard.
@@ -293,7 +373,7 @@ pub struct Calibration {
 /// A whole number in `u32` range, written either as `1` or as `1.0`. JSON does not
 /// tell the two apart and neither does JSON Schema (draft 2020-12 counts `1.0` as an
 /// integer), so a document that passes `schemas/fit-profile.schema.json` must load.
-fn whole_u32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+pub(crate) fn whole_u32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
     use serde::de::{Deserialize, Error};
     let v = f64::deserialize(d)?;
     if v.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&v) {
@@ -343,6 +423,7 @@ pub fn required_cells(connector: &str) -> &'static [&'static str] {
     }
 }
 
+/// How a finding affects export: blockers disable it, warnings never do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -351,19 +432,29 @@ pub enum Severity {
 }
 
 /// One validator message; every message carries rule, value, threshold and a fix hint.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+/// The JSON form is `$defs/finding` in `schemas/report.schema.json`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
+    /// Rule id from docs/plan/05 section 5 (`WALL.MIN`, ...).
     pub rule: String,
     pub severity: Severity,
+    /// What was measured, with its value and unit, and the threshold.
     pub message: String,
+    /// The measured value (millimetres unless the rule says otherwise, see
+    /// [`validate()`]); `None` when the rule measures no number.
     pub value: Option<f64>,
+    /// The threshold the value broke, in the unit of `value`.
     pub threshold: Option<f64>,
+    /// What to change, kindly worded.
     pub fix: String,
+    /// The part feature concerned, when known.
     #[serde(default)]
     pub feature: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+/// What [`validate()`] found; the JSON form is `schemas/report.schema.json`,
+/// the contract of `openbrick validate --json`.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Report {
     pub findings: Vec<Finding>,
 }
@@ -412,10 +503,20 @@ pub fn check_fit_missing(connector_types: &[&str], fit: Option<&FitProfile>) -> 
                 out.push(Finding {
                     rule: "FIT.MISSING".into(),
                     severity: Severity::Blocker,
-                    message: format!("fit-critical connector {ct} needs calibration cell `{cell}`"),
+                    message: match fit {
+                        Some(f) => format!(
+                            "fit-critical connector {ct} needs the calibration cell `{cell}`, which fit profile `{}` does not record",
+                            f.id
+                        ),
+                        None => format!(
+                            "fit-critical connector {ct} needs the calibration cell `{cell}`, and no fit profile was given"
+                        ),
+                    },
                     value: None,
                     threshold: None,
-                    fix: "print the calibration coupon and record the best-fitting cells (openbrick calibrate)".into(),
+                    fix: format!(
+                        "print the calibration coupon (openbrick calibrate coupon) and record the best-fitting `{cell}` cell (openbrick calibrate record)"
+                    ),
                     feature: None,
                 });
             }
@@ -439,6 +540,13 @@ mod tests {
             );
             assert!(p.min_tube_wall_mm <= p.min_wall_mm);
             assert!(p.min_cavity_depth_mm >= 1.8 - 1e-9);
+            if let Some(r) = p.recommended_tube_wall_mm {
+                assert!(
+                    r >= p.min_tube_wall_mm,
+                    "{}: warning band above the blocker",
+                    p.id
+                );
+            }
         }
     }
 

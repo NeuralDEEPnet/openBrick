@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/report.schema.json",
+  "title": "OpenBrick3D validator report",
+  "description": "What the validator found on a built part (openbrick_print::Report, written by serde_json): the contract of `openbrick validate --json` (docs/plan/05 sections 5 and 9). Findings are sorted blockers first, then by rule id, feature and message. A part may be exported when no finding is a blocker; warnings never block. cargo xtask data checks the expected reports of the validator fixtures (crates/openbrick-print/tests/fixtures/validator/) against this schema.",
+  "type": "object",
+  "required": ["findings"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "finding": {
+      "description": "One validator message (openbrick_print::Finding). Every message carries the rule id, the measured value, the threshold and a fix hint (CLAUDE.md).",
+      "type": "object",
+      "required": ["rule", "severity", "message", "value", "threshold", "fix"],
+      "properties": {
+        "rule": {
+          "description": "Rule id from the table in docs/plan/05 section 5. openbrick_print::IMPLEMENTED_RULES lists the rules checked today and PLANNED_RULES the rest; cargo xtask data checks that this enum is exactly both.",
+          "enum": [
+            "MESH.MANIFOLD",
+            "MESH.SELF_INTERSECT",
+            "MESH.VOLUME",
+            "WALL.MIN",
+            "TUBE.WALL",
+            "CAVITY.DEPTH",
+            "WALL.QUANTISED",
+            "ROOF.MIN",
+            "ROOF.BRIDGE",
+            "OVERHANG.MAX",
+            "OVERHANG.BRIDGED",
+            "FEATURE.MIN",
+            "RELIEF.HEIGHT",
+            "FIT.PROCESS",
+            "FIT.MISSING",
+            "CLUTCH.RISK",
+            "ORIENT.FACE",
+            "TRADEMARK.LOGO",
+            "SIZE.BED"
+          ]
+        },
+        "severity": {
+          "description": "blocker: export is disabled until it is fixed; warning: shown, never blocks.",
+          "enum": ["blocker", "warning"]
+        },
+        "message": {
+          "description": "What was measured, with the value, its unit and the threshold.",
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "description": "The measured value: millimetres, except MESH.VOLUME (deviation in percent) and MESH.MANIFOLD on an empty mesh (component count); null when the rule measures no number (FIT.PROCESS, FIT.MISSING, a non-manifold mesh).",
+          "type": ["number", "null"]
+        },
+        "threshold": {
+          "description": "The threshold the value broke, in the unit of value; null with a null value.",
+          "type": ["number", "null"]
+        },
+        "fix": {
+          "description": "What to change, kindly worded (for example: raise reliefHeight to 0.4 mm).",
+          "type": "string",
+          "minLength": 1
+        },
+        "feature": {
+          "description": "Id of the part feature concerned, when known; null or absent otherwise.",
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

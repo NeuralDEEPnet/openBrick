@@ -25,6 +25,10 @@ pub type Reader = fn(&str) -> Result<Value, String>;
 pub struct DataSet {
     /// Directory of the data files, relative to the repository root.
     pub dir: &'static str,
+    /// File-name prefix of the data files in `dir` that belong to this set; empty
+    /// for every `.json` file there. Every data file must belong to exactly one
+    /// set ([`unclaimed_data_files`]).
+    pub files: &'static str,
     /// Expected `kind` field (parts carry none yet).
     pub kind: Option<&'static str>,
     /// Schema file name inside `schemas/`.
@@ -39,6 +43,7 @@ pub struct DataSet {
 pub const DATA_SETS: &[DataSet] = &[
     DataSet {
         dir: "standards",
+        files: "dimensions-",
         kind: Some("standard"),
         schema: "standard.schema.json",
         prefix: "standard-",
@@ -46,7 +51,17 @@ pub const DATA_SETS: &[DataSet] = &[
         reader: read_standard,
     },
     DataSet {
+        dir: "standards",
+        files: "coupon-",
+        kind: Some("coupon"),
+        schema: "coupon.schema.json",
+        prefix: "coupon-",
+        reader_name: "openbrick_print::CouponSpec",
+        reader: read_coupon,
+    },
+    DataSet {
         dir: "profiles/process",
+        files: "",
         kind: Some("process"),
         schema: "process-profile.schema.json",
         prefix: "process-",
@@ -55,6 +70,7 @@ pub const DATA_SETS: &[DataSet] = &[
     },
     DataSet {
         dir: "profiles/fit",
+        files: "",
         kind: Some("fit"),
         schema: "fit-profile.schema.json",
         prefix: "fit-",
@@ -63,6 +79,7 @@ pub const DATA_SETS: &[DataSet] = &[
     },
     DataSet {
         dir: "parts",
+        files: "",
         kind: None,
         schema: "part.schema.json",
         prefix: "part-",
@@ -111,6 +128,59 @@ fn read_process(text: &str) -> Result<Value, String> {
 fn read_fit(text: &str) -> Result<Value, String> {
     let f: openbrick_print::FitProfile = serde_json::from_str(text).map_err(|e| e.to_string())?;
     written(serde_json::to_value(&f))
+}
+
+/// The coupon sweep, plus what its schema cannot state (`CouponSpec::check`):
+/// unique cell ids, standard ids with a nominal, one cell per offset field and
+/// whole numbers of steps.
+fn read_coupon(text: &str) -> Result<Value, String> {
+    let c: openbrick_print::CouponSpec = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let problems = c.check();
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+    written(serde_json::to_value(&c))
+}
+
+impl DataSet {
+    /// The data files of this set, sorted.
+    pub fn data_files(&self, root: &Path) -> Result<Vec<PathBuf>, String> {
+        Ok(json_files(&root.join(self.dir))?
+            .into_iter()
+            .filter(|p| file_name(p).starts_with(self.files))
+            .collect())
+    }
+}
+
+/// `.json` files in a data directory that no data set, or more than one, claims;
+/// one line per problem.
+pub fn unclaimed_data_files(root: &Path) -> Vec<String> {
+    let dirs: BTreeSet<&str> = DATA_SETS.iter().map(|s| s.dir).collect();
+    let mut problems = Vec::new();
+    for dir in dirs {
+        let Ok(files) = json_files(&root.join(dir)) else {
+            continue; // validate_json_dir reports a missing directory
+        };
+        for p in files {
+            let name = file_name(&p);
+            let claims = DATA_SETS
+                .iter()
+                .filter(|s| s.dir == dir && name.starts_with(s.files))
+                .count();
+            if claims != 1 {
+                problems.push(format!(
+                    "{dir}/{name}: {claims} data sets claim it; name it so exactly one schema validates it (in {dir}/: {})",
+                    DATA_SETS
+                        .iter()
+                        .filter(|s| s.dir == dir)
+                        .map(|s| format!("{}* -> {}", s.files, s.schema))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+    }
+    problems
 }
 
 /// Parts also get `PartDoc::check`: unique feature ids, known ops, anchors defined
@@ -273,7 +343,7 @@ fn set_for_fixture(file_name: &str) -> Option<&'static DataSet> {
     DATA_SETS.iter().find(|s| file_name.starts_with(s.prefix))
 }
 
-fn file_name(p: &Path) -> String {
+pub fn file_name(p: &Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
@@ -360,7 +430,12 @@ pub fn check_fixtures(root: &Path, schemas: &BTreeMap<&'static str, Schema>) -> 
             let shown = format!("schemas/fixtures/{sub}/{name}");
             let Some(set) = set_for_fixture(&name) else {
                 problems.push(format!(
-                    "{shown}: name must start with one of standard-, process-, fit-, part-"
+                    "{shown}: name must start with one of {}",
+                    DATA_SETS
+                        .iter()
+                        .map(|s| s.prefix)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
                 continue;
             };
@@ -609,13 +684,32 @@ mod tests {
         let schemas = schemas();
         let mut problems = Vec::new();
         for set in DATA_SETS {
-            for path in json_files(&root().join(set.dir)).expect("data directory") {
+            for path in set.data_files(&root()).expect("data directory") {
                 let text = std::fs::read_to_string(&path).expect("data file reads");
                 let shown = path.display().to_string();
                 problems.extend(check_document(&shown, set, &schemas[set.schema], &text));
             }
         }
         assert!(problems.is_empty(), "{problems:#?}");
+    }
+
+    #[test]
+    fn every_data_file_is_claimed_by_exactly_one_schema() {
+        let problems = unclaimed_data_files(&root());
+        assert!(problems.is_empty(), "{problems:#?}");
+        // A stray file in standards/ would otherwise go unchecked.
+        let dir =
+            std::env::temp_dir().join(format!("openbrick-xtask-unclaimed-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("standards")).expect("temp dir");
+        std::fs::write(dir.join("standards/coupon-v9.json"), "{}").expect("writes");
+        std::fs::write(dir.join("standards/stray.json"), "{}").expect("writes");
+        let problems = unclaimed_data_files(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(problems.len(), 1, "{problems:#?}");
+        assert!(
+            problems[0].starts_with("standards/stray.json: 0 data sets"),
+            "{problems:#?}"
+        );
     }
 
     #[test]

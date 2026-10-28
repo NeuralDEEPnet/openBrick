@@ -4,29 +4,33 @@ One JSON Schema (draft 2020-12) per document kind, published with each release a
 
 | Schema | Validates | Read in Rust by |
 |--------|-----------|-----------------|
-| `standard.schema.json` | `standards/*.json` (the Dimensional Standard) | `openbrick_units::Standard` |
+| `standard.schema.json` | `standards/dimensions-*.json` (the Dimensional Standard) | `openbrick_units::Standard` |
+| `coupon.schema.json` | `standards/coupon-*.json` (`kind: "coupon"`, the calibration coupon sweep of docs/plan/05 section 4) | `openbrick_print::CouponSpec` |
 | `process-profile.schema.json` | `profiles/process/*.json` (`kind: "process"`) | `openbrick_print::ProcessProfile` |
 | `fit-profile.schema.json` | `profiles/fit/*.json` (`kind: "fit"`) | `openbrick_print::FitProfile` |
 | `part.schema.json` | `parts/*.obpart.json` (`openbrick/part@1`) | `openbrick_part::PartDoc` |
+| `report.schema.json` | validator reports, the output of `openbrick validate --json` (docs/plan/05 section 5); no data files, checked against the expected reports of the validator fixtures in `crates/openbrick-print/tests/fixtures/validator/` | `openbrick_print::Report` |
 
 Still to come, with their document kinds: `run.schema.json` (`.obrun.json`) and `model.schema.json` (`model.json` inside `.obrick`).
 
 ## What `cargo xtask data` checks
 
+Every `.json` file in `standards/` must be claimed by exactly one schema (by its file-name prefix, `dimensions-` or `coupon-`), so a new file there never goes unchecked.
+
 For every file in `standards/`, `profiles/process/`, `profiles/fit/` and `parts/`, and for every fixture in `fixtures/valid/`:
 
 1. It passes its schema. Each failure is printed with its JSON pointer and schema location, for example `at /features/0/op: "body.tyle" is not one of [...] [schema #/$defs/feature/properties/op/enum]`.
-2. The Rust reader in the table above loads it. Parts also go through `PartDoc::check` (unique feature ids, known ops, anchors defined before use), and the standard through a check that row ids are unique, because `STANDARD.mm(id)` only ever finds the first row with an id.
+2. The Rust reader in the table above loads it. Parts also go through `PartDoc::check` (unique feature ids, known ops, anchors defined before use), the standard through a check that row ids are unique, because `STANDARD.mm(id)` only ever finds the first row with an id, and the coupon through `CouponSpec::check` (unique cell ids, every `standardId` a row of the standard with a nominal, every `offsetField` set by one cell only, and `endMm` a whole number of steps after `startMm`).
 3. What the reader writes back (`serde_json::to_value`) passes the schema too. The writers omit absent optional fields instead of writing `null`, keep the `credit` block, and write no empty `date`, so a document Rust writes is a document the schema accepts.
 
-It also keeps the older checks (every data file has a pragma, its `kind` and a `credit`), meta-validates each schema against draft 2020-12, checks that the shared `$defs` copies are identical and that each `$defs/knownFields` matches its schema (see below), and self-checks the fixtures.
+It also keeps the older checks (every data file has a pragma, its `kind` and a `credit`), meta-validates each schema against draft 2020-12, checks that the shared `$defs` copies are identical and that each `$defs/knownFields` matches its schema (see below), and self-checks the fixtures. For the print pipeline it also checks that the expected report of every validator fixture passes `report.schema.json` and loads as `openbrick_print::Report`, that the schema's rule ids are exactly `openbrick_print::IMPLEMENTED_RULES` plus `PLANNED_RULES`, and that recording the first and the last value of every coupon cell (`openbrick_print::record_with`) writes a fit profile `fit-profile.schema.json` accepts (`crates/xtask/src/validator.rs`).
 
 ### What the schemas and the readers can still disagree on
 
 Steps 2 and 3 run only on the repository's data and fixtures. For a document from elsewhere, the schema is the contract, so these are the known differences:
 
 - **The schema is stricter in many places, on purpose.** Bounds, enums, patterns, required `credit`, and no `null` for an absent optional field (`"on": null` loads in Rust but fails the schema; leave the field out instead).
-- **Where the schema could be looser, the readers were changed to match.** JSON and JSON Schema do not tell `1` from `1.0` (draft 2020-12 counts `1.0` as an integer), so `couponVersion` is read as a whole number whichever way it is written, and the schema caps it at the `u32` maximum the reader can hold.
+- **Where the schema could be looser, the readers were changed to match.** JSON and JSON Schema do not tell `1` from `1.0` (draft 2020-12 counts `1.0` as an integer), so `couponVersion` (and the coupon's `version` and `copies`) is read as a whole number whichever way it is written, and the schema caps it at the `u32` maximum the reader can hold.
 - **Duplicate keys in one object** are invisible to the schema (a parsed JSON value keeps the last one), while serde rejects them for fixed-field objects. Step 2 catches them in the repository.
 - **Readers drop what they do not model yet.** Writing a document back loses `kind`, `presets` and `lock` on parts and `author`, `license` and `url` inside part `provenance`; `provenance` on the other kinds; `notes` and `tolerances` on the standard; and `minFeatureRule`, `horizontalHoleStrategies`, `tessellation` and `notes` on process profiles. The result still passes the schema, but it is not the same document; see the follow-ups below.
 
@@ -52,7 +56,7 @@ docs/plan/08 section 9 says minor versions only add fields and stay readable by 
 
 ## Fixtures
 
-`fixtures/valid/` holds documents that must pass all three checks above, and `fixtures/invalid/` documents that must fail their schema. A fixture picks its schema by file-name prefix: `standard-`, `process-`, `fit-` or `part-`. Each invalid fixture is a valid document with exactly one thing broken, named for that rule (`part-unknown-op.json`, `fit-missing-chosen-cells.json`, `fit-coupon-version-too-large.json`, `process-negative-min-feature.json`, `standard-bad-confidence.json`, ...). The valid `*-later-minor-*` fixtures show what a 1.1 document may add; `fit-misspelled-offset.json` and `process-misspelled-optional-field.json` show the same additions failing at 1.0.
+`fixtures/valid/` holds documents that must pass all three checks above, and `fixtures/invalid/` documents that must fail their schema. A fixture picks its schema by file-name prefix: `standard-`, `coupon-`, `process-`, `fit-` or `part-`. Each invalid fixture is a valid document with exactly one thing broken, named for that rule (`part-unknown-op.json`, `fit-missing-chosen-cells.json`, `fit-coupon-version-too-large.json`, `process-negative-min-feature.json`, `standard-bad-confidence.json`, ...). The valid `*-later-minor-*` fixtures show what a 1.1 document may add; `fit-misspelled-offset.json` and `process-misspelled-optional-field.json` show the same additions failing at 1.0.
 
 `fixtures/expected-failures.json` records, for each invalid fixture, the JSON pointer, the schema keyword and a piece of the validator's message (the broken value or property name) that it breaks. Every error the fixture raises must match all three, so a fixture that also fails for some other reason, such as a second missing property, is reported.
 

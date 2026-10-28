@@ -1,0 +1,54 @@
+{
+  "description": "A 0.75 mm tube wall: printable (at least 0.7) but under the recommended 0.8 mm: warning.",
+  "rule": "TUBE.WALL",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "minTubeWallAtBedMm": 0.35,
+    "minTubeWallMm": 0.75,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.4,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "raise the tubeOuterDiameter offset in fit profile `example-mk4s-petg-0.4` by 0.1 mm, or record a tube cell with a smaller bore, so the wall reaches 0.8 mm",
+        "message": "the thinnest tube wall is 0.75 mm after fit offsets: printable, but below the recommended 0.8 mm of process `fdm-0.4`",
+        "rule": "TUBE.WALL",
+        "severity": "warning",
+        "threshold": 0.8,
+        "value": 0.75
+      }
+    ]
+  }
+}

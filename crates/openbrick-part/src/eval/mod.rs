@@ -1047,6 +1047,9 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         process: process.id.clone(),
         fit_profile: input.fit.map(|f| f.id.clone()),
         allowed_processes,
+        // No artwork op is built yet; relief.* fills this with the other
+        // artwork fields below.
+        min_fit_critical_stroke_mm: None,
         triangle_count: objects.iter().map(|o| o.mesh.triangle_count()).sum(),
         volume_mm3: objects.iter().map(|o| o.volume_mm3).sum(),
         feature_volume_sum_mm3: feature_volume_sum,

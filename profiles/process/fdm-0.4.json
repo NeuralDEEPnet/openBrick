@@ -10,6 +10,7 @@
   "wallQuantiseMm": 0.4,
   "minFeatureMm": 0.8,
   "minTubeWallMm": 0.7,
+  "recommendedTubeWallMm": 0.8,
   "minCavityDepthMm": 1.8,
   "minReliefHeightMm": 0.4,
   "maxReliefHeightMm": 1.5,
