@@ -10,3 +10,4 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 - `standards/dimensions-v1.json` (CC0) and process profiles `fdm-0.4`, `fdm-0.2`, `resin-msla`.
 - Example part documents: logo tile and nameplate keychain.
 - Governance, licence policy, trademark policy, contributing guide, code of conduct, security policy, packaging guide, CI workflow and issue templates.
+- Plan document 14: lean development with AI agents (operating model, task loop, budgets, first agent-ready backlog) and an `agent-task` issue template.

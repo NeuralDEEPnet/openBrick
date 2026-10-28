@@ -1,0 +1,21 @@
+name: Agent-ready task
+description: A small, fully specified task an AI agent or a contributor can take without further context
+labels: [agent-ready]
+body:
+  - type: input
+    attributes: { label: Goal in one sentence }
+    validations: { required: true }
+  - type: input
+    attributes: { label: Plan document and ADR ids, placeholder: "docs/plan/06, D04" }
+    validations: { required: true }
+  - type: input
+    attributes: { label: Files or crates that may change, placeholder: "crates/openbrick-part, parts/" }
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Acceptance tests, description: "Test names or fixtures the agent writes first; they must fail before and pass after" }
+    validations: { required: true }
+  - type: textarea
+    attributes: { label: Out of scope }
+  - type: dropdown
+    attributes: { label: Size, options: ["S (under 100 lines)", "M (under 400 lines)", "L (needs splitting first)"] }
+    validations: { required: true }
