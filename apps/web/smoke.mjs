@@ -145,17 +145,33 @@ async function drawnStats(page, label) {
   throw new Error(`${label}: the viewer did not draw the newest brick within 30 s`);
 }
 
-/** Viewer stats once the camera has stopped moving (orbit damping takes a while). */
-async function settledStats(page, label) {
-  const end = Date.now() + 15_000;
+/** Viewer stats of the first frame that satisfies `ok`, or an error with the last stats. */
+async function statsWhen(page, ok, timeoutMs, label, what) {
+  const end = Date.now() + timeoutMs;
+  let s = await stats(page);
+  while (Date.now() < end) {
+    if (ok(s)) return s;
+    await new Promise((r) => setTimeout(r, 100));
+    s = await stats(page);
+  }
+  throw new Error(`${label}: ${what} within ${timeoutMs / 1000} s (last ${JSON.stringify(s)})`);
+}
+
+/**
+ * Wait until the camera has stopped moving. Orbit damping is counted in frames,
+ * so on SwiftShader under load it can take tens of seconds; only screenshots wait
+ * for it, and they are taken anyway when it does not finish.
+ */
+async function settle(page, timeoutMs = 30_000) {
+  const end = Date.now() + timeoutMs;
   let last = await stats(page);
   while (Date.now() < end) {
     await new Promise((r) => setTimeout(r, 400));
     const s = await stats(page);
-    if (s.frames === last.frames) return s;
+    if (s.frames === last.frames) return true;
     last = s;
   }
-  throw new Error(`${label}: the camera did not settle within 15 s`);
+  return false;
 }
 
 async function backendRun(browser, origin, backend, native) {
@@ -221,9 +237,18 @@ async function backendRun(browser, origin, backend, native) {
   await page.mouse.down();
   await page.mouse.move(cx, cy - box.height / 8, { steps: 12 });
   await page.mouse.up();
-  const settled = await settledStats(page, `${label} underside`);
-  check(settled.below && settled.camera[1] < 0, `${label}: dragging up did not take the camera below the ground (${JSON.stringify(settled)})`);
-  if (shots) await page.screenshot({ path: join(shots, `${backend}-underside.png`) });
+  // The damped orbit crosses the ground after about a third of the turn.
+  const under = await statsWhen(
+    page,
+    (st) => st.below && st.camera[1] < 0,
+    30_000,
+    `${label} underside`,
+    "dragging up did not take the camera below the ground",
+  );
+  if (shots) {
+    await settle(page);
+    await page.screenshot({ path: join(shots, `${backend}-underside.png`) });
+  }
 
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
   check(web.warnings.length === 0, `${label}: page warnings: ${web.warnings.join(" | ")}`);
@@ -231,7 +256,7 @@ async function backendRun(browser, origin, backend, native) {
     `# ${label}: first brick after ${(firstMs / 1000).toFixed(1)} s (built in ${Math.round(web.brick.buildMs)} ms), ` +
       `2x4 ${web.brick.triangles} triangles ${web.brick.fingerprint}, 2x2 ${native["2x2"].triangles} triangles, ` +
       `16x16 cancelled after ${(cancelMs / 1000).toFixed(1)} s with ${web.restarts} worker restart(s), ` +
-      `underside view from camera y ${settled.camera[1].toFixed(1)} mm`,
+      `camera below the ground (y ${under.camera[1].toFixed(1)} mm) after dragging up`,
   );
   await context.close();
 }

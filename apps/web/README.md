@@ -93,7 +93,7 @@ The core returns millimetres in the kernel frame: right-handed, +Z up, with the 
 - waits for the first brick and checks that the triangle count, fingerprint, canonical fingerprint and volume equal the native 2x4, and that a frame drew it;
 - presses "one stud shorter" twice and checks the 2x2 values the same way;
 - asks for 16x16, checks after 1.5 s that the status line shows the seconds and the cancel note, then asks for 2x4 while that build runs, and checks that the worker was replaced and the fresh worker gives the native 2x4 again;
-- drags the view up by a quarter of its height, which turns the camera 90 degrees down, and checks that the camera ends below the ground and the viewer reports the underside view.
+- drags the view up by a quarter of its height, which turns the camera 90 degrees down, and checks that the camera goes below the ground and the viewer reports the underside view. The check does not wait for the damped orbit to come to rest, because damping is counted in frames and SwiftShader under load draws few of them.
 
 A phone-sized run (390 x 844, touch, dark theme) checks four things: there is no horizontal scrolling, every control is on screen, the dark background differs from the light one, and a tap on + and a one-finger drag (which must move the camera) both work. `--screenshots <dir>` saves what the runs saw; `apps/web/smoke-screenshots/`, the folder CI uses, is gitignored. Chromium renders with SwiftShader there, so the timings say nothing about a device.
 
