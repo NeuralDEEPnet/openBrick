@@ -28,6 +28,8 @@ serde = { version = "1", features = ["derive"] }
 # builds parse floats differently from the shipped CLI and WebAssembly builds.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
+# Content hashes of evaluated parts (docs/plan/06 section 10); pure Rust, builds for wasm32.
+sha2 = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive"] }
 openbrick-units = { path = "crates/openbrick-units" }
 openbrick-geom = { path = "crates/openbrick-geom" }
