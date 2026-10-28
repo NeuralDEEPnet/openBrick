@@ -2,16 +2,17 @@
 // falls back to WebGL2 by itself where WebGPU is missing, orbit controls (mouse
 // and touch) all the way round so the underside shows too, a ground grid on the
 // stud lattice, studio lighting and a soft contact shadow. It only displays
-// meshes built by the core; the one transform it applies is the kernel-to-three.js
-// frame rotation of packages/viewport and the lattice placement of
+// meshes built by the core: one per colour role, plus the red overlay of artwork
+// that does not print as drawn. The one transform it applies is the
+// kernel-to-three.js frame rotation of packages/viewport and the placement of
 // src/placement.js.
 
 import * as THREE from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { KERNEL_TO_THREE_EULER_X } from "@openbrick3d/viewport/frame.js";
-import { brickOffset, framingDistance, gridCells, placedBounds } from "./placement.js";
+import { brickOffset, centredOffset, framingDistance, gridCells, placedBounds } from "./placement.js";
 
-/** Vertical field of view in degrees: a short telephoto, so the brick is not distorted. */
+/** Vertical field of view in degrees: a short telephoto, so the part is not distorted. */
 const FOV_DEG = 35;
 /** Direction from the target to the camera for the first view: front right, above. */
 const FIRST_VIEW = new THREE.Vector3(1, 0.9, 1.5).normalize();
@@ -41,9 +42,9 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
   const camera = new THREE.PerspectiveCamera(FOV_DEG, 1, 1, 1000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  // Orbit below the ground too: the underside (tubes, or pins under 1-wide bricks)
-  // is where footprints differ most. The grid and the contact shadow hide while
-  // the camera is below the ground (see the render loop).
+  // Orbit below the ground too: the underside (tubes) is where parts differ
+  // most. The grid and the contact shadow hide while the camera is below the
+  // ground (see the render loop).
   controls.minPolarAngle = 0;
   controls.maxPolarAngle = Math.PI;
 
@@ -58,7 +59,7 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
   const fill = new THREE.DirectionalLight(0xdbe8ff, 0.6);
   const rim = new THREE.DirectionalLight(0xffffff, 0.9);
   const under = new THREE.DirectionalLight(0xfff4e8, 0.9);
-  under.target = key.target; // both aim at the brick's centre
+  under.target = key.target; // both aim at the part's centre
   scene.add(hemisphere, key, key.target, fill, rim, under);
 
   // Everything below `world` is in the kernel frame (mm, +Z up).
@@ -66,17 +67,30 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
   world.name = "kernel frame (mm, +Z up)";
   world.rotation.x = KERNEL_TO_THREE_EULER_X;
   scene.add(world);
+  const part = new THREE.Group();
+  part.name = "part";
+  world.add(part);
 
-  // Kernel meshes share vertices across sharp edges and carry no normals, so the
-  // material shades flat from screen-space derivatives instead.
-  const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.38, metalness: 0, flatShading: true });
-  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
-  mesh.name = "brick";
-  // The brick casts the contact shadow but does not receive shadows, which keeps
-  // flat-shaded faces free of shadow acne.
-  mesh.castShadow = true;
-  mesh.visible = false;
-  world.add(mesh);
+  /** role -> material; kernel meshes share vertices across sharp edges and carry
+   * no normals, so the materials shade flat from screen-space derivatives. */
+  const materials = new Map();
+  /** role -> colour chosen by the page (overrides the core's role colour). */
+  const chosen = new Map();
+  function material(role, coreColour) {
+    let m = materials.get(role);
+    if (!m) {
+      if (role === "removed") {
+        // The overlay reads as flat paint on the face: unlit, and pulled towards
+        // the camera in the depth test so it never flickers against the face.
+        m = new THREE.MeshBasicNodeMaterial({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+      } else {
+        m = new THREE.MeshStandardNodeMaterial({ roughness: 0.38, metalness: 0, flatShading: true });
+      }
+      materials.set(role, m);
+    }
+    m.color.set(chosen.get(role) ?? coreColour);
+    return m;
+  }
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShadowNodeMaterial({ opacity: 0.22 }));
   ground.rotation.x = -Math.PI / 2;
@@ -87,15 +101,17 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
 
   let dirty = true;
   let frames = 0;
-  /** How many bricks were shown, and which of them the last frame drew. */
+  /** How many parts were shown, and which of them the last frame drew. */
   let shown = 0;
   let lastFrame = { triangles: 0, drawCalls: 0, drawn: 0, below: false };
   let standard = null;
+  /** The footprint the grid was laid out for, in studs. */
   let current = null;
+  /** What was shown last, for the smoke test: roles, triangles, overlay. */
+  let showing = null;
 
   function applyTheme() {
     scene.background = cssColour("--stage-bg", "#dfe6ee");
-    material.color.copy(cssColour("--brick", "#c8323c"));
     gridKey = ""; // rebuild the grid in the new colours
     if (current) placeGrid(current);
     dirty = true;
@@ -111,7 +127,7 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
       grid.geometry.dispose();
       grid.material.dispose();
     }
-    // One cell per stud: lines on whole pitches from the origin, where the brick's
+    // One cell per stud: lines on whole pitches from the origin, where the part's
     // lattice cell corners sit (src/placement.js).
     const extent = cells * standard.pitchMm;
     grid = new THREE.GridHelper(extent, cells, cssColour("--grid-major", "#8c99a8"), cssColour("--grid-minor", "#b9c3ce"));
@@ -133,9 +149,9 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
     camera.near = distance / 100;
     camera.far = distance * 50;
     camera.updateProjectionMatrix();
-    controls.minDistance = bounds.radius * 0.8;
+    controls.minDistance = bounds.radius * 0.5;
     controls.maxDistance = distance * 8;
-    // Keep the lights and the shadow frustum around the brick.
+    // Keep the lights and the shadow frustum around the part.
     const r = bounds.radius;
     key.target.position.copy(center);
     key.position.copy(center).add(new THREE.Vector3(0.55, 1, 0.4).normalize().multiplyScalar(4 * r));
@@ -184,6 +200,21 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
     lastFrame = { triangles: renderer.info.render.triangles, drawCalls: renderer.info.render.drawCalls, drawn: shown, below };
   });
 
+  function clearPart() {
+    for (const child of [...part.children]) {
+      part.remove(child);
+      child.geometry.dispose();
+    }
+  }
+
+  function geometryOf(m) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(m.positions, 3));
+    geometry.setIndex(new THREE.BufferAttribute(m.indices, 1));
+    geometry.computeBoundingSphere();
+    return geometry;
+  }
+
   return {
     /** "webgpu" or "webgl2": the backend actually in use. */
     backend: renderer.backend.isWebGPUBackend ? "webgpu" : "webgl2",
@@ -194,23 +225,68 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
       applyTheme();
     },
 
-    /** Show a brick result from the core worker (src/protocol.js brick()). */
-    showBrick(result) {
+    /**
+     * Show a part from the core worker: `meshes` (one per colour role) and an
+     * optional `overlay` (role "removed"), all in the kernel frame. With a
+     * `footprint` [x, y] in studs the part sits on the stud lattice; without one
+     * it is centred on the grid (the coupon). `keepView` keeps the camera
+     * direction (the same part changed); otherwise the first view is restored.
+     */
+    showPart({ meshes, overlay = null, footprint = null }, { keepView = true } = {}) {
       if (!standard) throw new Error("setStandard() first");
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(result.positions, 3));
-      geometry.setIndex(new THREE.BufferAttribute(result.indices, 1));
-      geometry.computeBoundingSphere();
-      mesh.geometry.dispose();
-      mesh.geometry = geometry;
-      const offset = brickOffset(result, standard);
-      mesh.position.set(...offset);
-      mesh.visible = true;
+      clearPart();
+      const lo = [Infinity, Infinity, Infinity];
+      const hi = [-Infinity, -Infinity, -Infinity];
+      for (const m of meshes) {
+        for (let k = 0; k < 3; k++) {
+          lo[k] = Math.min(lo[k], m.bounds[k]);
+          hi[k] = Math.max(hi[k], m.bounds[k + 3]);
+        }
+      }
+      const bounds = [...lo, ...hi];
+      let size;
+      let offset;
+      if (footprint) {
+        size = { width: footprint[0], length: footprint[1] };
+        offset = brickOffset(size, standard);
+      } else {
+        offset = centredOffset(bounds);
+        size = { width: Math.ceil((hi[0] - lo[0]) / standard.pitchMm), length: Math.ceil((hi[1] - lo[1]) / standard.pitchMm) };
+      }
+      part.position.set(...offset);
+      for (const m of meshes) {
+        const mesh = new THREE.Mesh(geometryOf(m), material(m.role, m.color));
+        mesh.name = m.role;
+        // Parts cast the contact shadow but do not receive shadows, which keeps
+        // flat-shaded faces free of shadow acne.
+        mesh.castShadow = true;
+        part.add(mesh);
+      }
+      if (overlay) {
+        const mesh = new THREE.Mesh(geometryOf(overlay), material("removed", overlay.color));
+        mesh.name = "removed";
+        mesh.renderOrder = 1;
+        part.add(mesh);
+      }
       shown++;
-      const keepDirection = current !== null;
-      current = { width: result.width, length: result.length };
+      const keepDirection = keepView && current !== null;
+      current = size;
       placeGrid(current);
-      frame(placedBounds(result.bounds, offset), keepDirection);
+      frame(placedBounds(bounds, offset), keepDirection);
+      showing = {
+        roles: meshes.map((m) => m.role),
+        triangles: meshes.reduce((n, m) => n + m.triangles, 0),
+        overlayTriangles: overlay?.triangles ?? 0,
+      };
+      dirty = true;
+    },
+
+    /** Recolour roles without a new part: { body: "#rrggbb", accent: ... }. */
+    setColors(colors) {
+      for (const [role, colour] of Object.entries(colors)) {
+        chosen.set(role, colour);
+        materials.get(role)?.color.set(colour);
+      }
       dirty = true;
     },
 
@@ -218,12 +294,12 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
 
     /**
      * For the smoke test: frames drawn; the last frame's renderer.info counts, the
-     * number of the brick it showed (`drawn`, equal to `shown` once the newest
-     * brick is on screen) and whether it looked from below the ground (`below`);
-     * the camera position.
+     * number of the part it showed (`drawn`, equal to `shown` once the newest
+     * part is on screen) and whether it looked from below the ground (`below`);
+     * the camera position; what is shown.
      */
     stats() {
-      return { frames, shown, ...lastFrame, camera: camera.position.toArray() };
+      return { frames, shown, ...lastFrame, camera: camera.position.toArray(), showing };
     },
   };
 }

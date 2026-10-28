@@ -17,6 +17,8 @@ openbrick-units = { workspace = true }
 openbrick-geom = { workspace = true }
 openbrick-part = { workspace = true }
 openbrick-print = { workspace = true }
+# The 3MF and STL writers behind export_part and export_coupon.
+openbrick-io = { workspace = true }
 
 # Only the wasm32 build carries bindings; native builds (cargo test, clippy) compile
 # the same functions as plain Rust. Pinned exactly: the generated JavaScript glue

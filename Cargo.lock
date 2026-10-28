@@ -858,6 +858,7 @@ name = "openbrick-wasm"
 version = "0.0.1"
 dependencies = [
  "openbrick-geom",
+ "openbrick-io",
  "openbrick-part",
  "openbrick-print",
  "openbrick-units",

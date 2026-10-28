@@ -26,7 +26,7 @@ use clap::{Parser, Subcommand};
 
 use crate::ui::{Fail, Outcome, Ui};
 
-const DISCLAIMER: &str = "OpenBrick3D is an independent, community-driven open-source project published by Neural Deep Network Ltd (Malta). It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group. LEGO®, the LEGO® logo and the Minifigure are trademarks of the LEGO Group of companies, which does not sponsor, authorize or endorse this project. Works with LEGO®-compatible bricks. LDraw™ is a trademark of the Estate of James Jessiman. This software uses the LDraw Parts Library (https://www.ldraw.org).";
+const DISCLAIMER: &str = openbrick_units::DISCLAIMER;
 
 #[derive(Parser)]
 #[command(

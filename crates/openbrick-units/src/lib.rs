@@ -5,10 +5,12 @@
 //! the frame is LDraw's right-handed frame with minus-Y up, a brick is 24 LDU
 //! tall, a plate 8 LDU, and the stud pitch is 20 LDU.
 
+pub mod about;
 pub mod credit;
 pub mod rot24;
 pub mod standard;
 
+pub use about::DISCLAIMER;
 pub use credit::Credit;
 pub use rot24::Rot24;
 pub use standard::{Feature, Standard, STANDARD};

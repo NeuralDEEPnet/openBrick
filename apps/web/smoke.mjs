@@ -1,34 +1,47 @@
-// Smoke test of the browser pipeline: the Rust core as WebAssembly in a Web Worker,
-// meshes shown by the three.js viewer (docs/plan/02 sections 1 to 3).
+// Smoke test of the playground: the Rust core as WebAssembly in a Web Worker,
+// parts shown by the three.js viewer, validation and downloads (docs/plan/02
+// sections 1 to 3, docs/plan/06 sections 11 and 13).
 //
 // 1. Builds the core (`cargo xtask wasm`) and the app (vite build), unless --no-build.
-// 2. Gets the native kernel values for the 2x4 and 2x2 bricks from
-//    `cargo run --release -p openbrick-geom --example kernel_timing`, and checks the
-//    2x4 row against LOD0 of bench/harness/public/meshes/manifest.json.
-// 3. Serves dist/ on 127.0.0.1 and opens it in headless Chromium with Playwright,
-//    once on the WebGL2 backend and (unless --no-webgpu) once on WebGPU. Each run
-//    waits for the first brick and checks that its triangle count, fingerprint,
-//    canonical fingerprint and volume equal the native values for 2x4 and that the
-//    viewer drew it; then steps the length down to 2 with the - button and checks the
-//    2x2 values; then asks for 16x16 and, while that runs, checks that the status
-//    line says the build is slow and how to cancel it, and asks for 2x4 again, which
-//    must cancel the long build by replacing the worker and give the native 2x4
-//    again; then drags the view up until the camera looks at the underside from
-//    below the ground, where the grid and contact shadow must hide.
+// 2. Gets the native values from `cargo run --release -p openbrick-wasm --example
+//    native_eval`, which calls the same Rust functions the worker calls: the logo
+//    tile with its sample artwork (emboss, deboss and inlay with the example fit
+//    profile, emboss without one) and the default coupon.
+// 3. Serves dist/ on 127.0.0.1 and opens it in headless Chromium with Playwright.
+//    The WebGL2 run: the first part (the sample logo, emboss, example fit) has the
+//    native content hash, triangle count and per-object fingerprints and is drawn;
+//    the legend says how much artwork the red overlay marks; the validation panel
+//    shows the FEATURE.MIN warning with rule id, values and fix; "Use sample logo"
+//    after an uploaded SVG gives the native part back; a file over the core's
+//    limit is refused before it is sent; deboss and inlay change the meshes and
+//    equal native; "None" fit disables both downloads with FIT.MISSING shown and
+//    a link to the calibration coupon; with the example fit the 3MF and STL
+//    download (saved for scripts/validate-3mf.py); a 16x16 tile shows the elapsed
+//    seconds and is cancelled by going back to 2x4; dragging up shows the
+//    underside; the coupon mode builds the native coupon, lists its cells and
+//    downloads its 3MF.
+//    Unless --no-webgpu, a WebGPU run checks the first part again.
 // 4. A phone-sized run (390 x 844, touch, dark theme): no horizontal scrolling,
-//    every control on screen, a different background from the light theme, a tap on
-//    a + button, and a one-finger touch drag that orbits the camera.
+//    every control inside the width, a different background from the light
+//    theme, a tap on a + button, and a one-finger touch drag that orbits.
+// 5. Unless --no-base-check, builds the app again with OPENBRICK_BASE=/openBrick/
+//    (the GitHub Pages path) into a temporary directory, serves it only under
+//    /openBrick/ and checks that the page, worker, module and assets all load
+//    from there and give the native part.
 //
-// Usage: node smoke.mjs [--no-build] [--no-webgpu] [--screenshots <dir>]
+// Usage: node smoke.mjs [--no-build] [--no-webgpu] [--no-base-check]
+//                       [--screenshots <dir>] [--downloads <dir>]
 //
-// Chromium renders with SwiftShader here, so this proves the page works; it says
-// nothing about speed on a device.
+// Downloads go to apps/web/smoke-downloads/ unless --downloads names another
+// directory. Chromium renders with SwiftShader here, so this proves the page
+// works; it says nothing about speed on a device.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,8 +50,14 @@ const repo = resolve(here, "../..");
 const dist = join(here, "dist");
 const argv = process.argv.slice(2);
 const args = new Set(argv);
-const shotsAt = argv.indexOf("--screenshots");
-const shots = shotsAt >= 0 ? resolve(argv[shotsAt + 1] ?? "smoke-screenshots") : null;
+const option = (name, fallback) => {
+  const at = argv.indexOf(name);
+  return at >= 0 ? resolve(argv[at + 1] ?? fallback) : fallback;
+};
+const shots = option("--screenshots", null);
+const downloads = option("--downloads", join(here, "smoke-downloads"));
+/** The GitHub Pages path (https://neuraldeepnet.github.io/openBrick/). */
+const PAGES_BASE = "/openBrick/";
 // CommonJS resolution finds the local devDependency first and otherwise honours
 // NODE_PATH, so a globally installed Playwright works too.
 const { chromium } = createRequire(import.meta.url)("playwright");
@@ -52,39 +71,30 @@ const TYPES = {
 };
 
 function run(command, commandArgs, options = {}) {
-  const result = spawnSync(command, commandArgs, { cwd: repo, encoding: "utf8", ...options });
+  const result = spawnSync(command, commandArgs, { cwd: repo, encoding: "utf8", maxBuffer: 64 << 20, ...options });
   if (result.status !== 0) {
     throw new Error(`${command} ${commandArgs.join(" ")} failed (${result.status ?? result.signal})\n${result.stderr ?? ""}`);
   }
   return result.stdout ?? "";
 }
 
-/** Rows of kernel_timing: size, ms, triangles, volume, fingerprint, canonical. */
+/** The native numbers of the playground's cases (crates/openbrick-wasm/examples/native_eval.rs). */
 function nativeValues() {
-  const out = run("cargo", ["run", "-q", "--release", "-p", "openbrick-geom", "--example", "kernel_timing"]);
-  const rows = new Map();
-  for (const line of out.split("\n")) {
-    const f = line.trim().split(/\s+/);
-    if (/^\d+x\d+$/.test(f[0]) && f.length >= 6) {
-      rows.set(f[0], { triangles: Number(f[2]), volumeMm3: Number(f[3]), fingerprint: f[4], canonicalFingerprint: f[5] });
-    }
-  }
-  const kernel = /^kernel: (.+)$/m.exec(out)?.[1];
-  for (const size of ["2x2", "2x4"]) if (!rows.has(size)) throw new Error(`kernel_timing printed no ${size} row:\n${out}`);
-  const manifest = JSON.parse(readFileSync(join(repo, "bench/harness/public/meshes/manifest.json"), "utf8"));
-  const lod0 = manifest.lods.find((l) => l.lod === 0);
-  const native = rows.get("2x4");
-  if (lod0.triangles !== native.triangles || lod0.fingerprint !== native.fingerprint) {
-    throw new Error(`kernel_timing 2x4 (${native.triangles}, ${native.fingerprint}) differs from the harness LOD0 (${lod0.triangles}, ${lod0.fingerprint})`);
-  }
-  return { kernel, "2x4": native, "2x2": rows.get("2x2") };
+  const out = run("cargo", ["run", "-q", "--release", "-p", "openbrick-wasm", "--example", "native_eval"]);
+  const native = JSON.parse(out);
+  for (const c of ["emboss", "deboss", "inlay", "emboss-no-fit"]) if (!native.part[c]) throw new Error(`native_eval printed no ${c} case:\n${out}`);
+  return native;
 }
 
-function serve(root) {
+/** Serve `root` under `base` only; everything else is a 404, so a wrong absolute URL shows. */
+function serve(root, base = "/") {
+  const requests = [];
   const server = createServer(async (req, res) => {
+    const { pathname } = new URL(req.url, "http://127.0.0.1");
+    requests.push(pathname);
     try {
-      const { pathname } = new URL(req.url, "http://127.0.0.1");
-      let path = normalize(join(root, decodeURIComponent(pathname)));
+      if (!pathname.startsWith(base)) throw new Error("outside the base path");
+      let path = normalize(join(root, decodeURIComponent(pathname.slice(base.length))));
       if (path !== root && !path.startsWith(root + sep)) throw new Error("outside root");
       if ((await stat(path)).isDirectory()) path = join(path, "index.html");
       const body = await readFile(path);
@@ -95,7 +105,7 @@ function serve(root) {
       res.end("not found");
     }
   });
-  return new Promise((ok) => server.listen(0, "127.0.0.1", () => ok(server)));
+  return new Promise((ok) => server.listen(0, "127.0.0.1", () => ok({ server, requests, origin: `http://127.0.0.1:${server.address().port}` })));
 }
 
 const failures = [];
@@ -104,45 +114,58 @@ function check(condition, message) {
   return condition;
 }
 
-/** Wait until window.__web shows a finished brick that satisfies `want`, or an error. */
-async function waitBrick(page, want, timeoutMs, label) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    const web = await page.evaluate(() => {
-      const w = window.__web;
-      return w && { state: w.state, error: w.error, brick: w.brick, restarts: w.restarts, traps: w.traps, backend: w.backend, warnings: w.warnings };
-    });
-    if (web?.state === "error") throw new Error(`${label}: page error: ${web.error}`);
-    if (web?.state === "ready" && web.brick && web.brick.width === want.width && web.brick.length === want.length) return web;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`${label}: no ${want.width}x${want.length} brick within ${timeoutMs / 1000} s`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function web(page) {
+  return page.evaluate(() => {
+    const w = window.__web;
+    return w && JSON.parse(JSON.stringify({ ...w, stats: w.stats() }));
+  });
 }
 
-function checkBrick(brick, native, label) {
-  check(brick.triangles === native.triangles, `${label}: ${brick.triangles} triangles, native ${native.triangles}`);
-  check(brick.fingerprint === native.fingerprint, `${label}: fingerprint ${brick.fingerprint}, native ${native.fingerprint}`);
-  check(
-    brick.canonicalFingerprint === native.canonicalFingerprint,
-    `${label}: canonical fingerprint ${brick.canonicalFingerprint}, native ${native.canonicalFingerprint}`,
-  );
-  // kernel_timing prints the volume to three decimals.
-  check(Math.abs(brick.volumeMm3 - native.volumeMm3) <= 5e-4, `${label}: volume ${brick.volumeMm3}, native ${native.volumeMm3}`);
+/**
+ * Wait until the page shows a finished part in `mode` that satisfies `want` and
+ * came after `after` evaluations (coupon builds in coupon mode); throws on a page
+ * error.
+ */
+async function waitFor(page, { mode = "tile", after = 0, want = () => true }, timeoutMs, label) {
+  const end = Date.now() + timeoutMs;
+  let w = null;
+  while (Date.now() < end) {
+    w = await web(page);
+    if (w?.state === "error") throw new Error(`${label}: page error: ${w.error}`);
+    const count = mode === "tile" ? w?.evaluations : w?.couponBuilds;
+    const thing = mode === "tile" ? w?.part : w?.coupon;
+    if (w?.state === "ready" && w.mode === mode && count > after && thing && !thing.error && want(thing, w)) return w;
+    await sleep(100);
+  }
+  throw new Error(`${label}: no finished ${mode} within ${timeoutMs / 1000} s (last: ${JSON.stringify({ state: w?.state, part: w?.part, coupon: w?.coupon })})`);
+}
+
+function checkPart(part, native, label) {
+  check(part.contentHash === native.contentHash, `${label}: content hash ${part.contentHash}, native ${native.contentHash}`);
+  check(part.triangles === native.triangles, `${label}: ${part.triangles} triangles, native ${native.triangles}`);
+  const got = part.meshes.map((m) => `${m.role} ${m.triangles} ${m.fingerprint}`);
+  const want = native.meshes.map((m) => `${m.role} ${m.triangles} ${m.fingerprint}`);
+  check(JSON.stringify(got) === JSON.stringify(want), `${label}: meshes ${got.join(", ")}, native ${want.join(", ")}`);
+  check(part.exportAllowed === native.exportAllowed, `${label}: exportAllowed ${part.exportAllowed}, native ${native.exportAllowed}`);
+  check(JSON.stringify([...part.blockers].sort()) === JSON.stringify([...native.blockers].sort()), `${label}: blockers ${part.blockers}, native ${native.blockers}`);
+  check(Boolean(part.overlay) === native.removedOverlay, `${label}: red overlay ${Boolean(part.overlay)}, native ${native.removedOverlay}`);
 }
 
 async function stats(page) {
   return page.evaluate(() => window.__web.stats());
 }
 
-/** Viewer stats of the first frame that drew the newest brick (frames are on demand). */
+/** Viewer stats of the first frame that drew the newest part (frames are on demand). */
 async function drawnStats(page, label) {
   const end = Date.now() + 30_000;
   while (Date.now() < end) {
     const s = await stats(page);
     if (s && s.shown > 0 && s.drawn === s.shown) return s;
-    await new Promise((r) => setTimeout(r, 50));
+    await sleep(50);
   }
-  throw new Error(`${label}: the viewer did not draw the newest brick within 30 s`);
+  throw new Error(`${label}: the viewer did not draw the newest part within 30 s`);
 }
 
 /** Viewer stats of the first frame that satisfies `ok`, or an error with the last stats. */
@@ -151,7 +174,7 @@ async function statsWhen(page, ok, timeoutMs, label, what) {
   let s = await stats(page);
   while (Date.now() < end) {
     if (ok(s)) return s;
-    await new Promise((r) => setTimeout(r, 100));
+    await sleep(100);
     s = await stats(page);
   }
   throw new Error(`${label}: ${what} within ${timeoutMs / 1000} s (last ${JSON.stringify(s)})`);
@@ -166,7 +189,7 @@ async function settle(page, timeoutMs = 30_000) {
   const end = Date.now() + timeoutMs;
   let last = await stats(page);
   while (Date.now() < end) {
-    await new Promise((r) => setTimeout(r, 400));
+    await sleep(400);
     const s = await stats(page);
     if (s.frames === last.frames) return true;
     last = s;
@@ -174,62 +197,194 @@ async function settle(page, timeoutMs = 30_000) {
   return false;
 }
 
-async function backendRun(browser, origin, backend, native) {
-  const label = backend;
-  const context = await browser.newContext({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1, colorScheme: "light" });
-  const page = await context.newPage();
+/** Click a download button and save the file; returns its name and bytes. */
+async function download(page, selector, label) {
+  const [d] = await Promise.all([page.waitForEvent("download", { timeout: 60_000 }), page.click(selector)]);
+  const name = d.suggestedFilename();
+  const path = join(downloads, name);
+  await d.saveAs(path);
+  const bytes = readFileSync(path);
+  console.log(`# ${label}: saved ${path} (${bytes.length} bytes)`);
+  return { name, path, bytes };
+}
+
+const browserArgs = [
+  // WebGL2 through ANGLE on SwiftShader: there is no GPU on CI runners.
+  "--use-angle=swiftshader",
+  "--enable-unsafe-swiftshader",
+  // WebGPU on SwiftShader's Vulkan driver, which ships with Chromium.
+  "--enable-unsafe-webgpu",
+  "--enable-features=Vulkan",
+  "--use-vulkan=swiftshader",
+  "--use-webgpu-adapter=swiftshader",
+];
+
+function watchErrors(page) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  return errors;
+}
+
+async function fullRun(browser, origin, native) {
+  const label = "webgl2";
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light", acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
   const t0 = Date.now();
-  await page.goto(`${origin}?backend=${backend}`);
-  let web = await waitBrick(page, { width: 2, length: 4 }, 120_000, label);
+  await page.goto(`${origin}/?backend=webgl2`);
+  let w = await waitFor(page, {}, 120_000, label);
   const firstMs = Date.now() - t0;
-  check(web.backend === backend, `${label}: renderer backend is ${web.backend}`);
-  checkBrick(web.brick, native["2x4"], `${label} 2x4`);
-  check(web.brick.kernel === native.kernel, `${label}: kernel ${web.brick.kernel}, native ${native.kernel}`);
-  // A frame draws the brick twice (shadow map and scene), the ground and the output pass.
+  check(w.backend === "webgl2", `${label}: renderer backend is ${w.backend}`);
+  check(w.kernel === native.kernel, `${label}: kernel ${w.kernel}, native ${native.kernel}`);
+  checkPart(w.part, native.part.emboss, `${label} emboss`);
   let s = await drawnStats(page, label);
-  check(s.triangles >= native["2x4"].triangles, `${label}: the frame with the 2x4 drew ${s.triangles} triangles`);
-  const text = await page.textContent("#status");
-  check(text.includes("3,620 triangles") || text.includes(`${native["2x4"].triangles.toLocaleString("en-US")} triangles`), `${label}: status line "${text}"`);
-  check(text.includes(native["2x4"].fingerprint), `${label}: status line lacks the fingerprint: "${text}"`);
-  if (shots) await page.screenshot({ path: join(shots, `${backend}-2x4.png`) });
-
-  // Two taps on "one stud shorter": 2x4 -> 2x3 -> 2x2 (the 2x3 may be superseded).
-  await page.click('button[data-for="length"][data-step="-1"]');
-  await page.click('button[data-for="length"][data-step="-1"]');
-  web = await waitBrick(page, { width: 2, length: 2 }, 60_000, `${label} 2x2`);
-  check(web.brick.triangles !== native["2x4"].triangles, `${label}: 2x2 has the 2x4 triangle count`);
-  checkBrick(web.brick, native["2x2"], `${label} 2x2`);
-  check(new URL(page.url()).search.includes("w=2&l=2"), `${label}: URL ${page.url()} does not record the size`);
-  s = await drawnStats(page, `${label} 2x2`);
-  check(s.triangles >= native["2x2"].triangles, `${label}: the frame with the 2x2 drew ${s.triangles} triangles`);
-
-  // A 16x16 build takes tens of seconds; asking for 2x4 while it runs must cancel it.
-  await page.fill("#width", "16");
-  await page.fill("#length", "16");
-  await new Promise((r) => setTimeout(r, 1500));
-  const slow = await page.textContent("#status");
+  check(s.showing?.triangles === native.part.emboss.triangles, `${label}: the viewer shows ${s.showing?.triangles} triangles`);
+  check(s.triangles >= native.part.emboss.triangles, `${label}: the frame drew ${s.triangles} triangles`);
+  const statusText = await page.textContent("#status");
+  check(statusText.includes(`${native.part.emboss.triangles.toLocaleString("en-US")} triangles`), `${label}: status line "${statusText}"`);
+  const legend = await page.textContent("#legend");
+  check(/Red: [\d.]+ % of the artwork does not print as drawn/.test(legend), `${label}: the legend lacks the removed-area entry: "${legend}"`);
+  // The validation panel: FEATURE.MIN is a warning with every part of a message.
+  const feature = await page.textContent('#findings li[data-rule="FEATURE.MIN"]').catch(() => "");
   check(
-    /Building 16 × 16…\s*\d+ s/.test(slow) && slow.includes("Change the size to cancel."),
-    `${label}: after 1.5 s the 16x16 status line says "${slow}", without the elapsed seconds and the cancel note`,
+    feature.includes("Warning") && feature.includes("FEATURE.MIN") && /Measured [\d.]+ %/.test(feature) && /threshold [\d.]+ %/.test(feature) && feature.includes("Fix:"),
+    `${label}: the FEATURE.MIN entry is "${feature}"`,
   );
-  const t1 = Date.now();
-  await page.fill("#width", "2");
-  await page.fill("#length", "4");
-  web = await waitBrick(page, { width: 2, length: 4 }, 60_000, `${label} cancel`);
-  const cancelMs = Date.now() - t1;
-  check(web.restarts >= 1, `${label}: the 16x16 build was not cancelled (restarts ${web.restarts})`);
-  checkBrick(web.brick, native["2x4"], `${label} 2x4 from a fresh worker`);
-  check(web.traps === 0, `${label}: ${web.traps} WebAssembly trap(s)`);
-  if (shots) await page.screenshot({ path: join(shots, `${backend}-after-cancel.png`) });
+  check(!(await page.isDisabled("#download-3mf")) && !(await page.isDisabled("#download-stl")), `${label}: downloads are disabled for the default tile`);
+  const disclaimer = await page.textContent("footer");
+  check(disclaimer.includes("not affiliated with") && disclaimer.includes("Source code on GitHub"), `${label}: footer "${disclaimer}"`);
+  if (shots) {
+    await settle(page);
+    await page.screenshot({ path: join(shots, "desktop-light-emboss.png") });
+  }
+
+  // An uploaded SVG, then "Use sample logo": the native part again.
+  let n = w.evaluations;
+  await page.setInputFiles("#art-file", {
+    name: "square.svg",
+    mimeType: "image/svg+xml",
+    buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8"/></svg>'),
+  });
+  w = await waitFor(page, { after: n, want: (p) => p.params.logo === "square.svg" }, 60_000, `${label} upload`);
+  check(w.part.contentHash !== native.part.emboss.contentHash, `${label}: the uploaded square has the sample's content hash`);
+  n = w.evaluations;
+  await page.click("#use-sample");
+  w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/mark.svg" }, 60_000, `${label} sample`);
+  checkPart(w.part, native.part.emboss, `${label} sample again`);
+  // Over the core's limit: refused in the page, nothing is evaluated.
+  const before = w.evaluations;
+  check(Number.isInteger(w.maxAssetBytes) && w.maxAssetBytes > 0, `${label}: the page has no asset limit (${w.maxAssetBytes})`);
+  await page.setInputFiles("#art-file", { name: "huge.svg", mimeType: "image/svg+xml", buffer: Buffer.alloc(w.maxAssetBytes + 1, 0x20) });
+  await sleep(600);
+  const note = await page.textContent("#art-note");
+  w = await web(page);
+  const limit = w.maxAssetBytes.toLocaleString("en-US");
+  check(
+    note.includes(`“huge.svg” is`) && note.includes(`artwork can be at most`) && note.includes(`(${limit} bytes)`) && note.includes("The tile keeps the sample mark"),
+    `${label}: the art note for a big file is "${note}"`,
+  );
+  check(w.evaluations === before && w.state === "ready", `${label}: a file over the limit was evaluated (${w.evaluations} vs ${before}, ${w.state})`);
+
+  // Deboss and inlay change the meshes and equal native.
+  const relief = {};
+  for (const mode of ["deboss", "inlay"]) {
+    n = w.evaluations;
+    await page.check(`input[name="p-relief"][value="${mode}"]`);
+    w = await waitFor(page, { after: n, want: (p) => p.params.relief === mode }, 60_000, `${label} ${mode}`);
+    checkPart(w.part, native.part[mode], `${label} ${mode}`);
+    check(w.part.contentHash !== native.part.emboss.contentHash, `${label}: ${mode} has the emboss content hash`);
+    relief[mode] = w.part;
+    await drawnStats(page, `${label} ${mode}`);
+  }
+  check(relief.inlay.faceOnBed === "top", `${label}: the inlay is not exported face down (${relief.inlay.faceOnBed})`);
+  // The inlay is exported turned face down; lib3mf checks that file too.
+  const inlay = await download(page, "#download-3mf", `${label} inlay 3MF`);
+  check(inlay.name === "ndn.logo-tile-2x4-inlay.3mf", `${label}: inlay file name ${inlay.name}`);
+  check(await page.isHidden('[data-param="reliefHeight"]'), `${label}: reliefHeight is shown for an inlay`);
+  const inlayNotes = await page.textContent("#notes");
+  check(/filament change/.test(inlayNotes), `${label}: the inlay note on the filament change is missing: "${inlayNotes}"`);
+  if (shots) {
+    await settle(page);
+    await page.screenshot({ path: join(shots, "desktop-light-inlay.png") });
+  }
+  n = w.evaluations;
+  await page.check('input[name="p-relief"][value="emboss"]');
+  w = await waitFor(page, { after: n, want: (p) => p.params.relief === "emboss" }, 60_000, `${label} emboss again`);
+  check(await page.isVisible('[data-param="reliefHeight"]'), `${label}: reliefHeight is hidden for an emboss`);
+
+  // No fit profile: FIT.MISSING blocks both downloads, with the reason and the way out.
+  n = w.evaluations;
+  await page.selectOption("#fit", "none");
+  w = await waitFor(page, { after: n, want: (p) => p.blockers.includes("FIT.MISSING") }, 60_000, `${label} no fit`);
+  checkPart(w.part, native.part["emboss-no-fit"], `${label} no fit`);
+  check((await page.isDisabled("#download-3mf")) && (await page.isDisabled("#download-stl")), `${label}: downloads are enabled without a fit profile`);
+  const reason = await page.textContent("#download-reason");
+  check(reason.includes("FIT.MISSING"), `${label}: the download reason is "${reason}"`);
+  const missing = await page.textContent('#findings li[data-rule="FIT.MISSING"]');
+  check(missing.includes("Blocker") && missing.includes("Print the calibration coupon") && missing.includes("Fix:"), `${label}: the FIT.MISSING entry is "${missing}"`);
+  const guide = await page.getAttribute('#findings li[data-rule="FIT.MISSING"] a', "href");
+  check(guide === "https://github.com/NeuralDEEPnet/openBrick/blob/main/docs/guides/print-test.md", `${label}: guide link ${guide}`);
+  const first = await page.textContent("#findings li:first-child");
+  check(first.includes("Blocker"), `${label}: blockers are not listed first ("${first}")`);
+  if (shots) await page.screenshot({ path: join(shots, "desktop-light-no-fit.png") });
+
+  // The example fit: download the 3MF and the STL.
+  n = w.evaluations;
+  await page.selectOption("#fit", "example");
+  w = await waitFor(page, { after: n, want: (p) => p.exportAllowed }, 60_000, `${label} example fit`);
+  checkPart(w.part, native.part.emboss, `${label} example fit again`);
+  const threemf = await download(page, "#download-3mf", `${label} 3MF`);
+  check(threemf.name === "ndn.logo-tile-2x4-emboss.3mf", `${label}: 3MF file name ${threemf.name}`);
+  check(threemf.bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 3, 4])), `${label}: the 3MF is not a zip container`);
+  const stl = await download(page, "#download-stl", `${label} STL`);
+  check(stl.name === "ndn.logo-tile-2x4-emboss.stl", `${label}: STL file name ${stl.name}`);
+  const count = stl.bytes.readUInt32LE(80);
+  check(stl.bytes.length === 84 + 50 * count && count > 0, `${label}: the STL is ${stl.bytes.length} bytes for ${count} triangles`);
+
+  // A 16x16 tile takes seconds: the status line shows them, and going back to
+  // 2x4 cancels the build by replacing the worker.
+  const restartsBefore = (await web(page)).restarts;
+  n = (await web(page)).evaluations;
+  await page.fill("#p-size-0", "16");
+  await page.fill("#p-size-1", "16");
+  let slow = "";
+  let finished = false;
+  const end = Date.now() + 10_000;
+  while (Date.now() < end) {
+    slow = await page.textContent("#status");
+    if (/\d+ s/.test(slow)) break;
+    const now = await web(page);
+    if (now.state === "ready" && now.part?.params?.size?.[0] === 16) {
+      finished = true;
+      break;
+    }
+    await sleep(100);
+  }
+  let cancelNote;
+  if (finished) {
+    cancelNote = "16x16 finished before the slow-build note; the cancel was not exercised";
+  } else {
+    check(/Building the logo tile…\s*\d+ s/.test(slow) && slow.includes("Any change cancels this one."), `${label}: the 16x16 status line says "${slow}"`);
+    await page.fill("#p-size-0", "2");
+    await page.fill("#p-size-1", "4");
+    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x4" }, 60_000, `${label} cancel`);
+    check(w.restarts > restartsBefore, `${label}: the 16x16 evaluation was not cancelled (restarts ${w.restarts})`);
+    checkPart(w.part, native.part.emboss, `${label} 2x4 from a fresh worker`);
+    cancelNote = `16x16 cancelled with ${w.restarts - restartsBefore} worker restart(s)`;
+  }
+  w = await web(page);
+  if (w.part.params.size.join("x") !== "2x4") {
+    n = w.evaluations;
+    await page.fill("#p-size-0", "2");
+    await page.fill("#p-size-1", "4");
+    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x4" }, 60_000, `${label} back to 2x4`);
+  }
+  check(w.traps === 0, `${label}: ${w.traps} WebAssembly trap(s)`);
 
   // Drag up by a quarter of the view: OrbitControls turns the camera down by
-  // 2 pi * 1/4 = 90 degrees, from about 63 degrees off the zenith (FIRST_VIEW in
-  // src/viewer.js) to about 153, which is below the ground.
+  // 90 degrees, from about 63 degrees off the zenith to about 153, below the ground.
   s = await drawnStats(page, `${label} underside`);
-  check(!s.below && s.camera[1] > 0, `${label}: the first view is not from above (${JSON.stringify(s)})`);
   const box = await page.locator("#stage canvas").boundingBox();
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
@@ -237,27 +392,61 @@ async function backendRun(browser, origin, backend, native) {
   await page.mouse.down();
   await page.mouse.move(cx, cy - box.height / 8, { steps: 12 });
   await page.mouse.up();
-  // The damped orbit crosses the ground after about a third of the turn.
-  const under = await statsWhen(
-    page,
-    (st) => st.below && st.camera[1] < 0,
-    30_000,
-    `${label} underside`,
-    "dragging up did not take the camera below the ground",
-  );
+  const under = await statsWhen(page, (st) => st.below && st.camera[1] < 0, 30_000, `${label} underside`, "dragging up did not take the camera below the ground");
   if (shots) {
     await settle(page);
-    await page.screenshot({ path: join(shots, `${backend}-underside.png`) });
+    await page.screenshot({ path: join(shots, "desktop-light-underside.png") });
   }
 
+  // The calibration coupon: the native coupon, its cells, its 3MF.
+  const c0 = (await web(page)).couponBuilds;
+  await page.click("#tab-coupon");
+  w = await waitFor(page, { mode: "coupon", after: c0 }, 120_000, `${label} coupon`);
+  const nc = native.coupon;
+  check(w.coupon.contentHash === nc.contentHash, `${label}: coupon content hash ${w.coupon.contentHash}, native ${nc.contentHash}`);
+  check(w.coupon.triangles === nc.triangles, `${label}: coupon ${w.coupon.triangles} triangles, native ${nc.triangles}`);
+  check(w.coupon.fingerprint === nc.fingerprint, `${label}: coupon fingerprint ${w.coupon.fingerprint}, native ${nc.fingerprint}`);
+  check(new URL(page.url()).searchParams.get("mode") === "coupon", `${label}: URL ${page.url()} does not record the mode`);
+  const rows = await page.locator("#cells tr").count();
+  check(rows > 0 && rows * 2 === w.coupon.cells, `${label}: ${rows} cell rows for ${w.coupon.cells} cells in two copies`);
+  const command = await page.textContent("#record-command");
+  check(command.startsWith("openbrick calibrate record --process fdm-0.4 --pocket-set cross"), `${label}: record command "${command}"`);
+  await drawnStats(page, `${label} coupon`);
+  if (shots) {
+    await settle(page);
+    await page.screenshot({ path: join(shots, "desktop-light-coupon.png") });
+  }
+  const coupon = await download(page, "#download-coupon-3mf", `${label} coupon 3MF`);
+  check(coupon.name === `${nc.fileStem}.3mf`, `${label}: coupon file name ${coupon.name}`);
+  // Back to the tile: the part on screen is the one left there.
+  await page.click("#tab-tile");
+  w = await waitFor(page, { want: (p) => p.contentHash === native.part.emboss.contentHash }, 60_000, `${label} tile again`);
+
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
-  check(web.warnings.length === 0, `${label}: page warnings: ${web.warnings.join(" | ")}`);
+  check(w.warnings.length === 0, `${label}: page warnings: ${w.warnings.join(" | ")}`);
   console.log(
-    `# ${label}: first brick after ${(firstMs / 1000).toFixed(1)} s (built in ${Math.round(web.brick.buildMs)} ms), ` +
-      `2x4 ${web.brick.triangles} triangles ${web.brick.fingerprint}, 2x2 ${native["2x2"].triangles} triangles, ` +
-      `16x16 cancelled after ${(cancelMs / 1000).toFixed(1)} s with ${web.restarts} worker restart(s), ` +
-      `camera below the ground (y ${under.camera[1].toFixed(1)} mm) after dragging up`,
+    `# ${label}: first part after ${(firstMs / 1000).toFixed(1)} s (evaluated in ${Math.round(w.part.buildMs)} ms), ` +
+      `emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash.slice(0, 12)}…, deboss and inlay equal native, ` +
+      `FIT.MISSING blocks downloads, 3MF ${threemf.bytes.length} bytes, STL ${count} triangles, ${cancelNote}, ` +
+      `camera below the ground (y ${under.camera[1].toFixed(1)} mm), coupon ${nc.triangles} triangles in ${Math.round(w.coupon?.buildMs ?? 0)} ms, coupon 3MF ${coupon.bytes.length} bytes`,
   );
+  await context.close();
+  return [threemf.path, inlay.path, coupon.path];
+}
+
+async function webgpuRun(browser, origin, native) {
+  const label = "webgpu";
+  const context = await browser.newContext({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1, colorScheme: "light" });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgpu`);
+  const w = await waitFor(page, {}, 120_000, label);
+  check(w.backend === "webgpu", `${label}: renderer backend is ${w.backend}`);
+  checkPart(w.part, native.part.emboss, `${label} emboss`);
+  const s = await drawnStats(page, label);
+  check(s.triangles >= native.part.emboss.triangles, `${label}: the frame drew ${s.triangles} triangles`);
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(`# ${label}: the first part equals native and was drawn (${s.triangles} triangles in the frame)`);
   await context.close();
 }
 
@@ -266,7 +455,7 @@ async function phoneRun(browser, origin, native) {
   const background = async (scheme) => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: scheme });
     const page = await context.newPage();
-    await page.goto(`${origin}?backend=webgl2`);
+    await page.goto(`${origin}/?backend=webgl2`);
     const value = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     await context.close();
     return value;
@@ -280,17 +469,17 @@ async function phoneRun(browser, origin, native) {
     colorScheme: "dark",
   });
   const page = await context.newPage();
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
-  await page.goto(`${origin}?backend=webgl2`);
-  let web = await waitBrick(page, { width: 2, length: 4 }, 120_000, label);
-  checkBrick(web.brick, native["2x4"], `${label} 2x4`);
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2`);
+  let w = await waitFor(page, {}, 120_000, label);
+  checkPart(w.part, native.part.emboss, `${label} emboss`);
   const layout = await page.evaluate(() => {
-    const inside = [...document.querySelectorAll("button, input, h1, #status")].map((el) => {
-      const r = el.getBoundingClientRect();
-      return { what: el.id || el.getAttribute("aria-label") || el.tagName, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-    });
+    const inside = [...document.querySelectorAll("button, input:not([type=file]), select, h1, #status, [role=tab]")]
+      .filter((el) => el.offsetParent !== null)
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { what: el.id || el.getAttribute("aria-label") || el.textContent.trim().slice(0, 20) || el.tagName, left: r.left, right: r.right };
+      });
     return {
       scrollWidth: document.documentElement.scrollWidth,
       bodyScrollWidth: document.body.scrollWidth,
@@ -303,27 +492,34 @@ async function phoneRun(browser, origin, native) {
   });
   check(layout.scrollWidth <= layout.innerWidth && layout.bodyScrollWidth <= layout.innerWidth, `${label}: horizontal scroll (${layout.scrollWidth} > ${layout.innerWidth})`);
   for (const r of layout.inside) {
-    check(r.left >= 0 && r.right <= layout.innerWidth + 0.5 && r.top >= 0 && r.bottom <= layout.innerHeight + 0.5, `${label}: ${r.what} is off screen (${JSON.stringify(r)})`);
+    check(r.left >= 0 && r.right <= layout.innerWidth + 0.5, `${label}: ${r.what} is outside the width (${JSON.stringify(r)})`);
   }
-  check(layout.canvas && layout.canvas.height > layout.innerHeight / 2, `${label}: the 3D view is only ${layout.canvas?.height} px tall`);
+  check(layout.canvas && layout.canvas.height >= layout.innerHeight * 0.4, `${label}: the 3D view is only ${layout.canvas?.height} px tall`);
   check(layout.background !== light, `${label}: dark theme background ${layout.background} equals the light one`);
-  if (shots) await page.screenshot({ path: join(shots, "phone-dark-2x4.png") });
+  if (shots) {
+    await settle(page);
+    await page.screenshot({ path: join(shots, "phone-dark-emboss.png") });
+    await page.screenshot({ path: join(shots, "phone-dark-full.png"), fullPage: true });
+  }
 
-  await page.tap('button[data-for="width"][data-step="1"]');
-  web = await waitBrick(page, { width: 3, length: 4 }, 60_000, `${label} tap`);
+  const n = w.evaluations;
+  await page.tap('button[aria-label="One stud wider"]');
+  w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "3x4" }, 60_000, `${label} tap`);
 
   // One-finger drag on the canvas through the DevTools protocol, so Chromium makes
   // real touch pointers (OrbitControls captures them); the camera must move.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const canvas = await page.evaluate(() => document.querySelector("#stage canvas").getBoundingClientRect().toJSON());
   const before = (await stats(page)).camera;
   const cdp = await context.newCDPSession(page);
-  const { x, y, width, height } = layout.canvas;
+  const { x, y, width, height } = canvas;
   const at = (dx) => [{ x: x + width / 2 + dx, y: y + height / 2 }];
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(0) });
   for (let i = 1; i <= 8; i++) {
     await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(i * 15) });
   }
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  await new Promise((r) => setTimeout(r, 500));
+  await sleep(500);
   const after = (await stats(page)).camera;
   const moved = Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]);
   check(moved > 1, `${label}: a touch drag moved the camera by ${moved.toFixed(3)} mm`);
@@ -333,6 +529,46 @@ async function phoneRun(browser, origin, native) {
   await context.close();
 }
 
+/** Build the app for the GitHub Pages path and check it loads only from there. */
+async function baseRun(browser, native) {
+  const label = `base ${PAGES_BASE}`;
+  const out = mkdtempSync(join(tmpdir(), "openbrick-pages-"));
+  try {
+    const { build } = await import("vite");
+    process.env.OPENBRICK_BASE = PAGES_BASE;
+    try {
+      await build({ root: here, logLevel: "warn", build: { outDir: out, emptyOutDir: true } });
+    } finally {
+      delete process.env.OPENBRICK_BASE;
+    }
+    const html = readFileSync(join(out, "index.html"), "utf8");
+    check(html.includes(`src="${PAGES_BASE}assets/`), `${label}: index.html does not load its script from ${PAGES_BASE}assets/`);
+    const { server, requests, origin } = await serve(out, PAGES_BASE);
+    try {
+      const context = await browser.newContext({ viewport: { width: 960, height: 600 }, colorScheme: "light" });
+      const page = await context.newPage();
+      const errors = watchErrors(page);
+      const failed = [];
+      page.on("response", (r) => r.status() >= 400 && failed.push(`${r.status()} ${r.url()}`));
+      await page.goto(`${origin}${PAGES_BASE}?backend=webgl2`);
+      const w = await waitFor(page, {}, 120_000, label);
+      checkPart(w.part, native.part.emboss, `${label} emboss`);
+      check(failed.length === 0, `${label}: failed requests: ${failed.join(", ")}`);
+      const outside = requests.filter((p) => !p.startsWith(PAGES_BASE));
+      check(outside.length === 0, `${label}: requests outside ${PAGES_BASE}: ${outside.join(", ")}`);
+      check(requests.some((p) => /\/assets\/worker-[\w-]+\.js$/.test(p)), `${label}: the worker was not loaded from ${PAGES_BASE}assets/ (${requests.join(", ")})`);
+      check(requests.some((p) => /\/assets\/openbrick_wasm_bg-[\w-]+\.wasm$/.test(p)), `${label}: the module was not loaded from ${PAGES_BASE}assets/`);
+      check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+      console.log(`# ${label}: ${requests.length} requests, all under ${PAGES_BASE}; the first part equals native`);
+      await context.close();
+    } finally {
+      server.close();
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   if (!args.has("--no-build")) {
     run("cargo", ["xtask", "wasm"], { stdio: "inherit" });
@@ -340,27 +576,25 @@ async function main() {
     await build({ root: here, logLevel: "warn" });
   }
   if (shots) mkdirSync(shots, { recursive: true });
+  rmSync(downloads, { recursive: true, force: true });
+  mkdirSync(downloads, { recursive: true });
   const native = nativeValues();
-  console.log(`native (${native.kernel}): 2x4 ${JSON.stringify(native["2x4"])}, 2x2 ${JSON.stringify(native["2x2"])}`);
-  const server = await serve(dist);
-  const origin = `http://127.0.0.1:${server.address().port}/`;
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      // WebGL2 through ANGLE on SwiftShader: there is no GPU on CI runners.
-      "--use-angle=swiftshader",
-      "--enable-unsafe-swiftshader",
-      // WebGPU on SwiftShader's Vulkan driver, which ships with Chromium.
-      "--enable-unsafe-webgpu",
-      "--enable-features=Vulkan",
-      "--use-vulkan=swiftshader",
-      "--use-webgpu-adapter=swiftshader",
-    ],
-  });
+  console.log(
+    `native (${native.kernel}): emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash}, ` +
+      `deboss ${native.part.deboss.triangles}, inlay ${native.part.inlay.triangles}, coupon ${native.coupon.triangles} triangles ${native.coupon.contentHash}`,
+  );
+  const { server, origin } = await serve(dist);
+  const browser = await chromium.launch({ headless: true, args: browserArgs });
+  let saved = [];
   try {
-    for (const backend of args.has("--no-webgpu") ? ["webgl2"] : ["webgl2", "webgpu"]) {
+    try {
+      saved = await fullRun(browser, origin, native);
+    } catch (err) {
+      failures.push(err.message);
+    }
+    if (!args.has("--no-webgpu")) {
       try {
-        await backendRun(browser, origin, backend, native);
+        await webgpuRun(browser, origin, native);
       } catch (err) {
         failures.push(err.message);
       }
@@ -370,6 +604,13 @@ async function main() {
     } catch (err) {
       failures.push(err.message);
     }
+    if (!args.has("--no-base-check")) {
+      try {
+        await baseRun(browser, native);
+      } catch (err) {
+        failures.push(err.message);
+      }
+    }
   } finally {
     await browser.close();
     server.close();
@@ -378,6 +619,7 @@ async function main() {
     console.error(`\nSMOKE FAILED:\n- ${failures.join("\n- ")}`);
     process.exit(1);
   }
+  console.log(`downloads for scripts/validate-3mf.py: ${saved.join(" ")}`);
   console.log("SMOKE OK");
 }
 

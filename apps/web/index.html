@@ -3,12 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>OpenBrick3D viewer</title>
-    <meta name="description" content="OpenBrick3D: a brick-compatible brick built by the Rust core in WebAssembly and shown with three.js." />
+    <title>OpenBrick3D playground</title>
+    <meta name="description" content="OpenBrick3D playground: design a brick-compatible logo tile from your SVG, check it against the print rules and download a printable 3MF or STL, or print the calibration coupon. Everything runs in your browser." />
     <meta name="color-scheme" content="light dark" />
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='26' height='16' rx='2' fill='%23c8323c'/%3E%3Crect x='7' y='6' width='7' height='6' rx='1.5' fill='%23c8323c'/%3E%3Crect x='18' y='6' width='7' height='6' rx='1.5' fill='%23c8323c'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='26' height='16' rx='2' fill='%232f6db5'/%3E%3Crect x='7' y='6' width='7' height='6' rx='1.5' fill='%232f6db5'/%3E%3Crect x='18' y='6' width='7' height='6' rx='1.5' fill='%232f6db5'/%3E%3C/svg%3E"
     />
     <style>
       :root {
@@ -21,13 +21,18 @@
         --control: #f5f7fa;
         --control-hover: #e6ebf1;
         --accent: #1d5fae;
+        --accent-text: #ffffff;
         --bad: #b3261e;
+        --bad-bg: #fdecea;
+        --warn: #8a5300;
+        --warn-bg: #fff4e0;
+        --ok: #1e6b35;
+        --removed: #e5242b;
         /* Read by src/viewer.js for the 3D scene. */
         --stage-bg: #dde5ee;
         --grid-major: #7d8a99;
         --grid-minor: #b4bfcb;
-        --brick: #c8323c;
-        font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -39,127 +44,304 @@
           --control: #1d2632;
           --control-hover: #263241;
           --accent: #7cc4ff;
+          --accent-text: #0d1218;
           --bad: #ff9b9b;
+          --bad-bg: #3a1a1a;
+          --warn: #ffcc80;
+          --warn-bg: #33270f;
+          --ok: #8fdca5;
+          --removed: #ff4d4f;
           --stage-bg: #10161d;
           --grid-major: #4f5d6e;
           --grid-minor: #26303c;
-          --brick: #d23f48;
         }
       }
       *, *::before, *::after { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; }
+      html, body { margin: 0; }
       body {
         display: grid;
         grid-template-rows: auto minmax(0, 1fr) auto;
-        height: 100vh;
-        height: 100dvh;
-        overflow: hidden;
+        min-height: 100vh;
+        min-height: 100dvh;
         background: var(--bg);
         color: var(--text);
+        overflow-x: hidden;
       }
-      header, footer {
+      header, footer, aside {
         background: var(--panel);
-        padding-left: max(12px, env(safe-area-inset-left));
-        padding-right: max(12px, env(safe-area-inset-right));
       }
       header {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: 8px 20px;
-        padding-top: max(8px, env(safe-area-inset-top));
-        padding-bottom: 8px;
+        padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
         border-bottom: 1px solid var(--line);
       }
       h1 { margin: 0 auto 0 0; font-size: 16px; font-weight: 650; white-space: nowrap; }
       h1 span { color: var(--muted); font-weight: 400; }
-      form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; min-width: 0; }
-      /* Label above its - value + row, so two steppers fit side by side on a phone. */
+      h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; text-transform: none; }
+      a { color: var(--accent); }
+      code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      [role="tablist"] { display: flex; gap: 4px; padding: 3px; background: var(--control); border: 1px solid var(--line); border-radius: 10px; }
+      [role="tab"] {
+        font: inherit; color: var(--text); background: transparent; border: 0; border-radius: 7px;
+        min-height: 36px; padding: 0 14px; cursor: pointer; white-space: nowrap;
+      }
+      [role="tab"][aria-selected="true"],
+      [role="tab"][aria-selected="true"]:hover { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+      #layout { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
+      #stage { position: relative; min-height: 0; height: 52vh; height: 52dvh; overflow: hidden; background: var(--stage-bg); }
+      #stage canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+      aside { padding: 12px max(12px, env(safe-area-inset-right)) 16px max(12px, env(safe-area-inset-left)); border-top: 1px solid var(--line); min-width: 0; }
+      @media (min-width: 900px) {
+        body { height: 100vh; height: 100dvh; overflow: hidden; }
+        #layout { grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); }
+        #stage { height: auto; grid-column: 2; grid-row: 1; }
+        aside { grid-column: 1; grid-row: 1; overflow-y: auto; border-top: 0; border-right: 1px solid var(--line); }
+      }
+      section + section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+      fieldset { margin: 0 0 12px; padding: 0; border: 0; min-width: 0; }
+      legend { padding: 0; margin-bottom: 6px; font-weight: 650; font-size: 14px; }
+      .field { display: grid; gap: 4px; margin-bottom: 10px; min-width: 0; }
+      .field > label, .field > .label { color: var(--muted); font-size: 13px; }
+      .help { color: var(--muted); font-size: 12px; margin: 0; }
+      .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-end; }
       .stepper { display: grid; grid-template-columns: repeat(3, auto); gap: 2px 4px; }
-      .stepper label { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
-      button, input {
+      .stepper label { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+      button, input, select {
         font: inherit;
         color: var(--text);
         background: var(--control);
         border: 1px solid var(--line);
         border-radius: 8px;
-        height: 40px;
+        min-height: 40px;
       }
-      button { width: 40px; padding: 0; font-size: 20px; line-height: 1; cursor: pointer; touch-action: manipulation; }
+      button { padding: 0 12px; cursor: pointer; touch-action: manipulation; }
+      button.icon { width: 40px; padding: 0; font-size: 20px; line-height: 1; }
+      button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
       button:hover:not(:disabled) { background: var(--control-hover); }
-      input {
-        width: 3.4em;
-        padding: 0 4px;
-        text-align: center;
-        font-variant-numeric: tabular-nums;
-        appearance: textfield;
-        -moz-appearance: textfield;
+      button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+      button.link { min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; }
+      input[type="number"] {
+        width: 4.2em; padding: 0 4px; text-align: center; font-variant-numeric: tabular-nums;
+        appearance: textfield; -moz-appearance: textfield;
       }
+      .stepper input[type="number"] { width: 3.4em; }
       input::-webkit-inner-spin-button, input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type="range"] { width: 100%; min-height: 32px; padding: 0; background: none; border: 0; accent-color: var(--accent); }
+      input[type="color"] { width: 56px; padding: 2px; }
+      select { padding: 0 8px; max-width: 100%; width: 100%; }
       input[aria-invalid="true"] { border-color: var(--bad); outline: 2px solid var(--bad); outline-offset: -1px; }
-      button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      button:focus-visible, input:focus-visible, select:focus-visible, [role="tab"]:focus-visible, a:focus-visible, #drop:focus-visible {
+        outline: 2px solid var(--accent); outline-offset: 2px;
+      }
       :disabled { opacity: 0.55; cursor: default; }
-      #limits { align-self: center; color: var(--muted); font-size: 13px; }
-      #stage { position: relative; min-height: 0; overflow: hidden; background: var(--stage-bg); }
-      #stage canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+      .choices { display: flex; flex-wrap: wrap; gap: 6px; }
+      .choices label {
+        display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px;
+        border: 1px solid var(--line); border-radius: 8px; background: var(--control); cursor: pointer;
+      }
+      .choices input { accent-color: var(--accent); margin: 0; }
+      .choices label:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+      .choices label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .slider { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+      .slider output { min-width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; }
+      #drop {
+        display: grid; gap: 2px; width: 100%; min-height: 64px; padding: 10px 12px; text-align: left;
+        border: 2px dashed var(--line); background: var(--control); border-radius: 10px;
+      }
+      #drop.over { border-color: var(--accent); background: var(--control-hover); }
+      #drop strong { font-weight: 600; }
+      #drop span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+      .artwork-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+      .note { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+      .note.bad, .error { color: var(--bad); font-weight: 600; }
+      dl.stats { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 0; font-size: 14px; font-variant-numeric: tabular-nums; }
+      dl.stats dt { color: var(--muted); }
+      dl.stats dd { margin: 0; overflow-wrap: anywhere; }
+      #findings { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+      .finding { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); }
+      .finding.blocker { background: var(--bad-bg); border-color: var(--bad); }
+      .finding.warning { background: var(--warn-bg); border-color: var(--warn); }
+      .finding .sev { font-size: 18px; line-height: 1.3; }
+      .finding p { margin: 0 0 4px; overflow-wrap: anywhere; font-size: 14px; }
+      .finding p:last-child { margin-bottom: 0; }
+      .finding .head strong { margin-right: 6px; }
+      .finding.blocker .head strong { color: var(--bad); }
+      .finding.warning .head strong { color: var(--warn); }
+      .finding .nums { color: var(--muted); font-size: 13px; }
+      #summary.ok { color: var(--ok); font-weight: 600; }
+      #notes { margin-top: 10px; font-size: 13px; }
+      #notes ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+      #notes li { margin-bottom: 4px; overflow-wrap: anywhere; }
+      .downloads { display: flex; flex-wrap: wrap; gap: 8px; }
+      #download-reason, #coupon-download-note { margin: 8px 0 0; font-size: 13px; }
+      #download-reason:empty { display: none; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+      th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+      th { color: var(--muted); font-weight: 600; }
+      .table-wrap { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+      pre { margin: 6px 0; padding: 8px; background: var(--control); border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      ol.steps { margin: 6px 0; padding-left: 20px; font-size: 14px; }
+      ol.steps li { margin-bottom: 4px; }
+      .legend {
+        position: absolute; z-index: 1; left: max(10px, env(safe-area-inset-left)); top: 10px; right: 10px;
+        display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none;
+        font-size: 12px; pointer-events: none;
+      }
+      .legend li { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, var(--panel) 82%, transparent); max-width: 100%; }
+      .legend .swatch { flex: none; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--muted); }
       .hint {
-        position: absolute;
-        z-index: 1;
-        left: max(12px, env(safe-area-inset-left));
-        bottom: 10px;
-        margin: 0;
-        color: var(--muted);
-        font-size: 12px;
-        pointer-events: none;
+        position: absolute; z-index: 1; left: max(12px, env(safe-area-inset-left)); bottom: 10px; margin: 0;
+        color: var(--muted); font-size: 12px; pointer-events: none;
       }
       footer {
-        padding-top: 8px;
-        padding-bottom: max(8px, env(safe-area-inset-bottom));
+        display: grid; gap: 4px;
+        padding: 8px max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
         border-top: 1px solid var(--line);
       }
       #status {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 2px 14px;
-        min-height: 1.4em;
-        color: var(--muted);
-        font-size: 13px;
-        font-variant-numeric: tabular-nums;
+        display: flex; flex-wrap: wrap; gap: 2px 14px; min-height: 1.4em;
+        color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums;
       }
       #status span { overflow-wrap: anywhere; }
       #status span:first-child { color: var(--text); font-weight: 600; }
       #status.bad span { color: var(--bad); font-weight: 600; }
+      .disclaimer { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+      [hidden] { display: none !important; }
+      .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
       @media (max-width: 480px) {
         :root { font-size: 14px; }
         header { gap: 6px 12px; }
         h1 { font-size: 15px; }
+        [role="tab"] { padding: 0 10px; }
       }
     </style>
   </head>
-  <body data-state="loading">
+  <body data-state="loading" data-mode="tile">
     <header>
-      <h1>OpenBrick3D <span>viewer</span></h1>
-      <form id="controls" aria-label="Brick size" novalidate>
-        <div class="stepper">
-          <label for="width">Width</label>
-          <button type="button" data-for="width" data-step="-1" aria-label="One stud narrower" disabled>−</button>
-          <input id="width" name="width" type="number" inputmode="numeric" step="1" value="2" disabled />
-          <button type="button" data-for="width" data-step="1" aria-label="One stud wider" disabled>+</button>
-        </div>
-        <div class="stepper">
-          <label for="length">Length</label>
-          <button type="button" data-for="length" data-step="-1" aria-label="One stud shorter" disabled>−</button>
-          <input id="length" name="length" type="number" inputmode="numeric" step="1" value="4" disabled />
-          <button type="button" data-for="length" data-step="1" aria-label="One stud longer" disabled>+</button>
-        </div>
-        <span id="limits"></span>
-      </form>
+      <h1>OpenBrick3D <span>playground</span></h1>
+      <div role="tablist" aria-label="What to make">
+        <button type="button" role="tab" id="tab-tile" aria-controls="panel-tile" aria-selected="true">Logo tile</button>
+        <button type="button" role="tab" id="tab-coupon" aria-controls="panel-coupon" aria-selected="false" tabindex="-1">Calibration coupon</button>
+      </div>
     </header>
-    <main id="stage" aria-label="3D view of the brick: drag to orbit, also underneath, pinch or scroll to zoom, two fingers or right-drag to pan">
-      <p class="hint" aria-hidden="true">Drag to orbit, also underneath · pinch or scroll to zoom</p>
-    </main>
+    <div id="layout">
+      <main id="stage" aria-label="3D view: drag to orbit, also underneath, pinch or scroll to zoom, two fingers or right-drag to pan">
+        <ul class="legend" id="legend" aria-label="Colours in the 3D view"></ul>
+        <p class="hint" aria-hidden="true">Drag to orbit, also underneath · pinch or scroll to zoom</p>
+      </main>
+      <aside>
+        <div id="panel-tile" role="tabpanel" aria-labelledby="tab-tile">
+          <section aria-labelledby="part-heading">
+            <h2 id="part-heading">Logo tile</h2>
+            <form id="tile-form" novalidate></form>
+          </section>
+          <section aria-labelledby="print-heading">
+            <h2 id="print-heading">Printer</h2>
+            <div class="field">
+              <label for="process">Process profile</label>
+              <select id="process" disabled></select>
+            </div>
+            <div class="field">
+              <label for="fit">Fit profile</label>
+              <select id="fit" disabled></select>
+              <input type="file" id="fit-file" accept=".json,application/json" hidden />
+              <p class="note" id="fit-note" aria-live="polite"></p>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="color-body">Body colour</label>
+                <input type="color" id="color-body" disabled />
+              </div>
+              <div class="field">
+                <label for="color-accent">Logo colour</label>
+                <input type="color" id="color-accent" disabled />
+              </div>
+            </div>
+          </section>
+          <section aria-labelledby="result-heading">
+            <h2 id="result-heading">Result</h2>
+            <dl class="stats" id="tile-stats"></dl>
+          </section>
+          <section aria-labelledby="validation-heading">
+            <h2 id="validation-heading">Validation</h2>
+            <p id="summary" aria-live="polite">Waiting for the first build…</p>
+            <ul id="findings"></ul>
+            <details id="notes" hidden open>
+              <summary>Notes from the evaluator</summary>
+              <ul></ul>
+            </details>
+          </section>
+          <section aria-labelledby="download-heading">
+            <h2 id="download-heading">Download</h2>
+            <div class="downloads">
+              <button type="button" class="primary" id="download-3mf" disabled aria-describedby="download-reason">Download 3MF</button>
+              <button type="button" id="download-stl" disabled aria-describedby="download-reason">Download STL</button>
+            </div>
+            <p id="download-reason" aria-live="polite"></p>
+            <p class="note" id="download-note">The 3MF keeps body and logo as two objects in their colours; the STL is one solid for a single colour.</p>
+          </section>
+        </div>
+        <div id="panel-coupon" role="tabpanel" aria-labelledby="tab-coupon" hidden>
+          <section aria-labelledby="coupon-heading">
+            <h2 id="coupon-heading">Calibration coupon</h2>
+            <p class="note">Print this once per printer, nozzle and material. It measures how your printer makes studs, tube bores and 2x2 pockets, so the tiles you print fit genuine bricks. Fit offsets are never applied to the coupon.</p>
+            <div class="field">
+              <label for="coupon-process">Process profile</label>
+              <select id="coupon-process" disabled></select>
+            </div>
+            <div class="field">
+              <label for="coupon-pockets">Pocket layout</label>
+              <select id="coupon-pockets" disabled></select>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="bed-x">Bed width (mm)</label>
+                <input type="number" id="bed-x" inputmode="decimal" min="50" step="1" disabled />
+              </div>
+              <div class="field">
+                <label for="bed-y">Bed depth (mm)</label>
+                <input type="number" id="bed-y" inputmode="decimal" min="50" step="1" disabled />
+              </div>
+            </div>
+          </section>
+          <section aria-labelledby="coupon-result-heading">
+            <h2 id="coupon-result-heading">Coupon</h2>
+            <dl class="stats" id="coupon-stats"></dl>
+            <div class="downloads" style="margin-top: 10px">
+              <button type="button" class="primary" id="download-coupon-3mf" disabled>Download coupon 3MF</button>
+              <button type="button" id="download-coupon-stl" disabled>Download coupon STL</button>
+            </div>
+            <p id="coupon-download-note" class="note" aria-live="polite"></p>
+          </section>
+          <section aria-labelledby="howto-heading">
+            <h2 id="howto-heading">How to use it</h2>
+            <ol class="steps">
+              <li>Slice it flat side down as it comes, without supports, with XY and elephant-foot compensation off (the model has the first-layer chamfer).</li>
+              <li>Press a genuine 1x1 plate onto each stud, a turned-over 1x1 plate's stud into each tube bore, and a turned-over 2x2 plate into each pocket. Pick the cell in each line that holds best without force.</li>
+              <li>Record your choices with the command line tool (the values below are examples):</li>
+            </ol>
+            <pre><code id="record-command"></code></pre>
+            <p class="note">Then choose “Load my fit profile…” in the logo tile and pick the file it wrote. The <a href="https://github.com/NeuralDEEPnet/openBrick/blob/main/docs/guides/print-test.md" target="_blank" rel="noopener">print test guide</a> has the details.</p>
+          </section>
+          <section aria-labelledby="cells-heading">
+            <h2 id="cells-heading">Cells (first copy)</h2>
+            <div class="table-wrap">
+              <table>
+                <caption class="visually-hidden">Coupon cells: the label printed on each cell and what to record for it</caption>
+                <thead><tr><th scope="col">Line</th><th scope="col">Label</th><th scope="col">Record as</th></tr></thead>
+                <tbody id="cells"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
     <footer>
       <output id="status" role="status" aria-live="polite"></output>
+      <p class="disclaimer"><span id="disclaimer"><!--openbrick:disclaimer--></span> <a href="https://github.com/NeuralDEEPnet/openBrick" target="_blank" rel="noopener">Source code on GitHub</a></p>
     </footer>
     <script type="module" src="/src/main.js"></script>
   </body>
