@@ -5,7 +5,7 @@
 use manifold_rust::cross_section::CrossSection as MrCrossSection;
 use manifold_rust::linalg::{Vec2, Vec3};
 use manifold_rust::manifold::Manifold;
-use manifold_rust::types::{Error as MrError, OpType, Polygons};
+use manifold_rust::types::{Error as MrError, MeshGL, OpType, Polygons};
 
 use crate::{CrossSection, GeomError, Kernel, Mesh, Polygon, Solid};
 
@@ -143,5 +143,72 @@ impl Kernel for ManifoldRust {
         let cs =
             MrCrossSection::new(to_mr(section)).offset_with_params(delta_mm, JOIN_ROUND, 2.0, n);
         Ok(from_mr(cs.to_polygons()))
+    }
+}
+
+impl ManifoldRust {
+    /// A solid from a mesh that already left a kernel (millimetres, closed,
+    /// consistently oriented, vertices shared by index as [`Solid::to_mesh`]
+    /// gives them), for checks on exported objects: the relief tests intersect
+    /// a part's objects to prove they touch without overlapping. Manifold's
+    /// strict import refuses a mesh that is not a manifold.
+    pub fn solid_from_mesh(&self, mesh: &Mesh) -> Result<MrSolid, GeomError> {
+        let gl = MeshGL {
+            num_prop: 3,
+            vert_properties: mesh.positions.as_flattened().to_vec(),
+            tri_verts: mesh.indices.clone(),
+            ..MeshGL::default()
+        };
+        checked(Manifold::from_mesh_gl(&gl), "solid_from_mesh")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A unit tetrahedron with outward triangles: abstract test geometry, not
+    /// a brick dimension.
+    fn tetra() -> Mesh {
+        Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            indices: vec![0, 2, 1, 0, 1, 3, 1, 2, 3, 0, 3, 2],
+        }
+    }
+
+    #[test]
+    fn meshes_come_back_as_solids() {
+        let k = ManifoldRust;
+        let t = k.solid_from_mesh(&tetra()).expect("a closed mesh");
+        assert!((t.volume_mm3() - 1.0 / 6.0).abs() < 1e-12);
+        assert_eq!((t.genus(), t.component_count()), (0, 1));
+        // A kernel solid survives the round trip through its mesh.
+        let cube = k
+            .extrude(
+                &CrossSection::from(vec![Polygon::rect([0.0, 0.0], [2.0, 3.0])]),
+                4.0,
+                1.0,
+            )
+            .expect("box");
+        let back = k.solid_from_mesh(&cube.to_mesh()).expect("closed");
+        assert!((back.volume_mm3() - 24.0).abs() < 1e-9);
+        // Two touching boxes share no volume; overlapping ones do.
+        let above = k.translate(&cube, [0.0, 0.0, 4.0]);
+        let touching = k.intersection(&back, &k.solid_from_mesh(&above.to_mesh()).unwrap());
+        assert_eq!(touching.expect("boolean").volume_mm3(), 0.0);
+        let into = k.translate(&cube, [0.0, 0.0, 3.0]);
+        let overlap = k
+            .intersection(&back, &k.solid_from_mesh(&into.to_mesh()).unwrap())
+            .expect("boolean");
+        assert!((overlap.volume_mm3() - 6.0).abs() < 1e-9);
+        // An open mesh is refused.
+        let mut open = tetra();
+        open.indices.truncate(9);
+        assert!(k.solid_from_mesh(&open).is_err());
     }
 }

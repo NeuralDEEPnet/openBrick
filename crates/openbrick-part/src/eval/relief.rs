@@ -39,12 +39,17 @@
 //!    budget (see [`min_stroke`]).
 //! 6. The mode: `emboss` extrudes the artwork by `height` on top of the face, as
 //!    a separate object of `colorRole` that touches the body without overlapping
-//!    it; `deboss` cuts it `height` deep into the face; `inlay` cuts it the same
-//!    way and splits off the face slab as the `colorRole` object (docs/plan/05
-//!    section 6), printed face down. Inlay builds the single-extruder
-//!    filament-swap variant only: the artwork prints as a recess in the body
-//!    colour. The multi-material variant, whose artwork fill is its own object,
-//!    is not built yet.
+//!    it; `deboss` cuts it `height` deep into the face; `inlay` prints face down
+//!    (docs/plan/05 section 6) in one of two styles, the field `inlayStyle`:
+//!    - `swap` (the default, for a single extruder with a filament change): the
+//!      face cut like a deboss, and the face slab split off as the `colorRole`
+//!      object, so the artwork prints as a recess in the body colour;
+//!    - `parts` (for a multi-material unit such as an AMS, or a tool changer):
+//!      the artwork fill is its own `colorRole` object, the opened artwork
+//!      `height` deep into the face, and the body is recessed by exactly that
+//!      region, so the two touch without overlapping and together are the
+//!      plain body. The roof is not thickened (the fill completes it), and the
+//!      depth keeps one layer of the roof in the body under the fill.
 //! 7. Thin face material (deboss and inlay): what prints is the face around the
 //!    cuts, so the body footprint at the bottom of the cut minus the opened
 //!    artwork is opened at the same radius too (see [`thin_face`]). Walls
@@ -68,13 +73,18 @@
 //! is built, and the face an inlay puts on the bed is a solid slab with no
 //! side wall or tube in that plane.
 //!
-//! Deboss and inlay thicken the roof by the depth so the roof under the artwork
-//! keeps its thickness (rule `ROOF.MIN`), and clamp the depth so the cavity keeps
-//! `minCavityDepthMm` (rule `CAVITY.DEPTH`; 0.4 mm on plate-height parts). The
-//! whole cavity ceiling is lowered rather than only the part under the artwork:
-//! a pad in the shape of the artwork hanging from the ceiling would be an
-//! unsupported island when the part prints face up, while a lowered ceiling is
-//! still one flat bridge between the walls and the tubes.
+//! Deboss and the swap inlay thicken the roof by the depth so the roof under the
+//! artwork keeps its thickness (rule `ROOF.MIN`), and clamp the depth so the
+//! cavity keeps `minCavityDepthMm` (rule `CAVITY.DEPTH`; 0.4 mm on plate-height
+//! parts). The whole cavity ceiling is lowered rather than only the part under
+//! the artwork: a pad in the shape of the artwork hanging from the ceiling would
+//! be an unsupported island when the part prints face up, while a lowered
+//! ceiling is still one flat bridge between the walls and the tubes. The parts
+//! inlay leaves the roof and the cavity as they are: its artwork fill prints
+//! with the body, so the roof under the artwork is the body's roof below the
+//! fill plus the fill. Its depth is clamped instead so the body keeps the
+//! thinnest layer of the process (`layerHeightMm`) under the fill: the fill
+//! never reaches the cavity, and the body stays one solid.
 
 use openbrick_geom::region::{self, FillRule};
 use openbrick_geom::{round_segments, CrossSection, GeomError, Kernel, Polygon};
@@ -142,9 +152,37 @@ impl Mode {
         }
     }
 
-    /// Deboss and inlay cut into the face (and thicken the roof).
+    /// Deboss and inlay cut into the face.
     pub(crate) fn cuts(self) -> bool {
         self != Mode::Emboss
+    }
+}
+
+/// How an inlay is printed (the `inlayStyle` field of `relief.svg`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InlayStyle {
+    /// Single extruder with a filament change: the face slab minus the artwork
+    /// is the relief object.
+    Swap,
+    /// Multi-material unit or tool changer: the artwork fill is the relief
+    /// object, the body is recessed by it.
+    Parts,
+}
+
+impl InlayStyle {
+    fn parse(s: &str) -> Option<InlayStyle> {
+        Some(match s {
+            "swap" => InlayStyle::Swap,
+            "parts" => InlayStyle::Parts,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            InlayStyle::Swap => "swap",
+            InlayStyle::Parts => "parts",
+        }
     }
 }
 
@@ -159,8 +197,15 @@ pub struct Artwork {
     pub feature: String,
     /// `emboss`, `deboss` or `inlay`.
     pub mode: String,
+    /// For an inlay, how it prints: `swap` (one extruder, a filament change
+    /// after the face slab) or `parts` (the artwork fill is its own part, for
+    /// a multi-material unit or tool changer). `None` for emboss and deboss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inlay_style: Option<String>,
     /// The face the part prints on: `bottom` (face up) for emboss and deboss,
     /// `top` (face down) for inlay, so the exporter and the UI can lay it out.
+    /// Exports keep the design orientation, so an inlay is turned over in the
+    /// slicer (the evaluator's warning says so).
     pub face_on_bed: String,
     /// Height of the face the artwork sits on (the body top).
     pub face_z_mm: f64,
@@ -207,6 +252,9 @@ pub struct Artwork {
 pub(crate) struct ReliefPlan {
     pub id: String,
     pub mode: Mode,
+    /// How an inlay prints; [`InlayStyle::Swap`] for emboss and deboss, where
+    /// it is not used.
+    pub style: InlayStyle,
     pub role: String,
     /// The height (emboss) or depth (deboss, inlay) to build.
     pub height: f64,
@@ -755,7 +803,10 @@ pub(crate) fn plan_relief<K: Kernel>(
     assets: &RecordingAssets,
     warnings: &mut Vec<String>,
 ) -> Result<ReliefPlan, EvalError> {
-    feat.warn_unused(&["src", "mode", "height", "fit", "minFeature"], warnings);
+    feat.warn_unused(
+        &["src", "mode", "height", "fit", "minFeature", "inlayStyle"],
+        warnings,
+    );
     match feat.face_of(&body.id)? {
         None | Some("top") => {}
         Some(face) => {
@@ -774,6 +825,36 @@ pub(crate) fn plan_relief<K: Kernel>(
             })?
         }
     };
+    let style = match feat.field("inlayStyle")? {
+        None => InlayStyle::Swap,
+        Some(v) => {
+            let s = v.str().map_err(|m| feat.err("inlayStyle", m))?;
+            InlayStyle::parse(s).ok_or_else(|| {
+                feat.err(
+                    "inlayStyle",
+                    format!("`{s}` is not one of swap (one extruder, a filament change) or parts (the artwork fill as its own part, for a multi-material unit or tool changer)"),
+                )
+            })?
+        }
+    };
+    if style == InlayStyle::Parts && mode != Mode::Inlay {
+        warnings.push(format!(
+            "feature `{}`: inlayStyle `parts` applies to inlay only and is ignored for {}{}",
+            feat.id(),
+            mode.name(),
+            if mode == Mode::Emboss {
+                ", whose raised artwork is its own part already"
+            } else {
+                ""
+            }
+        ));
+    }
+    let style = if mode == Mode::Inlay {
+        style
+    } else {
+        InlayStyle::Swap
+    };
+    let parts_inlay = mode == Mode::Inlay && style == InlayStyle::Parts;
     let requested = feat
         .field("height")?
         .ok_or_else(|| feat.err("height", "is required, for example \"0.6mm\""))?;
@@ -983,9 +1064,48 @@ pub(crate) fn plan_relief<K: Kernel>(
     }
     let mut removed = region::difference(&art, &opened);
 
-    // The depth of a cut keeps the cavity (docs/plan/05 section 6).
+    // The depth of a cut keeps the cavity (docs/plan/05 section 6); the parts
+    // inlay keeps the roof and the cavity, and one layer of roof in the body
+    // under its fill.
     let mut height = requested;
-    if mode.cuts() {
+    if parts_inlay {
+        let layer = process
+            .layer_height_mm
+            .iter()
+            .copied()
+            .filter(|l| l.is_finite() && *l > 0.0)
+            .fold(f64::INFINITY, f64::min);
+        let keep = if layer.is_finite() {
+            layer
+        } else {
+            MIN_LENGTH_MM
+        };
+        let room = g.roof - keep;
+        let mut depth = if requested <= room {
+            requested
+        } else {
+            (room / DEPTH_GRID_MM + 1e-9).floor() * DEPTH_GRID_MM
+        };
+        while depth > 0.0 && g.roof - depth < keep {
+            depth -= DEPTH_GRID_MM;
+        }
+        if depth < MIN_LENGTH_MM {
+            return Err(feat.fail(format!(
+                "no room to inlay the artwork as its own part: the {} mm roof must keep one {keep} mm layer (the thinnest layerHeightMm of {}) of the body under the fill; use a process with thinner layers, or inlayStyle swap",
+                g.roof, process.id
+            )));
+        }
+        if depth < requested - 1e-9 {
+            warnings.push(format!(
+                "feature `{}`: inlay depth {requested} mm is clamped to {depth:.3} mm so the body keeps {:.3} mm of its {} mm roof under the artwork fill, at least one {keep} mm layer (the thinnest layerHeightMm of {}): the fill never reaches the cavity",
+                feat.id(),
+                g.roof - depth,
+                g.roof,
+                process.id
+            ));
+        }
+        height = depth;
+    } else if mode.cuts() {
         let cavity = g.cavity_depth();
         let room = cavity - process.min_cavity_depth_mm;
         let mut depth = if requested <= room {
@@ -1075,21 +1195,36 @@ pub(crate) fn plan_relief<K: Kernel>(
     }
 
     if mode == Mode::Inlay {
-        // The slicer assigns each layer to an object by where the layer lies,
-        // and a first layer plus whole layers need not add up to the depth (a
-        // 0.2 mm first layer and 0.16 mm layers end at 0.36 and 0.52, never at
-        // 0.4), so the swap goes where the preview starts the body.
-        warnings.push(format!(
-            "feature `{}`: inlay is built as the single-extruder filament-swap variant: print it face down with the top face on the bed; the `{}` object is the {height:.3} mm face slab minus the artwork, so the artwork prints as a recess in the body colour; add the filament change before the first layer the slicer's preview shows as the body (the slab ends on a layer boundary only if your first layer and layer height add up to {height:.3} mm). A multi-material variant, with the artwork filled as its own object for a multi-material unit or tool changer, is coming; until then a second slot for `{}` gives the same recessed artwork",
-            feat.id(),
-            feat.role(),
-            feat.role()
-        ));
+        match style {
+            // The slicer assigns each layer to an object by where the layer
+            // lies, and a first layer plus whole layers need not add up to the
+            // depth (a 0.2 mm first layer and 0.16 mm layers end at 0.36 and
+            // 0.52, never at 0.4), so the swap goes where the preview starts
+            // the body.
+            InlayStyle::Swap => warnings.push(format!(
+                "feature `{}`: inlay is built as the single-extruder filament-swap variant (inlayStyle swap): print it face down with the top face on the bed; the `{}` object is the {height:.3} mm face slab minus the artwork, so the artwork prints as a recess in the body colour; add the filament change before the first layer the slicer's preview shows as the body (the slab ends on a layer boundary only if your first layer and layer height add up to {height:.3} mm). For a multi-material unit or tool changer, set inlayStyle to `parts`: the artwork fill becomes its own `{}` part, and each part takes its own filament",
+                feat.id(),
+                feat.role(),
+                feat.role()
+            )),
+            // Every layer holds both colours where the fill is, so there is
+            // no filament change to place: the slicer prints each part with
+            // its own filament.
+            InlayStyle::Parts => warnings.push(format!(
+                "feature `{}`: inlay is built as the multi-material variant (inlayStyle parts): print it face down with the top face on the bed; the `{}` object is the artwork fill, {height:.3} mm deep in the face, and the body is recessed by exactly that region, so the two touch without overlapping; give each part its own filament (an AMS slot or a toolhead): no filament change is needed",
+                feat.id(),
+                feat.role()
+            )),
+        }
         if feat.role() == body.role {
             warnings.push(format!(
-                "feature `{}`: inlay with colorRole `{}`, the body's own role, is a plain deboss printed face down; set colorRole to `accent`",
+                "feature `{}`: inlay with colorRole `{}`, the body's own role, is {}; set colorRole to `accent`",
                 feat.id(),
-                body.role
+                body.role,
+                match style {
+                    InlayStyle::Swap => "a plain deboss printed face down",
+                    InlayStyle::Parts => "the plain body printed face down, without visible artwork",
+                }
             ));
         }
     }
@@ -1097,6 +1232,7 @@ pub(crate) fn plan_relief<K: Kernel>(
     let info = Artwork {
         feature: feat.id().to_string(),
         mode: mode.name().to_string(),
+        inlay_style: (mode == Mode::Inlay).then(|| style.name().to_string()),
         face_on_bed: if mode == Mode::Inlay { "top" } else { "bottom" }.to_string(),
         face_z_mm: g.height,
         face_chamfer_mm: g.top_chamfer,
@@ -1114,6 +1250,7 @@ pub(crate) fn plan_relief<K: Kernel>(
     Ok(ReliefPlan {
         id: feat.id().to_string(),
         mode,
+        style,
         role: feat.role(),
         height,
         art: opened,
@@ -1137,6 +1274,29 @@ pub(crate) struct ReliefSolids<S> {
 }
 
 impl ReliefPlan {
+    /// Whether the body's roof is thickened by the depth (deboss and the swap
+    /// inlay, whose artwork is a recess); the parts inlay fills its recess.
+    pub(crate) fn thickens_roof(&self) -> bool {
+        self.mode.cuts() && !self.is_parts_inlay()
+    }
+
+    /// The multi-material inlay, whose artwork fill is its own object.
+    pub(crate) fn is_parts_inlay(&self) -> bool {
+        self.mode == Mode::Inlay && self.style == InlayStyle::Parts
+    }
+
+    /// How a colour role's object came from this relief, for the colour-role
+    /// warning: what the user sees in that role.
+    pub(crate) fn describe(&self) -> String {
+        let what = match (self.mode, self.style) {
+            (Mode::Emboss, _) => "the raised artwork",
+            (Mode::Deboss, _) => "the debossed artwork",
+            (Mode::Inlay, InlayStyle::Swap) => "the face slab around the artwork",
+            (Mode::Inlay, InlayStyle::Parts) => "the artwork fill",
+        };
+        format!("{what} of `{}`", self.id)
+    }
+
     /// The artwork extruded from `z0` to `z1`, `xyScale` applied.
     fn prism<K: Kernel>(&self, g: &Geo<K>, z0: f64, z1: f64) -> Result<K::Solid, GeomError> {
         let s = g.k.extrude(&scaled(&self.art, g.xy), z1 - z0, 1.0)?;
@@ -1144,9 +1304,10 @@ impl ReliefPlan {
     }
 
     /// Build the relief on the face at height `top` of `body`, a body whose
-    /// roof under the face is at least `2 sink` thick (and `sink` is under
-    /// `OVERSHOOT_MM`). Returns the body to use from now on (cut for deboss
-    /// and inlay) and the relief's objects.
+    /// roof under the face is at least `2 sink` thick (for the parts inlay:
+    /// the roof left under its fill), and `sink` is under `OVERSHOOT_MM`.
+    /// Returns the body to use from now on (cut for deboss and inlay) and the
+    /// relief's objects.
     pub(crate) fn build<K: Kernel>(
         &self,
         g: &Geo<K>,
@@ -1174,6 +1335,25 @@ impl ReliefPlan {
                     ReliefSolids {
                         object: None,
                         bond: None,
+                    },
+                ))
+            }
+            // The body minus the artwork prism `h` deep, and the body within
+            // that prism: complementary, so they touch on the recess's walls
+            // and floor without overlapping, and together are the body. The
+            // cutter starts inside the roof and ends above the body, so it
+            // shares no face with it; the bonding copy reaches `sink` deeper,
+            // into the roof left under the fill.
+            Mode::Inlay if self.style == InlayStyle::Parts => {
+                let cutter = self.prism(g, top - h, top + OVERSHOOT_MM)?;
+                let fill = g.k.intersection(&body, &cutter)?;
+                let bond =
+                    g.k.intersection(&body, &self.prism(g, top - h - sink, top + OVERSHOOT_MM)?)?;
+                Ok((
+                    g.k.difference(&body, &cutter)?,
+                    ReliefSolids {
+                        object: Some(fill),
+                        bond: Some(bond),
                     },
                 ))
             }

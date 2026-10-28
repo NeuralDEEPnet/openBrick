@@ -10,6 +10,10 @@
 //! - [`write_3mf`]: a 3MF package (Core 1.4.0, colour groups from Materials and
 //!   Properties 1.2.1, UUIDs from Production 1.1.2), one object per colour role,
 //!   byte-identical for identical input (docs/plan/05 section 7, decision D18).
+//!   [`write_3mf_with_layout`] chooses an [`ExportLayout`]: one build item per
+//!   object, or one object whose parts are the colour roles
+//!   ([`ExportLayout::PART_DESIGNER`], for multi-material printers; see
+//!   docs/spikes/q18-slicer-multimaterial-import.md).
 //! - [`write_stl_binary`] and [`write_stl_binary_per_role`]: legacy binary STL,
 //!   without colour (docs/plan/08 section 5).
 
@@ -21,7 +25,10 @@ mod zip_writer;
 
 pub use export::{EdgeProblem, ExportMeta, ExportObject, IoError, GENERATOR, ROLES};
 pub use stl::{stl_binary_len, write_stl_binary, write_stl_binary_per_role};
-pub use threemf::{threemf_model_xml, write_3mf};
+pub use threemf::{
+    threemf_model_xml, threemf_model_xml_with_layout, write_3mf, write_3mf_with_layout,
+    ExportLayout,
+};
 
 /// Document kinds and their extensions.
 pub const EXTENSIONS: &[(&str, &str)] = &[

@@ -1,7 +1,9 @@
 //! Round-trip tests for the fixtures that `examples/write_fixtures.rs` writes and CI
 //! checks with lib3mf (`scripts/validate-3mf.py`). Here the same files are read back
 //! with independent Rust readers (the `zip` crate, `roxmltree` and `stl_io`, none
-//! of which share code with the writers) and compared with the meshes that went in.
+//! of which share code with the writers) and compared with the meshes that went in,
+//! in either 3MF layout (one build item per object, or one components object
+//! whose parts are the meshes).
 //!
 //! The example is included as a module so both use the same `fixtures()`.
 
@@ -16,10 +18,10 @@ use std::sync::OnceLock;
 
 use openbrick_geom::{CrossSection, Mesh, Polygon};
 use openbrick_io::threemf::{
-    package_uuids, stored_fingerprint, CORE_NAMESPACE, MATERIAL_NAMESPACE, MODEL_PATH,
-    OPENBRICK_NAMESPACE, PRODUCTION_NAMESPACE,
+    assembly_name, package_uuids_with_layout, stored_fingerprint, CORE_NAMESPACE,
+    MATERIAL_NAMESPACE, MODEL_PATH, OPENBRICK_NAMESPACE, PRODUCTION_NAMESPACE,
 };
-use openbrick_io::{stl_binary_len, ExportMeta};
+use openbrick_io::{stl_binary_len, ExportLayout, ExportMeta};
 use openbrick_units::STANDARD;
 use write_fixtures::{fixtures, generate, mesh_volume, Fixture, STUDS};
 
@@ -66,10 +68,21 @@ struct ReadObject {
     mesh: Mesh,
 }
 
+/// A components object as read back: id, name, UUID, and per component the
+/// referenced object id, the component UUID and the transform attribute.
+#[derive(Debug)]
+struct ReadAssembly {
+    id: String,
+    name: String,
+    uuid: String,
+    components: Vec<(String, String, Option<String>)>,
+}
+
 /// Everything the tests compare, parsed with roxmltree.
 struct ReadModel {
     metadata: BTreeMap<String, String>,
     objects: Vec<ReadObject>,
+    assemblies: Vec<ReadAssembly>,
     build_uuid: String,
     items: Vec<(String, String)>,
 }
@@ -116,6 +129,7 @@ fn parse_model(xml: &str) -> ReadModel {
     let mut metadata = BTreeMap::new();
     let mut colour_groups: BTreeMap<String, Vec<[u8; 4]>> = BTreeMap::new();
     let mut objects = Vec::new();
+    let mut assemblies = Vec::new();
     let mut build = None;
     for node in children(model) {
         if core(node, "metadata") {
@@ -139,6 +153,29 @@ fn parse_model(xml: &str) -> ReadModel {
                         res.tag_name()
                     );
                     assert_eq!(res.attribute("type"), Some("model"));
+                    if let Some(list) = children(res).into_iter().find(|c| core(*c, "components")) {
+                        // Core 1.4.0 chapter 4: no pid on an object with components.
+                        assert_eq!(res.attribute("pid"), None);
+                        assert_eq!(children(res).len(), 1, "only the components list");
+                        let components = children(list)
+                            .iter()
+                            .map(|c| {
+                                assert!(core(*c, "component"));
+                                (
+                                    c.attribute("objectid").unwrap().to_string(),
+                                    uuid_of(*c),
+                                    c.attribute("transform").map(str::to_string),
+                                )
+                            })
+                            .collect();
+                        assemblies.push(ReadAssembly {
+                            id: res.attribute("id").unwrap().to_string(),
+                            name: res.attribute("name").unwrap().to_string(),
+                            uuid: uuid_of(res),
+                            components,
+                        });
+                        continue;
+                    }
                     let colour = res.attribute("pid").map(|pid| {
                         let index: usize = res.attribute("pindex").unwrap().parse().unwrap();
                         colour_groups[pid][index]
@@ -196,6 +233,7 @@ fn parse_model(xml: &str) -> ReadModel {
     ReadModel {
         metadata,
         objects,
+        assemblies,
         build_uuid,
         items,
     }
@@ -291,21 +329,48 @@ fn every_3mf_fixture_reads_back_exactly() {
                 part.name
             );
         }
-        // The UUIDs are the documented derivation from metadata and objects.
-        let expected = package_uuids(&f.objects(), &f.meta);
+        // The UUIDs are the documented derivation from metadata, objects and
+        // layout.
+        let expected = package_uuids_with_layout(&f.objects(), &f.meta, f.layout);
         let read_objects: Vec<String> = model.objects.iter().map(|o| o.uuid.clone()).collect();
         let read_items: Vec<String> = model.items.iter().map(|(_, u)| u.clone()).collect();
         let strings = |v: &[uuid::Uuid]| v.iter().map(|u| u.to_string()).collect::<Vec<_>>();
         assert_eq!(model.build_uuid, expected.build.to_string(), "{}", f.name);
         assert_eq!(read_objects, strings(&expected.objects), "{}", f.name);
         assert_eq!(read_items, strings(&expected.items), "{}", f.name);
-        // One build item per object, in order, and every UUID distinct and v5.
         let ids: Vec<&str> = model.objects.iter().map(|o| o.id.as_str()).collect();
         let item_ids: Vec<&str> = model.items.iter().map(|(id, _)| id.as_str()).collect();
-        assert_eq!(item_ids, ids);
+        if f.layout.groups(f.parts.len()) {
+            // One components object, placed by the only build item, whose
+            // components are the mesh objects in order, without transforms.
+            assert_eq!(model.assemblies.len(), 1, "{}", f.name);
+            let a = &model.assemblies[0];
+            assert_eq!(a.name, assembly_name(&f.meta));
+            assert_eq!(
+                Some(a.uuid.clone()),
+                expected.assembly.map(|u| u.to_string())
+            );
+            assert_eq!(item_ids, [a.id.as_str()]);
+            let referenced: Vec<&str> = a.components.iter().map(|(id, _, _)| id.as_str()).collect();
+            assert_eq!(referenced, ids);
+            let component_uuids: Vec<String> =
+                a.components.iter().map(|(_, u, _)| u.clone()).collect();
+            assert_eq!(component_uuids, strings(&expected.components));
+            assert!(a.components.iter().all(|(_, _, t)| t.is_none()));
+        } else {
+            // One build item per object, in order.
+            assert!(model.assemblies.is_empty(), "{}", f.name);
+            assert!(expected.assembly.is_none() && expected.components.is_empty());
+            assert_eq!(item_ids, ids);
+        }
+        // Every UUID distinct and v5.
         let mut uuids: Vec<&str> = vec![model.build_uuid.as_str()];
         uuids.extend(model.objects.iter().map(|o| o.uuid.as_str()));
         uuids.extend(model.items.iter().map(|(_, u)| u.as_str()));
+        for a in &model.assemblies {
+            uuids.push(a.uuid.as_str());
+            uuids.extend(a.components.iter().map(|(_, u, _)| u.as_str()));
+        }
         for u in &uuids {
             let parsed = uuid::Uuid::parse_str(u).expect("well-formed UUID");
             assert_eq!(parsed.get_version_num(), 5, "{u}");
@@ -500,4 +565,29 @@ fn fixtures_are_byte_identical_across_runs() {
     for ((name, a), (_, b)) in again.iter().zip(all_files()) {
         assert!(a == b, "{name} differs between two runs");
     }
+}
+
+/// The components fixture: its part stands on the body's top face, touching in
+/// that plane without sharing volume (boxes, so the bounds say it all), and the
+/// layout is the part-designer one.
+#[test]
+fn stacked_parts_touch_without_overlapping() {
+    let f = all_fixtures()
+        .iter()
+        .find(|f| f.name == "stacked-parts")
+        .expect("fixture");
+    assert_eq!(f.layout, ExportLayout::PART_DESIGNER);
+    let [body, accent] = [&f.parts[0].mesh, &f.parts[1].mesh];
+    let (b_lo, b_hi) = body.bounds();
+    let (a_lo, a_hi) = accent.bounds();
+    assert_eq!(a_lo[2], b_hi[2], "the accent stands on the top face");
+    assert!(a_hi[2] > a_lo[2]);
+    for k in 0..2 {
+        assert!(b_lo[k] < a_lo[k] && a_hi[k] < b_hi[k], "inside the face");
+    }
+    // Volumes of the boxes, as the file records them.
+    let side = (b_hi[0] - b_lo[0]) as f64;
+    assert!((mesh_volume(body) - side.powi(3)).abs() < 1e-9);
+    let [w, d, h] = [0, 1, 2].map(|k| (a_hi[k] - a_lo[k]) as f64);
+    assert!((mesh_volume(accent) - w * d * h).abs() < 1e-9);
 }

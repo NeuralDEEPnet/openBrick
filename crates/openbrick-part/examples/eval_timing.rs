@@ -8,9 +8,11 @@
 //! cargo run --release -p openbrick-part --example eval_timing -- logo logo:deboss
 //! ```
 //!
-//! Each argument is `<x>x<y>:<tile|plate|brick>`, or `logo[:<emboss|deboss|inlay>]`
-//! for the example 2x4 logo tile (parts/ndn.logo-tile.obpart.json) with its
-//! artwork parts/assets/mark.svg (relief.svg, backlog item 9). Every brick or
+//! Each argument is `<x>x<y>:<tile|plate|brick>`, or
+//! `logo[:<emboss|deboss|inlay|inlay-parts>]` for the example 2x4 logo tile
+//! (parts/ndn.logo-tile.obpart.json) with its artwork parts/assets/mark.svg
+//! (relief.svg, backlog item 9; `inlay-parts` is the inlay with inlayStyle
+//! `parts`, the artwork fill as its own part). Every brick or
 //! plate is built with studs (except tiles) and a tube field on the nominal
 //! fdm-0.4 process with the example fit profile, three times; the table shows
 //! the fastest run.
@@ -58,6 +60,7 @@ fn main() {
             "logo",
             "logo:deboss",
             "logo:inlay",
+            "logo:inlay-parts",
         ]
         .map(String::from)
         .to_vec();
@@ -70,7 +73,7 @@ fn main() {
     let kernel = ManifoldRust;
     println!("kernel: {}", openbrick_geom::Kernel::id(&kernel));
     println!(
-        "{:<12} {:>9} {:>9} {:>12} {:>5} {:>5} {:>10}",
+        "{:<17} {:>9} {:>9} {:>12} {:>5} {:>5} {:>10}",
         "part", "best ms", "tris", "volume mm3", "genus", "comps", "connectors"
     );
     for arg in args {
@@ -78,7 +81,11 @@ fn main() {
         let mut params = ParamValues::new();
         let assets = MemoryAssets::new().with("assets/mark.svg", MARK_SVG.to_vec());
         let d = if size == "logo" {
-            if !kind.is_empty() {
+            if let Some(mode) = kind.strip_suffix("-parts") {
+                params = params
+                    .with("relief", json!(mode))
+                    .with("inlayStyle", json!("parts"));
+            } else if !kind.is_empty() {
                 params = params.with("relief", json!(kind));
             }
             PartDoc::parse(LOGO_TILE).expect("the logo tile parses")
@@ -106,7 +113,7 @@ fn main() {
         let b = last.expect("built");
         let m = &b.measurements;
         println!(
-            "{:<12} {:>9.1} {:>9} {:>12.3} {:>5} {:>5} {:>10}",
+            "{:<17} {:>9.1} {:>9} {:>12.3} {:>5} {:>5} {:>10}",
             arg,
             best,
             m.triangle_count,
@@ -117,7 +124,7 @@ fn main() {
         );
         if let (Some(pct), Some(h)) = (m.removed_area_pct, m.relief_height_mm) {
             println!(
-                "{:<12} relief {h:.3} mm, opening removed {pct:.2} %, thinnest stroke {:.3} mm",
+                "{:<17} relief {h:.3} mm, opening removed {pct:.2} %, thinnest stroke {:.3} mm",
                 "",
                 m.min_stroke_mm.unwrap_or(f64::NAN)
             );

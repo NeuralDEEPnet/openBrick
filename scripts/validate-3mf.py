@@ -20,33 +20,50 @@ Each TARGET is either
 Generic rules for every 3MF, read in lib3mf strict mode:
     - lib3mf reads the package without errors and reports no warnings;
     - the unit is millimetre;
-    - every object is a mesh of type "model" that lib3mf finds manifold and
-      consistently oriented;
-    - every object has a build item with no transform (the objects share one
-      frame), and the build, every item and every object carry a Production
-      extension UUID; all UUIDs are distinct;
+    - every object is either a mesh of type "model" that lib3mf finds manifold
+      and consistently oriented, or a components object of type "model" (the
+      one-object-with-parts layout of openbrick_io::ExportLayout) whose
+      components reference mesh objects and carry no transform, so its parts
+      keep the shared frame; there is at most one components object;
+    - every mesh object is placed exactly once, by a build item of its own or
+      as a component of the one placed components object; build items carry no
+      transform (the objects share one frame); the build, every item, every
+      object and every component carry a Production extension UUID; all UUIDs
+      are distinct;
+    - no two mesh objects overlap (the 3MF Core specification asks producers
+      not to emit overlapping objects; touching is fine): sampled with a grid of
+      vertical lines over the region where their boxes overlap, each line's
+      inside intervals computed from its crossings with each mesh. The sample
+      can miss an overlap narrower than the grid spacing; the Rust tests prove
+      non-overlap of the evaluator's objects with kernel intersections;
     - the traceability metadata of docs/plan/05 section 3 is present and not
       blank: openbrick:partId, version, contentHash, fitProfile, process,
-      generator, kernel, and every object names its colour role in
+      generator, kernel, and every mesh object names its colour role in
       openbrick:role;
     - every UUID equals the one this script derives, independently of the Rust
-      code, from what lib3mf read: the metadata, and each object's name, role,
-      colour, and vertex and triangle lists (the stored fingerprint), following
-      the recipe documented on openbrick_io::threemf::package_uuids. So a file
-      whose content changed after writing, or two different exports, cannot
-      carry the same UUIDs unnoticed.
-Manifest checks add, per 3MF: object names, roles and colours in order, vertex
-and triangle counts, the stored fingerprint (FNV-1a over the exact f32 bits and
-indices lib3mf read), volume (divergence theorem over lib3mf's vertices) and
-bounding box, the build, object and item UUIDs, and the model metadata value by
-value; per STL (read with lib3mf's STL reader): triangle count and volume, for
-the merged file and each per-role file.
+      code, from what lib3mf read: the metadata, each mesh object's name, role,
+      colour, and vertex and triangle lists (the stored fingerprint), and the
+      layout and components object name, following the recipe documented on
+      openbrick_io::threemf::package_uuids_with_layout. So a file whose content
+      changed after writing, or two different exports, cannot carry the same
+      UUIDs unnoticed.
+Manifest checks add, per 3MF: the layout, object names, roles and colours in
+order, vertex and triangle counts, the stored fingerprint (FNV-1a over the
+exact f32 bits and indices lib3mf read), volume (divergence theorem over
+lib3mf's vertices) and bounding box, the build, object, item and component
+UUIDs, the components object's name and each component's object and
+transform, and the model metadata value by value; per STL (read with lib3mf's
+STL reader): triangle count and volume, for the merged file and each per-role
+file. Manifests written before the layout existed are read as the separate
+layout.
 
 --self-test first writes broken copies of the first 3MF (a flipped triangle, a
 malformed UUID, a missing build item, another unit, a missing and a blank
 metadata entry, a moved vertex) into a temporary directory and requires each to
 fail with the problem it was built to show, so a validator that passes
-everything cannot go unnoticed.
+everything cannot go unnoticed. When a target holds a components object, the
+first such 3MF gets broken copies too (overlapping parts, a component with a
+transform, a component without a UUID, a part placed twice, a part left out).
 
 Exit status: 0 when everything passes, 1 on any failure, 2 on bad usage.
 Requires: pip install -r scripts/requirements-validate-3mf.txt (lib3mf 2.5.0).
@@ -97,6 +114,20 @@ UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 UUID_ROOT = uuid.uuid5(uuid.NAMESPACE_DNS, "openbrick3d.org")
 # Relative tolerance for volumes summed in a different order than the writer did.
 VOLUME_RTOL = 1e-9
+# The layout name of a package with a components object, as written into the
+# UUID seed (openbrick_io::ExportLayout::OneObjectWithParts.name()).
+GROUPED_LAYOUT = "oneObjectWithParts"
+SEPARATE_LAYOUT = "separateObjects"
+# Overlap sampling: vertical lines per axis over the region where two objects'
+# boxes overlap, and the longest stretch of a line that may lie inside both
+# (f32 coordinates of a part a few centimetres across round to about 1e-6 mm;
+# 0.1 um leaves a margin and is far below any printed feature).
+OVERLAP_LINES = 64
+OVERLAP_TOLERANCE_MM = 1e-4
+# A line closer than this (in barycentric terms) to a triangle edge is skipped:
+# it would count a crossing twice or not at all.
+EDGE_EPS = 1e-12
+IDENTITY = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, 0]]
 
 WRAPPER = lib3mf.get_wrapper()
 
@@ -130,12 +161,36 @@ def mesh_objects(model):
     return out
 
 
+def components_objects(model):
+    it = model.GetComponentsObjects()
+    out = []
+    while it.MoveNext():
+        out.append(it.GetCurrentComponentsObject())
+    return out
+
+
 def object_count(model):
     it = model.GetObjects()
     n = 0
     while it.MoveNext():
         n += 1
     return n
+
+
+def components_of(assembly):
+    return [assembly.GetComponent(i) for i in range(assembly.GetComponentCount())]
+
+
+def transform_rows(t):
+    """A lib3mf transform as 4 rows of 3 (the 3MF matrix, translation last)."""
+    return [[t.Fields[r][c] for c in range(3)] for r in range(4)]
+
+
+def component_transform(component):
+    """The component's transform as rows, the identity when it has none."""
+    if not component.HasTransform():
+        return [row[:] for row in IDENTITY]
+    return transform_rows(component.GetTransform())
 
 
 def mesh_lists(mesh):
@@ -201,9 +256,11 @@ def model_metadata(model):
     return found
 
 
-def derived_uuids(model, meshes):
-    """The UUIDs openbrick_io::threemf::package_uuids gives for what lib3mf read:
-    (build, [object UUIDs in resource order], [item UUIDs in object order])."""
+def derived_uuids(model, meshes, assembly=None):
+    """The UUIDs openbrick_io::threemf::package_uuids_with_layout gives for what
+    lib3mf read: (build, [object UUIDs in resource order], [item UUIDs in build
+    order], assembly UUID or None, [component UUIDs in component order]).
+    `assembly` is the components object, when the package has one."""
     metadata = model_metadata(model)
 
     def sized(value):
@@ -226,17 +283,147 @@ def derived_uuids(model, meshes):
             f"object/{i}/mesh={m.GetVertexCount()}:{m.GetTriangleCount()}:"
             f"{stored_fingerprint(m):016x}\n"
         )
+    if assembly is not None:
+        seed += f"layout={GROUPED_LAYOUT}\n"
+        seed += f"assembly={sized(assembly.GetName())}\n"
     package = uuid.uuid5(UUID_ROOT, seed)
+    n = len(meshes)
     return (
         str(uuid.uuid5(package, "build")),
-        [str(uuid.uuid5(package, f"object/{i}")) for i in range(len(meshes))],
-        [str(uuid.uuid5(package, f"item/{i}")) for i in range(len(meshes))],
+        [str(uuid.uuid5(package, f"object/{i}")) for i in range(n)],
+        [str(uuid.uuid5(package, f"item/{i}")) for i in range(1 if assembly else n)],
+        str(uuid.uuid5(package, "assembly")) if assembly else None,
+        [str(uuid.uuid5(package, f"component/{i}")) for i in range(n)] if assembly else [],
     )
 
 
 def is_identity(t):
-    identity = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, 0]]
-    return all(t.Fields[r][c] == identity[r][c] for r in range(4) for c in range(3))
+    return transform_rows(t) == IDENTITY
+
+
+def triangle_list(mesh):
+    """Triangles as vertex triples, from what lib3mf read."""
+    vertices, triangles = mesh_lists(mesh)
+    return [(vertices[a], vertices[b], vertices[c]) for a, b, c in triangles]
+
+
+def box_of(tris):
+    points = [p for t in tris for p in t]
+    return (
+        [min(p[k] for p in points) for k in range(3)],
+        [max(p[k] for p in points) for k in range(3)],
+    )
+
+
+def inside_intervals(rows, x, y):
+    """Where the vertical line through (x, y) is inside a closed mesh, as sorted
+    (z0, z1) pairs, from its crossings with the triangles in `rows` (the mesh's
+    triangles whose projection spans this line's row); None when the line runs
+    through an edge or a vertex, where crossings would be miscounted."""
+    zs = []
+    for (a, b, c), (x0, x1) in rows:
+        if x < x0 or x > x1:
+            continue
+        d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+        if d == 0:
+            continue  # a vertical triangle: a generic vertical line misses it
+        l1 = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d
+        l2 = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / d
+        l3 = 1.0 - l1 - l2
+        low = min(l1, l2, l3)
+        if low < -EDGE_EPS:
+            continue
+        if low < EDGE_EPS:
+            return None
+        zs.append(l1 * a[2] + l2 * b[2] + l3 * c[2])
+    if len(zs) % 2:
+        return None
+    zs.sort()
+    return [(zs[i], zs[i + 1]) for i in range(0, len(zs), 2)]
+
+
+def shared_length(a, b):
+    """Total length two sorted interval lists have in common."""
+    total, i, j = 0.0, 0, 0
+    while i < len(a) and j < len(b):
+        total += max(0.0, min(a[i][1], b[j][1]) - max(a[i][0], b[j][0]))
+        if a[i][1] < b[j][1]:
+            i += 1
+        else:
+            j += 1
+    return total
+
+
+def overlap(tris_a, tris_b):
+    """Sampled overlap of two closed meshes: (longest shared stretch of a
+    vertical line, its (x, y), estimated shared volume, lines used, lines
+    skipped). None when their boxes share no volume, so they cannot overlap."""
+    (alo, ahi), (blo, bhi) = box_of(tris_a), box_of(tris_b)
+    lo = [max(alo[k], blo[k]) for k in range(3)]
+    hi = [min(ahi[k], bhi[k]) for k in range(3)]
+    if any(hi[k] - lo[k] <= 0 for k in range(3)):
+        return None
+    n = OVERLAP_LINES
+    step = [(hi[k] - lo[k]) / n for k in range(2)]
+    # Lines at cell centres, nudged by an irrational fraction of a cell so they
+    # avoid the round coordinates that edges and vertices sit on.
+    nudge = (math.sqrt(2) - 1.0) / 7.0
+    xs = [lo[0] + (i + 0.5 + nudge) * step[0] for i in range(n)]
+    ys = [lo[1] + (j + 0.5 - nudge) * step[1] for j in range(n)]
+
+    def by_row(tris):
+        rows = [[] for _ in range(n)]
+        for t in tris:
+            tx = (min(p[0] for p in t), max(p[0] for p in t))
+            ty0, ty1 = min(p[1] for p in t), max(p[1] for p in t)
+            for j in range(n):
+                if ty0 <= ys[j] <= ty1:
+                    rows[j].append((t, tx))
+        return rows
+
+    rows_a, rows_b = by_row(tris_a), by_row(tris_b)
+    worst, where, total, used, skipped = 0.0, None, 0.0, 0, 0
+    for j, y in enumerate(ys):
+        for x in xs:
+            ia = inside_intervals(rows_a[j], x, y)
+            ib = inside_intervals(rows_b[j], x, y)
+            if ia is None or ib is None:
+                skipped += 1
+                continue
+            used += 1
+            shared = shared_length(ia, ib)
+            total += shared * step[0] * step[1]
+            if shared > worst:
+                worst, where = shared, (x, y)
+    return worst, where, total, used, skipped
+
+
+def check_overlaps(meshes, parts):
+    """Problems for every pair of mesh objects whose sampled overlap exceeds
+    the tolerance; `parts` holds the resource ids of the components object's
+    parts, so the message can say which kind of objects overlap."""
+    problems = []
+    tris = [triangle_list(m) for m in meshes]
+    for i in range(len(meshes)):
+        for j in range(i + 1, len(meshes)):
+            result = overlap(tris[i], tris[j])
+            if result is None:
+                continue
+            worst, where, total, used, skipped = result
+            if worst > OVERLAP_TOLERANCE_MM:
+                a, b = meshes[i], meshes[j]
+                kind = (
+                    "parts"
+                    if a.GetResourceID() in parts and b.GetResourceID() in parts
+                    else "objects"
+                )
+                problems.append(
+                    f"{kind} {a.GetName()!r} and {b.GetName()!r} overlap: a vertical line at "
+                    f"x={where[0]:.4f}, y={where[1]:.4f} mm runs {worst:.4g} mm inside both "
+                    f"(about {total:.4g} mm3 over {used} sampled lines, {skipped} skipped); "
+                    "objects must touch, never overlap (docs/plan/05 section 7)"
+                )
+    return problems
 
 
 def check_3mf_generic(path):
@@ -252,12 +439,16 @@ def check_3mf_generic(path):
         problems.append("the build has no p:UUID")
     uuids.append(build_uuid)
     object_uuids = []
-    item_uuids = {}
     meshes = mesh_objects(model)
+    assemblies = components_objects(model)
     if not meshes:
         problems.append("no mesh objects")
-    if object_count(model) != len(meshes):
-        problems.append("the package holds objects that are not meshes")
+    if object_count(model) != len(meshes) + len(assemblies):
+        problems.append("the package holds objects that are neither meshes nor components objects")
+    if len(assemblies) > 1:
+        problems.append(
+            f"{len(assemblies)} components objects; an OpenBrick3D export has at most one"
+        )
     by_id = {}
     for m in meshes:
         name = m.GetName()
@@ -275,26 +466,74 @@ def check_3mf_generic(path):
         object_uuids.append(u)
         if not metadata_value(m.GetMetaDataGroup(), OPENBRICK_NS, "role"):
             problems.append(f"object {name!r} has no openbrick:role metadata")
+    # The components object: its parts are mesh objects in the shared frame.
+    assembly_ids = {a.GetResourceID(): a for a in assemblies}
+    component_uuids = {}
+    for a in assemblies:
+        label = f"components object {a.GetName()!r}"
+        if a.GetType() != lib3mf.ObjectType.Model:
+            problems.append(f"{label} has type {a.GetType()}, expected model")
+        has, u = a.GetUUID()
+        if not has:
+            problems.append(f"{label} has no p:UUID")
+        uuids.append(u)
+        if a.GetComponentCount() == 0:
+            problems.append(f"{label} has no components")
+        for k, c in enumerate(components_of(a)):
+            rid = c.GetObjectResourceID()
+            target = by_id.get(rid)
+            part = f"component {k} of {label}"
+            if target is None:
+                problems.append(f"{part} refers to resource {rid}, which is not a mesh object")
+            else:
+                part += f" (object {target.GetName()!r})"
+            if component_transform(c) != IDENTITY:
+                problems.append(
+                    f"{part} has a transform {component_transform(c)}: the parts must keep "
+                    "the shared frame, so components carry no transform"
+                )
+            has, u = c.GetUUID()
+            if not has:
+                problems.append(f"{part} has no p:UUID")
+            uuids.append(u)
+            component_uuids.setdefault(a.GetResourceID(), []).append(u)
     items = model.GetBuildItems()
-    referenced = []
+    placed = {rid: 0 for rid in by_id}
+    item_uuids = {}
     while items.MoveNext():
         item = items.GetCurrent()
         rid = item.GetObjectResourceID()
-        referenced.append(rid)
-        if rid not in by_id:
-            problems.append(f"a build item refers to resource {rid}, which is not a mesh object")
+        if rid in by_id:
+            placed[rid] += 1
+        elif rid in assembly_ids:
+            for c in components_of(assembly_ids[rid]):
+                if c.GetObjectResourceID() in placed:
+                    placed[c.GetObjectResourceID()] += 1
+        else:
+            problems.append(
+                f"a build item refers to resource {rid}, which is neither a mesh object "
+                "nor a components object"
+            )
         if item.HasObjectTransform() and not is_identity(item.GetObjectTransform()):
             problems.append(f"the build item of resource {rid} has a transform")
         has, u = item.GetUUID()
         if not has:
             problems.append(f"the build item of resource {rid} has no p:UUID")
         uuids.append(u)
-        item_uuids[rid] = u
-    if sorted(referenced) != sorted(by_id):
-        problems.append(
-            f"build items refer to {sorted(referenced)}, objects are {sorted(by_id)}; "
-            "every object needs exactly one build item"
-        )
+        item_uuids.setdefault(rid, []).append(u)
+    for rid, count in sorted(placed.items()):
+        if count != 1:
+            problems.append(
+                f"object {by_id[rid].GetName()!r} (resource {rid}) is placed {count} times; "
+                "every object needs exactly one build item, its own or that of the "
+                "components object it is a part of"
+            )
+    for rid, a in assembly_ids.items():
+        if len(item_uuids.get(rid, [])) != 1:
+            problems.append(
+                f"components object {a.GetName()!r} has {len(item_uuids.get(rid, []))} "
+                "build items, expected exactly one build item"
+            )
     for u in uuids:
         if u and not UUID_RE.match(u):
             problems.append(f"malformed UUID {u!r}")
@@ -305,24 +544,48 @@ def check_3mf_generic(path):
     for name in REQUIRED_METADATA:
         if not (metadata_value(group, OPENBRICK_NS, name) or "").strip():
             problems.append(f"model metadata openbrick:{name} is missing or empty")
+    assembly = assemblies[0] if len(assemblies) == 1 else None
     if meshes:
-        build, objects, items = derived_uuids(model, meshes)
-        read_items = [item_uuids.get(m.GetResourceID(), "") for m in meshes]
+        build, objects, items, assembly_uuid, components = derived_uuids(model, meshes, assembly)
         names = [m.GetName() for m in meshes]
-        for label, got, want in (
-            [("the build", build_uuid, build)]
-            + [(f"object {n!r}", g, w) for n, g, w in zip(names, object_uuids, objects)]
-            + [(f"the build item of {n!r}", g, w) for n, g, w in zip(names, read_items, items)]
-        ):
+        checks = [("the build", build_uuid, build)] + [
+            (f"object {n!r}", g, w) for n, g, w in zip(names, object_uuids, objects)
+        ]
+        if assembly is None:
+            read_items = [
+                (item_uuids.get(m.GetResourceID()) or [""])[0] for m in meshes
+            ]
+            checks += [
+                (f"the build item of {n!r}", g, w) for n, g, w in zip(names, read_items, items)
+            ]
+        else:
+            rid = assembly.GetResourceID()
+            label = f"components object {assembly.GetName()!r}"
+            checks += [
+                (label, assembly.GetUUID()[1], assembly_uuid),
+                (f"the build item of {label}", (item_uuids.get(rid) or [""])[0], items[0]),
+            ]
+            checks += [
+                (f"component {k} of {label}", g, w)
+                for k, (g, w) in enumerate(zip(component_uuids.get(rid, []), components))
+            ]
+        for label, got, want in checks:
             if got and got.lower() != want:
                 problems.append(
                     f"p:UUID of {label} is {got}, but the metadata and objects give {want}: "
-                    "the UUIDs do not match the content (see package_uuids in "
+                    "the UUIDs do not match the content (see package_uuids_with_layout in "
                     "crates/openbrick-io/src/threemf.rs)"
                 )
+    parts = {c.GetObjectResourceID() for a in assemblies for c in components_of(a)}
+    problems += check_overlaps(meshes, parts)
     vertices = sum(m.GetVertexCount() for m in meshes)
     triangles = sum(m.GetTriangleCount() for m in meshes)
     summary = f"{len(meshes)} objects, {vertices} vertices, {triangles} triangles"
+    if assembly is not None:
+        summary += (
+            f", one components object {assembly.GetName()!r} with "
+            f"{assembly.GetComponentCount()} parts"
+        )
     return model, problems, summary
 
 
@@ -344,6 +607,51 @@ def check_3mf_expected(model, fixture):
     while items.MoveNext():
         item = items.GetCurrent()
         item_uuids[item.GetObjectResourceID()] = item.GetUUID()[1]
+    # The layout: manifests written before it existed are the separate layout.
+    layout = fixture.get("layout", SEPARATE_LAYOUT)
+    assemblies = components_objects(model)
+    expected_assembly = fixture.get("assembly")
+    if (layout == GROUPED_LAYOUT) != bool(expected_assembly):
+        problems.append(f"manifest layout {layout!r} and its assembly entry disagree")
+    if expected_assembly is None:
+        if assemblies:
+            problems.append(f"{len(assemblies)} components objects, expected none ({layout})")
+    elif len(assemblies) != 1:
+        problems.append(f"{len(assemblies)} components objects, expected one ({layout})")
+    else:
+        a, e = assemblies[0], expected_assembly
+        label = f"components object {e['name']!r}"
+        if a.GetName() != e["name"]:
+            problems.append(f"{label}: read name {a.GetName()!r}")
+        if a.GetUUID()[1].lower() != e["uuid"]:
+            problems.append(f"{label}: p:UUID {a.GetUUID()[1]!r}, expected {e['uuid']}")
+        item_uuid = item_uuids.get(a.GetResourceID(), "")
+        if item_uuid.lower() != e["itemUuid"]:
+            problems.append(f"{label}: build item p:UUID {item_uuid!r}, expected {e['itemUuid']}")
+        if sorted(item_uuids) != [a.GetResourceID()]:
+            problems.append(f"{label}: the build places {sorted(item_uuids)}, expected only it")
+        components = components_of(a)
+        if len(components) != len(e["components"]):
+            problems.append(
+                f"{label}: {len(components)} components, expected {len(e['components'])}"
+            )
+        for k, (c, ec) in enumerate(zip(components, e["components"])):
+            target = c.GetObjectResource()
+            got = target.GetName() if target is not None else None
+            if got != ec["object"]:
+                problems.append(
+                    f"{label}: component {k} is object {got!r}, expected {ec['object']!r}"
+                )
+            if c.GetUUID()[1].lower() != ec["uuid"]:
+                problems.append(
+                    f"{label}: component {k} p:UUID {c.GetUUID()[1]!r}, expected {ec['uuid']}"
+                )
+            # The parts keep their transforms: exactly the ones recorded.
+            if component_transform(c) != ec["transform"]:
+                problems.append(
+                    f"{label}: component {k} transform {component_transform(c)}, "
+                    f"expected {ec['transform']}"
+                )
     for m, e in zip(meshes, expected):
         name = m.GetName()
         label = f"object {e['name']!r}"
@@ -362,9 +670,24 @@ def check_3mf_expected(model, fixture):
         uuid_read = m.GetUUID()[1]
         if uuid_read.lower() != e["uuid"]:
             problems.append(f"{label}: p:UUID {uuid_read!r}, expected {e['uuid']}")
-        item_uuid = item_uuids.get(m.GetResourceID(), "")
-        if item_uuid.lower() != e["itemUuid"]:
+        # A part of the components object has no build item of its own.
+        item_uuid = item_uuids.get(m.GetResourceID())
+        if e.get("itemUuid") is None:
+            if item_uuid is not None:
+                problems.append(f"{label}: has a build item of its own, expected none")
+        elif (item_uuid or "").lower() != e["itemUuid"]:
             problems.append(f"{label}: build item p:UUID {item_uuid!r}, expected {e['itemUuid']}")
+        if e.get("componentUuid") is not None:
+            found = [
+                c.GetUUID()[1].lower()
+                for a in assemblies
+                for c in components_of(a)
+                if c.GetObjectResourceID() == m.GetResourceID()
+            ]
+            if found != [e["componentUuid"]]:
+                problems.append(
+                    f"{label}: component p:UUIDs {found}, expected [{e['componentUuid']}]"
+                )
         # Exact f32 bits and indices: lib3mf's lists hash to the writer's value.
         fingerprint = f"{stored_fingerprint(m):016x}"
         if fingerprint != e["storedFingerprint"]:
@@ -521,11 +844,76 @@ MUTATIONS = [
 ]
 
 
-def self_test(path, report):
+def mesh_object_blocks(text):
+    return [
+        b for b in re.finditer(r"<object [^>]*>.*?</object>", text, re.S) if "<mesh>" in b.group(0)
+    ]
+
+
+def sink_second_part(text):
+    """Lower every vertex of the second mesh object by 0.5 mm, into the first:
+    both stay manifold, so only the overlap check (and the UUIDs) can notice."""
+    block = mesh_object_blocks(text)[1]
+
+    def lower(m):
+        return f'{m.group(1)}{float(m.group(2)) - 0.5!r}"'
+
+    moved = re.sub(r'( z=")([^"]+)"', lower, block.group(0))
+    return text[: block.start()] + moved + text[block.end() :]
+
+
+def transform_last_component(text):
+    last = list(re.finditer(r'<component objectid="\d+"', text))[-1]
+    return text[: last.end()] + ' transform="1 0 0 0 1 0 0 0 1 0 0 0.5"' + text[last.end() :]
+
+
+def drop_component_uuid(text):
+    return re.sub(r'(<component [^>]*?) p:UUID="[^"]+"', r"\1", text, count=1)
+
+
+def place_part_too(text):
+    first = re.search(r'<component objectid="(\d+)"', text).group(1)
+    extra = uuid.uuid5(UUID_ROOT, "validate-3mf self-test: part placed twice")
+    return text.replace(
+        "</build>", f'  <item objectid="{first}" p:UUID="{extra}"/>\n </build>', 1
+    )
+
+
+def drop_last_component(text):
+    last = list(re.finditer(r"\s*<component [^>]*/>", text))[-1]
+    return text[: last.start()] + text[last.end() :]
+
+
+# Broken copies of a package with a components object.
+COMPONENT_MUTATIONS = [
+    ("overlapping parts", sink_second_part, "overlap"),
+    ("component with a transform", transform_last_component, "has a transform"),
+    ("component without a UUID", drop_component_uuid, "UUID"),
+    ("part placed twice", place_part_too, "exactly one build item"),
+    ("part left out", drop_last_component, "exactly one build item"),
+]
+
+
+def has_components(path):
+    with zipfile.ZipFile(path) as z:
+        return "<components>" in z.read("3D/3dmodel.model").decode("utf-8")
+
+
+def self_test(paths, report):
     """Every broken copy of a valid file must fail the generic rules, with the
-    problem it was built to show."""
+    problem it was built to show: the generic mutations on the first 3MF, and
+    the component mutations on the first 3MF with a components object."""
+    runs = [(paths[0], MUTATIONS)]
+    grouped = next((p for p in paths if has_components(p)), None)
+    if grouped is not None:
+        runs.append((grouped, COMPONENT_MUTATIONS))
+    for path, mutations in runs:
+        self_test_one(path, mutations, report)
+
+
+def self_test_one(path, mutations, report):
     with tempfile.TemporaryDirectory() as tmp:
-        for label, edit, fragment in MUTATIONS:
+        for label, edit, fragment in mutations:
             dst = os.path.join(tmp, "mutated.3mf")
             rewrite(path, dst, edit)
             _, problems, _ = check_3mf_generic(dst)
@@ -567,7 +955,7 @@ def main(argv):
         if not threemfs:
             print("--self-test needs at least one 3MF", file=sys.stderr)
             return 2
-        self_test(threemfs[0], report)
+        self_test(threemfs, report)
     if report.failures:
         print(f"{report.failures} check(s) failed")
         return 1
