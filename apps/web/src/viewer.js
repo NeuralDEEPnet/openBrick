@@ -281,6 +281,17 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
       dirty = true;
     },
 
+    /**
+     * Show no part (the build failed, so nothing on screen describes the
+     * controls). The grid and the camera stay; the page says why in text.
+     */
+    clear() {
+      clearPart();
+      shown++;
+      showing = { roles: [], triangles: 0, overlayTriangles: 0 };
+      dirty = true;
+    },
+
     /** Recolour roles without a new part: { body: "#rrggbb", accent: ... }. */
     setColors(colors) {
       for (const [role, colour] of Object.entries(colors)) {

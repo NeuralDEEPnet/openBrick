@@ -16,10 +16,17 @@
 //    limit is refused before it is sent; deboss and inlay change the meshes and
 //    equal native; "None" fit disables both downloads with FIT.MISSING shown and
 //    a link to the calibration coupon; with the example fit the 3MF and STL
-//    download (saved for scripts/validate-3mf.py); a 16x16 tile shows the elapsed
+//    download (saved for scripts/validate-3mf.py) and every downloaded file is
+//    byte-identical to the one native_eval writes with the same functions (so
+//    the STL is the closed solid the openbrick-wasm tests check); a size that
+//    turns invalid while a tile is being built keeps the downloads off and its
+//    message up when that build answers; a fit profile the core refuses empties
+//    the 3D view and the stats and says why; a 16x16 tile shows the elapsed
 //    seconds and is cancelled by going back to 2x4; dragging up shows the
 //    underside; the coupon mode builds the native coupon, lists its cells and
-//    downloads its 3MF.
+//    downloads its 3MF, a pocket layout the bed cannot take empties the view,
+//    the stats and the cell table, and an invalid bed size turns the coupon
+//    downloads off until it is fixed.
 //    Unless --no-webgpu, a WebGPU run checks the first part again.
 // 4. A phone-sized run (390 x 844, touch, dark theme): no horizontal scrolling,
 //    every control inside the width, a different background from the light
@@ -37,6 +44,7 @@
 // works; it says nothing about speed on a device.
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -83,6 +91,7 @@ function nativeValues() {
   const out = run("cargo", ["run", "-q", "--release", "-p", "openbrick-wasm", "--example", "native_eval"]);
   const native = JSON.parse(out);
   for (const c of ["emboss", "deboss", "inlay", "emboss-no-fit"]) if (!native.part[c]) throw new Error(`native_eval printed no ${c} case:\n${out}`);
+  for (const f of ["emboss3mf", "embossStl", "inlay3mf", "coupon3mf"]) if (!native.exports?.[f]) throw new Error(`native_eval printed no ${f} export:\n${out}`);
   return native;
 }
 
@@ -197,15 +206,34 @@ async function settle(page, timeoutMs = 30_000) {
   return false;
 }
 
-/** Click a download button and save the file; returns its name and bytes. */
+/** Click a download button and save the file; returns its name, bytes and SHA-256. */
 async function download(page, selector, label) {
   const [d] = await Promise.all([page.waitForEvent("download", { timeout: 60_000 }), page.click(selector)]);
   const name = d.suggestedFilename();
   const path = join(downloads, name);
   await d.saveAs(path);
   const bytes = readFileSync(path);
-  console.log(`# ${label}: saved ${path} (${bytes.length} bytes)`);
-  return { name, path, bytes };
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  console.log(`# ${label}: saved ${path} (${bytes.length} bytes, sha256 ${sha256.slice(0, 16)}…)`);
+  return { name, path, bytes, sha256 };
+}
+
+/** A downloaded file is byte-identical to the one native_eval wrote (same name, size and SHA-256). */
+function checkFile(file, native, label) {
+  check(file.name === native.name, `${label}: file name ${file.name}, native ${native.name}`);
+  check(
+    file.bytes.length === native.bytes && file.sha256 === native.sha256,
+    `${label}: ${file.bytes.length} bytes sha256 ${file.sha256}, native ${native.bytes} bytes ${native.sha256}`,
+  );
+}
+
+/** Wait until the page's state is `want` (or throw with the last state). */
+async function waitState(page, want, timeoutMs, label) {
+  try {
+    await page.waitForFunction((s) => window.__web?.state === s, want, { timeout: timeoutMs, polling: 50 });
+  } catch {
+    throw new Error(`${label}: the page did not reach state ${want} within ${timeoutMs / 1000} s (last: ${(await web(page))?.state})`);
+  }
 }
 
 const browserArgs = [
@@ -251,6 +279,8 @@ async function fullRun(browser, origin, native) {
     feature.includes("Warning") && feature.includes("FEATURE.MIN") && /Measured [\d.]+ %/.test(feature) && /threshold [\d.]+ %/.test(feature) && feature.includes("Fix:"),
     `${label}: the FEATURE.MIN entry is "${feature}"`,
   );
+  // The unit is the core's (openbrick_print::finding_unit), not read from the message.
+  check(JSON.stringify(w.part.units) === JSON.stringify(["FEATURE.MIN %"]), `${label}: finding units ${JSON.stringify(w.part.units)}`);
   check(!(await page.isDisabled("#download-3mf")) && !(await page.isDisabled("#download-stl")), `${label}: downloads are disabled for the default tile`);
   const disclaimer = await page.textContent("footer");
   check(disclaimer.includes("not affiliated with") && disclaimer.includes("Source code on GitHub"), `${label}: footer "${disclaimer}"`);
@@ -300,7 +330,7 @@ async function fullRun(browser, origin, native) {
   check(relief.inlay.faceOnBed === "top", `${label}: the inlay is not exported face down (${relief.inlay.faceOnBed})`);
   // The inlay is exported turned face down; lib3mf checks that file too.
   const inlay = await download(page, "#download-3mf", `${label} inlay 3MF`);
-  check(inlay.name === "ndn.logo-tile-2x4-inlay.3mf", `${label}: inlay file name ${inlay.name}`);
+  checkFile(inlay, native.exports.inlay3mf, `${label} inlay 3MF`);
   check(await page.isHidden('[data-param="reliefHeight"]'), `${label}: reliefHeight is shown for an inlay`);
   const inlayNotes = await page.textContent("#notes");
   check(/filament change/.test(inlayNotes), `${label}: the inlay note on the filament change is missing: "${inlayNotes}"`);
@@ -335,12 +365,69 @@ async function fullRun(browser, origin, native) {
   w = await waitFor(page, { after: n, want: (p) => p.exportAllowed }, 60_000, `${label} example fit`);
   checkPart(w.part, native.part.emboss, `${label} example fit again`);
   const threemf = await download(page, "#download-3mf", `${label} 3MF`);
-  check(threemf.name === "ndn.logo-tile-2x4-emboss.3mf", `${label}: 3MF file name ${threemf.name}`);
   check(threemf.bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 3, 4])), `${label}: the 3MF is not a zip container`);
+  checkFile(threemf, native.exports.emboss3mf, `${label} 3MF`);
+  // The STL: byte-identical to the native export, which the openbrick-wasm
+  // tests check is closed and has the kernel's volume.
   const stl = await download(page, "#download-stl", `${label} STL`);
-  check(stl.name === "ndn.logo-tile-2x4-emboss.stl", `${label}: STL file name ${stl.name}`);
   const count = stl.bytes.readUInt32LE(80);
-  check(stl.bytes.length === 84 + 50 * count && count > 0, `${label}: the STL is ${stl.bytes.length} bytes for ${count} triangles`);
+  check(stl.bytes.length === 84 + 50 * count && count === native.exports.embossStl.triangles, `${label}: the STL is ${stl.bytes.length} bytes for ${count} triangles, native ${native.exports.embossStl.triangles}`);
+  checkFile(stl, native.exports.embossStl, `${label} STL`);
+
+  // A size that turns invalid while a tile is being built: when that build
+  // answers, the field's message stays up and the downloads stay off.
+  let raceNote;
+  {
+    const start = await web(page);
+    await page.fill("#p-size-0", "12");
+    await page.fill("#p-size-1", "12");
+    await waitState(page, "evaluating", 10_000, `${label} race`);
+    await page.fill("#p-size-0", "40");
+    const atInvalid = await web(page);
+    let now = atInvalid;
+    if (atInvalid.evaluations !== start.evaluations) {
+      raceNote = "the 12x12 answered before the invalid width; the race was not exercised";
+    } else {
+      check(atInvalid.state === "invalid", `${label}: an invalid width gives state ${atInvalid.state}`);
+      // Wait for the 12x12 to answer: dropped (the fix) or shown (the bug).
+      const end = Date.now() + 60_000;
+      while (Date.now() < end && now.staleReplies === start.staleReplies && now.evaluations === start.evaluations) {
+        await sleep(100);
+        now = await web(page);
+      }
+      if (now.evaluations !== start.evaluations) check(false, `${label}: the 12x12 reached the screen after the width turned invalid (state ${now.state})`);
+      else check(now.staleReplies > start.staleReplies, `${label}: the 12x12 did not answer within 60 s`);
+      check(now.state === "invalid", `${label}: after the stale reply the state is ${now.state}, not invalid`);
+      const line = await page.textContent("#status");
+      check(line.includes("Width must be a whole number of studs from 1 to"), `${label}: the status line lost the invalid width message: "${line}"`);
+      check((await page.isDisabled("#download-3mf")) && (await page.isDisabled("#download-stl")), `${label}: downloads came back on with an invalid width`);
+      const why = await page.textContent("#download-reason");
+      check(why.includes("a field is invalid"), `${label}: the download reason with an invalid width is "${why}"`);
+      check((await page.getAttribute("#p-size-0", "aria-invalid")) === "true", `${label}: the width field is not marked invalid`);
+      raceNote = `a stale reply after an invalid width was dropped (${now.staleReplies - start.staleReplies})`;
+    }
+    n = now.evaluations;
+    await page.fill("#p-size-0", "2");
+    await page.fill("#p-size-1", "4");
+    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x4" }, 60_000, `${label} after the race`);
+    checkPart(w.part, native.part.emboss, `${label} after the race`);
+  }
+
+  // A fit profile the core refuses: nothing on screen may describe the controls,
+  // so the 3D view and the stats empty and the text says why.
+  n = w.evaluations;
+  await page.setInputFiles("#fit-file", { name: "broken-fit.json", mimeType: "application/json", buffer: Buffer.from('{"kind":"fit","id":"x"}') });
+  await waitState(page, "part-error", 60_000, `${label} broken fit`);
+  s = await stats(page);
+  check(s.showing?.triangles === 0 && s.showing.roles.length === 0 && s.showing.overlayTriangles === 0, `${label}: a failed build left ${JSON.stringify(s.showing)} on screen`);
+  check((await page.textContent("#tile-stats")).trim() === "", `${label}: a failed build left the stats "${await page.textContent("#tile-stats")}"`);
+  const emptyLegend = await page.textContent("#legend");
+  check(emptyLegend.includes("Nothing to show: the tile could not be built"), `${label}: the legend after a failed build is "${emptyLegend}"`);
+  check((await page.isDisabled("#download-3mf")) && (await page.isDisabled("#download-stl")), `${label}: downloads are on after a failed build`);
+  check((await page.textContent("#findings")).includes("Error"), `${label}: the validation panel does not show the error`);
+  await page.selectOption("#fit", "example");
+  w = await waitFor(page, { after: n, want: (p) => p.exportAllowed }, 60_000, `${label} example fit after the broken one`);
+  checkPart(w.part, native.part.emboss, `${label} example fit after the broken one`);
 
   // A 16x16 tile takes seconds: the status line shows them, and going back to
   // 2x4 cancels the build by replacing the worker.
@@ -418,6 +505,36 @@ async function fullRun(browser, origin, native) {
   }
   const coupon = await download(page, "#download-coupon-3mf", `${label} coupon 3MF`);
   check(coupon.name === `${nc.fileStem}.3mf`, `${label}: coupon file name ${coupon.name}`);
+  checkFile(coupon, native.exports.coupon3mf, `${label} coupon 3MF`);
+
+  // A pocket layout the bed cannot take: no coupon, and nothing of the last one
+  // stays in the view, the stats or the cell table.
+  await page.selectOption("#coupon-pockets", "full");
+  await waitState(page, "coupon-error", 120_000, `${label} full coupon`);
+  s = await stats(page);
+  check(s.showing?.triangles === 0, `${label}: a failed coupon left ${JSON.stringify(s.showing)} on screen`);
+  check((await page.textContent("#coupon-stats")).trim() === "", `${label}: a failed coupon left its stats`);
+  const cellText = await page.textContent("#cells");
+  check((await page.locator("#cells tr").count()) === 1 && cellText.includes("No cells"), `${label}: a failed coupon left the cells "${cellText.slice(0, 80)}"`);
+  check((await page.isDisabled("#download-coupon-3mf")) && (await page.isDisabled("#download-coupon-stl")), `${label}: coupon downloads are on after a failed build`);
+  check((await page.textContent("#coupon-download-note")).includes("could not be built"), `${label}: the coupon note does not say why`);
+  check((await page.textContent("#legend")).includes("Nothing to show: the coupon could not be built"), `${label}: the legend does not say why the view is empty`);
+  const c1 = (await web(page)).couponBuilds;
+  await page.selectOption("#coupon-pockets", "cross");
+  w = await waitFor(page, { mode: "coupon", after: c1 }, 120_000, `${label} cross coupon again`);
+  check(w.coupon.contentHash === nc.contentHash, `${label}: the cross coupon again has content hash ${w.coupon.contentHash}`);
+  // A bed size that is not a positive number: the coupon on screen is the last
+  // valid bed's, the message stays, and the downloads are off until it is fixed.
+  const bedX = await page.inputValue("#bed-x");
+  await page.fill("#bed-x", "0");
+  await page.dispatchEvent("#bed-x", "change");
+  await waitState(page, "invalid", 10_000, `${label} bed 0`);
+  check((await page.isDisabled("#download-coupon-3mf")) && (await page.isDisabled("#download-coupon-stl")), `${label}: coupon downloads are on with a bed of 0 mm`);
+  check((await page.textContent("#coupon-download-note")).includes("bed size is invalid"), `${label}: the coupon note does not name the invalid bed`);
+  await page.fill("#bed-x", bedX);
+  await page.dispatchEvent("#bed-x", "change");
+  await waitState(page, "ready", 30_000, `${label} bed back to ${bedX}`);
+  check(!(await page.isDisabled("#download-coupon-3mf")), `${label}: coupon downloads stay off after the bed is fixed`);
   // Back to the tile: the part on screen is the one left there.
   await page.click("#tab-tile");
   w = await waitFor(page, { want: (p) => p.contentHash === native.part.emboss.contentHash }, 60_000, `${label} tile again`);
@@ -427,7 +544,8 @@ async function fullRun(browser, origin, native) {
   console.log(
     `# ${label}: first part after ${(firstMs / 1000).toFixed(1)} s (evaluated in ${Math.round(w.part.buildMs)} ms), ` +
       `emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash.slice(0, 12)}…, deboss and inlay equal native, ` +
-      `FIT.MISSING blocks downloads, 3MF ${threemf.bytes.length} bytes, STL ${count} triangles, ${cancelNote}, ` +
+      `FIT.MISSING blocks downloads, 3MF ${threemf.bytes.length} bytes, STL ${count} triangles (both byte-identical to native), ${raceNote}, ` +
+      `a refused fit profile and a refused coupon layout empty the view, ${cancelNote}, ` +
       `camera below the ground (y ${under.camera[1].toFixed(1)} mm), coupon ${nc.triangles} triangles in ${Math.round(w.coupon?.buildMs ?? 0)} ms, coupon 3MF ${coupon.bytes.length} bytes`,
   );
   await context.close();

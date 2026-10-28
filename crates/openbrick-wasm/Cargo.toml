@@ -20,6 +20,11 @@ openbrick-print = { workspace = true }
 # The 3MF and STL writers behind export_part and export_coupon.
 openbrick-io = { workspace = true }
 
+[dev-dependencies]
+# examples/native_eval: SHA-256 of the native exports, which the smoke test
+# compares with the files the browser downloads.
+sha2 = { workspace = true }
+
 # Only the wasm32 build carries bindings; native builds (cargo test, clippy) compile
 # the same functions as plain Rust. Pinned exactly: the generated JavaScript glue
 # must come from wasm-bindgen-cli of the same version, which `cargo xtask wasm`

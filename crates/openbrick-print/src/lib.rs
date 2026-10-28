@@ -20,7 +20,7 @@ pub use record::{
     FIT_INTENTS, RECORD_DECIMALS,
 };
 pub use validate::{
-    validate, validate_with, FeatureNames, IMPLEMENTED_RULES, LENGTH_TOLERANCE_MM,
+    finding_unit, validate, validate_with, FeatureNames, IMPLEMENTED_RULES, LENGTH_TOLERANCE_MM,
     MESH_VOLUME_TOLERANCE_PCT, PLANNED_RULES,
 };
 

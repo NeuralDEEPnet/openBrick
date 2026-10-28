@@ -1,11 +1,8 @@
 // Small pure helpers for the page: URL parameters, stepping the size inputs, the
 // text of the status line, the stats and the validation panel. Kept apart from
-// main.js so node --test can check them. Every number shown comes from the core.
+// main.js so node --test can check them. Every number shown comes from the core,
+// and so does every unit.
 
-import { parseStuds } from "./protocol.js";
-
-/** The brick the page shows first when the URL names none. */
-export const DEFAULT_SIZE = Object.freeze({ width: 2, length: 4 });
 export const BACKENDS = ["auto", "webgpu", "webgl2"];
 export const MODES = ["tile", "coupon"];
 
@@ -36,33 +33,6 @@ export function writeMode(search, mode) {
   return s ? `?${s}` : "";
 }
 
-/**
- * Read ?w= and ?l= (studs). Out-of-range or malformed values fall back to the
- * defaults and are reported in `errors`.
- */
-export function readSize(search, maxStuds) {
-  const q = new URLSearchParams(search);
-  const errors = [];
-  const size = { ...DEFAULT_SIZE };
-  for (const [key, field] of [["w", "width"], ["l", "length"]]) {
-    if (!q.has(key)) continue;
-    try {
-      size[field] = parseStuds(q.get(key), maxStuds, field);
-    } catch (err) {
-      errors.push(err.message);
-    }
-  }
-  return { ...size, errors };
-}
-
-/** The query string for a size, keeping any other parameters. */
-export function writeQuery(search, { width, length }) {
-  const q = new URLSearchParams(search);
-  q.set("w", String(width));
-  q.set("l", String(length));
-  return `?${q}`;
-}
-
 /** The value a stepper button produces: current + step, kept within min and max. */
 export function stepStuds(current, step, maxStuds, minStuds = 1) {
   const n = Number.isInteger(current) ? current : minStuds;
@@ -75,13 +45,6 @@ export function stepStuds(current, step, maxStuds, minStuds = 1) {
  * pure-Rust kernel (Q01 finding 2 in docs/spikes/q01-kernel-conformance.md).
  */
 export const SLOW_BUILD_MS = 1000;
-
-/** Status line parts while a build runs; a slow one gets a note on cancelling. */
-export function buildingParts({ width, length }, elapsedMs) {
-  const parts = [`Building ${width} × ${length}…`];
-  if (elapsedMs >= SLOW_BUILD_MS) parts.push("Large bricks take a while. Change the size to cancel.");
-  return parts;
-}
 
 /** Status line parts while an evaluation runs; a slow one says how to cancel it. */
 export function evaluatingParts(what, elapsedMs) {
@@ -96,21 +59,8 @@ export function elapsedText(ms) {
 }
 
 const integer = new Intl.NumberFormat("en-US");
-const volume = new Intl.NumberFormat("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 const oneDecimal = new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const upToThree = new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 });
-
-/** Status line parts for a built brick, in display order. */
-export function statusParts(result, backend) {
-  return [
-    `${result.width} × ${result.length} brick`,
-    `${integer.format(result.triangles)} triangles`,
-    `${volume.format(result.volumeMm3)} mm³`,
-    `fingerprint ${result.fingerprint}`,
-    `built in ${Math.round(result.buildMs)} ms by ${result.kernel}`,
-    `${backend === "webgpu" ? "WebGPU" : "WebGL 2"}`,
-  ];
-}
 
 /** "12.5 × 25.5 × 2.5 mm" from bounds [min x, y, z, max x, y, z]. */
 export function sizeText(bounds) {
@@ -149,24 +99,19 @@ export function removedText(result) {
   return `Red: ${upToThree.format(pct)} % of the artwork does not print as drawn (lines thinner than the minimum feature, or face material too thin between cuts)`;
 }
 
-/** The unit of a finding's value and threshold (schemas/report.schema.json). */
-export function findingUnit(f) {
-  if (f.rule === "MESH.VOLUME") return f.threshold > 0 ? "%" : "mm³";
-  if (f.rule === "FEATURE.MIN" && /% of the/.test(f.message)) return "%";
-  if (f.rule === "MESH.MANIFOLD") return "";
-  return "mm";
-}
-
 const num = (x, unit) => (typeof x === "number" ? `${upToThree.format(x)}${unit ? ` ${unit}` : ""}` : "not measured");
 
 /**
  * What the validation panel shows for one finding: severity in words and as an
  * icon (never colour alone), rule id, message, measured value, threshold and
  * fix hint, and whether it asks for calibration (FIT.MISSING, FIT.PROCESS).
+ * The unit of the numbers is the core's (`f.unit`, from
+ * openbrick_print::finding_unit through the worker); without one the numbers
+ * are shown bare, never with a guessed unit.
  */
 export function findingView(f) {
   const blocker = f.severity === "blocker";
-  const unit = findingUnit(f);
+  const unit = typeof f.unit === "string" ? f.unit : "";
   return {
     blocker,
     icon: blocker ? "⛔" : "⚠️",

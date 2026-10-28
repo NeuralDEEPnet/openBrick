@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { controlsFor, defaultValues, paramOverrides, visibility } from "../src/params.js";
 import { dispatch } from "../src/protocol.js";
+import { findingView } from "../src/ui.js";
 
 const glue = new URL("../src/wasm/openbrick_wasm.js", import.meta.url);
 const skip = existsSync(glue) ? false : "src/wasm/ is not built; run `pnpm --dir apps/web wasm` (cargo xtask wasm)";
@@ -77,11 +78,21 @@ test("the WebAssembly core evaluates, validates and exports the logo tile with i
   assert.equal(r.kernel, manifest.kernel);
   assert.match(r.contentHash, /^[0-9a-f]{64}$/);
   assert.equal(transfer.length, 6);
+  // The sample's hairline: FEATURE.MIN on the removed area, in percent, as the
+  // core says (openbrick_print::finding_unit), not as the message reads.
+  const area = r.report.findings.find((f) => f.rule === "FEATURE.MIN");
+  assert.equal(area?.unit, "%", JSON.stringify(r.report));
+  assert.equal(area.value, r.measurements.removedAreaPct);
+  assert.match(findingView(area).measured, /^\d+(\.\d+)? %$/);
+  const fdm = b.processProfiles.find((p) => p.id === "fdm-0.4");
+  assert.equal(area.threshold, fdm.maxRemovedAreaPct);
+  assert.equal(findingView(area).threshold, `${fdm.maxRemovedAreaPct} %`);
 
   // Without a fit profile the fit-critical tube field blocks the export.
   const none = dispatch(core, { id: 3, type: "evaluatePart", ...request, fit: "" }).reply.result;
   assert.equal(none.exportAllowed, false);
   assert.ok(none.report.findings.some((f) => f.rule === "FIT.MISSING" && f.severity === "blocker"));
+  for (const f of none.report.findings) assert.equal(f.unit, f.rule === "FIT.MISSING" ? "" : "%", f.rule);
   const refused = dispatch(core, { id: 4, type: "exportPart", format: "3mf", ...request, fit: "" }).reply;
   assert.equal(refused.ok, false);
   assert.match(refused.error, /FIT\.MISSING/);

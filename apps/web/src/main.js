@@ -79,6 +79,8 @@ const page = {
   part: null,
   coupon: null,
   evaluations: 0,
+  /** Tile replies dropped because the controls changed while they were built. */
+  staleReplies: 0,
   couponBuilds: 0,
   restarts: 0,
   traps: 0,
@@ -223,6 +225,8 @@ async function main() {
       request: null,
       result: null,
       error: null,
+      /** A bed size field holds something that is not a positive number. */
+      invalid: false,
       exporting: false,
     },
   };
@@ -600,12 +604,21 @@ async function main() {
   // ------------------------------------------------------------------ evaluation
 
   let timer = null;
+  /**
+   * Counts changes to the tile controls. An evaluation remembers the count it
+   * started at; a reply for an older count describes controls that have changed
+   * since (a newer evaluation follows, or a field is now invalid), so it never
+   * reaches the screen and never turns the downloads back on.
+   */
+  let edits = 0;
   /** The controls changed: evaluate again after a short pause. */
   function changed() {
+    edits++;
     state.dirty = true;
     renderDownloads();
     if (invalid.size > 0) {
       clearTimeout(timer);
+      timer = null;
       stopTicker();
       setState("invalid");
       showStatus([...invalid.values()], "bad");
@@ -635,7 +648,9 @@ async function main() {
 
   async function evaluate() {
     timer = null;
+    if (invalid.size > 0) return; // changed() shows why; nothing to build
     const request = currentRequest();
+    const started = edits;
     setState("evaluating");
     showBuilding("Building the logo tile", performance.now());
     let result;
@@ -643,22 +658,25 @@ async function main() {
       result = await client.evaluatePart(request);
     } catch (err) {
       syncCounters();
-      stopTicker();
-      if (page.mode !== "tile" || timer) return;
+      if (started !== edits) {
+        page.staleReplies++;
+        return;
+      }
+      // In the coupon mode the tile stays dirty and is evaluated again when shown.
+      if (page.mode !== "tile") return;
       state.error = err.message;
       state.dirty = false;
       state.result = null;
       page.part = { error: err.message };
-      setState("part-error");
-      showStatus([`The tile could not be built: ${err.message}`], "bad");
-      renderValidation();
-      renderDownloads();
+      presentTileError();
       return;
     }
     syncCounters();
     if (result === null) return; // superseded; the newer request owns the status line
-    if (timer) return; // the controls changed again meanwhile
-    stopTicker();
+    if (started !== edits) {
+      page.staleReplies++;
+      return;
+    }
     state.request = request;
     state.result = result;
     state.dirty = false;
@@ -670,8 +688,7 @@ async function main() {
         page.warnings.push(`visibleWhen of ${name}: the page read ${visible[name]}, the core ${shown}`);
       }
     }
-    applyVisibility(result.params.visible ?? visible);
-    if (page.mode === "tile") showTile({ keepView: page.evaluations > 0 });
+    const keepView = page.evaluations > 0;
     page.evaluations++;
     page.part = {
       contentHash: result.contentHash,
@@ -682,12 +699,23 @@ async function main() {
       exportAllowed: result.exportAllowed,
       blockers: result.report.findings.filter((f) => f.severity === "blocker").map((f) => f.rule),
       warnings: result.report.findings.filter((f) => f.severity !== "blocker").map((f) => f.rule),
+      units: result.report.findings.map((f) => `${f.rule} ${f.unit}`),
       params: result.params.values,
       faceOnBed: result.faceOnBed,
       removedAreaPct: result.measurements.removedAreaPct ?? null,
       buildMs: result.buildMs,
     };
     page.error = null;
+    // In the coupon mode the result waits; setMode("tile") shows it.
+    if (page.mode === "tile") presentTile({ keepView });
+  }
+
+  /** Put the tile result on screen: the part, the status line, stats, validation, downloads. */
+  function presentTile({ keepView }) {
+    const result = state.result;
+    stopTicker();
+    applyVisibility(result.params.visible ?? visibility(spec, state.values).visible);
+    showTile({ keepView });
     setState("ready");
     const v = result.params.values;
     showStatus([
@@ -697,6 +725,22 @@ async function main() {
       `built in ${Math.round(result.buildMs)} ms by ${result.kernel}`,
       backendName,
     ]);
+    renderStats();
+    renderValidation();
+    renderDownloads();
+  }
+
+  /**
+   * The tile could not be built: nothing on screen may describe the controls
+   * any more, so the 3D view and the stats are emptied, and the legend, the
+   * status line and the validation panel say why.
+   */
+  function presentTileError() {
+    stopTicker();
+    viewer.clear();
+    setState("part-error");
+    showStatus([`The tile could not be built: ${state.error}`], "bad");
+    renderLegend();
     renderStats();
     renderValidation();
     renderDownloads();
@@ -716,11 +760,13 @@ async function main() {
   function swatch(colour, text, id) {
     return el("li", { id }, el("span", { className: "swatch", style: `background:${colour}`, "aria-hidden": "true" }), el("span", { text }));
   }
+  /** The legend's line when a build failed: why the 3D view is empty. */
+  const emptyNote = (what) => el("li", { id: "legend-empty", text: `Nothing to show: the ${what} could not be built (see the status line).` });
   function renderLegend() {
     if (page.mode !== "tile") return;
     const r = state.result;
     if (!r) {
-      legend.replaceChildren();
+      legend.replaceChildren(...(state.error ? [emptyNote("tile")] : []));
       return;
     }
     const relief = r.params.values.relief;
@@ -741,7 +787,10 @@ async function main() {
   }
   function renderStats() {
     const r = state.result;
-    if (!r) return;
+    if (!r) {
+      $("tile-stats").replaceChildren();
+      return;
+    }
     const rows = partStats(r);
     if (r.faceOnBed === "top") rows.push(["Prints", "face down: the downloads are laid out that way"]);
     statsList($("tile-stats"), rows);
@@ -809,6 +858,7 @@ async function main() {
     const reason = $("download-reason");
     let why = null;
     if (state.exporting) why = "Preparing the file…";
+    else if (invalid.size > 0) why = `Download is off while a field is invalid: ${[...invalid.values()][0]}`;
     else if (state.error) why = "Download is off until the tile builds (see Validation).";
     else if (!state.result) why = "Waiting for the first build…";
     else if (state.dirty) why = "Updating the preview…";
@@ -817,7 +867,7 @@ async function main() {
     download3mf.disabled = !enabled;
     downloadStl.disabled = !enabled;
     reason.textContent = why ?? "";
-    reason.className = why && state.result && !state.dirty && !state.exporting ? "error" : "";
+    reason.className = why && ((state.result && !state.dirty && !state.exporting) || invalid.size > 0) ? "error" : "";
   }
 
   async function downloadPart(format) {
@@ -870,8 +920,10 @@ async function main() {
       return n;
     });
     $("record-command").textContent = recordCommand(state.coupon.process, state.coupon.pockets, exampleFit.calibration?.chosenCells);
+    state.coupon.invalid = !ok;
     if (!ok) {
-      showStatus(["The bed size must be a positive number of millimetres."], "bad");
+      showBedInvalid();
+      renderCouponDownloads();
       return;
     }
     if (page.mode === "coupon") buildCoupon();
@@ -884,10 +936,17 @@ async function main() {
   const couponButtons = [$("download-coupon-3mf"), $("download-coupon-stl")];
   function renderCouponDownloads() {
     const c = state.coupon;
-    const ok = c.result !== null && c.request !== null && !c.exporting && c.key === couponKey();
+    const ok = c.result !== null && c.request !== null && !c.exporting && !c.invalid && c.key === couponKey();
     for (const b of couponButtons) b.disabled = !ok;
-    $("coupon-download-note").textContent = c.exporting ? "Preparing the file…" : c.error ? `The coupon could not be built: ${c.error}` : "";
-    $("coupon-download-note").className = c.error ? "note bad" : "note";
+    const note = c.exporting
+      ? "Preparing the file…"
+      : c.invalid
+        ? "Download is off while the bed size is invalid."
+        : c.error
+          ? `The coupon could not be built: ${c.error}`
+          : "";
+    $("coupon-download-note").textContent = note;
+    $("coupon-download-note").className = c.error || c.invalid ? "note bad" : "note";
   }
 
   function couponRequest() {
@@ -897,7 +956,29 @@ async function main() {
 
   function renderCouponLegend() {
     if (page.mode !== "coupon") return;
+    if (!state.coupon.result) {
+      legend.replaceChildren(...(state.coupon.error ? [emptyNote("coupon")] : []));
+      return;
+    }
     legend.replaceChildren(swatch(state.colors.body, "Coupon (body colour)"));
+  }
+
+  /** The coupon's stats and cell table, or empty ones (with a note) after a failed build. */
+  function renderCouponTables() {
+    const r = state.coupon.result;
+    if (!r) {
+      $("coupon-stats").replaceChildren();
+      $("cells").replaceChildren(
+        ...(state.coupon.error ? [el("tr", {}, el("td", { colspan: 3, text: "No cells: the coupon could not be built (see the note under Download)." }))] : []),
+      );
+      return;
+    }
+    statsList($("coupon-stats"), couponStats(r));
+    $("cells").replaceChildren(
+      ...couponRows(r.cells).map((row) =>
+        el("tr", {}, el("td", { text: row.line }), el("td", { text: row.label }), el("td", {}, row.record ? el("code", { text: row.record }) : "")),
+      ),
+    );
   }
 
   function showCoupon({ keepView }) {
@@ -908,15 +989,38 @@ async function main() {
     renderCouponLegend();
   }
 
+  /** The bed size is invalid: a build that answers keeps this message (the coupon shown is the last valid bed's). */
+  function showBedInvalid() {
+    setState("invalid");
+    showStatus(["The bed size must be a positive number of millimetres."], "bad");
+  }
+
+  function showCouponStatus() {
+    const r = state.coupon.result;
+    showStatus([
+      `Calibration coupon, ${r.summary.process}, ${r.summary.pockets} pockets`,
+      `${r.triangles.toLocaleString("en-US")} triangles`,
+      `built in ${Math.round(r.buildMs)} ms by ${r.kernel}`,
+      backendName,
+    ]);
+  }
+
   async function buildCoupon() {
     const request = couponRequest();
     const key = couponKey();
     if (state.coupon.key === key && state.coupon.result) {
       showCoupon({ keepView: false });
-      setState("ready");
+      if (state.coupon.invalid) showBedInvalid();
+      else {
+        setState("ready");
+        showCouponStatus();
+      }
       renderCouponDownloads();
       return;
     }
+    // Until the new coupon arrives the view keeps the last one, or nothing.
+    if (state.coupon.result) showCoupon({ keepView: true });
+    else viewer.clear();
     setState("building-coupon");
     showBuilding("Building the calibration coupon", performance.now());
     renderCouponDownloads();
@@ -925,14 +1029,18 @@ async function main() {
       result = await client.buildCoupon(request);
     } catch (err) {
       syncCounters();
-      stopTicker();
       if (page.mode !== "coupon" || couponKey() !== key) return;
+      stopTicker();
       state.coupon.error = err.message;
       state.coupon.result = null;
       state.coupon.key = null;
       page.coupon = { error: err.message };
+      // Nothing on screen may describe the old layout: empty the view and tables.
+      viewer.clear();
       setState("coupon-error");
       showStatus([`The coupon could not be built: ${err.message}`], "bad");
+      renderCouponLegend();
+      renderCouponTables();
       renderCouponDownloads();
       return;
     }
@@ -951,20 +1059,13 @@ async function main() {
     };
     if (page.mode === "coupon") {
       showCoupon({ keepView: false });
-      setState("ready");
-      showStatus([
-        `Calibration coupon, ${result.summary.process}, ${result.summary.pockets} pockets`,
-        `${result.triangles.toLocaleString("en-US")} triangles`,
-        `built in ${Math.round(result.buildMs)} ms by ${result.kernel}`,
-        backendName,
-      ]);
+      if (state.coupon.invalid) showBedInvalid();
+      else {
+        setState("ready");
+        showCouponStatus();
+      }
     }
-    statsList($("coupon-stats"), couponStats(result));
-    $("cells").replaceChildren(
-      ...couponRows(result.cells).map((row) =>
-        el("tr", {}, el("td", { text: row.line }), el("td", { text: row.label }), el("td", {}, row.record ? el("code", { text: row.record }) : "")),
-      ),
-    );
+    renderCouponTables();
     renderCouponDownloads();
   }
 
@@ -996,6 +1097,9 @@ async function main() {
   const panels = { tile: $("panel-tile"), coupon: $("panel-coupon") };
 
   function setMode(mode, { focus = false } = {}) {
+    // The status line's seconds belong to the mode being left; a build the new
+    // mode starts shows its own.
+    stopTicker();
     page.mode = mode;
     document.body.dataset.mode = mode;
     for (const [m, tab] of Object.entries(tabs)) {
@@ -1008,11 +1112,12 @@ async function main() {
     history.replaceState(null, "", `${location.pathname}${writeMode(location.search, mode)}${location.hash}`);
     if (mode === "tile") {
       legend.replaceChildren();
-      if (state.dirty || !state.result) changed();
-      else {
-        showTile({ keepView: false });
-        setState("ready");
-      }
+      if (state.dirty || !state.result) {
+        // Until the evaluation answers, the view keeps the last tile, or nothing.
+        if (state.result) showTile({ keepView: false });
+        else viewer.clear();
+        changed();
+      } else presentTile({ keepView: false });
     } else {
       clearTimeout(timer);
       timer = null;

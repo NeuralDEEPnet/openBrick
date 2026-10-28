@@ -204,12 +204,32 @@ function withAssets(core, assets, fn) {
 }
 
 /**
+ * The validation report with each finding's `unit` (of its value and threshold:
+ * "mm", "%", "mm³" or "" for a count or no numbers) set from the core's
+ * report_units_json(), which lists them in report order. The page shows that
+ * unit and never reads one from the wording of a message.
+ */
+export function reportWithUnits(reportJson, unitsJson) {
+  const report = JSON.parse(reportJson);
+  const units = JSON.parse(unitsJson);
+  const findings = report?.findings ?? [];
+  if (!Array.isArray(units) || units.length !== findings.length) {
+    throw new Error(`the core gave ${Array.isArray(units) ? units.length : "no"} units for ${findings.length} findings`);
+  }
+  findings.forEach((f, i) => {
+    f.unit = units[i];
+  });
+  return report;
+}
+
+/**
  * Evaluate and validate a part with the core. Result: { meshes: [meshData()]
  * (one per colour role, body first), overlay: meshData() of the red region of
  * artwork that does not print as drawn, or null, report: { findings } (blockers
- * first), exportAllowed, measurements, warnings, contentHash, kernel, artwork
- * (summary or null), params: { values, visible }, footprint: [x, y] studs,
- * bounds, volumeMm3, massGPla, triangles, faceOnBed, buildMs }.
+ * first; each finding with its `unit`, see reportWithUnits()), exportAllowed,
+ * measurements, warnings, contentHash, kernel, artwork (summary or null),
+ * params: { values, visible }, footprint: [x, y] studs, bounds, volumeMm3,
+ * massGPla, triangles, faceOnBed, buildMs }.
  */
 export function evaluatePart(core, request, now = () => performance.now()) {
   const f = partFields(request);
@@ -226,7 +246,7 @@ export function evaluatePart(core, request, now = () => performance.now()) {
     return {
       meshes,
       overlay: removed ? meshData(removed) : null,
-      report: JSON.parse(out.report_json()),
+      report: reportWithUnits(out.report_json(), out.report_units_json()),
       exportAllowed: out.export_allowed(),
       measurements: JSON.parse(out.measurements_json()),
       warnings: JSON.parse(out.warnings_json()),

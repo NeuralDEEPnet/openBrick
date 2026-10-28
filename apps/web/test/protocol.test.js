@@ -14,6 +14,7 @@ import {
   isTrap,
   parseStuds,
   PROTOCOL_VERSION,
+  reportWithUnits,
   standardSummary,
   transferables,
 } from "../src/protocol.js";
@@ -108,7 +109,8 @@ function fakeCore({ throws = null } = {}) {
           removed = undefined;
           return m;
         },
-        report_json: () => '{"findings":[]}',
+        report_json: () => JSON.stringify({ findings: [REMOVED_AREA] }),
+        report_units_json: () => '["%"]',
         export_allowed: () => true,
         measurements_json: () => '{"process":"fdm-0.4"}',
         warnings_json: () => '["a note"]',
@@ -352,6 +354,16 @@ test("only mesh arrays and file bytes are transferables, each buffer once", () =
 
 // ------------------------------------------------------------ part designer
 
+/** A FEATURE.MIN finding on the removed area, as schemas/report.schema.json has it. */
+const REMOVED_AREA = Object.freeze({
+  rule: "FEATURE.MIN",
+  severity: "warning",
+  message: "the morphological opening removed 1.03 % of the artwork area",
+  value: 1.03,
+  threshold: 1,
+  fix: "make those lines wider",
+  feature: null,
+});
 const PART = { doc: '{"id":"ndn.logo-tile"}', params: { size: [2, 4], relief: "emboss" }, process: "fdm-0.4", fit: "" };
 const SVG = new TextEncoder().encode("<svg/>");
 
@@ -376,7 +388,7 @@ test("evaluatePart sends JSON text and the assets to the core and returns plain,
     ["accent", "#f4f1e8", 1],
   ]);
   assert.equal(r.overlay.role, "removed");
-  assert.deepEqual(r.report, { findings: [] });
+  assert.deepEqual(r.report, { findings: [{ ...REMOVED_AREA, unit: "%" }] }, "each finding carries the core's unit");
   assert.equal(r.exportAllowed, true);
   assert.deepEqual(r.measurements, { process: "fdm-0.4" });
   assert.deepEqual(r.warnings, ["a note"]);
@@ -393,6 +405,21 @@ test("evaluatePart sends JSON text and the assets to the core and returns plain,
   const received = structuredClone(reply, { transfer });
   assert.equal(r.meshes[0].positions.byteLength, 0, "moved, not copied");
   assert.equal(received.result.overlay.indices.length, 3);
+});
+
+test("units come from the core, one per finding, in report order", () => {
+  const report = JSON.stringify({ findings: [REMOVED_AREA, { ...REMOVED_AREA, rule: "WALL.MIN" }] });
+  assert.deepEqual(
+    reportWithUnits(report, '["%","mm"]').findings.map((f) => [f.rule, f.unit]),
+    [
+      ["FEATURE.MIN", "%"],
+      ["WALL.MIN", "mm"],
+    ],
+  );
+  assert.deepEqual(reportWithUnits('{"findings":[]}', "[]"), { findings: [] });
+  // A count that does not match is a core bug, not something to guess around.
+  assert.throws(() => reportWithUnits(report, '["%"]'), /1 units for 2 findings/);
+  assert.throws(() => reportWithUnits(report, "null"), /no units for 2 findings/);
 });
 
 test("part requests are checked before the core is called", () => {

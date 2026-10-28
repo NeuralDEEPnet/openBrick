@@ -17,7 +17,7 @@ use openbrick_part::coupon::PLA_DENSITY_G_CM3;
 use openbrick_part::eval::resolve_params;
 use openbrick_part::{evaluate, validate, Artwork, Built, EvalInput, MemoryAssets, ParamValues};
 use openbrick_part::{PartDoc, RoleMesh};
-use openbrick_print::{default_process_profiles, FitProfile, ProcessProfile, Report};
+use openbrick_print::{default_process_profiles, finding_unit, FitProfile, ProcessProfile, Report};
 use openbrick_units::STANDARD;
 use serde_json::{json, Value};
 
@@ -192,6 +192,8 @@ pub struct PartOut {
     meshes: Vec<Option<MeshOut>>,
     removed: Option<MeshOut>,
     report: Report,
+    /// The unit of each finding's numbers, in report order.
+    units: Vec<&'static str>,
     measurements_json: String,
     warnings: Vec<String>,
     content_hash: String,
@@ -228,6 +230,15 @@ impl PartOut {
     /// of `schemas/report.schema.json`: findings sorted blockers first.
     pub fn report_json(&self) -> String {
         serde_json::to_string(&self.report).expect("the report serialises")
+    }
+
+    /// The unit of each finding's `value` and `threshold`, as a JSON array in
+    /// the order of [`PartOut::report_json`]'s findings: `mm`, `%`, `mm³`, or
+    /// empty (a count, or no numbers). The core decides it
+    /// (`openbrick_print::finding_unit`), so the page never reads a unit from
+    /// the wording of a message.
+    pub fn report_units_json(&self) -> String {
+        serde_json::to_string(&self.units).expect("strings serialise")
     }
 
     /// True when the report has no blocker; [`export_part`] refuses otherwise.
@@ -329,6 +340,11 @@ fn printed_volume(built: &Built) -> f64 {
 fn part_out(inputs: &PartInputs, built: Built) -> Result<PartOut, CoreError> {
     let k = ManifoldRust;
     let report = validate(&built, &inputs.process, inputs.fit.as_ref());
+    let units = report
+        .findings
+        .iter()
+        .map(|f| finding_unit(f, &built.measurements, &inputs.process))
+        .collect();
     let resolved = resolve_params(&inputs.doc, &inputs.params, &inputs.process)
         .map_err(|e| CoreError(e.to_string()))?;
     let mut warnings = built.warnings.clone();
@@ -386,6 +402,7 @@ fn part_out(inputs: &PartInputs, built: Built) -> Result<PartOut, CoreError> {
         meshes,
         removed,
         report,
+        units,
         measurements_json,
         warnings,
         content_hash,
@@ -611,6 +628,17 @@ mod tests {
         let m: openbrick_print::Measurements =
             serde_json::from_str(&out.measurements_json()).unwrap();
         assert_eq!(m, b.measurements);
+        // One unit per finding, from the core: the sample's removed area is a
+        // percentage (FEATURE.MIN, 1.03 % against 1 %).
+        let units: Vec<String> = serde_json::from_str(&out.report_units_json()).unwrap();
+        assert_eq!(units.len(), report.findings.len());
+        let feature: Vec<(&str, &str)> = report
+            .findings
+            .iter()
+            .zip(&units)
+            .map(|(f, u)| (f.rule.as_str(), u.as_str()))
+            .collect();
+        assert_eq!(feature, vec![("FEATURE.MIN", "%")], "{}", out.report_json());
         let warnings: Vec<String> = serde_json::from_str(&out.warnings_json()).unwrap();
         assert_eq!(warnings, b.warnings);
 
@@ -651,6 +679,13 @@ mod tests {
         let out = eval_with("", "");
         assert!(!out.export_allowed());
         let report: Report = serde_json::from_str(&out.report_json()).unwrap();
+        // FIT.MISSING carries no numbers, so no unit; FEATURE.MIN keeps its %.
+        let units: Vec<String> = serde_json::from_str(&out.report_units_json()).unwrap();
+        for (f, u) in report.findings.iter().zip(&units) {
+            let want = if f.rule == "FIT.MISSING" { "" } else { "%" };
+            assert_eq!((f.rule.as_str(), u.as_str()), (f.rule.as_str(), want));
+        }
+        assert_eq!(units.len(), report.findings.len());
         let rules: Vec<&str> = report.blockers().map(|f| f.rule.as_str()).collect();
         assert!(
             rules.iter().all(|r| *r == "FIT.MISSING") && !rules.is_empty(),
@@ -694,6 +729,22 @@ mod tests {
         let stl = export_part("stl", &doc, "", "fdm-0.4", &fit, &sample(), "").unwrap();
         let fused = b.fused.as_ref().unwrap();
         assert_eq!(stl.len(), 84 + 50 * fused.mesh.triangle_count());
+        // The STL is the fused solid: closed (every edge shared by exactly two
+        // triangles, in opposite directions) with the kernel's volume, up to
+        // the rounding of its corners to f32.
+        let corners = stl_corners(&stl);
+        let (volume, slivers) = closed_volume(&corners).expect("the STL is closed");
+        let slack = f32_volume_slack(&corners);
+        eprintln!(
+            "emboss STL: {} triangles ({slivers} slivers), volume {volume} mm3, kernel {} mm3, slack {slack:e}",
+            corners.len() / 3,
+            fused.volume_mm3
+        );
+        assert!(
+            (volume - fused.volume_mm3).abs() <= slack,
+            "{volume} vs {}",
+            fused.volume_mm3
+        );
         // Colours are recorded in the 3MF (and change it), never in the STL.
         let orange = export_part(
             "3mf",
@@ -730,6 +781,69 @@ mod tests {
         out
     }
 
+    /// The volume of a triangle soup (as an STL stores it) when it is closed:
+    /// corners are welded by their exact coordinates, and every directed edge
+    /// must meet its reverse exactly once. A triangle with two corners at the
+    /// same point (the kernel keeps a few such slivers where two vertices round
+    /// to one f32 position) has no area and no volume, and the two edges it
+    /// keeps are each other's reverse, so it is left out of the pairing: its
+    /// neighbours then pair with each other across it. `None` when the rest is
+    /// not closed; otherwise the volume and the number of slivers.
+    fn closed_volume(corners: &[[f32; 3]]) -> Option<(f64, usize)> {
+        use std::collections::HashMap;
+        let key = |p: [f32; 3]| p.map(|c| (c + 0.0).to_bits());
+        let mut edges: HashMap<([u32; 3], [u32; 3]), i32> = HashMap::new();
+        let mut volume = 0.0;
+        let mut slivers = 0;
+        for t in corners.chunks(3) {
+            let k = [key(t[0]), key(t[1]), key(t[2])];
+            if k[0] == k[1] || k[1] == k[2] || k[2] == k[0] {
+                slivers += 1;
+                continue;
+            }
+            for i in 0..3 {
+                *edges.entry((k[i], k[(i + 1) % 3])).or_default() += 1;
+            }
+            let [a, b, c] = [t[0], t[1], t[2]].map(|p| p.map(f64::from));
+            volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                / 6.0;
+        }
+        let paired = edges
+            .iter()
+            .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1));
+        paired.then_some((volume, slivers))
+    }
+
+    /// How far the volume of f32 corners may lie from the kernel's volume of
+    /// the same solid in f64: rounding a coordinate x to f32 moves it by at
+    /// most |x| 2^-24, so no corner moves more than sqrt(3) max|x| 2^-24, and
+    /// to first order the volume changes by at most the surface area times
+    /// that. For the 2x4 tile (about 32 mm and 2,000 mm2) that is about
+    /// 6e-3 mm3; the files differ from the kernel by about 4e-5 mm3.
+    fn f32_volume_slack(corners: &[[f32; 3]]) -> f64 {
+        let far = corners
+            .iter()
+            .flatten()
+            .map(|c| f64::from(c.abs()))
+            .fold(0.0, f64::max);
+        let area: f64 = corners
+            .chunks(3)
+            .map(|t| {
+                let [a, b, c] = [t[0], t[1], t[2]].map(|p| p.map(f64::from));
+                let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                let n = [
+                    u[1] * v[2] - u[2] * v[1],
+                    u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0],
+                ];
+                (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt() / 2.0
+            })
+            .sum();
+        area * 3f64.sqrt() * far * 2f64.powi(-24)
+    }
+
     #[test]
     fn an_inlay_is_exported_face_down() {
         let fit = example_fit_profile_json();
@@ -743,6 +857,15 @@ mod tests {
         let stl = export_part("stl", &doc, params, "fdm-0.4", &fit, &sample(), "").unwrap();
         let corners = stl_corners(&stl);
         let fused = &b.fused.as_ref().unwrap().mesh;
+        // Turned, still closed with the same positive volume: a rotation, not a
+        // mirror (a mirror would turn every triangle inside out and the volume
+        // negative).
+        let (turned, _) = closed_volume(&corners).expect("the face-down STL is closed");
+        let built = b.fused.as_ref().unwrap().volume_mm3;
+        assert!(
+            (turned - built).abs() <= f32_volume_slack(&corners),
+            "{turned} vs {built}"
+        );
         // Same box, turned: the top face (z = top) is now on the bed (z = 0),
         // and the open cavity faces up.
         let (lo, hi) = fused.bounds();

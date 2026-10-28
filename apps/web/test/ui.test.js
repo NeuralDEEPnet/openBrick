@@ -10,7 +10,6 @@ import {
   couponStats,
   downloadBlockedReason,
   evaluatingParts,
-  findingUnit,
   findingView,
   fitLabel,
   partStats,
@@ -34,7 +33,9 @@ const missing = {
   threshold: null,
   fix: "print the calibration coupon and record it",
   feature: "bottom",
+  unit: "",
 };
+// Each finding as the worker hands it over: the report entry plus the core's unit.
 const removed = {
   rule: "FEATURE.MIN",
   severity: "warning",
@@ -43,8 +44,9 @@ const removed = {
   threshold: 1,
   fix: "make those lines wider",
   feature: null,
+  unit: "%",
 };
-const wall = { rule: "WALL.MIN", severity: "blocker", message: "the side wall is 0.6 mm", value: 0.6, threshold: 0.8, fix: "thicker", feature: "body" };
+const wall = { rule: "WALL.MIN", severity: "blocker", message: "the side wall is 0.6 mm", value: 0.6, threshold: 0.8, fix: "thicker", feature: "body", unit: "mm" };
 
 test("a finding shows severity in words and as an icon, its rule, values, threshold and fix", () => {
   const v = findingView(removed);
@@ -62,13 +64,21 @@ test("a finding shows severity in words and as an icon, its rule, values, thresh
   assert.equal(findingView({ ...wall, rule: "FIT.PROCESS" }).calibrate, true);
 });
 
-test("units follow the report schema", () => {
-  assert.equal(findingUnit(wall), "mm");
-  assert.equal(findingUnit(removed), "%");
-  assert.equal(findingUnit({ ...removed, message: "the thinnest stroke of the artwork is 0.5 mm" }), "mm");
-  assert.equal(findingUnit({ rule: "MESH.VOLUME", threshold: 5 }), "%");
-  assert.equal(findingUnit({ rule: "MESH.VOLUME", threshold: 0 }), "mm³");
-  assert.equal(findingUnit({ rule: "MESH.MANIFOLD", threshold: null }), "");
+test("the unit is the core's, never read from the message", () => {
+  // The same message with another unit from the core shows that unit: the
+  // wording plays no part.
+  assert.deepEqual(
+    [findingView({ ...removed, unit: "mm" }).measured, findingView({ ...removed, unit: "mm" }).threshold],
+    ["1.032 mm", "1 mm"],
+  );
+  const volume = findingView({ ...wall, rule: "MESH.VOLUME", value: -5, threshold: 0, unit: "mm³" });
+  assert.deepEqual([volume.measured, volume.threshold], ["-5 mm³", "0 mm³"]);
+  // A count (the components of an empty mesh) has no unit.
+  const empty = findingView({ ...wall, rule: "MESH.MANIFOLD", value: 0, threshold: 1, unit: "" });
+  assert.deepEqual([empty.measured, empty.threshold], ["0", "1"]);
+  // Without a unit from the core the numbers are shown bare.
+  const { unit: _, ...bare } = removed;
+  assert.deepEqual([findingView(bare).measured, findingView(bare).threshold], ["1.032", "1"]);
 });
 
 test("blockers come first, and the download reason names them", () => {

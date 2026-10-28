@@ -11,16 +11,31 @@
 //! profile, emboss without a fit profile) the parameter overrides, the content
 //! hash, the triangle count, each object's role, triangles and fingerprint, and
 //! the blocking rules; then the default coupon's content hash, triangles and
-//! fingerprint. Content hashes are the same on every target; triangle counts and
-//! fingerprints are bit-exact on x86-64 Linux, where CI runs the smoke test.
+//! fingerprint. Under `exports`: the files `export_part` and `export_coupon`
+//! write for the downloads the smoke test makes (the emboss 3MF and STL and the
+//! face-down inlay 3MF with the example fit, the default coupon 3MF), each with
+//! its download name, byte count and SHA-256, so the downloaded files must be
+//! byte-identical; the STL also with its triangle count. Content hashes are the
+//! same on every target; triangle counts, fingerprints and file hashes are
+//! bit-exact on x86-64 Linux, where CI runs the smoke test.
 
 use std::time::Instant;
 
 use openbrick_wasm::{
-    build_coupon, evaluate_part, example_fit_profile_json, logo_tile_part_json, sample_logo_svg,
-    AssetSet,
+    build_coupon, evaluate_part, example_fit_profile_json, export_coupon, export_part,
+    logo_tile_part_json, sample_logo_svg, AssetSet,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+
+/// Byte count and SHA-256 (hex) of a file, under its download name.
+fn file(name: &str, bytes: &[u8]) -> Value {
+    let hash: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    json!({ "name": name, "bytes": bytes.len(), "sha256": hash })
+}
 
 fn main() {
     let doc = logo_tile_part_json();
@@ -81,10 +96,21 @@ fn main() {
             }),
         );
     }
+    // The files the smoke test downloads, written natively by the same functions.
+    let export = |format: &str, params: &str| {
+        export_part(format, &doc, params, "fdm-0.4", &fit, &assets, "")
+            .unwrap_or_else(|e| panic!("{format} {params}: {e}"))
+    };
+    let stl = export("stl", "{}");
+    let stl_triangles = u32::from_le_bytes(stl[80..84].try_into().expect("an STL header"));
+    let mut stl_file = file("ndn.logo-tile-2x4-emboss.stl", &stl);
+    stl_file["triangles"] = json!(stl_triangles);
+
     let started = Instant::now();
     let mut coupon = build_coupon("fdm-0.4", "").expect("the default coupon builds");
     let ms = started.elapsed().as_secs_f64() * 1e3;
     let mesh = coupon.take_mesh().expect("mesh");
+    let coupon_3mf = export_coupon("3mf", "fdm-0.4", "", "").expect("the coupon exports");
     let result = json!({
         "kernel": openbrick_wasm::kernel_id(),
         "part": out,
@@ -95,6 +121,15 @@ fn main() {
             "triangles": coupon.triangle_count(),
             "fingerprint": mesh.fingerprint(),
             "ms": (ms * 10.0).round() / 10.0,
+        },
+        "exports": {
+            "emboss3mf": file("ndn.logo-tile-2x4-emboss.3mf", &export("3mf", "{}")),
+            "embossStl": stl_file,
+            "inlay3mf": file(
+                "ndn.logo-tile-2x4-inlay.3mf",
+                &export("3mf", r#"{"relief":"inlay"}"#)
+            ),
+            "coupon3mf": file(&format!("{}.3mf", coupon.file_stem()), &coupon_3mf),
         },
     });
     println!(
