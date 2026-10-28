@@ -16,11 +16,12 @@ use std::sync::OnceLock;
 
 use openbrick_geom::{CrossSection, Mesh, Polygon};
 use openbrick_io::threemf::{
-    CORE_NAMESPACE, MATERIAL_NAMESPACE, MODEL_PATH, OPENBRICK_NAMESPACE, PRODUCTION_NAMESPACE,
+    package_uuids, stored_fingerprint, CORE_NAMESPACE, MATERIAL_NAMESPACE, MODEL_PATH,
+    OPENBRICK_NAMESPACE, PRODUCTION_NAMESPACE,
 };
 use openbrick_io::{stl_binary_len, ExportMeta};
 use openbrick_units::STANDARD;
-use write_fixtures::{fixtures, generate, mesh_volume, Fixture};
+use write_fixtures::{fixtures, generate, mesh_volume, Fixture, STUDS};
 
 fn all_fixtures() -> &'static [Fixture] {
     static F: OnceLock<Vec<Fixture>> = OnceLock::new();
@@ -281,7 +282,23 @@ fn every_3mf_fixture_reads_back_exactly() {
                     .collect()
             };
             assert_eq!(bits(&read.mesh), bits(&part.mesh), "{}", part.name);
+            // The fingerprint the UUIDs are derived from is what a reader can
+            // recompute from the file alone.
+            assert_eq!(
+                read.mesh.fingerprint(),
+                stored_fingerprint(&part.mesh),
+                "{}",
+                part.name
+            );
         }
+        // The UUIDs are the documented derivation from metadata and objects.
+        let expected = package_uuids(&f.objects(), &f.meta);
+        let read_objects: Vec<String> = model.objects.iter().map(|o| o.uuid.clone()).collect();
+        let read_items: Vec<String> = model.items.iter().map(|(_, u)| u.clone()).collect();
+        let strings = |v: &[uuid::Uuid]| v.iter().map(|u| u.to_string()).collect::<Vec<_>>();
+        assert_eq!(model.build_uuid, expected.build.to_string(), "{}", f.name);
+        assert_eq!(read_objects, strings(&expected.objects), "{}", f.name);
+        assert_eq!(read_items, strings(&expected.items), "{}", f.name);
         // One build item per object, in order, and every UUID distinct and v5.
         let ids: Vec<&str> = model.objects.iter().map(|o| o.id.as_str()).collect();
         let item_ids: Vec<&str> = model.items.iter().map(|(id, _)| id.as_str()).collect();
@@ -372,7 +389,8 @@ fn brick_fixture_has_the_analytic_volume_and_bounds() {
         s.mm("side_wall"),
     );
     let (roof, height) = (s.mm("roof"), s.mm("brick_height"));
-    let (w, d) = (2.0 * pitch - 2.0 * gap, 4.0 * pitch - 2.0 * gap);
+    let [nx, ny] = STUDS.map(f64::from);
+    let (w, d) = (nx * pitch - 2.0 * gap, ny * pitch - 2.0 * gap);
     let cavity = height - roof;
     let outer = Polygon::rect([0.0, 0.0], [w, d]);
     let inner = Polygon::rect([wall, wall], [w - 2.0 * wall, d - 2.0 * wall]).reversed();
@@ -385,12 +403,15 @@ fn brick_fixture_has_the_analytic_volume_and_bounds() {
         Polygon::circle([0.0, 0.0], s.mm("tube_outer_diameter") / 2.0, 64),
         Polygon::circle([0.0, 0.0], s.mm("tube_inner_diameter") / 2.0, 64).reversed(),
     ]);
-    // Shell, roof, eight studs and three tubes; the faceted polygon areas, so the
+    // Shell, roof, one stud per footprint cell and one row of tubes between the
+    // two stud columns (STUDS[1] - 1 of them); the faceted polygon areas, so the
     // comparison checks the file, not the faceting.
+    let studs = nx * ny;
+    let tubes = ny - 1.0;
     let brick = CrossSection::from(vec![outer.clone(), inner]).area() * cavity
         + CrossSection::from(vec![outer]).area() * roof
-        + 8.0 * disc.area() * s.mm("stud_height")
-        + 3.0 * annulus.area() * cavity;
+        + studs * disc.area() * s.mm("stud_height")
+        + tubes * annulus.area() * cavity;
     let side = s.mm("stud_diameter");
     let cube = side * side * side;
 
@@ -462,6 +483,14 @@ fn brick_fixture_fingerprints() {
     let f = &all_fixtures()[0];
     let prints: Vec<u64> = f.parts.iter().map(|p| p.mesh.fingerprint()).collect();
     assert_eq!(prints, [0xfa96_9a6c_0bf6_57e7, 0xd6d9_62aa_5ef1_e7ed]);
+    // No negative zeros, so the stored fingerprints (from which the UUIDs are
+    // derived and which the manifest records) are the same values.
+    let stored: Vec<u64> = f
+        .parts
+        .iter()
+        .map(|p| stored_fingerprint(&p.mesh))
+        .collect();
+    assert_eq!(stored, prints);
 }
 
 #[test]

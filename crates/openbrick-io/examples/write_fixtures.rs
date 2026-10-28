@@ -13,8 +13,8 @@
 //!   tetrahedra as `accent` and `serial`, the last without a colour), with a
 //!   serial number in the metadata.
 //! - `fixtures.json`: what every file must contain (objects, counts, colours,
-//!   volumes, bounds and metadata), which the validator compares with what lib3mf
-//!   reads.
+//!   volumes, bounds, stored mesh fingerprints, Production UUIDs and metadata),
+//!   which the validator compares with what lib3mf reads.
 //!
 //! Every brick dimension comes from `standards/dimensions-v1.json` through
 //! `openbrick-units`. Run from the repository root:
@@ -33,7 +33,7 @@ use std::process::ExitCode;
 
 use openbrick_geom::manifold_rust::{ManifoldRust, MrSolid};
 use openbrick_geom::{CrossSection, Kernel, Mesh, Polygon, Solid};
-use openbrick_io::threemf::OPENBRICK_NAMESPACE;
+use openbrick_io::threemf::{package_uuids, stored_fingerprint, OPENBRICK_NAMESPACE};
 use openbrick_io::{
     write_3mf, write_stl_binary, write_stl_binary_per_role, ExportMeta, ExportObject, GENERATOR,
 };
@@ -42,7 +42,10 @@ use serde_json::json;
 
 const USAGE: &str = "usage: write_fixtures [output-dir]";
 /// Footprint of the brick in studs (x, y).
-const STUDS: [u32; 2] = [2, 4];
+pub const STUDS: [u32; 2] = [2, 4];
+// `brick` places one row of tubes between the two stud columns, which is the
+// layout of a 2-wide brick only.
+const _: () = assert!(STUDS[0] == 2, "brick() builds 2-wide bricks only");
 /// Display colours (sRGB, alpha) chosen for the fixtures; any distinct pair works.
 const BODY_COLOUR: [u8; 4] = [0xD0, 0x30, 0x20, 0xFF];
 const ACCENT_COLOUR: [u8; 4] = [0xF2, 0xCD, 0x37, 0xFF];
@@ -319,6 +322,7 @@ pub fn generate() -> Vec<(String, Vec<u8>)> {
     let mut entries = Vec::new();
     for f in fixtures() {
         let objects = f.objects();
+        let uuids = package_uuids(&objects, &f.meta);
         let threemf = format!("{}.3mf", f.name);
         let stl = format!("{}.stl", f.name);
         files.push((threemf.clone(), write_3mf(&objects, &f.meta).expect("3MF")));
@@ -338,7 +342,8 @@ pub fn generate() -> Vec<(String, Vec<u8>)> {
         let objects_json: Vec<_> = f
             .parts
             .iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(i, p)| {
                 let (lo, hi) = p.mesh.bounds();
                 json!({
                     "name": p.name,
@@ -348,7 +353,9 @@ pub fn generate() -> Vec<(String, Vec<u8>)> {
                     "triangles": p.mesh.triangle_count(),
                     "volumeMm3": mesh_volume(&p.mesh),
                     "boundsMm": { "min": lo, "max": hi },
-                    "fingerprint": format!("{:#018x}", p.mesh.fingerprint()),
+                    "storedFingerprint": format!("{:016x}", stored_fingerprint(&p.mesh)),
+                    "uuid": uuids.objects[i].to_string(),
+                    "itemUuid": uuids.items[i].to_string(),
                 })
             })
             .collect();
@@ -359,6 +366,7 @@ pub fn generate() -> Vec<(String, Vec<u8>)> {
             "stlTriangles": f.parts.iter().map(|p| p.mesh.triangle_count()).sum::<usize>(),
             "stlPerRole": per_role,
             "metadata": expected_metadata(&f.meta),
+            "buildUuid": uuids.build.to_string(),
             "objects": objects_json,
         }));
     }

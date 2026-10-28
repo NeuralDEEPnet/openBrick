@@ -55,6 +55,15 @@ fn facet_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
 /// All objects merged into one binary STL, in input order. Fails on an empty
 /// object list or a structurally broken mesh (see [`IoError`]); unlike 3MF, STL
 /// does not require closed meshes, so open ones are written as they are.
+///
+/// It returns a `Result` rather than bare bytes so that bad input (no objects,
+/// an index out of range, a NaN) is an error, never a panic in WebAssembly.
+///
+/// The file has [`stl_binary_len`] bytes. At the import triangle cap
+/// [`MESH_MAX_TRIANGLES`](crate::MESH_MAX_TRIANGLES) that is about 100 MB, twice
+/// the import size cap [`MESH_MAX_BYTES`](crate::MESH_MAX_BYTES): until the two
+/// caps are reconciled (docs/plan/08 section 7), a binary STL above about one
+/// million triangles cannot be imported back.
 pub fn write_stl_binary(objects: &[ExportObject<'_>]) -> Result<Vec<u8>, IoError> {
     if objects.is_empty() {
         return Err(IoError::NoObjects);

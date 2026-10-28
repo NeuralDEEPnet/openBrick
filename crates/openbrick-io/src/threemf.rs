@@ -13,7 +13,8 @@
 //!   sRGB colour per role, referenced by each object's `pid` and `pindex`; objects
 //!   without a colour carry no property;
 //! - `p:UUID` (Production extension 1.1.2) on the build, every item and every
-//!   object, derived by [`package_uuids`] instead of drawn at random;
+//!   object, derived by [`package_uuids`] from the metadata and the objects
+//!   instead of drawn at random;
 //! - model metadata `Title`, `Application` and `openbrick:*` from [`ExportMeta`],
 //!   and an object metadata group with `openbrick:role`.
 //!
@@ -100,20 +101,60 @@ pub struct PackageUuids {
     pub items: Vec<Uuid>,
 }
 
-/// Derive the package UUIDs from the metadata alone, so the same export always
-/// gets the same UUIDs and exports that differ in any metadata field (content
-/// hash, serial, fit profile, ...) get different ones.
+/// FNV-1a (64 bit) of a mesh as the 3MF stores it: the little-endian `f32` bits
+/// of every coordinate, with `-0` taken as `0` because it is written as `0`,
+/// then every index as a little-endian `u32`. A reader can recompute it from the
+/// file alone (`scripts/validate-3mf.py` does, from what lib3mf reads). It
+/// equals [`Mesh::fingerprint`](openbrick_geom::Mesh::fingerprint) for a mesh
+/// without negative zeros.
+pub fn stored_fingerprint(mesh: &openbrick_geom::Mesh) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: [u8; 4]| {
+        for b in bytes {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for p in &mesh.positions {
+        for c in p {
+            eat((c + 0.0).to_le_bytes());
+        }
+    }
+    for i in &mesh.indices {
+        eat(i.to_le_bytes());
+    }
+    h
+}
+
+/// Derive the package UUIDs from everything the model part holds, so the same
+/// export always gets the same UUIDs, and exports that differ in a metadata
+/// field (content hash, serial, fit profile, ...) or in any object (geometry,
+/// name, role, colour, order, count) get different ones. The geometry enters
+/// through [`stored_fingerprint`], which hashes the vertex and triangle lists
+/// exactly as they are written, so no export option the metadata does not
+/// record (fused or not, another tessellation) can reuse another file's UUIDs.
 ///
 /// All are name-based version 5 UUIDs (RFC 9562 section 5.5):
 ///
 /// 1. root = v5(DNS namespace, "openbrick3d.org"), see [`UUID_ROOT_NAME`];
-/// 2. package = v5(root, seed), where the seed is the line
-///    `openbrick 3mf package` followed by one line per [`ExportMeta`] field in
-///    declaration order, `name=<byte length>:<value>`, or `name=-` for a missing
-///    serial (the length prefix keeps the encoding unambiguous);
+/// 2. package = v5(root, seed). The seed is UTF-8 text, one line each, ending
+///    in `\n`:
+///    - `openbrick 3mf package`;
+///    - one line per [`ExportMeta`] field in declaration order (`part_id`,
+///      `version`, `content_hash`, `fit_profile_id`, `process_id`, `generator`,
+///      `kernel_id`, `title`, `serial`): `name=<byte length>:<value>`, or
+///      `serial=-` when there is no serial;
+///    - `objects=<count>`;
+///    - per object i, counting from 0: `object/i/name=<byte length>:<name>`,
+///      `object/i/role=<byte length>:<role>`, `object/i/color=#RRGGBBAA`
+///      (upper-case hex, as written) or `object/i/color=-`, and
+///      `object/i/mesh=<vertices>:<triangles>:<stored fingerprint as 16
+///      lower-case hex digits>`.
+///
+///    The length prefixes keep the encoding unambiguous.
 /// 3. build = v5(package, "build"), object i = v5(package, "object/i") and
-///    item i = v5(package, "item/i"), counting from 0.
-pub fn package_uuids(meta: &ExportMeta, object_count: usize) -> PackageUuids {
+///    item i = v5(package, "item/i").
+pub fn package_uuids(objects: &[ExportObject<'_>], meta: &ExportMeta) -> PackageUuids {
     let root = Uuid::new_v5(&Uuid::NAMESPACE_DNS, UUID_ROOT_NAME.as_bytes());
     let mut seed = String::from("openbrick 3mf package\n");
     for (name, value) in meta.fields() {
@@ -126,13 +167,52 @@ pub fn package_uuids(meta: &ExportMeta, object_count: usize) -> PackageUuids {
             }
         }
     }
+    let _ = writeln!(seed, "objects={}", objects.len());
+    for (i, o) in objects.iter().enumerate() {
+        let _ = writeln!(seed, "object/{i}/name={}:{}", o.name.len(), o.name);
+        let _ = writeln!(seed, "object/{i}/role={}:{}", o.role.len(), o.role);
+        match o.color_srgb {
+            Some(c) => {
+                let _ = writeln!(seed, "object/{i}/color={}", colour_hex(c));
+            }
+            None => {
+                let _ = writeln!(seed, "object/{i}/color=-");
+            }
+        }
+        let _ = writeln!(
+            seed,
+            "object/{i}/mesh={}:{}:{:016x}",
+            o.mesh.positions.len(),
+            o.mesh.triangle_count(),
+            stored_fingerprint(o.mesh)
+        );
+    }
     let package = Uuid::new_v5(&root, seed.as_bytes());
     let derive = |kind: &str, i: usize| Uuid::new_v5(&package, format!("{kind}/{i}").as_bytes());
     PackageUuids {
         build: Uuid::new_v5(&package, b"build"),
-        objects: (0..object_count).map(|i| derive("object", i)).collect(),
-        items: (0..object_count).map(|i| derive("item", i)).collect(),
+        objects: (0..objects.len()).map(|i| derive("object", i)).collect(),
+        items: (0..objects.len()).map(|i| derive("item", i)).collect(),
     }
+}
+
+/// `#RRGGBBAA` in upper-case hex, the form `m:color` uses.
+fn colour_hex([r, g, b, a]: [u8; 4]) -> String {
+    format!("#{r:02X}{g:02X}{b:02X}{a:02X}")
+}
+
+/// Every [`ExportMeta`] field must be text XML can carry, and every field but
+/// `title` must hold more than white space (`serial` only when present): a 3MF
+/// without its traceability metadata cannot be traced to its document.
+fn check_meta(meta: &ExportMeta) -> Result<(), IoError> {
+    for (name, value) in meta.fields() {
+        let field = format!("meta.{name}");
+        check_text(&field, value.unwrap_or_default())?;
+        if name != "title" && value.is_some_and(|v| v.trim().is_empty()) {
+            return Err(IoError::MissingMeta { field });
+        }
+    }
+    Ok(())
 }
 
 /// A role and its colour, if it has one.
@@ -171,12 +251,13 @@ fn metadata(out: &mut String, indent: &str, name: &str, value: &str, preserve: b
 
 /// The model part `3D/3dmodel.model` as text: what [`write_3mf`] puts in the zip.
 ///
-/// Checks, in this order: at least one object; every metadata field, object name
-/// and role holds only characters XML 1.0 allows; roles are non-empty; objects of
-/// one role share a colour; every mesh has whole triangles, indices in range,
-/// finite coordinates, at least one triangle, three distinct vertices per
-/// triangle, and is closed and consistently oriented (each edge used once in each
-/// direction), as 3MF requires of objects of type "model".
+/// Checks, in this order: at least one object; every metadata field holds only
+/// characters XML 1.0 allows, and every field but `title` is non-blank (`serial`
+/// when present); object names and roles hold only characters XML 1.0 allows;
+/// roles are non-empty; objects of one role share a colour; every mesh has whole
+/// triangles, indices in range, finite coordinates, at least one triangle, three
+/// distinct vertices per triangle, and is closed and consistently oriented (each
+/// edge used once in each direction), as 3MF requires of objects of type "model".
 pub fn threemf_model_xml(
     objects: &[ExportObject<'_>],
     meta: &ExportMeta,
@@ -184,9 +265,7 @@ pub fn threemf_model_xml(
     if objects.is_empty() {
         return Err(IoError::NoObjects);
     }
-    for (name, value) in meta.fields() {
-        check_text(&format!("meta.{name}"), value.unwrap_or_default())?;
-    }
+    check_meta(meta)?;
     for (i, o) in objects.iter().enumerate() {
         check_text(&format!("objects[{i}].name"), &o.name)?;
         check_text(&format!("objects[{i}].role"), &o.role)?;
@@ -209,7 +288,7 @@ pub fn threemf_model_xml(
         .collect();
     let colour_group_id = 1;
     let first_object_id = if colours.is_empty() { 1 } else { 2 };
-    let uuids = package_uuids(meta, objects.len());
+    let uuids = package_uuids(objects, meta);
 
     // Kernel meshes take about 45 bytes per vertex line and 50 per triangle line.
     // Only a hint: saturating (usize is 32 bits on wasm32), and growth takes over
@@ -228,9 +307,7 @@ pub fn threemf_model_xml(
     if !meta.title.is_empty() {
         metadata(&mut out, " ", "Title", &meta.title, false);
     }
-    if !meta.generator.is_empty() {
-        metadata(&mut out, " ", "Application", &meta.generator, false);
-    }
+    metadata(&mut out, " ", "Application", &meta.generator, false);
     for (name, value) in [
         ("openbrick:partId", Some(&meta.part_id)),
         ("openbrick:version", Some(&meta.version)),
@@ -249,8 +326,8 @@ pub fn threemf_model_xml(
     out.push_str(" <resources>\n");
     if !colours.is_empty() {
         let _ = writeln!(out, "  <m:colorgroup id=\"{colour_group_id}\">");
-        for (_, [r, g, b, a]) in &colours {
-            let _ = writeln!(out, "   <m:color color=\"#{r:02X}{g:02X}{b:02X}{a:02X}\"/>");
+        for &(_, colour) in &colours {
+            let _ = writeln!(out, "   <m:color color=\"{}\"/>", colour_hex(colour));
         }
         out.push_str("  </m:colorgroup>\n");
     }
@@ -330,9 +407,11 @@ mod tests {
     }
 
     /// The whole model part for two small objects, byte for byte. The UUIDs were
-    /// checked independently with Python's uuid module:
-    /// `root = uuid5(NAMESPACE_DNS, "openbrick3d.org")`,
-    /// `pkg = uuid5(root, seed)` with the seed documented on `package_uuids`, then
+    /// computed independently in Python (the uuid and struct modules, no Rust):
+    /// the stored fingerprints by FNV-1a over `struct.pack("<f", c)` of every
+    /// coordinate and `struct.pack("<I", i)` of every index (94c82c300515cbf8 and
+    /// 31830281756abe55), the seed as documented on `package_uuids`, then
+    /// `root = uuid5(NAMESPACE_DNS, "openbrick3d.org")`, `pkg = uuid5(root, seed)`,
     /// `uuid5(pkg, "build")`, `uuid5(pkg, "object/0")` and so on.
     #[test]
     fn model_xml_golden() {
@@ -358,7 +437,7 @@ mod tests {
   <m:colorgroup id="1">
    <m:color color="#C91A09FF"/>
   </m:colorgroup>
-  <object id="2" type="model" name="body" pid="1" pindex="0" p:UUID="3a77f527-a7c4-570f-8748-b9e5fe06bf06">
+  <object id="2" type="model" name="body" pid="1" pindex="0" p:UUID="f25cd000-d00b-5792-9349-2681f941d8be">
    <metadatagroup>
     <metadata name="openbrick:role" preserve="1">body</metadata>
    </metadatagroup>
@@ -377,7 +456,7 @@ mod tests {
     </triangles>
    </mesh>
   </object>
-  <object id="3" type="model" name="accent &quot;x&quot;" p:UUID="c5434001-ccdb-5317-b63f-b3ae227c2e59">
+  <object id="3" type="model" name="accent &quot;x&quot;" p:UUID="1c61f2e9-fce3-5a65-bb38-114fcdac3e41">
    <metadatagroup>
     <metadata name="openbrick:role" preserve="1">accent</metadata>
    </metadatagroup>
@@ -397,13 +476,15 @@ mod tests {
    </mesh>
   </object>
  </resources>
- <build p:UUID="9a123626-b1b5-5035-b389-af6a1de6e778">
-  <item objectid="2" p:UUID="33b2be0a-b6eb-5aff-9fc0-c7ae93078cca"/>
-  <item objectid="3" p:UUID="42aa74e7-8547-5788-8ccf-d59a10ba5554"/>
+ <build p:UUID="54994c9d-067a-5155-8314-8ee9e19c9778">
+  <item objectid="2" p:UUID="e58aa277-4798-593c-aeba-81e49c9ebe3a"/>
+  <item objectid="3" p:UUID="be8efcbf-65d1-5149-b7e5-0d534df2a581"/>
  </build>
 </model>
 "##;
         assert_eq!(xml, expected);
+        assert_eq!(stored_fingerprint(&a), 0x94c8_2c30_0515_cbf8);
+        assert_eq!(stored_fingerprint(&b), 0x3183_0281_756a_be55);
     }
 
     #[test]
@@ -415,7 +496,13 @@ mod tests {
 
     #[test]
     fn uuids_are_unique_in_a_package_and_follow_the_metadata() {
-        let u = package_uuids(&meta(), 3);
+        let (a, b, c) = (tetra(0.0), tetra(2.0), tetra(4.0));
+        let objects = [
+            ExportObject::new("a", "body", None, &a),
+            ExportObject::new("b", "accent", None, &b),
+            ExportObject::new("c", "serial", None, &c),
+        ];
+        let u = package_uuids(&objects, &meta());
         let mut all = vec![u.build];
         all.extend(&u.objects);
         all.extend(&u.items);
@@ -425,13 +512,14 @@ mod tests {
         assert_eq!(all.len(), count, "duplicate UUID in one package");
         assert!(all.iter().all(|x| x.get_version_num() == 5));
 
-        assert_eq!(package_uuids(&meta(), 3), u, "not deterministic");
+        assert_eq!(package_uuids(&objects, &meta()), u, "not deterministic");
         let other_serial = ExportMeta {
             serial: Some("NDN-0002".into()),
             ..meta()
         };
-        assert_ne!(package_uuids(&other_serial, 3).build, u.build);
-        // A missing serial and an empty one are different exports.
+        assert_ne!(package_uuids(&objects, &other_serial).build, u.build);
+        // A missing serial and an empty one are different seeds (write_3mf
+        // refuses the empty one, but the derivation itself keeps them apart).
         let none = ExportMeta {
             serial: None,
             ..meta()
@@ -441,8 +529,8 @@ mod tests {
             ..meta()
         };
         assert_ne!(
-            package_uuids(&none, 1).build,
-            package_uuids(&empty, 1).build
+            package_uuids(&objects, &none).build,
+            package_uuids(&objects, &empty).build
         );
         // Moving text between fields changes the seed (the length prefixes).
         let shifted = ExportMeta {
@@ -450,14 +538,93 @@ mod tests {
             version: ".0.0".into(),
             ..meta()
         };
-        assert_ne!(package_uuids(&shifted, 1).build, u.build);
+        assert_ne!(package_uuids(&objects, &shifted).build, u.build);
+    }
+
+    /// Equal metadata is not enough for equal UUIDs: the objects take part too,
+    /// so a fused and an unfused export of one document, or a re-tessellated
+    /// one, cannot share UUIDs (review of backlog item 12).
+    #[test]
+    fn uuids_follow_the_objects() {
+        let (a, b) = (tetra(0.0), tetra(2.0));
+        let red = Some([255, 0, 0, 255]);
+        let base = [
+            ExportObject::new("a", "body", red, &a),
+            ExportObject::new("b", "accent", None, &b),
+        ];
+        let u = package_uuids(&base, &meta());
+        let differs = |objects: &[ExportObject<'_>], what: &str| {
+            let v = package_uuids(objects, &meta());
+            assert_ne!(v.build, u.build, "{what}: build");
+            assert_ne!(v.objects[0], u.objects[0], "{what}: object/0");
+            assert_ne!(v.items[0], u.items[0], "{what}: item/0");
+        };
+        // Fewer objects (the reviewer's case: [a] against [b, a]).
+        differs(&base[..1], "one object fewer");
+        differs(&[base[1].clone(), base[0].clone()], "order");
+        let moved = tetra(0.5);
+        differs(
+            &[ExportObject::new("a", "body", red, &moved), base[1].clone()],
+            "geometry",
+        );
+        let mut renumbered = a.clone();
+        renumbered.indices.rotate_left(3);
+        differs(
+            &[
+                ExportObject::new("a", "body", red, &renumbered),
+                base[1].clone(),
+            ],
+            "triangle order",
+        );
+        differs(
+            &[ExportObject::new("a2", "body", red, &a), base[1].clone()],
+            "name",
+        );
+        differs(
+            &[ExportObject::new("a", "serial", red, &a), base[1].clone()],
+            "role",
+        );
+        differs(
+            &[
+                ExportObject::new("a", "body", Some([255, 0, 0, 254]), &a),
+                base[1].clone(),
+            ],
+            "colour",
+        );
+        differs(
+            &[ExportObject::new("a", "body", None, &a), base[1].clone()],
+            "no colour",
+        );
+
+        // -0 is written as 0, so a mesh that differs only there writes the same
+        // file and gets the same UUIDs.
+        let mut negative_zero = a.clone();
+        negative_zero.positions[0] = [-0.0, -0.0, -0.0];
+        assert_ne!(negative_zero.fingerprint(), a.fingerprint());
+        assert_eq!(stored_fingerprint(&negative_zero), stored_fingerprint(&a));
+        let same = [
+            ExportObject::new("a", "body", red, &negative_zero),
+            base[1].clone(),
+        ];
+        assert_eq!(package_uuids(&same, &meta()), u);
+        assert_eq!(
+            threemf_model_xml(&same, &meta()),
+            threemf_model_xml(&base, &meta())
+        );
+    }
+
+    #[test]
+    fn stored_fingerprint_is_the_mesh_fingerprint_without_negative_zeros() {
+        let a = tetra(2.5);
+        assert_eq!(stored_fingerprint(&a), a.fingerprint());
+        assert_ne!(stored_fingerprint(&a), stored_fingerprint(&tetra(2.0)));
     }
 
     #[test]
     fn coordinates_round_trip_through_their_decimal_text() {
         let values = [
             0.1f32,
-            15.8,
+            12.3,
             -3.25,
             1.0e-7,
             123_456.79,
@@ -532,6 +699,61 @@ mod tests {
         );
 
         let objects = [ExportObject::new("a", "body", None, &a)];
+        // Traceability metadata must be present (docs/plan/05 section 3).
+        assert_eq!(
+            write_3mf(&objects, &ExportMeta::default()),
+            Err(IoError::MissingMeta {
+                field: "meta.part_id".into()
+            })
+        );
+        for (blank, field) in [
+            (
+                ExportMeta {
+                    content_hash: " \t".into(),
+                    ..meta()
+                },
+                "meta.content_hash",
+            ),
+            (
+                ExportMeta {
+                    fit_profile_id: String::new(),
+                    ..meta()
+                },
+                "meta.fit_profile_id",
+            ),
+            (
+                ExportMeta {
+                    kernel_id: String::new(),
+                    ..meta()
+                },
+                "meta.kernel_id",
+            ),
+            (
+                ExportMeta {
+                    serial: Some(String::new()),
+                    ..meta()
+                },
+                "meta.serial",
+            ),
+        ] {
+            let err = write_3mf(&objects, &blank).unwrap_err();
+            assert_eq!(
+                err,
+                IoError::MissingMeta {
+                    field: field.into()
+                }
+            );
+            assert!(err.to_string().contains("docs/plan/05"), "{err}");
+        }
+        // The title is optional, and so is the serial number.
+        let optional = ExportMeta {
+            title: String::new(),
+            serial: None,
+            ..meta()
+        };
+        let xml = threemf_model_xml(&objects, &optional).unwrap();
+        assert!(!xml.contains("\"Title\"") && !xml.contains("openbrick:serial"));
+
         let bad = ExportMeta {
             serial: Some("NDN\u{7}".into()),
             ..meta()

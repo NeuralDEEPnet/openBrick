@@ -25,18 +25,28 @@ Generic rules for every 3MF, read in lib3mf strict mode:
     - every object has a build item with no transform (the objects share one
       frame), and the build, every item and every object carry a Production
       extension UUID; all UUIDs are distinct;
-    - the traceability metadata of docs/plan/05 section 3 is present:
-      openbrick:partId, version, contentHash, fitProfile, process, generator,
-      kernel, and every object names its colour role in openbrick:role.
+    - the traceability metadata of docs/plan/05 section 3 is present and not
+      blank: openbrick:partId, version, contentHash, fitProfile, process,
+      generator, kernel, and every object names its colour role in
+      openbrick:role;
+    - every UUID equals the one this script derives, independently of the Rust
+      code, from what lib3mf read: the metadata, and each object's name, role,
+      colour, and vertex and triangle lists (the stored fingerprint), following
+      the recipe documented on openbrick_io::threemf::package_uuids. So a file
+      whose content changed after writing, or two different exports, cannot
+      carry the same UUIDs unnoticed.
 Manifest checks add, per 3MF: object names, roles and colours in order, vertex
-and triangle counts, volume (divergence theorem over lib3mf's vertices) and
-bounding box, and the model metadata value by value; per STL (read with lib3mf's
-STL reader): triangle count and volume, for the merged file and each per-role file.
+and triangle counts, the stored fingerprint (FNV-1a over the exact f32 bits and
+indices lib3mf read), volume (divergence theorem over lib3mf's vertices) and
+bounding box, the build, object and item UUIDs, and the model metadata value by
+value; per STL (read with lib3mf's STL reader): triangle count and volume, for
+the merged file and each per-role file.
 
 --self-test first writes broken copies of the first 3MF (a flipped triangle, a
-malformed UUID, a missing build item, another unit, a missing metadata entry) into
-a temporary directory and requires every one of them to fail, so a validator that
-passes everything cannot go unnoticed.
+malformed UUID, a missing build item, another unit, a missing and a blank
+metadata entry, a moved vertex) into a temporary directory and requires each to
+fail with the problem it was built to show, so a validator that passes
+everything cannot go unnoticed.
 
 Exit status: 0 when everything passes, 1 on any failure, 2 on bad usage.
 Requires: pip install -r scripts/requirements-validate-3mf.txt (lib3mf 2.5.0).
@@ -46,8 +56,10 @@ import json
 import math
 import os
 import re
+import struct
 import sys
 import tempfile
+import uuid
 import zipfile
 
 try:
@@ -67,7 +79,22 @@ REQUIRED_METADATA = (
     "generator",
     "kernel",
 )
+# ExportMeta fields in declaration order, with the metadata entry that carries
+# each (openbrick_io::threemf::package_uuids hashes them in this order).
+META_FIELDS = (
+    ("part_id", "openbrick:partId"),
+    ("version", "openbrick:version"),
+    ("content_hash", "openbrick:contentHash"),
+    ("fit_profile_id", "openbrick:fitProfile"),
+    ("process_id", "openbrick:process"),
+    ("generator", "openbrick:generator"),
+    ("kernel_id", "openbrick:kernel"),
+    ("title", "Title"),
+    ("serial", "openbrick:serial"),
+)
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+# Root of every OpenBrick3D UUID: uuid5(NAMESPACE_DNS, "openbrick3d.org").
+UUID_ROOT = uuid.uuid5(uuid.NAMESPACE_DNS, "openbrick3d.org")
 # Relative tolerance for volumes summed in a different order than the writer did.
 VOLUME_RTOL = 1e-9
 
@@ -111,12 +138,32 @@ def object_count(model):
     return n
 
 
+def mesh_lists(mesh):
+    """Vertices (f32 values as Python floats) and triangles as lib3mf read them."""
+    vertices = [tuple(p.Coordinates) for p in mesh.GetVertices()]
+    triangles = [tuple(t.Indices) for t in mesh.GetTriangleIndices()]
+    return vertices, triangles
+
+
+def stored_fingerprint(mesh):
+    """FNV-1a (64 bit) over every coordinate's little-endian f32 bits (-0 as 0),
+    then every index as a little-endian u32: openbrick_io::threemf::
+    stored_fingerprint, recomputed from what lib3mf read."""
+    vertices, triangles = mesh_lists(mesh)
+    data = b"".join(struct.pack("<3f", *(c + 0.0 for c in v)) for v in vertices)
+    data += b"".join(struct.pack("<3I", *t) for t in triangles)
+    h = 0xCBF29CE484222325
+    for byte in data:
+        h = ((h ^ byte) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
 def geometry(mesh):
     """Volume (divergence theorem, in double precision) and bounds of a mesh."""
-    vertices = [tuple(p.Coordinates) for p in mesh.GetVertices()]
+    vertices, triangles = mesh_lists(mesh)
     volume = 0.0
-    for t in mesh.GetTriangleIndices():
-        a, b, c = (vertices[i] for i in t.Indices)
+    for t in triangles:
+        a, b, c = (vertices[i] for i in t)
         volume += (
             a[0] * (b[1] * c[2] - b[2] * c[1])
             - a[1] * (b[0] * c[2] - b[2] * c[0])
@@ -132,7 +179,7 @@ def colour_of(model, mesh):
     if not has:
         return None
     c = model.GetColorGroupByID(resource).GetColor(prop)
-    return "#{:02X}{:02X}{:02X}{:02X}".format(c.Red, c.Green, c.Blue, c.Alpha)
+    return f"#{c.Red:02X}{c.Green:02X}{c.Blue:02X}{c.Alpha:02X}"
 
 
 def metadata_value(group, namespace, name):
@@ -140,6 +187,51 @@ def metadata_value(group, namespace, name):
         return group.GetMetaDataByKey(namespace, name).GetValue()
     except lib3mf.ELib3MFException:
         return None
+
+
+def model_metadata(model):
+    """Model metadata as {key: value}; keys are "Title", "openbrick:partId" and so on."""
+    group = model.GetMetaDataGroup()
+    found = {}
+    for i in range(group.GetMetaDataCount()):
+        md = group.GetMetaData(i)
+        ns, name = md.GetNameSpace(), md.GetName()
+        key = name if ns == "" else ("openbrick:" + name if ns == OPENBRICK_NS else md.GetKey())
+        found[key] = md.GetValue()
+    return found
+
+
+def derived_uuids(model, meshes):
+    """The UUIDs openbrick_io::threemf::package_uuids gives for what lib3mf read:
+    (build, [object UUIDs in resource order], [item UUIDs in object order])."""
+    metadata = model_metadata(model)
+
+    def sized(value):
+        return f"{len(value.encode('utf-8'))}:{value}"
+
+    seed = "openbrick 3mf package\n"
+    for field, key in META_FIELDS:
+        value = metadata.get(key)
+        if value is None and field == "serial":
+            seed += "serial=-\n"
+        else:
+            seed += f"{field}={sized(value or '')}\n"
+    seed += f"objects={len(meshes)}\n"
+    for i, m in enumerate(meshes):
+        role = metadata_value(m.GetMetaDataGroup(), OPENBRICK_NS, "role") or ""
+        seed += f"object/{i}/name={sized(m.GetName())}\n"
+        seed += f"object/{i}/role={sized(role)}\n"
+        seed += f"object/{i}/color={colour_of(model, m) or '-'}\n"
+        seed += (
+            f"object/{i}/mesh={m.GetVertexCount()}:{m.GetTriangleCount()}:"
+            f"{stored_fingerprint(m):016x}\n"
+        )
+    package = uuid.uuid5(UUID_ROOT, seed)
+    return (
+        str(uuid.uuid5(package, "build")),
+        [str(uuid.uuid5(package, f"object/{i}")) for i in range(len(meshes))],
+        [str(uuid.uuid5(package, f"item/{i}")) for i in range(len(meshes))],
+    )
 
 
 def is_identity(t):
@@ -159,6 +251,8 @@ def check_3mf_generic(path):
     if not has:
         problems.append("the build has no p:UUID")
     uuids.append(build_uuid)
+    object_uuids = []
+    item_uuids = {}
     meshes = mesh_objects(model)
     if not meshes:
         problems.append("no mesh objects")
@@ -178,6 +272,7 @@ def check_3mf_generic(path):
         if not has:
             problems.append(f"object {name!r} has no p:UUID")
         uuids.append(u)
+        object_uuids.append(u)
         if not metadata_value(m.GetMetaDataGroup(), OPENBRICK_NS, "role"):
             problems.append(f"object {name!r} has no openbrick:role metadata")
     items = model.GetBuildItems()
@@ -194,6 +289,7 @@ def check_3mf_generic(path):
         if not has:
             problems.append(f"the build item of resource {rid} has no p:UUID")
         uuids.append(u)
+        item_uuids[rid] = u
     if sorted(referenced) != sorted(by_id):
         problems.append(
             f"build items refer to {sorted(referenced)}, objects are {sorted(by_id)}; "
@@ -203,12 +299,27 @@ def check_3mf_generic(path):
         if u and not UUID_RE.match(u):
             problems.append(f"malformed UUID {u!r}")
     present = [u for u in uuids if u]
-    if len(set(u.lower() for u in present)) != len(present):
+    if len({u.lower() for u in present}) != len(present):
         problems.append("UUIDs repeat within the package")
     group = model.GetMetaDataGroup()
     for name in REQUIRED_METADATA:
-        if metadata_value(group, OPENBRICK_NS, name) is None:
-            problems.append(f"model metadata openbrick:{name} is missing")
+        if not (metadata_value(group, OPENBRICK_NS, name) or "").strip():
+            problems.append(f"model metadata openbrick:{name} is missing or empty")
+    if meshes:
+        build, objects, items = derived_uuids(model, meshes)
+        read_items = [item_uuids.get(m.GetResourceID(), "") for m in meshes]
+        names = [m.GetName() for m in meshes]
+        for label, got, want in (
+            [("the build", build_uuid, build)]
+            + [(f"object {n!r}", g, w) for n, g, w in zip(names, object_uuids, objects)]
+            + [(f"the build item of {n!r}", g, w) for n, g, w in zip(names, read_items, items)]
+        ):
+            if got and got.lower() != want:
+                problems.append(
+                    f"p:UUID of {label} is {got}, but the metadata and objects give {want}: "
+                    "the UUIDs do not match the content (see package_uuids in "
+                    "crates/openbrick-io/src/threemf.rs)"
+                )
     vertices = sum(m.GetVertexCount() for m in meshes)
     triangles = sum(m.GetTriangleCount() for m in meshes)
     summary = f"{len(meshes)} objects, {vertices} vertices, {triangles} triangles"
@@ -225,6 +336,14 @@ def check_3mf_expected(model, fixture):
     expected = fixture["objects"]
     if len(meshes) != len(expected):
         return [f"{len(meshes)} objects, expected {len(expected)}"]
+    build_uuid = model.GetBuildUUID()[1]
+    if build_uuid.lower() != fixture["buildUuid"]:
+        problems.append(f"build p:UUID {build_uuid!r}, expected {fixture['buildUuid']}")
+    item_uuids = {}
+    items = model.GetBuildItems()
+    while items.MoveNext():
+        item = items.GetCurrent()
+        item_uuids[item.GetObjectResourceID()] = item.GetUUID()[1]
     for m, e in zip(meshes, expected):
         name = m.GetName()
         label = f"object {e['name']!r}"
@@ -240,6 +359,18 @@ def check_3mf_expected(model, fixture):
             problems.append(f"{label}: {m.GetVertexCount()} vertices, expected {e['vertices']}")
         if m.GetTriangleCount() != e["triangles"]:
             problems.append(f"{label}: {m.GetTriangleCount()} triangles, expected {e['triangles']}")
+        uuid_read = m.GetUUID()[1]
+        if uuid_read.lower() != e["uuid"]:
+            problems.append(f"{label}: p:UUID {uuid_read!r}, expected {e['uuid']}")
+        item_uuid = item_uuids.get(m.GetResourceID(), "")
+        if item_uuid.lower() != e["itemUuid"]:
+            problems.append(f"{label}: build item p:UUID {item_uuid!r}, expected {e['itemUuid']}")
+        # Exact f32 bits and indices: lib3mf's lists hash to the writer's value.
+        fingerprint = f"{stored_fingerprint(m):016x}"
+        if fingerprint != e["storedFingerprint"]:
+            problems.append(
+                f"{label}: stored fingerprint {fingerprint}, expected {e['storedFingerprint']}"
+            )
         volume, lo, hi = geometry(m)
         if not close(volume, e["volumeMm3"]):
             problems.append(f"{label}: volume {volume} mm3, expected {e['volumeMm3']}")
@@ -247,13 +378,7 @@ def check_3mf_expected(model, fixture):
         # so the bounds must match exactly.
         if lo != e["boundsMm"]["min"] or hi != e["boundsMm"]["max"]:
             problems.append(f"{label}: bounds {lo} .. {hi}, expected {e['boundsMm']}")
-    group = model.GetMetaDataGroup()
-    found = {}
-    for i in range(group.GetMetaDataCount()):
-        md = group.GetMetaData(i)
-        ns, name = md.GetNameSpace(), md.GetName()
-        key = name if ns == "" else ("openbrick:" + name if ns == OPENBRICK_NS else md.GetKey())
-        found[key] = md.GetValue()
+    found = model_metadata(model)
     wanted = fixture["metadata"]
     for key in sorted(set(found) | set(wanted)):
         if found.get(key) != wanted.get(key):
@@ -368,28 +493,52 @@ def drop_content_hash(text):
     return re.sub(r'\s*<metadata name="openbrick:contentHash"[^<]*</metadata>', "", text, count=1)
 
 
+def blank_content_hash(text):
+    return re.sub(
+        r'(<metadata name="openbrick:contentHash"[^>]*>)[^<]*(</metadata>)', r"\1 \2", text, count=1
+    )
+
+
+def move_first_vertex(text):
+    """Shift the first vertex by 0.5 mm along x: the topology stays manifold, so
+    only the content-derived UUIDs can notice."""
+
+    def shift(m):
+        return f'{m.group(1)}{float(m.group(2)) + 0.5!r}"'
+
+    return re.sub(r'(<vertex x=")([^"]+)"', shift, text, count=1)
+
+
+# (label, mutation, a fragment of the problem the broken copy must report)
 MUTATIONS = [
-    ("flipped triangle", flip_first_triangle),
-    ("malformed object UUID", break_first_uuid),
-    ("missing build item", drop_last_item),
-    ("unit inch", use_inches),
-    ("missing openbrick:contentHash", drop_content_hash),
+    ("flipped triangle", flip_first_triangle, "not manifold"),
+    ("malformed object UUID", break_first_uuid, "UUID"),
+    ("missing build item", drop_last_item, "exactly one build item"),
+    ("unit inch", use_inches, "expected millimetre"),
+    ("missing openbrick:contentHash", drop_content_hash, "openbrick:contentHash is missing"),
+    ("blank openbrick:contentHash", blank_content_hash, "openbrick:contentHash is missing or empty"),
+    ("moved vertex", move_first_vertex, "the UUIDs do not match the content"),
 ]
 
 
 def self_test(path, report):
-    """Every broken copy of a valid file must fail the generic rules."""
+    """Every broken copy of a valid file must fail the generic rules, with the
+    problem it was built to show."""
     with tempfile.TemporaryDirectory() as tmp:
-        for label, edit in MUTATIONS:
+        for label, edit, fragment in MUTATIONS:
             dst = os.path.join(tmp, "mutated.3mf")
             rewrite(path, dst, edit)
             _, problems, _ = check_3mf_generic(dst)
-            if problems:
-                report.result(f"self-test: {label} is rejected", [], problems[0])
+            hits = [p for p in problems if fragment in p]
+            if hits:
+                report.result(f"self-test: {label} is rejected", [], hits[0])
             else:
                 report.result(
                     f"self-test: {label} is rejected",
-                    ["the broken copy passed every check; the validator is too lenient"],
+                    [
+                        f"no problem mentions {fragment!r}; the validator is too lenient",
+                        *(f"(reported instead: {p})" for p in problems),
+                    ],
                 )
 
 

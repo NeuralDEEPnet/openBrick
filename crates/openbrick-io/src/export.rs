@@ -47,9 +47,13 @@ impl<'a> ExportObject<'a> {
 /// Traceability metadata embedded in every 3MF (docs/plan/05 sections 3 and 7), so
 /// a printed part can be traced to its document, fit profile and generator.
 ///
-/// The 3MF UUIDs are derived from all of these fields (see
-/// [`threemf::package_uuids`](crate::threemf::package_uuids)), so `content_hash`
-/// must identify the geometry: two exports with equal metadata get equal UUIDs.
+/// [`write_3mf`](crate::write_3mf) requires every field except `title` to hold
+/// more than white space (`serial` only when it is `Some`); it returns
+/// [`IoError::MissingMeta`] otherwise. `Default` is therefore not a valid export
+/// on its own; it exists for building values field by field.
+///
+/// The 3MF UUIDs are derived from all of these fields and from the objects (see
+/// [`threemf::package_uuids`](crate::threemf::package_uuids)).
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExportMeta {
@@ -147,6 +151,8 @@ pub enum IoError {
     RoleColourConflict { role: String },
     #[error("{field} contains the character U+{code:04X}, which XML 1.0 cannot carry; remove it")]
     InvalidText { field: String, code: u32 },
+    #[error("{field} is empty; every 3MF carries it as openbrick traceability metadata so a printed part can be traced back (docs/plan/05 sections 3 and 7). Pass the real value; a part without a serial number uses serial: None, not an empty string")]
+    MissingMeta { field: String },
     #[error("{what} is too large for this writer ({size} bytes or entries); split the export into several files")]
     TooLarge { what: &'static str, size: u64 },
 }
