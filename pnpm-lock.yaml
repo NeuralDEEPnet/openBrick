@@ -8,8 +8,11 @@ importers:
 
   .: {}
 
-  bench/harness:
+  apps/web:
     dependencies:
+      '@openbrick3d/viewport':
+        specifier: workspace:*
+        version: link:../../packages/viewport
       three:
         specifier: 0.186.1
         version: 0.186.1
@@ -20,6 +23,28 @@ importers:
       vite:
         specifier: 8.3.5
         version: 8.3.5
+
+  bench/harness:
+    dependencies:
+      '@openbrick3d/viewport':
+        specifier: workspace:*
+        version: link:../../packages/viewport
+      three:
+        specifier: 0.186.1
+        version: 0.186.1
+    devDependencies:
+      playwright:
+        specifier: 1.63.0
+        version: 1.63.0
+      vite:
+        specifier: 8.3.5
+        version: 8.3.5
+
+  packages/viewport:
+    devDependencies:
+      three:
+        specifier: 0.186.1
+        version: 0.186.1
 
 packages:
 

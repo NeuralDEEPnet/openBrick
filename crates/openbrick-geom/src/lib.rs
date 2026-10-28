@@ -5,7 +5,9 @@
 //! library through FFI, for CLI and desktop builds (opt-in feature `manifold-csg`,
 //! module `manifold_csg`). A `manifold-3d` WASM backend for web and mobile follows
 //! behind the same interface. This crate holds the trait and the plain mesh and
-//! polygon types so that no other crate depends on a kernel directly.
+//! polygon types so that no other crate depends on a kernel directly. Module
+//! `nominal` builds nominal bricks from the Dimensional Standard over any kernel,
+//! for the render harness and the browser pipeline until the part evaluator exists.
 //!
 //! Backends agree on volume and topology but may tessellate differently, so a mesh
 //! fingerprint is only meaningful together with its kernel id: never mix content
@@ -17,6 +19,8 @@ pub mod manifold_rust;
 
 #[cfg(feature = "manifold-csg")]
 pub mod manifold_csg;
+
+pub mod nominal;
 
 /// A closed polygon in millimetres (counter-clockwise outer, clockwise holes).
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -191,6 +195,8 @@ pub enum GeomError {
     NonManifold(String),
     #[error("operation not supported by this kernel: {0}")]
     Unsupported(&'static str),
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 /// A solid handle owned by a kernel.

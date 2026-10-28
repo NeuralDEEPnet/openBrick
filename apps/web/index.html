@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>OpenBrick3D viewer</title>
+    <meta name="description" content="OpenBrick3D: a brick-compatible brick built by the Rust core in WebAssembly and shown with three.js." />
+    <meta name="color-scheme" content="light dark" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='26' height='16' rx='2' fill='%23c8323c'/%3E%3Crect x='7' y='6' width='7' height='6' rx='1.5' fill='%23c8323c'/%3E%3Crect x='18' y='6' width='7' height='6' rx='1.5' fill='%23c8323c'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #eef2f6;
+        --panel: #ffffff;
+        --text: #17212b;
+        --muted: #4f5d6c;
+        --line: #d2dae3;
+        --control: #f5f7fa;
+        --control-hover: #e6ebf1;
+        --accent: #1d5fae;
+        --bad: #b3261e;
+        /* Read by src/viewer.js for the 3D scene. */
+        --stage-bg: #dde5ee;
+        --grid-major: #7d8a99;
+        --grid-minor: #b4bfcb;
+        --brick: #c8323c;
+        font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1218;
+          --panel: #151c25;
+          --text: #e6ecf2;
+          --muted: #9fadbd;
+          --line: #2a3542;
+          --control: #1d2632;
+          --control-hover: #263241;
+          --accent: #7cc4ff;
+          --bad: #ff9b9b;
+          --stage-bg: #10161d;
+          --grid-major: #4f5d6e;
+          --grid-minor: #26303c;
+          --brick: #d23f48;
+        }
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header, footer {
+        background: var(--panel);
+        padding-left: max(12px, env(safe-area-inset-left));
+        padding-right: max(12px, env(safe-area-inset-right));
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 20px;
+        padding-top: max(8px, env(safe-area-inset-top));
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      h1 { margin: 0 auto 0 0; font-size: 16px; font-weight: 650; white-space: nowrap; }
+      h1 span { color: var(--muted); font-weight: 400; }
+      form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; min-width: 0; }
+      /* Label above its - value + row, so two steppers fit side by side on a phone. */
+      .stepper { display: grid; grid-template-columns: repeat(3, auto); gap: 2px 4px; }
+      .stepper label { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+      button, input {
+        font: inherit;
+        color: var(--text);
+        background: var(--control);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        height: 40px;
+      }
+      button { width: 40px; padding: 0; font-size: 20px; line-height: 1; cursor: pointer; touch-action: manipulation; }
+      button:hover:not(:disabled) { background: var(--control-hover); }
+      input {
+        width: 3.4em;
+        padding: 0 4px;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        appearance: textfield;
+        -moz-appearance: textfield;
+      }
+      input::-webkit-inner-spin-button, input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      input[aria-invalid="true"] { border-color: var(--bad); outline: 2px solid var(--bad); outline-offset: -1px; }
+      button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      :disabled { opacity: 0.55; cursor: default; }
+      #limits { align-self: center; color: var(--muted); font-size: 13px; }
+      #stage { position: relative; min-height: 0; overflow: hidden; background: var(--stage-bg); }
+      #stage canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+      .hint {
+        position: absolute;
+        z-index: 1;
+        left: max(12px, env(safe-area-inset-left));
+        bottom: 10px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        pointer-events: none;
+      }
+      footer {
+        padding-top: 8px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+        border-top: 1px solid var(--line);
+      }
+      #status {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 14px;
+        min-height: 1.4em;
+        color: var(--muted);
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+      }
+      #status span { overflow-wrap: anywhere; }
+      #status span:first-child { color: var(--text); font-weight: 600; }
+      #status.bad span { color: var(--bad); font-weight: 600; }
+      @media (max-width: 480px) {
+        :root { font-size: 14px; }
+        header { gap: 6px 12px; }
+        h1 { font-size: 15px; }
+      }
+    </style>
+  </head>
+  <body data-state="loading">
+    <header>
+      <h1>OpenBrick3D <span>viewer</span></h1>
+      <form id="controls" aria-label="Brick size" novalidate>
+        <div class="stepper">
+          <label for="width">Width</label>
+          <button type="button" data-for="width" data-step="-1" aria-label="One stud narrower" disabled>−</button>
+          <input id="width" name="width" type="number" inputmode="numeric" step="1" value="2" disabled />
+          <button type="button" data-for="width" data-step="1" aria-label="One stud wider" disabled>+</button>
+        </div>
+        <div class="stepper">
+          <label for="length">Length</label>
+          <button type="button" data-for="length" data-step="-1" aria-label="One stud shorter" disabled>−</button>
+          <input id="length" name="length" type="number" inputmode="numeric" step="1" value="4" disabled />
+          <button type="button" data-for="length" data-step="1" aria-label="One stud longer" disabled>+</button>
+        </div>
+        <span id="limits"></span>
+      </form>
+    </header>
+    <main id="stage" aria-label="3D view of the brick: drag to orbit, pinch or scroll to zoom, two fingers or right-drag to pan">
+      <p class="hint" aria-hidden="true">Drag to orbit · pinch or scroll to zoom</p>
+    </main>
+    <footer>
+      <output id="status" role="status" aria-live="polite"></output>
+    </footer>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

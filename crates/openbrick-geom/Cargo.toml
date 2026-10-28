@@ -20,6 +20,8 @@ manifold-csg = ["dep:manifold-csg", "dep:manifold-csg-sys"]
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+# Nominal brick dimensions (module `nominal`) come from the Dimensional Standard.
+openbrick-units = { workspace = true }
 # Pinned exactly: the kernel id in content hashes names this version.
 manifold-rust = { version = "=0.19.1", optional = true }
 # Both pinned exactly because the kernel id in content hashes names these versions
@@ -29,7 +31,6 @@ manifold-csg = { version = "=0.4.1", optional = true, default-features = false }
 manifold-csg-sys = { version = "=3.5.105", optional = true, default-features = false }
 
 [dev-dependencies]
-openbrick-units = { workspace = true }
 serde_json = { workspace = true }
 manifold-rust = "=0.19.1"
 
@@ -45,6 +46,11 @@ required-features = ["manifold-rust"]
 
 [[test]]
 name = "harness_meshes"
+required-features = ["manifold-rust"]
+
+# Golden values of the nominal bricks are manifold-rust output.
+[[test]]
+name = "nominal"
 required-features = ["manifold-rust"]
 
 [lints]

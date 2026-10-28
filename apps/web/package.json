@@ -1,0 +1,25 @@
+{
+  "name": "@openbrick3d/web",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Browser app: the Rust core as WebAssembly in a Web Worker, meshes shown with the three.js WebGPURenderer (docs/plan/02 sections 1 to 3, decisions D10 and D14)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "wasm": "cd ../.. && cargo xtask wasm",
+    "start": "pnpm run wasm && vite",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test",
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "@openbrick3d/viewport": "workspace:*",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0",
+    "vite": "8.3.5"
+  }
+}

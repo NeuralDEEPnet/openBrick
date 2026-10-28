@@ -19,7 +19,7 @@ pnpm --dir bench/harness smoke     # build, serve and run headless Chromium
 | `src/params.js` | URL parameters, validation and suite plans |
 | `src/layout.js` | lattice grid and chunking |
 | `src/mesh.js` | reader for the kernel's OBMESH files |
-| `src/frame.js` | kernel frame to three.js frame |
+| `src/frame.js` | kernel frame to three.js frame (re-exports `packages/viewport/src/frame.js`, shared with `apps/web`) |
 | `public/meshes/` | brick meshes written by the kernel (committed, about 75 KB) |
 | `test/` | `node --test` unit tests |
 | `smoke.mjs` | end-to-end smoke test in headless Chromium |
@@ -47,7 +47,7 @@ Each `.bin` file is OBMESH version 1, little-endian: a 32-byte header (`OBMESH\0
 
 ## Frames
 
-Kernel meshes are millimetres in a right-handed frame with +Z up and the body's minimum corner at the origin. three.js is right-handed with +Y up. All bricks live under one group rotated by -90 degrees about +X, which maps (x, y, z) to (x, z, -y); the determinant is +1, so triangle winding and back-face culling are unchanged. One three.js unit is one millimetre. `src/frame.js` holds the conversion and a test checks it against three's own matrix.
+Kernel meshes are millimetres in a right-handed frame with +Z up and the body's minimum corner at the origin. three.js is right-handed with +Y up. All bricks live under one group rotated by -90 degrees about +X, which maps (x, y, z) to (x, z, -y); the determinant is +1, so triangle winding and back-face culling are unchanged. One three.js unit is one millimetre. The conversion lives in `packages/viewport/src/frame.js`, which `apps/web` uses too; tests there and in `test/mesh.test.js` check it against three's own matrix.
 
 ## Scene and measurement
 

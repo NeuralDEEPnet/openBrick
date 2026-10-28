@@ -1,0 +1,17 @@
+{
+  "name": "@openbrick3d/viewport",
+  "private": true,
+  "version": "0.0.1",
+  "description": "three.js viewport building blocks (docs/plan/02 section 2); for now the kernel-to-three.js frame conversion shared by bench/harness and apps/web",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./frame.js": "./src/frame.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "three": "0.186.1"
+  }
+}
