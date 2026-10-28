@@ -289,10 +289,12 @@ pub struct Measurements {
     pub allowed_processes: Vec<String>,
     pub triangle_count: usize,
     pub volume_mm3: f64,
-    /// Sum of the volumes of the feature solids before the union. Solids that
-    /// only touch add up to the union volume exactly; the few that overlap (wall
-    /// ribs inside the wall-to-roof chamfer) count twice, so the union is slightly
-    /// smaller. Rule `MESH.VOLUME` compares the two.
+    /// Sum of the volumes of the feature solids before the union, less the
+    /// designed overlap of tubes, pins and ribs that reach into a deboss or
+    /// inlay's thickened roof. Solids that only touch add up to the union volume
+    /// exactly; the few that overlap (wall ribs inside the wall-to-roof chamfer)
+    /// count twice, so the union is slightly smaller. Rule `MESH.VOLUME` compares
+    /// the two.
     pub feature_volume_sum_mm3: f64,
     pub bounds_min_mm: [f64; 3],
     pub bounds_max_mm: [f64; 3],
@@ -309,7 +311,9 @@ pub struct Measurements {
     /// is [`Measurements::min_body_wall_at_bed_mm`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_body_wall_mm: Option<f64>,
-    /// Thinnest body side wall in the bed plane (z = 0), after the 45 degree
+    /// Thinnest body side wall at z = 0, the bottom edges (the bed plane, except
+    /// for an inlay printed face down, whose face on the bed
+    /// `Built.artwork.faceChamferMm` describes), after the 45 degree
     /// first-layer chamfers on its outer face and on the cavity rim:
     /// `min_body_wall_mm` minus twice the chamfer. Equal to `min_body_wall_mm`
     /// when the process has no first-layer chamfer.
@@ -320,7 +324,8 @@ pub struct Measurements {
     /// chamfer; see [`Measurements::min_tube_wall_at_bed_mm`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_tube_wall_mm: Option<f64>,
-    /// Thinnest tube wall in the bed plane, after the first-layer chamfers on
+    /// Thinnest tube wall at z = 0 (see `min_body_wall_at_bed_mm`), after the
+    /// first-layer chamfers on
     /// the outside and in the bore: `min_tube_wall_mm` minus twice the tube's
     /// chamfer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -370,7 +375,10 @@ pub struct Measurements {
     /// `FEATURE.MIN` then reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_stroke_mm: Option<f64>,
-    /// Reserved for artwork: area removed by the opening, in percent.
+    /// Reserved for artwork: the area that does not print as drawn, in percent
+    /// of the artwork area. This is what the opening removed, plus, for deboss
+    /// and inlay, face material strictly thinner than minFeature measured at the
+    /// bottom of the cut (still built).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed_area_pct: Option<f64>,
     /// Reserved for artwork: relief height (rule `RELIEF.HEIGHT`).

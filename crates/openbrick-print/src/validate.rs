@@ -26,8 +26,10 @@
 //! line widths, so every rule that compares a length in the bed plane (`WALL.MIN`,
 //! `TUBE.WALL`, `WALL.QUANTISED`, `FEATURE.MIN` strokes and `CLUTCH.RISK`) first
 //! divides it by `xyScale`: it judges the part as drawn plus fit offsets, which
-//! is also how the coupon cells are printed (no fit profile reaches the
-//! coupon). A calibration therefore cannot turn a wall drawn at the minimum
+//! is also how the coupon cells are printed: at scale 1, because no fit profile
+//! reaches the coupon. A fit profile whose `xyScale` is not 1 therefore also
+//! scales the calibrated diameters away from the chosen cells (`record` writes 1;
+//! see `openbrick_part::coupon`). A calibration therefore cannot turn a wall drawn at the minimum
 //! into a blocker, nor a wall of whole lines into a warning. Messages show the
 //! mesh length too when `xyScale` is not 1. Heights (`ROOF.MIN`,
 //! `CAVITY.DEPTH`, `RELIEF.HEIGHT`) are not scaled.
