@@ -143,7 +143,9 @@ impl Mesh {
         let key = |i: u32| self.positions[i as usize].map(|c| (c + 0.0).to_bits());
         let mut tris: Vec<[[u32; 3]; 3]> = self
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| {
                 let c = [key(t[0]), key(t[1]), key(t[2])];
                 // The smallest of the three rotations, so a tie between two corners

@@ -62,6 +62,43 @@ jobs:
           echo "native 2x4 fingerprint: $native"
           echo "$out" | grep -q "\"fingerprint\":\"$native\""
 
+  deny:
+    # Licence allowlist, bans, advisories and sources (LICENSE-POLICY.md, deny.toml).
+    # Covers every feature, including the optional manifold-csg backend. The C++
+    # sources that manifold-csg-sys clones at build time are outside Cargo's view;
+    # see docs/spikes/q01b-manifold-csg-comparison.md.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          arguments: --all-features
+          command: check
+
+  geom-manifold-csg:
+    # Second kernel backend (C++ Manifold through manifold-csg) and the
+    # cross-backend conformance comparison; see
+    # docs/spikes/q01b-manifold-csg-comparison.md. The first build clones Manifold
+    # and Clipper2 from GitHub and compiles them with cmake and g++, which
+    # ubuntu-24.04 runners already have; rust-cache keeps the build afterwards.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy with both kernel backends
+        run: cargo clippy -p openbrick-geom --all-targets --features manifold-csg -- -D warnings
+      - name: Conformance corpus on both backends
+        run: cargo test -p openbrick-geom --features manifold-csg
+      - name: Print the cross-backend comparison table
+        run: cargo test -p openbrick-geom --features manifold-csg --test conformance backends_agree -- --nocapture
+      - name: Corpus on manifold-csg alone
+        run: cargo test -p openbrick-geom --no-default-features --features manifold-csg
+
   docs:
     runs-on: ubuntu-24.04
     steps:

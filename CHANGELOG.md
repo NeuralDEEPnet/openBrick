@@ -5,6 +5,8 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 ## Unreleased
 
 ### Fixed
+- `deny.toml` used a value current cargo-deny rejects, so the licence policy could not be checked; CI now runs `cargo deny --all-features check`, and a `geom-manifold-csg` job runs the C++ kernel cross-check.
+- `canonical_fingerprint` uses `as_chunks`, which the clippy lint added in Rust 1.99 requires.
 - DCO workflow skips merge commits, as the DCO app does; it failed on the merge commit in the M0 scaffold pull request.
 
 ### Added

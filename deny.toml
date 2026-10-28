@@ -8,4 +8,6 @@ exceptions = [{ allow = ["MIT-0"], crate = "borrow-or-share" }]
 multiple-versions = "warn"
 
 [advisories]
-unmaintained = "warn"
+# Unmaintained-crate advisories fail only for crates the workspace depends on
+# directly; transitive ones are reviewed in the monthly dependency audit.
+unmaintained = "workspace"
