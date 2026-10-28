@@ -33,9 +33,12 @@ Generic rules for every 3MF, read in lib3mf strict mode:
     - no two mesh objects overlap (the 3MF Core specification asks producers
       not to emit overlapping objects; touching is fine): sampled with a grid of
       vertical lines over the region where their boxes overlap, each line's
-      inside intervals computed from its crossings with each mesh. The sample
-      can miss an overlap narrower than the grid spacing; the Rust tests prove
-      non-overlap of the evaluator's objects with kernel intersections;
+      inside intervals computed from its crossings with each mesh. A line
+      through an edge or a vertex, or with an odd number of crossings, is
+      skipped, and a pair with more than half its lines skipped fails as not
+      checked. The sample can miss an overlap narrower than the grid spacing;
+      the Rust tests prove non-overlap of the evaluator's objects with kernel
+      intersections;
     - the traceability metadata of docs/plan/05 section 3 is present and not
       blank: openbrick:partId, version, contentHash, fitProfile, process,
       generator, kernel, and every mesh object names its colour role in
@@ -59,11 +62,14 @@ layout.
 
 --self-test first writes broken copies of the first 3MF (a flipped triangle, a
 malformed UUID, a missing build item, another unit, a missing and a blank
-metadata entry, a moved vertex) into a temporary directory and requires each to
-fail with the problem it was built to show, so a validator that passes
-everything cannot go unnoticed. When a target holds a components object, the
-first such 3MF gets broken copies too (overlapping parts, a component with a
-transform, a component without a UUID, a part placed twice, a part left out).
+metadata entry, a moved vertex, no Production UUIDs at all) into a temporary
+directory and requires each to fail with the problem it was built to show, so
+a validator that passes everything cannot go unnoticed. When a target holds a
+components object, the first such 3MF gets broken copies too (overlapping
+parts, a component with a transform, a component without a UUID, a part placed
+twice, a part left out, overlapping parts that cannot be sampled). lib3mf
+itself refuses the malformed and the missing UUID; the self-test requires its
+message.
 
 Exit status: 0 when everything passes, 1 on any failure, 2 on bad usage.
 Requires: pip install -r scripts/requirements-validate-3mf.txt (lib3mf 2.5.0).
@@ -124,6 +130,12 @@ SEPARATE_LAYOUT = "separateObjects"
 # 0.1 um leaves a margin and is far below any printed feature).
 OVERLAP_LINES = 64
 OVERLAP_TOLERANCE_MM = 1e-4
+# A pair of objects whose boxes overlap must be sampled by at least this share
+# of the lines; the rest ran through an edge or a vertex, or crossed a mesh an
+# odd number of times (an open mesh), and say nothing. Below it the pair fails
+# as not checked, so an overlap cannot hide behind lines that were all skipped.
+# (The nudged lines miss every edge of the exports in CI: none is skipped.)
+OVERLAP_MIN_SAMPLED = 0.5
 # A line closer than this (in barycentric terms) to a triangle edge is skipped:
 # it would count a crossing twice or not at all.
 EDGE_EPS = 1e-12
@@ -410,13 +422,21 @@ def check_overlaps(meshes, parts):
             if result is None:
                 continue
             worst, where, total, used, skipped = result
-            if worst > OVERLAP_TOLERANCE_MM:
-                a, b = meshes[i], meshes[j]
-                kind = (
-                    "parts"
-                    if a.GetResourceID() in parts and b.GetResourceID() in parts
-                    else "objects"
+            a, b = meshes[i], meshes[j]
+            kind = (
+                "parts"
+                if a.GetResourceID() in parts and b.GetResourceID() in parts
+                else "objects"
+            )
+            lines = used + skipped
+            if used < OVERLAP_MIN_SAMPLED * lines:
+                problems.append(
+                    f"{kind} {a.GetName()!r} and {b.GetName()!r} were not checked for overlap: "
+                    f"{skipped} of the {lines} vertical lines over the region where their boxes "
+                    "overlap ran through an edge or a vertex or crossed a mesh an odd number of "
+                    f"times, more than {1 - OVERLAP_MIN_SAMPLED:.0%}; an overlap could hide there"
                 )
+            if worst > OVERLAP_TOLERANCE_MM:
                 problems.append(
                     f"{kind} {a.GetName()!r} and {b.GetName()!r} overlap: a vertical line at "
                     f"x={where[0]:.4f}, y={where[1]:.4f} mm runs {worst:.4g} mm inside both "
@@ -434,6 +454,12 @@ def check_3mf_generic(path):
     if model.GetUnit() != lib3mf.ModelUnit.MilliMeter:
         problems.append(f"unit is {model.GetUnit()}, expected millimetre")
     uuids = []
+    # lib3mf 2.5.0 never lets the "has no p:UUID" checks below fire: it refuses
+    # a package that declares the Production namespace and leaves out a UUID
+    # ("A UUID for a build, build item or object is missing"), and invents
+    # random UUIDs for one that does not declare it, which the derived-UUID
+    # check at the end rejects (both are self-test mutations). The checks stay
+    # as a guard should another lib3mf version read such files differently.
     has, build_uuid = model.GetBuildUUID()
     if not has:
         problems.append("the build has no p:UUID")
@@ -822,6 +848,13 @@ def blank_content_hash(text):
     )
 
 
+def drop_production_uuids(text):
+    """Remove every p:UUID and the Production namespace: lib3mf then reads the
+    package and makes up random UUIDs, so only the derived UUIDs notice."""
+    text = re.sub(r' p:UUID="[^"]+"', "", text)
+    return re.sub(r' xmlns:p="[^"]+"', "", text, count=1)
+
+
 def move_first_vertex(text):
     """Shift the first vertex by 0.5 mm along x: the topology stays manifold, so
     only the content-derived UUIDs can notice."""
@@ -835,12 +868,14 @@ def move_first_vertex(text):
 # (label, mutation, a fragment of the problem the broken copy must report)
 MUTATIONS = [
     ("flipped triangle", flip_first_triangle, "not manifold"),
-    ("malformed object UUID", break_first_uuid, "UUID"),
+    # lib3mf's own message (lib3mf 2.5.0 refuses the file before this script's checks).
+    ("malformed object UUID", break_first_uuid, "A UUID is ill formatted"),
     ("missing build item", drop_last_item, "exactly one build item"),
     ("unit inch", use_inches, "expected millimetre"),
     ("missing openbrick:contentHash", drop_content_hash, "openbrick:contentHash is missing"),
     ("blank openbrick:contentHash", blank_content_hash, "openbrick:contentHash is missing or empty"),
     ("moved vertex", move_first_vertex, "the UUIDs do not match the content"),
+    ("no Production UUIDs", drop_production_uuids, "the UUIDs do not match the content"),
 ]
 
 
@@ -879,6 +914,25 @@ def place_part_too(text):
     )
 
 
+def open_sunk_second_part(text):
+    """Sink the second mesh object into the first, then remove its top cap (the
+    triangles whose three vertices lie at its highest z): every vertical line
+    through it now crosses it once, so the overlap sample cannot use those lines
+    and must say the pair was not checked."""
+    text = sink_second_part(text)
+    block = mesh_object_blocks(text)[1]
+    body = block.group(0)
+    zs = [float(z) for z in re.findall(r'<vertex [^>]*z="([^"]+)"', body)]
+    top = max(zs)
+
+    def keep(m):
+        corners = (int(m.group(k)) for k in (1, 2, 3))
+        return "" if all(zs[v] == top for v in corners) else m.group(0)
+
+    opened = re.sub(r'\s*<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"[^>]*/>', keep, body)
+    return text[: block.start()] + opened + text[block.end() :]
+
+
 def drop_last_component(text):
     last = list(re.finditer(r"\s*<component [^>]*/>", text))[-1]
     return text[: last.start()] + text[last.end() :]
@@ -888,9 +942,11 @@ def drop_last_component(text):
 COMPONENT_MUTATIONS = [
     ("overlapping parts", sink_second_part, "overlap"),
     ("component with a transform", transform_last_component, "has a transform"),
-    ("component without a UUID", drop_component_uuid, "UUID"),
+    # lib3mf's own message (lib3mf 2.5.0 refuses the file before this script's checks).
+    ("component without a UUID", drop_component_uuid, "A UUID for a build, build item or object is missing"),
     ("part placed twice", place_part_too, "exactly one build item"),
     ("part left out", drop_last_component, "exactly one build item"),
+    ("overlapping parts that cannot be sampled", open_sunk_second_part, "not checked for overlap"),
 ]
 
 

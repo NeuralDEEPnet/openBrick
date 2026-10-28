@@ -753,6 +753,14 @@ fn parts_inlay(svg: Vec<u8>, params: ParamValues) -> Result<Built, EvalError> {
     )
 }
 
+/// The thinnest layer of a process: the parts inlay keeps one under its fill.
+fn thinnest_layer(p: &ProcessProfile) -> f64 {
+    p.layer_height_mm
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// The volume two meshes share, through the kernel: each mesh back into a
 /// solid, then their intersection.
 fn shared_volume(a: &Mesh, b: &Mesh) -> f64 {
@@ -777,12 +785,13 @@ fn inlay_parts_fill_and_body_make_the_plain_tile() {
     // The multi-material inlay (inlayStyle parts): the artwork fill is the
     // accent object, the opened square reliefHeight deep into the face, and the
     // body is the plain tile recessed by exactly that region. Nothing is
-    // thickened or clamped: on fdm-0.4 the 1.0 mm roof keeps 0.4 mm under the
-    // 0.6 mm fill, more than one 0.16 mm layer.
+    // thickened or clamped: on fdm-0.4 the roof keeps more than the thinnest
+    // layer under the fill (1.0 - 0.6 = 0.4 mm against 0.16 mm today).
     let p = fdm();
     let f = face();
     let h = param_default("reliefHeight");
     let roof = mm("roof").max(p.min_roof_mm);
+    let layer = thinnest_layer(&p);
     let b = parts_inlay(fixture("square.svg"), ParamValues::new()).expect("builds");
     eprintln!("warnings: {:?}", b.warnings);
     let roles: Vec<&str> = b.objects.iter().map(|o| o.role.as_str()).collect();
@@ -790,7 +799,10 @@ fn inlay_parts_fill_and_body_make_the_plain_tile() {
     let (body, fill) = (&b.objects[0], &b.objects[1]);
     let m = &b.measurements;
     assert_eq!(m.relief_height_mm, Some(h), "not clamped");
-    assert!(roof - h >= 0.16 - 1e-12);
+    assert!(
+        roof - h >= layer - 1e-12,
+        "{roof} - {h} keeps a {layer} mm layer"
+    );
     assert_eq!(m.roof_mm, Some(roof), "the roof is not thickened");
     assert_eq!(
         m.cavity_depth_mm,
@@ -916,8 +928,12 @@ fn inlay_parts_fill_and_body_make_the_plain_tile() {
     for words in [
         "multi-material variant",
         "top face on the bed",
-        "the `accent` object is the artwork fill, 0.600 mm deep",
+        &format!("the `accent` object is the artwork fill, {h:.3} mm deep"),
         "own filament",
+        // The fused object above is the plain tile: the warning says so.
+        "single-colour (fused) export",
+        "plain body without visible artwork",
+        "inlayStyle `swap` or mode `deboss`",
     ] {
         assert!(variant.contains(words), "`{words}` in: {variant}");
     }
@@ -927,7 +943,8 @@ fn inlay_parts_fill_and_body_make_the_plain_tile() {
         .find(|w| w.contains("colour roles"))
         .unwrap_or_else(|| panic!("{:?}", b.warnings));
     for words in [
-        "2 colour roles, each its own part",
+        "2 colour roles, each its own object in the export",
+        "the parts of one object in the part-designer 3MF layout",
         "`body` (the body) and `accent` (the artwork fill of `art`)",
         "top face (the artwork) on the bed",
         "turn it over in the slicer",
@@ -969,19 +986,17 @@ fn inlay_parts_fill_and_body_make_the_plain_tile() {
 
 #[test]
 fn inlay_parts_keep_a_layer_of_roof_under_the_fill() {
-    // 1.5 mm asked on a 1.0 mm roof: clamped so the body keeps one 0.16 mm
-    // layer (the thinnest of fdm-0.4) under the fill, with a warning; the
-    // fill never reaches the cavity. A brick has the same roof.
+    // 1.5 mm asked on a 1.0 mm roof: clamped so the body keeps one layer (the
+    // thinnest of fdm-0.4, 0.16 mm today, so 0.840 mm) under the fill, with a
+    // warning; the fill never reaches the cavity. A brick has the same roof.
     let p = fdm();
     let roof = mm("roof").max(p.min_roof_mm);
-    let layer = p
-        .layer_height_mm
-        .iter()
-        .copied()
-        .fold(f64::INFINITY, f64::min);
+    let layer = thinnest_layer(&p);
+    let asked = 1.5;
+    assert!(asked > roof - layer, "the request is deeper than the clamp");
     let b = parts_inlay(
         fixture("square.svg"),
-        ParamValues::new().with("reliefHeight", json!(1.5)),
+        ParamValues::new().with("reliefHeight", json!(asked)),
     )
     .expect("builds");
     let depth = b.measurements.relief_height_mm.expect("measured");
@@ -990,9 +1005,10 @@ fn inlay_parts_keep_a_layer_of_roof_under_the_fill() {
         "{depth}"
     );
     assert!(
-        b.warnings
-            .iter()
-            .any(|w| w.contains("clamped to 0.840 mm") && w.contains("one 0.16 mm layer")),
+        b.warnings.iter().any(
+            |w| w.contains(&format!("clamped to {:.3} mm", roof - layer))
+                && w.contains(&format!("one {layer} mm layer"))
+        ),
         "{:?}",
         b.warnings
     );
@@ -1027,20 +1043,67 @@ fn inlay_parts_keep_a_layer_of_roof_under_the_fill() {
         "{e}"
     );
     assert!(e.to_string().contains("swap"), "{e}");
-    let emboss = tile(
+    // The logo tile shows inlayStyle only for inlay (`visibleWhen`), so a
+    // `parts` left over from an inlay the user switched away from is ignored
+    // without a word: the user can no longer see it.
+    let ignored = |w: &String| w.contains("applies to inlay only");
+    for relief in ["emboss", "deboss"] {
+        let b = tile(
+            fixture("square.svg"),
+            ParamValues::new()
+                .with("relief", json!(relief))
+                .with("inlayStyle", json!("parts")),
+        )
+        .expect("builds");
+        assert!(
+            !b.warnings.iter().any(ignored),
+            "{relief}: {:?}",
+            b.warnings
+        );
+        assert_eq!(b.artwork.as_ref().expect("report").inlay_style, None);
+    }
+    // Written into the document, or through a parameter that is shown, it is
+    // worth a warning.
+    let literal = logo_tile_with_art_field("inlayStyle", json!("parts"));
+    let mut shown: Value = serde_json::from_str(LOGO_TILE).expect("JSON");
+    shown["params"]["inlayStyle"]
+        .as_object_mut()
+        .expect("the inlayStyle parameter")
+        .remove("visibleWhen")
+        .expect("hidden unless inlay");
+    let shown = PartDoc::parse(&shown.to_string()).expect("parses");
+    for (doc, params) in [
+        (&literal, ParamValues::new()),
+        (
+            &shown,
+            ParamValues::new().with("inlayStyle", json!("parts")),
+        ),
+    ] {
+        let emboss = eval_doc(doc, fixture("square.svg"), params).expect("builds");
+        assert!(
+            emboss
+                .warnings
+                .iter()
+                .any(|w| ignored(w) && w.contains("its own part already")),
+            "{:?}",
+            emboss.warnings
+        );
+        assert_eq!(emboss.artwork.as_ref().expect("report").inlay_style, None);
+    }
+    let deboss = eval_doc(
+        &literal,
         fixture("square.svg"),
-        ParamValues::new().with("inlayStyle", json!("parts")),
+        ParamValues::new().with("relief", json!("deboss")),
     )
     .expect("builds");
     assert!(
-        emboss
+        deboss
             .warnings
             .iter()
-            .any(|w| w.contains("applies to inlay only") && w.contains("its own part already")),
+            .any(|w| ignored(w) && w.contains("ignored for deboss")),
         "{:?}",
-        emboss.warnings
+        deboss.warnings
     );
-    assert_eq!(emboss.artwork.as_ref().expect("report").inlay_style, None);
     // In the body's own colour the parts inlay is the plain tile.
     let doc = logo_tile_with_art_field("colorRole", json!("body"));
     let one = eval_doc(
@@ -2152,9 +2215,35 @@ fn multi_material_exports_are_one_object_with_parts() {
             shared_volume(&b.objects[0].mesh, &b.objects[1].mesh) < 1e-9,
             "{name}"
         );
+        let mut files = vec![(format!("{name}.3mf"), bytes)];
+        // A colourless copy of the square tiles for the print test: Bambu
+        // Studio turns colour groups into surface painting through its colour
+        // dialog, so the A1 test compares that path with plain per-part
+        // filaments (docs/spikes/q18-slicer-multimaterial-import.md).
+        if !name.contains("mark") {
+            let plain: Vec<ExportObject> = objects
+                .iter()
+                .map(|o| ExportObject {
+                    color_srgb: None,
+                    ..o.clone()
+                })
+                .collect();
+            let xml = threemf_model_xml_with_layout(&plain, &meta, layout).expect("model");
+            assert!(
+                !xml.contains("colorgroup") && !xml.contains("pid="),
+                "{name}: no colour"
+            );
+            assert_eq!(xml.matches("<component ").count(), 2, "{name}");
+            let bytes = write_3mf_with_layout(&plain, &meta, layout).expect("writes");
+            assert_eq!(bytes, write_3mf_with_layout(&plain, &meta, layout).unwrap());
+            assert_ne!(bytes, files[0].1, "{name}: another file");
+            files.push((format!("{name}-no-colour.3mf"), bytes));
+        }
         if let Ok(dir) = std::env::var("OPENBRICK_RELIEF_EXPORT_DIR") {
             let dir = Path::new(&dir);
-            std::fs::write(dir.join(format!("{name}.3mf")), &bytes).expect("write");
+            for (file, bytes) in &files {
+                std::fs::write(dir.join(file), bytes).expect("write");
+            }
         }
     }
 }

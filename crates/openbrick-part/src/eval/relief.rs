@@ -49,7 +49,11 @@
 //!      `height` deep into the face, and the body is recessed by exactly that
 //!      region, so the two touch without overlapping and together are the
 //!      plain body. The roof is not thickened (the fill completes it), and the
-//!      depth keeps one layer of the roof in the body under the fill.
+//!      depth keeps one layer of the roof in the body under the fill. So the
+//!      fused single-colour object is the plain body, and the warning says so.
+//!
+//!    A `parts` style the mode does not read gets a warning, unless the field
+//!    names a parameter that its `visibleWhen` hides.
 //! 7. Thin face material (deboss and inlay): what prints is the face around the
 //!    cuts, so the body footprint at the bottom of the cut minus the opened
 //!    artwork is opened at the same radius too (see [`thin_face`]). Walls
@@ -837,7 +841,11 @@ pub(crate) fn plan_relief<K: Kernel>(
             })?
         }
     };
-    if style == InlayStyle::Parts && mode != Mode::Inlay {
+    // A style the user can see and has set is worth a word when the mode does
+    // not read it. A parameter hidden by its `visibleWhen` (the logo tile shows
+    // inlayStyle only for inlay) keeps the value it had before the user left
+    // inlay, and the user cannot see it, so it is ignored without a warning.
+    if style == InlayStyle::Parts && mode != Mode::Inlay && !feat.names_hidden_param("inlayStyle") {
         warnings.push(format!(
             "feature `{}`: inlayStyle `parts` applies to inlay only and is ignored for {}{}",
             feat.id(),
@@ -1211,7 +1219,7 @@ pub(crate) fn plan_relief<K: Kernel>(
             // no filament change to place: the slicer prints each part with
             // its own filament.
             InlayStyle::Parts => warnings.push(format!(
-                "feature `{}`: inlay is built as the multi-material variant (inlayStyle parts): print it face down with the top face on the bed; the `{}` object is the artwork fill, {height:.3} mm deep in the face, and the body is recessed by exactly that region, so the two touch without overlapping; give each part its own filament (an AMS slot or a toolhead): no filament change is needed",
+                "feature `{}`: inlay is built as the multi-material variant (inlayStyle parts): print it face down with the top face on the bed; the `{}` object is the artwork fill, {height:.3} mm deep in the face, and the body is recessed by exactly that region, so the two touch without overlapping; give each part its own filament (an AMS slot or a toolhead): no filament change is needed. The single-colour (fused) export joins the fill back into the body, so it is the plain body without visible artwork: for one colour, use inlayStyle `swap` or mode `deboss`",
                 feat.id(),
                 feat.role()
             )),

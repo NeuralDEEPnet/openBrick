@@ -315,6 +315,15 @@ impl Feat<'_> {
         }
     }
 
+    /// Whether the field is a plain `$name` reference to a parameter hidden by
+    /// its `visibleWhen` (see [`Scope::names_hidden_param`]).
+    fn names_hidden_param(&self, name: &str) -> bool {
+        self.f
+            .fields
+            .get(name)
+            .is_some_and(|v| self.scope.names_hidden_param(v))
+    }
+
     fn err(&self, field: &str, message: impl Into<String>) -> EvalError {
         EvalError::Field {
             feature: self.f.id.clone(),
@@ -921,7 +930,9 @@ fn role_rank(role: &str) -> (usize, &str) {
 /// For a part with more than one colour role: which roles there are, what each
 /// holds, and which face goes on the bed, so the CLI and the playground can say
 /// which filament goes where. Every role is one object of the export, a part of
-/// one object in the part-designer 3MF layout (`openbrick_io::ExportLayout`).
+/// one object in the part-designer 3MF layout (`openbrick_io::ExportLayout::
+/// PART_DESIGNER`); the wording holds for either layout, since the evaluator
+/// does not know which one the exporter writes.
 fn colour_roles_warning(
     objects: &[RoleMesh],
     body_role: &str,
@@ -958,7 +969,7 @@ fn colour_roles_warning(
         _ => "print it with the bottom face on the bed, as designed",
     };
     Some(format!(
-        "{} colour roles, each its own part in the export: {list}; assign each part its filament (an AMS slot or a toolhead); {face}",
+        "{} colour roles, each its own object in the export (the parts of one object in the part-designer 3MF layout): {list}; assign each its filament (an AMS slot or a toolhead); {face}",
         objects.len()
     ))
 }
