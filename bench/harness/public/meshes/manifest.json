@@ -1,0 +1,98 @@
+{
+  "body_mm": [
+    15.8,
+    31.8,
+    9.6
+  ],
+  "brick_height_mm": 9.6,
+  "format": "OBMESH",
+  "format_version": 1,
+  "frame": "kernel frame: right-handed, +Z up; body minimum corner at the origin, body from z = 0 to brick_height_mm, studs on top",
+  "generator": "cargo run --release -p openbrick-geom --example export_lods",
+  "kernel": "manifold-rust 0.19",
+  "lods": [
+    {
+      "bounds_mm": {
+        "max": [
+          15.8,
+          31.8,
+          11.3
+        ],
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "bytes": 65216,
+      "description": "full brick: shell, roof, 64-segment studs and tubes",
+      "file": "brick-2x4-lod0.bin",
+      "fingerprint": "0xfa969a6c0bf657e7",
+      "lod": 0,
+      "stud_segments": 64,
+      "triangles": 3620,
+      "tubes": true,
+      "vertices": 1812,
+      "volume_mm3": 2073.391
+    },
+    {
+      "bounds_mm": {
+        "max": [
+          15.8,
+          31.8,
+          11.3
+        ],
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "bytes": 9920,
+      "description": "shell, roof and 16-segment studs; no tubes (underside detail is invisible from typical views)",
+      "file": "brick-2x4-lod1.bin",
+      "fingerprint": "0xbcd6e38057053f32",
+      "lod": 1,
+      "stud_segments": 16,
+      "triangles": 548,
+      "tubes": false,
+      "vertices": 276,
+      "volume_mm3": 1675.191
+    },
+    {
+      "bounds_mm": {
+        "max": [
+          15.8,
+          31.8,
+          9.6
+        ],
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "bytes": 272,
+      "description": "stud-less hull box of the body",
+      "file": "brick-2x4-lod2.bin",
+      "fingerprint": "0x42488224136e3b7d",
+      "lod": 2,
+      "stud_segments": null,
+      "triangles": 12,
+      "tubes": false,
+      "vertices": 8,
+      "volume_mm3": 4823.424
+    }
+  ],
+  "part": "brick 2x4",
+  "pitch_mm": 8.0,
+  "standard": "dimensions-v1 1.0.0",
+  "stud_height_mm": 1.7,
+  "studs": [
+    2,
+    4
+  ],
+  "to_threejs": "three.js is right-handed with +Y up: (x, y, z) -> (x, z, -y), a -90 degree rotation about +X (determinant +1, so triangle winding is kept)",
+  "undersize_per_side_mm": 0.1,
+  "units": "mm"
+}

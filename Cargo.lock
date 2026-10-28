@@ -612,6 +612,7 @@ dependencies = [
  "manifold-rust",
  "openbrick-units",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

@@ -30,6 +30,7 @@ manifold-csg-sys = { version = "=3.5.105", optional = true, default-features = f
 
 [dev-dependencies]
 openbrick-units = { workspace = true }
+serde_json = { workspace = true }
 manifold-rust = "=0.19.1"
 
 [[example]]

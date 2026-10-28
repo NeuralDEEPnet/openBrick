@@ -1,0 +1,22 @@
+{
+  "name": "@openbrick3d/bench-harness",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Device render harness: N instanced 2x4 bricks at a chosen LOD with the three.js WebGPURenderer, frame-time statistics as a CSV row (docs/plan/07 section 9, decision D10)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test",
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0",
+    "vite": "8.3.5"
+  }
+}

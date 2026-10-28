@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Render harness</title>
+    <meta name="description" content="OpenBrick3D device render harness: instanced brick-compatible 2x4 bricks, frame-time statistics as CSV." />
+    <style>
+      :root {
+        color-scheme: dark;
+        --panel: rgb(17 22 29 / 0.88);
+        --text: #e8edf3;
+        --muted: #a9b4c2;
+        --accent: #7cc4ff;
+        --warn: #ffd27a;
+        --bad: #ff9b9b;
+        --line: rgb(255 255 255 / 0.14);
+        font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      html, body { margin: 0; height: 100%; background: #0b0f14; color: var(--text); overflow: hidden; }
+      #stage, #stage canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+      .panel {
+        position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top));
+        max-width: min(720px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: auto;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+        box-sizing: border-box;
+      }
+      h1 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+      #status { color: var(--muted); font-variant-numeric: tabular-nums; }
+      [hidden] { display: none !important; }
+      #result { top: auto; bottom: max(12px, env(safe-area-inset-bottom)); }
+      .summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px 12px; margin: 8px 0; }
+      .summary div { font-variant-numeric: tabular-nums; }
+      .summary span { display: block; color: var(--muted); font-size: 12px; }
+      textarea {
+        width: 100%; box-sizing: border-box; min-height: 7.5em; resize: vertical; background: #0b0f14; color: var(--text);
+        border: 1px solid var(--line); border-radius: 6px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 8px;
+      }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+      button, select, input {
+        font: inherit; color: var(--text); background: #1d2632; border: 1px solid var(--line); border-radius: 6px;
+        min-height: 40px; padding: 0 12px; box-sizing: border-box;
+      }
+      button { cursor: pointer; }
+      button.primary { background: #1f4f7a; border-color: #2f6da3; }
+      button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+      label input, label select { width: 120px; }
+      label.wide input { width: 200px; }
+      .warn { color: var(--warn); }
+      .bad { color: var(--bad); white-space: pre-wrap; }
+      a { color: var(--accent); }
+      small { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div id="stage" aria-hidden="true"></div>
+    <section id="hud" class="panel" aria-live="polite">
+      <h1>OpenBrick3D render harness</h1>
+      <div id="config"></div>
+      <div id="status">Loading…</div>
+    </section>
+    <section id="result" class="panel" hidden aria-labelledby="result-title">
+      <h1 id="result-title">Result</h1>
+      <div id="result-config"></div>
+      <div id="summary" class="summary"></div>
+      <div id="warnings" class="warn"></div>
+      <label for="csv">CSV (header and row; paste the row into bench/devices/results.csv)</label>
+      <textarea id="csv" readonly spellcheck="false"></textarea>
+      <div class="row">
+        <button id="copy" class="primary" type="button">Copy CSV</button>
+        <button id="download" type="button">Download CSV</button>
+        <button id="again" type="button">Run again</button>
+        <button id="open-setup" type="button" aria-controls="setup">Change settings</button>
+        <small id="copied" role="status"></small>
+      </div>
+    </section>
+    <form id="setup" class="panel" hidden>
+      <h1>Settings</h1>
+      <div class="row">
+        <label>Bricks <input name="count" inputmode="numeric" autocomplete="off" /></label>
+        <label>LOD <select name="lod"><option>0</option><option>1</option><option>2</option></select></label>
+        <label>Backend <select name="backend"><option>webgpu</option><option>webgl2</option></select></label>
+        <label>Seconds <input name="seconds" inputmode="decimal" /></label>
+        <label>Warm-up <input name="warmup" inputmode="decimal" /></label>
+        <label>DPR cap <input name="dpr" inputmode="decimal" /></label>
+        <label>MSAA <select name="aa"><option value="1">on</option><option value="0">off</option></select></label>
+        <label>GPU timer <select name="gpu"><option value="0">off</option><option value="1">on</option></select></label>
+        <label class="wide">Device label <input name="device" placeholder="e.g. Pixel 8a, Chrome 141" maxlength="80" /></label>
+      </div>
+      <div class="row">
+        <button class="primary" type="submit">Run</button>
+        <button id="suite" type="button">Run the standard suite (10k and 100k, every LOD, both backends)</button>
+        <button id="close-setup" type="button">Back to the result</button>
+      </div>
+      <p><small>Integers accept a k suffix (100k). The suite reloads the page once per run and collects every row; keep the tab in front.</small></p>
+    </form>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
