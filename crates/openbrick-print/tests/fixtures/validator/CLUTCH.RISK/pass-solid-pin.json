@@ -1,0 +1,47 @@
+{
+  "description": "A 1-wide part on a fit profile without a pin offset: the solid pin is at its 3.18 mm nominal (standards/dimensions-v1.json pin_1wide_diameter).",
+  "rule": "CLUTCH.RISK",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "fitPatch": {
+    "offsetsMm": {
+      "pinDiameter": 0.0
+    }
+  },
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "pinDiameterMm": 3.18,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.4,
+    "roofMm": 1.0,
+    "studDiameterMm": 4.8,
+    "triangleCount": 2640,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": []
+  }
+}

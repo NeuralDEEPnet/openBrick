@@ -5,14 +5,29 @@
 //! value and unit, the value and the threshold as numbers, and a fix hint
 //! (CLAUDE.md). Blockers disable export; warnings never do. Thresholds come from
 //! the process profile, the coupon sweep from `standards/coupon-v1.json`
-//! ([`crate::coupon_v1`]); the only threshold of the validator itself is
-//! [`MESH_VOLUME_TOLERANCE_PCT`], from the rule table, and
-//! [`LENGTH_TOLERANCE_MM`] only absorbs floating-point residue, so a wall of
-//! exactly the minimum passes.
+//! ([`crate::coupon_v1`]) and nominals from the Dimensional Standard; the only
+//! threshold of the validator itself is [`MESH_VOLUME_TOLERANCE_PCT`], from the
+//! rule table, and [`LENGTH_TOLERANCE_MM`] only absorbs floating-point residue,
+//! so a wall of exactly the minimum passes.
 //!
-//! Units: `value` and `threshold` are millimetres, except `MESH.VOLUME`
-//! (percent deviation and percent tolerance) and `MESH.MANIFOLD` on an empty
-//! mesh (component count).
+//! Units: `value` and `threshold` are millimetres, except `MESH.VOLUME` (percent
+//! deviation and percent tolerance; on a volume that is not positive, the volume
+//! in mm3 against 0, and on one that is not a finite number, both null),
+//! `FEATURE.MIN` on the removed area (percent of the artwork area) and
+//! `MESH.MANIFOLD` on an empty mesh (component count).
+//!
+//! **One frame for lengths in the bed plane.** The measurements are taken on the
+//! compensated mesh, after fit offsets and the fit profile's `xyScale`. `xyScale`
+//! is a uniform shrinkage compensation of a few percent (the fit-profile schema
+//! allows 0.9 to 1.1) that the print undoes and that the slicer absorbs in its
+//! line widths, so every rule that compares a length in the bed plane (`WALL.MIN`,
+//! `TUBE.WALL`, `WALL.QUANTISED`, `FEATURE.MIN` strokes and `CLUTCH.RISK`) first
+//! divides it by `xyScale`: it judges the part as drawn plus fit offsets, which
+//! is also how the coupon cells are printed (no fit profile reaches the
+//! coupon). A calibration therefore cannot turn a wall drawn at the minimum
+//! into a blocker, nor a wall of whole lines into a warning. Messages show the
+//! mesh length too when `xyScale` is not 1. Heights (`ROOF.MIN`,
+//! `CAVITY.DEPTH`, `RELIEF.HEIGHT`) are not scaled.
 //!
 //! Implemented rules ([`IMPLEMENTED_RULES`]): `MESH.MANIFOLD`, `MESH.VOLUME`,
 //! `WALL.MIN`, `TUBE.WALL`, `CAVITY.DEPTH`, `WALL.QUANTISED`, `ROOF.MIN`,
@@ -26,27 +41,39 @@
 //!   the count alone cannot tell a loose piece from a multi-colour part. A
 //!   per-object count would let a later revision warn about loose pieces of the
 //!   body.
-//! - `MESH.VOLUME` warns when the volume is not positive, or deviates from
-//!   [`Measurements::feature_volume_sum_mm3`] by more than 5 percent; it skips
-//!   the comparison when that sum is not positive (unknown).
+//! - `MESH.VOLUME` warns when the volume is not positive or not a finite number,
+//!   or deviates from [`Measurements::feature_volume_sum_mm3`] by more than 5
+//!   percent; it skips the comparison when that sum is not positive (unknown).
 //! - `TUBE.WALL` blocks below `minTubeWallMm` and warns below
 //!   `recommendedTubeWallMm` (0.8 mm for `fdm-0.4`, from "minTubeWallMm 0.7
 //!   (warning below 0.8)" in the rule table); a profile without that field has
 //!   no warning band. Hollow-stud walls are not measured yet.
-//! - `WALL.QUANTISED` tests the side wall before the fit profile's `xyScale`,
-//!   which compensates shrinkage and so is undone by the print: the designer's
-//!   wall is what must be whole lines.
-//! - `FEATURE.MIN` blocks when the thinnest stroke of fit-critical artwork
-//!   ([`Measurements::min_fit_critical_stroke_mm`], a label someone reads to
-//!   calibrate) is below `minFeatureMm`, and warns when any artwork stroke is.
-//!   The removed area of the morphological opening is reported in the message;
-//!   rounding the corners of any artwork removes some area, so it is not a
-//!   trigger on its own.
-//! - `FIT.PROCESS` blocks a fit profile calibrated for another process, a part
-//!   built for a process other than the one it is validated against, and a
-//!   process the part does not allow (`print.profiles`).
+//! - `FEATURE.MIN` has two triggers: the thinnest artwork stroke
+//!   ([`Measurements::min_stroke_mm`], after the morphological opening) below
+//!   `minFeatureMm`, and the share of the artwork area the opening removed
+//!   ([`Measurements::removed_area_pct`]) above the process's
+//!   `maxRemovedAreaPct`. Both are blockers when the part's artwork is
+//!   fit-critical ([`Measurements::fit_critical_artwork`], a label someone reads
+//!   to calibrate, which must print as drawn) and warnings otherwise. The opening
+//!   also rounds or bevels convex corners: on a 13.2 mm square at 0.8 mm that
+//!   is 0.18 % of the area, under the 1 % of the bundled profiles, but small
+//!   text at the minimum stroke can lose more than 1 % to its corners alone, so
+//!   fit-critical text needs bolder strokes or a larger size.
+//! - `FIT.PROCESS` blocks when the part, its build and the profiles disagree: a
+//!   fit profile calibrated for another process; a process the part does not
+//!   allow (`print.profiles`); a part built for another process than the one it
+//!   is validated against; and a part built with another fit profile than the
+//!   one it is validated against, or with one when none is given, or without
+//!   one when one is given ([`Measurements::fit_profile`]). The last ones keep a
+//!   nominal preview from passing as a calibrated export: the report must
+//!   describe the mesh that is exported.
 //! - `CLUTCH.RISK` warns when the stud, tube bore or tube outer diameter after
-//!   offsets lies outside the coupon cells `stud`, `tube` or `pocketTubeOD`.
+//!   offsets lies outside the coupon cells `stud`, `tube` or `pocketTubeOD`; and
+//!   when the solid pin under a 1-wide part is not at its nominal. The fit
+//!   offset that sizes that pin, `pinDiameter`, is calibrated on the Technic pin
+//!   row of the coupon (cell `pin`), and no coupon cell tests the solid pin, so
+//!   any change to it is untested (an open question for docs/plan/05: a
+//!   separate offset or a 1-wide pin row).
 //!
 //! Not implemented yet, because they need mesh analysis or data the evaluator
 //! does not provide: `MESH.SELF_INTERSECT` (needs a self-intersection test of
@@ -54,6 +81,8 @@
 //! and face-angle analysis), `ORIENT.FACE` (needs the declared up face and
 //! inlay mode), `TRADEMARK.LOGO` (needs the Q16 artwork matcher) and `SIZE.BED`
 //! (process profiles carry no bed size yet).
+
+use openbrick_units::STANDARD;
 
 use crate::coupon::coupon_v1;
 use crate::{
@@ -98,13 +127,36 @@ pub const PLANNED_RULES: &[&str] = &[
     "SIZE.BED",
 ];
 
+/// Ids of the part features the measurements come from, when the caller knows
+/// them, so findings can name them (`Finding::feature`).
+/// `openbrick_part::validate` fills it from the built part's connectors.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FeatureNames {
+    /// The stud field (`studM` connectors): `CLUTCH.RISK` on the stud diameter.
+    pub studs: Option<String>,
+    /// The tube field (`tubeF` connectors): `TUBE.WALL`, and `CLUTCH.RISK` on
+    /// the tube bore, the tube outer diameter and the solid 1-wide pin.
+    pub tubes: Option<String>,
+}
+
 /// Check the measurements of a built part. Findings are sorted blockers first,
 /// then by rule id, feature and message, so equal inputs give equal reports.
 pub fn validate(m: &Measurements, process: &ProcessProfile, fit: Option<&FitProfile>) -> Report {
+    validate_with(m, process, fit, &FeatureNames::default())
+}
+
+/// [`validate`], naming the features in `names` on the findings they concern.
+pub fn validate_with(
+    m: &Measurements,
+    process: &ProcessProfile,
+    fit: Option<&FitProfile>,
+    names: &FeatureNames,
+) -> Report {
     let mut v = Validator {
         m,
         p: process,
         fit,
+        names,
         out: Vec::new(),
     };
     v.mesh_manifold();
@@ -181,10 +233,12 @@ struct Validator<'a> {
     m: &'a Measurements,
     p: &'a ProcessProfile,
     fit: Option<&'a FitProfile>,
+    names: &'a FeatureNames,
     out: Vec<Finding>,
 }
 
 impl Validator<'_> {
+    /// Add a finding; set `feature` on the returned finding when it is known.
     fn push(
         &mut self,
         rule: &str,
@@ -193,7 +247,7 @@ impl Validator<'_> {
         value: Option<f64>,
         threshold: Option<f64>,
         fix: String,
-    ) {
+    ) -> &mut Finding {
         self.out.push(Finding {
             rule: rule.into(),
             severity,
@@ -203,9 +257,10 @@ impl Validator<'_> {
             fix,
             feature: None,
         });
+        self.out.last_mut().expect("just pushed")
     }
 
-    /// `of fdm-0.4`, for messages that name the threshold's source.
+    /// `of process `fdm-0.4``, for messages that name the threshold's source.
     fn of_process(&self) -> String {
         format!("of process `{}`", self.p.id)
     }
@@ -214,6 +269,36 @@ impl Validator<'_> {
         self.fit
             .map(|f| format!("fit profile `{}`", f.id))
             .unwrap_or_else(|| "the fit profile".into())
+    }
+
+    /// The fit profile's `xyScale`, 1 without a fit profile (or with a scale
+    /// that is not a positive number, which the schema refuses).
+    fn xy_scale(&self) -> f64 {
+        self.fit
+            .map(|f| f.offsets_mm.xy_scale)
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .unwrap_or(1.0)
+    }
+
+    /// A length in the bed plane as drawn plus fit offsets: the measured
+    /// (compensated mesh) length divided by `xyScale` (see the module
+    /// documentation).
+    fn drawn(&self, mesh_mm: f64) -> f64 {
+        mesh_mm / self.xy_scale()
+    }
+
+    /// ` (0.784 mm on the mesh, scaled by xyScale 0.98 of fit profile `x`)`
+    /// when `xyScale` is not 1, else nothing.
+    fn on_mesh(&self, mesh_mm: f64) -> String {
+        let xy = self.xy_scale();
+        if (xy - 1.0).abs() < 1e-12 {
+            return String::new();
+        }
+        format!(
+            " ({} mm on the mesh, scaled by xyScale {xy} of {})",
+            mm(mesh_mm),
+            self.fit_name()
+        )
     }
 
     fn mesh_manifold(&mut self) {
@@ -252,7 +337,24 @@ impl Validator<'_> {
     fn mesh_volume(&mut self) {
         let m = self.m;
         let tol = MESH_VOLUME_TOLERANCE_PCT;
-        if m.volume_mm3 <= 0.0 || !m.volume_mm3.is_finite() {
+        if !m.volume_mm3.is_finite() {
+            // No number to report: the value and the threshold are both null.
+            self.push(
+                "MESH.VOLUME",
+                Severity::Warning,
+                format!(
+                    "the mesh volume could not be measured (it came out as {}), so it cannot be compared with the sum of its feature volumes",
+                    m.volume_mm3
+                ),
+                None,
+                None,
+                "this is a bug in the evaluator or the kernel, not in your part: please report it with the part file and its parameters"
+                    .into(),
+            );
+            return;
+        }
+        if m.volume_mm3 <= 0.0 {
+            // The volume itself, in mm3, against zero (not a percentage).
             self.push(
                 "MESH.VOLUME",
                 Severity::Warning,
@@ -292,24 +394,20 @@ impl Validator<'_> {
     }
 
     fn wall_min(&mut self) {
-        let Some(wall) = self.m.min_body_wall_mm else {
+        let Some(mesh) = self.m.min_body_wall_mm else {
             return;
         };
+        let wall = self.drawn(mesh);
         let min = self.p.min_wall_mm;
         if below(wall, min) {
             let msg = format!(
-                "the thinnest body wall is {} mm, below the {} mm minimum wall {}",
+                "the thinnest body wall is {} mm{}, below the {} mm minimum wall {}",
                 mm(wall),
+                self.on_mesh(mesh),
                 mm(min),
                 self.of_process()
             );
-            let mut fix = format!("make the side wall at least {} mm thick", mm(min));
-            if let Some(f) = self.fit.filter(|f| f.offsets_mm.xy_scale < 1.0) {
-                fix += &format!(
-                    "; the xyScale {} of fit profile `{}` thins every wall",
-                    f.offsets_mm.xy_scale, f.id
-                );
-            }
+            let fix = format!("make the side wall at least {} mm thick", mm(min));
             self.push(
                 "WALL.MIN",
                 Severity::Blocker,
@@ -322,14 +420,17 @@ impl Validator<'_> {
     }
 
     fn tube_wall(&mut self) {
-        let Some(wall) = self.m.min_tube_wall_mm else {
+        let Some(mesh) = self.m.min_tube_wall_mm else {
             return;
         };
+        let wall = self.drawn(mesh);
+        let feature = self.names.tubes.clone();
         let min = self.p.min_tube_wall_mm;
         if below(wall, min) {
             let msg = format!(
-                "the thinnest tube wall is {} mm after fit offsets, below the {} mm minimum tube wall {}",
+                "the thinnest tube wall is {} mm after fit offsets{}, below the {} mm minimum tube wall {}",
                 mm(wall),
+                self.on_mesh(mesh),
                 mm(min),
                 self.of_process()
             );
@@ -345,7 +446,8 @@ impl Validator<'_> {
                 Some(wall),
                 Some(min),
                 fix,
-            );
+            )
+            .feature = feature;
             return;
         }
         let Some(recommended) = self.p.recommended_tube_wall_mm else {
@@ -353,8 +455,9 @@ impl Validator<'_> {
         };
         if below(wall, recommended) {
             let msg = format!(
-                "the thinnest tube wall is {} mm after fit offsets: printable, but below the recommended {} mm {}",
+                "the thinnest tube wall is {} mm after fit offsets{}: printable, but below the recommended {} mm {}",
                 mm(wall),
+                self.on_mesh(mesh),
                 mm(recommended),
                 self.of_process()
             );
@@ -371,7 +474,8 @@ impl Validator<'_> {
                 Some(wall),
                 Some(recommended),
                 fix,
-            );
+            )
+            .feature = feature;
         }
     }
 
@@ -404,23 +508,23 @@ impl Validator<'_> {
     }
 
     fn wall_quantised(&mut self) {
-        let Some(wall) = self.m.min_body_wall_mm else {
+        let Some(mesh) = self.m.min_body_wall_mm else {
             return;
         };
         let q = self.p.wall_quantise_mm;
         if q <= 0.0 {
             return;
         }
-        let xy = self.fit.map(|f| f.offsets_mm.xy_scale).unwrap_or(1.0);
-        let design = if xy > 0.0 { wall / xy } else { wall };
-        let lines = design / q;
+        let wall = self.drawn(mesh);
+        let lines = wall / q;
         if (lines - lines.round()).abs() * q <= LENGTH_TOLERANCE_MM {
             return;
         }
-        let better = self.p.quantise_wall(design);
+        let better = self.p.quantise_wall(wall);
         let msg = format!(
-            "the side wall is {} mm, which is {:.2} lines of {} mm (wallQuantiseMm {}); walls print solid only as whole lines",
-            mm(design),
+            "the side wall is {} mm{}, which is {:.2} lines of {} mm (wallQuantiseMm {}); walls print solid only as whole lines",
+            mm(wall),
+            self.on_mesh(mesh),
             lines,
             mm(q),
             self.of_process()
@@ -435,7 +539,7 @@ impl Validator<'_> {
             "WALL.QUANTISED",
             Severity::Warning,
             msg,
-            Some(design),
+            Some(wall),
             Some(q),
             fix,
         );
@@ -471,53 +575,58 @@ impl Validator<'_> {
 
     fn feature_min(&mut self) {
         let min = self.p.min_feature_mm;
-        let removed = self
-            .m
-            .removed_area_pct
-            .map(|pct| {
-                format!("; the morphological opening removed {pct:.1} % of the artwork area")
-            })
-            .unwrap_or_default();
-        if let Some(stroke) = self.m.min_fit_critical_stroke_mm.filter(|&s| below(s, min)) {
-            let msg = format!(
-                "the thinnest stroke of fit-critical artwork is {} mm, below the {} mm minimum feature {}{removed}",
-                mm(stroke),
-                mm(min),
-                self.of_process()
-            );
-            let fix = format!(
-                "fit-critical artwork such as a calibration label must print as drawn: make its strokes at least {} mm wide (a bolder weight or a larger size)",
-                mm(min)
-            );
-            self.push(
-                "FEATURE.MIN",
-                Severity::Blocker,
-                msg,
-                Some(stroke),
-                Some(min),
-                fix,
-            );
-            return;
+        let critical = self.m.fit_critical_artwork;
+        let (severity, artwork) = if critical {
+            (Severity::Blocker, "fit-critical artwork")
+        } else {
+            (Severity::Warning, "artwork")
+        };
+        if let Some(mesh) = self.m.min_stroke_mm {
+            let stroke = self.drawn(mesh);
+            if below(stroke, min) {
+                let msg = format!(
+                    "the thinnest stroke of the {artwork} is {} mm{}, below the {} mm minimum feature {}",
+                    mm(stroke),
+                    self.on_mesh(mesh),
+                    mm(min),
+                    self.of_process()
+                );
+                let fix = if critical {
+                    format!(
+                        "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes at least {} mm wide (a bolder weight or a larger size) and keep minStroke at the process minimum",
+                        mm(min)
+                    )
+                } else {
+                    format!(
+                        "make strokes at least {} mm wide (a bolder weight or a larger size), or keep minStroke at the process minimum so thinner lines are removed",
+                        mm(min)
+                    )
+                };
+                self.push("FEATURE.MIN", severity, msg, Some(stroke), Some(min), fix);
+            }
         }
-        if let Some(stroke) = self.m.min_stroke_mm.filter(|&s| below(s, min)) {
-            let msg = format!(
-                "the thinnest artwork stroke is {} mm, below the {} mm minimum feature {}{removed}",
-                mm(stroke),
-                mm(min),
-                self.of_process()
-            );
-            let fix = format!(
-                "make strokes at least {} mm wide (a bolder weight or a larger size), or keep minStroke at the process minimum so thinner lines are removed",
-                mm(min)
-            );
-            self.push(
-                "FEATURE.MIN",
-                Severity::Warning,
-                msg,
-                Some(stroke),
-                Some(min),
-                fix,
-            );
+        if let (Some(pct), Some(max)) = (self.m.removed_area_pct, self.p.max_removed_area_pct) {
+            if pct.is_finite() && pct > max + 1e-9 {
+                let msg = format!(
+                    "the morphological opening removed {pct:.1} % of the {artwork} area, more than the {} % allowed (maxRemovedAreaPct {}): strokes thinner than the {} mm minimum feature do not print, and the removed regions are shown in red in the preview",
+                    mm(max),
+                    self.of_process(),
+                    mm(min)
+                );
+                let fix = if critical {
+                    format!(
+                        "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes wider than {} mm (a bolder weight or a larger size) until the opening removes at most {} %",
+                        mm(min),
+                        mm(max)
+                    )
+                } else {
+                    format!(
+                        "if the red regions matter, make those lines wider than {} mm or the artwork larger; otherwise you may export as it is",
+                        mm(min)
+                    )
+                };
+                self.push("FEATURE.MIN", severity, msg, Some(pct), Some(max), fix);
+            }
         }
     }
 
@@ -577,6 +686,40 @@ impl Validator<'_> {
                 format!("build the part again for `{process}` before validating and exporting it"),
             );
         }
+        // The report must describe the mesh that is exported: the fit profile
+        // the part was built with is the one it is validated against.
+        let built = m.fit_profile.as_deref();
+        let given = self.fit.map(|f| f.id.as_str());
+        if built != given {
+            let (message, fix) = match (built, given) {
+                (None, Some(g)) => (
+                    format!(
+                        "the part was built without a fit profile but is validated against fit profile `{g}`, so its mesh has none of that profile's offsets"
+                    ),
+                    format!("build the part again with fit profile `{g}` before exporting it"),
+                ),
+                (Some(b), None) => (
+                    format!(
+                        "the part was built with fit profile `{b}` but is validated without a fit profile"
+                    ),
+                    format!(
+                        "validate it with fit profile `{b}`, the one it was built with, or build it again without a fit profile"
+                    ),
+                ),
+                (b, g) => (
+                    format!(
+                        "the part was built with fit profile `{}` but is validated against fit profile `{}`",
+                        b.unwrap_or_default(),
+                        g.unwrap_or_default()
+                    ),
+                    format!(
+                        "build the part again with fit profile `{}` before exporting it",
+                        g.unwrap_or_default()
+                    ),
+                ),
+            };
+            self.push("FIT.PROCESS", Severity::Blocker, message, None, None, fix);
+        }
         if !m.allowed_processes.is_empty() && !m.allowed_processes.contains(process) {
             let allowed: Vec<String> = m
                 .allowed_processes
@@ -629,19 +772,22 @@ impl Validator<'_> {
 
     fn clutch_risk(&mut self) {
         let spec = coupon_v1();
+        let (m, names) = (self.m, self.names);
         let checks = [
-            (self.m.stud_diameter_mm, "stud", "stud diameter"),
-            (self.m.tube_inner_diameter_mm, "tube", "tube bore"),
+            (m.stud_diameter_mm, "stud", "stud diameter", &names.studs),
+            (m.tube_inner_diameter_mm, "tube", "tube bore", &names.tubes),
             (
-                self.m.tube_outer_diameter_mm,
+                m.tube_outer_diameter_mm,
                 "pocketTubeOD",
                 "tube outer diameter",
+                &names.tubes,
             ),
         ];
-        for (value, cell_id, what) in checks {
-            let (Some(v), Some(cell)) = (value, spec.cell(cell_id)) else {
+        for (value, cell_id, what, feature) in checks {
+            let (Some(mesh), Some(cell)) = (value, spec.cell(cell_id)) else {
                 continue;
             };
+            let v = self.drawn(mesh);
             if cell.covers(v) {
                 continue;
             }
@@ -652,8 +798,9 @@ impl Validator<'_> {
             };
             let offset = cell.offset_field.as_deref().unwrap_or("matching");
             let msg = format!(
-                "the {what} is {} mm after offsets, outside the {} to {} mm the coupon tests (cell `{cell_id}`), so no printed cell has shown how it grips",
+                "the {what} is {} mm after offsets{}, outside the {} to {} mm the coupon tests (cell `{cell_id}`), so no printed cell has shown how it grips",
                 mm(v),
+                self.on_mesh(mesh),
                 mm(cell.start_mm),
                 mm(cell.end_mm)
             );
@@ -661,6 +808,7 @@ impl Validator<'_> {
                 "check the {offset} offset in {}, or print the coupon again and record the `{cell_id}` cell that fits best",
                 self.fit_name()
             );
+            let feature = feature.clone();
             self.push(
                 "CLUTCH.RISK",
                 Severity::Warning,
@@ -668,7 +816,136 @@ impl Validator<'_> {
                 Some(v),
                 Some(bound),
                 fix,
-            );
+            )
+            .feature = feature;
         }
+        self.solid_pin();
+    }
+
+    /// `CLUTCH.RISK` on the solid pin under 1-wide parts: no coupon cell tests
+    /// it, so only its nominal is known to grip (see the module documentation).
+    fn solid_pin(&mut self) {
+        let Some(mesh) = self.m.pin_diameter_mm else {
+            return;
+        };
+        let pin = self.drawn(mesh);
+        let nominal = STANDARD.get().mm("pin_1wide_diameter");
+        if (pin - nominal).abs() <= LENGTH_TOLERANCE_MM {
+            return;
+        }
+        let spec = coupon_v1();
+        let row = spec
+            .cells
+            .iter()
+            .find(|c| c.offset_field.as_deref() == Some("pinDiameter"));
+        let calibrated_on = row
+            .map(|c| {
+                format!(
+                    "on coupon cell `{}` ({}, {} to {} mm)",
+                    c.id,
+                    c.label,
+                    mm(c.start_mm),
+                    mm(c.end_mm)
+                )
+            })
+            .unwrap_or_else(|| "on another coupon row".into());
+        let msg = format!(
+            "the solid pin under the 1-wide part is {} mm after offsets{}, {} mm {} its {} mm nominal: the pinDiameter offset of {} is calibrated {calibrated_on}, and no coupon cell tests the solid pin, so no printed cell has shown how it grips",
+            mm(pin),
+            self.on_mesh(mesh),
+            mm((pin - nominal).abs()),
+            if pin < nominal { "under" } else { "over" },
+            mm(nominal),
+            self.fit_name()
+        );
+        let fix = format!(
+            "print the part once and check how its pin holds between studs; if it is too loose or too tight, move pinDiameter in {} towards 0 (it also sizes Technic pins)",
+            self.fit_name()
+        );
+        let feature = self.names.tubes.clone();
+        self.push(
+            "CLUTCH.RISK",
+            Severity::Warning,
+            msg,
+            Some(pin),
+            Some(nominal),
+            fix,
+        )
+        .feature = feature;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{default_process_profiles, example_fit_profile};
+
+    fn fdm04() -> ProcessProfile {
+        default_process_profiles()
+            .into_iter()
+            .find(|p| p.id == "fdm-0.4")
+            .expect("bundled")
+    }
+
+    #[test]
+    fn a_volume_that_is_not_a_number_reports_no_numbers() {
+        // JSON cannot hold NaN or infinity, so this case has no data fixture.
+        let fit = example_fit_profile();
+        for volume in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let m = Measurements {
+                process: "fdm-0.4".into(),
+                fit_profile: Some(fit.id.clone()),
+                components: 1,
+                is_manifold: true,
+                volume_mm3: volume,
+                feature_volume_sum_mm3: 100.0,
+                ..Measurements::default()
+            };
+            let r = validate(&m, &fdm04(), Some(&fit));
+            assert_eq!(r.findings.len(), 1, "{volume}: {:#?}", r.findings);
+            let f = &r.findings[0];
+            assert_eq!(
+                (f.rule.as_str(), f.severity),
+                ("MESH.VOLUME", Severity::Warning)
+            );
+            assert_eq!((f.value, f.threshold), (None, None), "{volume}");
+            // The JSON form has null for both, as the report schema asks.
+            let json = serde_json::to_value(f).expect("serialises");
+            assert!(json["value"].is_null() && json["threshold"].is_null());
+            assert!(r.export_allowed());
+        }
+    }
+
+    #[test]
+    fn feature_names_reach_the_findings_they_concern() {
+        let fit = example_fit_profile();
+        let m = Measurements {
+            process: "fdm-0.4".into(),
+            fit_profile: Some(fit.id.clone()),
+            components: 1,
+            is_manifold: true,
+            volume_mm3: 100.0,
+            feature_volume_sum_mm3: 100.0,
+            min_tube_wall_mm: Some(0.75),
+            stud_diameter_mm: Some(5.0),
+            ..Measurements::default()
+        };
+        let names = FeatureNames {
+            studs: Some("top".into()),
+            tubes: Some("bottom".into()),
+        };
+        let r = validate_with(&m, &fdm04(), Some(&fit), &names);
+        let got: Vec<(&str, Option<&str>)> = r
+            .findings
+            .iter()
+            .map(|f| (f.rule.as_str(), f.feature.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![("CLUTCH.RISK", Some("top")), ("TUBE.WALL", Some("bottom"))]
+        );
+        // Without names the same findings carry none.
+        let r = validate(&m, &fdm04(), Some(&fit));
+        assert!(r.findings.iter().all(|f| f.feature.is_none()));
     }
 }

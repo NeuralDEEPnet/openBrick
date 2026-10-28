@@ -1,5 +1,5 @@
 {
-  "description": "Decorative artwork with a 0.5 mm stroke (minStroke set below the process minimum): warning.",
+  "description": "Decorative artwork with a 0.5 mm stroke (minStroke set below the process minimum, so the opening removed only 0.4 %): warning.",
   "rule": "FEATURE.MIN",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",
@@ -33,7 +33,7 @@
     "minTubeWallMm": 0.85,
     "process": "fdm-0.4",
     "reliefHeightMm": 0.6,
-    "removedAreaPct": 3.2,
+    "removedAreaPct": 0.4,
     "ribDepthMm": 0.4,
     "roofMm": 1.0,
     "triangleCount": 2640,
@@ -46,7 +46,7 @@
       {
         "feature": null,
         "fix": "make strokes at least 0.8 mm wide (a bolder weight or a larger size), or keep minStroke at the process minimum so thinner lines are removed",
-        "message": "the thinnest artwork stroke is 0.5 mm, below the 0.8 mm minimum feature of process `fdm-0.4`; the morphological opening removed 3.2 % of the artwork area",
+        "message": "the thinnest stroke of the artwork is 0.5 mm, below the 0.8 mm minimum feature of process `fdm-0.4`",
         "rule": "FEATURE.MIN",
         "severity": "warning",
         "threshold": 0.8,

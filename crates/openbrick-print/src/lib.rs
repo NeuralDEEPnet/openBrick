@@ -17,7 +17,8 @@ pub use record::{
     FIT_INTENTS, RECORD_DECIMALS,
 };
 pub use validate::{
-    validate, IMPLEMENTED_RULES, LENGTH_TOLERANCE_MM, MESH_VOLUME_TOLERANCE_PCT, PLANNED_RULES,
+    validate, validate_with, FeatureNames, IMPLEMENTED_RULES, LENGTH_TOLERANCE_MM,
+    MESH_VOLUME_TOLERANCE_PCT, PLANNED_RULES,
 };
 
 /// What a manufacturing process can resolve.
@@ -42,6 +43,12 @@ pub struct ProcessProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_tube_wall_mm: Option<f64>,
     pub min_cavity_depth_mm: f64,
+    /// Share of artwork area, in percent, the morphological opening may remove
+    /// before rule `FEATURE.MIN` reports it (a blocker on fit-critical artwork,
+    /// a warning otherwise; docs/plan/05 section 5 asks the rule to report the
+    /// removed area). Absent means the removed area is never a trigger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_removed_area_pct: Option<f64>,
     pub min_relief_height_mm: f64,
     pub max_relief_height_mm: f64,
     pub min_roof_mm: f64,
@@ -253,7 +260,9 @@ impl Offsets {
 
 /// What the part evaluator measured on a built part, for the validator
 /// (docs/plan/05 section 5). Lengths are millimetres on the compensated mesh
-/// (after fit offsets and `xyScale`); `None` means the part has no such feature.
+/// (after fit offsets and `xyScale`); the validator divides lengths in the bed
+/// plane by `xyScale` before comparing them (see [`validate()`]). `None` means
+/// the part has no such feature.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Measurements {
@@ -344,13 +353,13 @@ pub struct Measurements {
     /// Reserved for artwork: relief height (rule `RELIEF.HEIGHT`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relief_height_mm: Option<f64>,
-    /// Reserved for artwork: thinnest stroke among fit-critical artwork (a
-    /// relief feature listed in the part's `fitCritical`, such as the cell labels
-    /// of the calibration coupon, which someone reads to calibrate). Rule
-    /// `FEATURE.MIN` blocks when it is below `minFeatureMm`, where a thin stroke
-    /// elsewhere ([`Measurements::min_stroke_mm`]) only warns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_fit_critical_stroke_mm: Option<f64>,
+    /// The part's artwork is fit-critical: a `relief.*` feature the part lists
+    /// as fit-critical (`fitCritical`), such as a label someone reads to
+    /// calibrate. The evaluator sets it from the part document, so it does not
+    /// depend on how the artwork op measures strokes. Rule `FEATURE.MIN` then
+    /// blocks where it would otherwise warn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fit_critical_artwork: bool,
 }
 
 /// The calibration record written by the coupon wizard.
@@ -540,6 +549,9 @@ mod tests {
             );
             assert!(p.min_tube_wall_mm <= p.min_wall_mm);
             assert!(p.min_cavity_depth_mm >= 1.8 - 1e-9);
+            if let Some(pct) = p.max_removed_area_pct {
+                assert!((0.0..=100.0).contains(&pct), "{}: a percentage", p.id);
+            }
             if let Some(r) = p.recommended_tube_wall_mm {
                 assert!(
                     r >= p.min_tube_wall_mm,
@@ -642,6 +654,10 @@ mod tests {
         assert!(
             v.get("minStrokeMm").is_none(),
             "reserved artwork fields are omitted"
+        );
+        assert!(
+            v.get("fitCriticalArtwork").is_none(),
+            "false is the default and is omitted"
         );
         let back: Measurements = serde_json::from_value(v).expect("reads back");
         assert_eq!(back, m);

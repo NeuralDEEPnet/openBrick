@@ -1,5 +1,5 @@
 {
-  "openbrick": "1.0",
+  "openbrick": "1.1",
   "kind": "process",
   "id": "fdm-0.4",
   "credit": { "author": "OpenBrick3D contributors" },
@@ -9,6 +9,7 @@
   "minWallMm": 0.8,
   "wallQuantiseMm": 0.4,
   "minFeatureMm": 0.8,
+  "maxRemovedAreaPct": 1.0,
   "minTubeWallMm": 0.7,
   "recommendedTubeWallMm": 0.8,
   "minCavityDepthMm": 1.8,

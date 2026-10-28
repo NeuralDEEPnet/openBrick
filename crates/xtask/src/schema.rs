@@ -89,9 +89,10 @@ pub const DATA_SETS: &[DataSet] = &[
 ];
 
 /// `$defs` that every schema repeats so each file stands alone; they must not drift.
+/// `atThisMinor` is repeated too but follows each schema's own minor version
+/// ([`check_minor_version`]).
 pub const SHARED_DEFS: &[&str] = &[
     "pragma",
-    "atThisMinor",
     "semver",
     "spdx",
     "credit",
@@ -529,6 +530,51 @@ pub fn check_shared_defs(schemas: &BTreeMap<&'static str, Schema>) -> Vec<String
     problems
 }
 
+/// The `pattern` of `$defs/atThisMinor` for a schema at version 1.`minor`: the
+/// pragmas 1.0 to 1.`minor` and their patches (docs/plan/08 section 9; minor
+/// versions only add fields, so the schema of the newest minor checks the
+/// documents of every older one strictly).
+pub fn at_this_minor_pattern(minor: u32) -> String {
+    if minor == 0 {
+        r"^1\.0(\.|$)".to_string()
+    } else {
+        let minors: Vec<String> = (0..=minor).map(|m| m.to_string()).collect();
+        format!(r"^1\.({})(\.|$)", minors.join("|"))
+    }
+}
+
+/// A schema's `$id` names its version (`.../schemas/1.1/process-profile.schema.json`),
+/// and its `$defs/atThisMinor` must match exactly the pragmas of that version
+/// and the minors before it ([`at_this_minor_pattern`]). Returns one line per
+/// problem.
+pub fn check_minor_version(schema: &Schema) -> Vec<String> {
+    let id = schema.raw.get("$id").and_then(Value::as_str).unwrap_or("");
+    let minor = id
+        .rsplit('/')
+        .nth(1)
+        .and_then(|v| v.strip_prefix("1."))
+        .and_then(|m| m.parse::<u32>().ok());
+    let Some(minor) = minor else {
+        return vec![format!(
+            "{}: $id `{id}` does not name a 1.x schema version (.../schemas/1.<minor>/<file>)",
+            schema.name
+        )];
+    };
+    let want = at_this_minor_pattern(minor);
+    let got = schema
+        .raw
+        .pointer("/$defs/atThisMinor/properties/openbrick/pattern")
+        .and_then(Value::as_str);
+    if got == Some(want.as_str()) {
+        Vec::new()
+    } else {
+        vec![format!(
+            "{}: $id names version 1.{minor}, so $defs/atThisMinor must match the pragmas 1.0 to 1.{minor} with the pattern {want:?}, not {got:?}",
+            schema.name
+        )]
+    }
+}
+
 /// Follow local `$ref`s (`#/$defs/...`) until a schema without one.
 fn resolve<'a>(root: &'a Value, mut node: &'a Value) -> &'a Value {
     for _ in 0..16 {
@@ -724,6 +770,50 @@ mod tests {
                 .count();
             assert!(users >= 2, "$defs/{def} is shared by {users} schema(s)");
         }
+    }
+
+    #[test]
+    fn at_this_minor_follows_the_schema_version() {
+        for schema in schemas().values() {
+            let problems = check_minor_version(schema);
+            assert!(problems.is_empty(), "{problems:#?}");
+        }
+        assert_eq!(at_this_minor_pattern(0), r"^1\.0(\.|$)");
+        assert_eq!(at_this_minor_pattern(2), r"^1\.(0|1|2)(\.|$)");
+        // A schema bumped to 1.1 that still applies its field list to 1.0 only.
+        let mut raw =
+            read_json(&root().join("schemas/process-profile.schema.json")).expect("schema");
+        raw["$defs"]["atThisMinor"]["properties"]["openbrick"]["pattern"] =
+            Value::String(at_this_minor_pattern(0));
+        let schema = Schema::from_value("process-profile.schema.json", raw).expect("compiles");
+        let problems = check_minor_version(&schema);
+        assert_eq!(problems.len(), 1, "{problems:#?}");
+        assert!(problems[0].contains("version 1.1"), "{problems:#?}");
+    }
+
+    #[test]
+    fn process_profiles_at_1_1_are_strict_and_later_minors_are_open() {
+        let schemas = schemas();
+        let process = &schemas["process-profile.schema.json"];
+        let mut doc = fixture("process-minimal.json");
+        doc["openbrick"] = serde_json::json!("1.1");
+        doc["recommendedTubeWallMm"] = serde_json::json!(0.8);
+        doc["maxRemovedAreaPct"] = serde_json::json!(1.0);
+        assert!(process.failures(&doc).is_empty(), "1.1 names both fields");
+        doc["maxRemovedAreaPtc"] = serde_json::json!(1.0);
+        let failures = process.failures(&doc);
+        assert_eq!(failures.len(), 1, "{failures:#?}");
+        assert_eq!(failures[0].keyword, "additionalProperties");
+        doc["openbrick"] = serde_json::json!("1.2");
+        assert!(process.failures(&doc).is_empty(), "1.2 may add fields");
+        doc["maxRemovedAreaPct"] = serde_json::json!(101);
+        let failures = process.failures(&doc);
+        assert_eq!(
+            failures.len(),
+            1,
+            "known fields stay checked: {failures:#?}"
+        );
+        assert_eq!(failures[0].keyword, "maximum");
     }
 
     #[test]

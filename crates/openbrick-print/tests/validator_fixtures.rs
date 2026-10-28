@@ -286,16 +286,21 @@ fn blockers_and_warnings_follow_the_rule_table() {
         ("WALL.QUANTISED/fail", true),
         ("ROOF.MIN/fail", false),
         ("FEATURE.MIN/fail", true),
+        ("FEATURE.MIN/fail-removed-area", true),
         ("FEATURE.MIN/fail-fit-critical", false),
+        ("FEATURE.MIN/fail-fit-critical-removed-area", false),
         ("RELIEF.HEIGHT/fail", true),
         ("RELIEF.HEIGHT/fail-too-high", true),
         ("FIT.PROCESS/fail", false),
         ("FIT.PROCESS/fail-not-allowed", false),
         ("FIT.PROCESS/fail-built-for-another-process", false),
+        ("FIT.PROCESS/fail-built-without-fit", false),
+        ("FIT.PROCESS/fail-validated-without-fit", false),
         ("FIT.MISSING/fail", false),
         ("FIT.MISSING/fail-cell-missing", false),
         ("CLUTCH.RISK/fail", true),
         ("CLUTCH.RISK/fail-tube", true),
+        ("CLUTCH.RISK/fail-solid-pin", true),
     ];
     for (name, exportable) in expect {
         let case = run(&fixtures_dir().join(format!("{name}.json")));
@@ -320,6 +325,8 @@ fn findings_are_sorted_blockers_first_then_by_rule() {
     let mut case = run(&fixtures_dir().join("MESH.VOLUME/fail.json"));
     let mut m: Measurements =
         serde_json::from_value(case.doc["measurements"].clone()).expect("measurements");
+    // Built without a fit profile, as it is validated (rule FIT.PROCESS).
+    m.fit_profile = None;
     m.roof_mm = Some(0.5);
     m.min_tube_wall_mm = Some(0.75);
     m.relief_height_mm = Some(0.1);

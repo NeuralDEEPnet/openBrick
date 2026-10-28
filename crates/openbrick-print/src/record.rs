@@ -87,6 +87,8 @@ pub enum RecordError {
     Intent(String),
     #[error("`{0}` is not a profile id: use lower-case words joined by hyphens, as in fdm-0.4 or mk4s-petg-fdm-0.4")]
     Id(String),
+    #[error("process `{process}` is not a known process profile: the coupon must be printed and recorded with one of {known}")]
+    UnknownProcess { process: String, known: String },
     #[error("date `{0}` is not a calendar date written YYYY-MM-DD")]
     Date(String),
 }
@@ -112,6 +114,19 @@ pub fn record_with(spec: &CouponSpec, input: &RecordInput) -> Result<FitProfile,
     }
     if !is_profile_id(&input.process) {
         return Err(RecordError::Id(input.process.clone()));
+    }
+    // A typo such as `fdm-04` would write a profile that rule FIT.PROCESS then
+    // refuses for every part.
+    let processes = crate::default_process_profiles();
+    if !processes.iter().any(|p| p.id == input.process) {
+        return Err(RecordError::UnknownProcess {
+            process: input.process.clone(),
+            known: processes
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        });
     }
     if !(input.nozzle_mm.is_finite() && input.nozzle_mm > 0.0) {
         return Err(RecordError::Nozzle(input.nozzle_mm));

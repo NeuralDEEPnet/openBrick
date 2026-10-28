@@ -216,6 +216,16 @@ fn inputs_are_checked() {
         ),
         (
             RecordInput {
+                process: "fdm-04".into(),
+                ..ok.clone()
+            },
+            |e| {
+                matches!(e, RecordError::UnknownProcess { process, known }
+                    if process == "fdm-04" && known.contains("fdm-0.4"))
+            },
+        ),
+        (
+            RecordInput {
                 id: Some("My Profile".into()),
                 ..ok.clone()
             },

@@ -1,5 +1,5 @@
 {
-  "description": "Artwork opened at minFeatureMm: every stroke, fit-critical or not, is at least 0.8 mm; the opening removed 1.5 % of the area.",
+  "description": "Fit-critical artwork at both limits: the thinnest stroke is exactly minFeatureMm (0.8 mm) and the opening removed exactly maxRemovedAreaPct (1 %) of its area.",
   "rule": "FEATURE.MIN",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",
@@ -20,6 +20,7 @@
     "components": 1,
     "featureVolumeSumMm3": 848.85,
     "firstLayerChamferMm": 0.2,
+    "fitCriticalArtwork": true,
     "fitCriticalConnectors": [
       "tubeF"
     ],
@@ -28,13 +29,12 @@
     "isManifold": true,
     "minBodyWallAtBedMm": 0.8,
     "minBodyWallMm": 1.2,
-    "minFitCriticalStrokeMm": 0.9,
     "minStrokeMm": 0.8,
     "minTubeWallAtBedMm": 0.45,
     "minTubeWallMm": 0.85,
     "process": "fdm-0.4",
     "reliefHeightMm": 0.6,
-    "removedAreaPct": 1.5,
+    "removedAreaPct": 1.0,
     "ribDepthMm": 0.4,
     "roofMm": 1.0,
     "triangleCount": 2640,

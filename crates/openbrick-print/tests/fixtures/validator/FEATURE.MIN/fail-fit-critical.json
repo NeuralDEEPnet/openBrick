@@ -1,5 +1,5 @@
 {
-  "description": "A fit-critical label (coupon cell numbers) with a 0.6 mm stroke: blocker.",
+  "description": "Fit-critical artwork (a label someone reads to calibrate) with a 0.6 mm stroke: blocker.",
   "rule": "FEATURE.MIN",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",
@@ -20,6 +20,7 @@
     "components": 1,
     "featureVolumeSumMm3": 848.85,
     "firstLayerChamferMm": 0.2,
+    "fitCriticalArtwork": true,
     "fitCriticalConnectors": [
       "tubeF"
     ],
@@ -28,7 +29,6 @@
     "isManifold": true,
     "minBodyWallAtBedMm": 0.8,
     "minBodyWallMm": 1.2,
-    "minFitCriticalStrokeMm": 0.6,
     "minStrokeMm": 0.6,
     "minTubeWallAtBedMm": 0.45,
     "minTubeWallMm": 0.85,
@@ -46,8 +46,8 @@
     "findings": [
       {
         "feature": null,
-        "fix": "fit-critical artwork such as a calibration label must print as drawn: make its strokes at least 0.8 mm wide (a bolder weight or a larger size)",
-        "message": "the thinnest stroke of fit-critical artwork is 0.6 mm, below the 0.8 mm minimum feature of process `fdm-0.4`; the morphological opening removed 0.0 % of the artwork area",
+        "fix": "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes at least 0.8 mm wide (a bolder weight or a larger size) and keep minStroke at the process minimum",
+        "message": "the thinnest stroke of the fit-critical artwork is 0.6 mm, below the 0.8 mm minimum feature of process `fdm-0.4`",
         "rule": "FEATURE.MIN",
         "severity": "blocker",
         "threshold": 0.8,

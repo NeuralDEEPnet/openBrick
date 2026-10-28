@@ -1,5 +1,5 @@
 {
-  "openbrick": "1.0",
+  "openbrick": "1.1",
   "kind": "process",
   "id": "resin-msla",
   "credit": { "author": "OpenBrick3D contributors" },
@@ -10,6 +10,7 @@
   "minWallMm": 1.0,
   "wallQuantiseMm": 0.05,
   "minFeatureMm": 0.3,
+  "maxRemovedAreaPct": 1.0,
   "minTubeWallMm": 0.7,
   "minCavityDepthMm": 1.8,
   "minReliefHeightMm": 0.2,

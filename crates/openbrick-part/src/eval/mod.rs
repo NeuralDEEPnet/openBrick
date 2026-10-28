@@ -906,6 +906,11 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
     }
 
     let fit_critical_ids = doc.fit_critical_features();
+    // Rule FEATURE.MIN blocks thin or removed strokes of fit-critical artwork
+    // (a label someone reads to calibrate) and only warns about other artwork.
+    let fit_critical_artwork = active
+        .iter()
+        .any(|f| f.f.op.starts_with("relief.") && fit_critical_ids.iter().any(|i| i == f.id()));
     let mut connectors = Vec::new();
     let mut body: Option<BodyPlan> = None;
     let mut studs: Option<(String, StudPlan)> = None;
@@ -1047,9 +1052,7 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         process: process.id.clone(),
         fit_profile: input.fit.map(|f| f.id.clone()),
         allowed_processes,
-        // No artwork op is built yet; relief.* fills this with the other
-        // artwork fields below.
-        min_fit_critical_stroke_mm: None,
+        fit_critical_artwork,
         triangle_count: objects.iter().map(|o| o.mesh.triangle_count()).sum(),
         volume_mm3: objects.iter().map(|o| o.volume_mm3).sum(),
         feature_volume_sum_mm3: feature_volume_sum,

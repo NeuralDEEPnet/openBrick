@@ -1,0 +1,49 @@
+{
+  "description": "A body wall drawn at exactly minWallMm (0.8 mm) on a fit profile with xyScale 0.98: 0.784 mm on the mesh, 0.8 mm as drawn, which is what WALL.MIN and WALL.QUANTISED compare (every length in the bed plane is scaled by 0.98, volumes by 0.98 squared).",
+  "rule": "WALL.MIN",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "fitPatch": {
+    "offsetsMm": {
+      "xyScale": 0.98
+    }
+  },
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.484,
+      31.164,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 815.236,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.392,
+    "minBodyWallMm": 0.784,
+    "minTubeWallAtBedMm": 0.441,
+    "minTubeWallMm": 0.833,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.392,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.851,
+    "tubeOuterDiameterMm": 6.517,
+    "volumeMm3": 814.821
+  },
+  "report": {
+    "findings": []
+  }
+}

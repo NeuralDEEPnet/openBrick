@@ -1,0 +1,55 @@
+{
+  "description": "A part without fit-critical features built with example-mk4s-petg-0.4 but validated without a fit profile: blocker (FIT.MISSING has nothing to ask for, so only FIT.PROCESS fails).",
+  "rule": "FIT.PROCESS",
+  "process": "fdm-0.4",
+  "fit": null,
+  "measurements": {
+    "allowedProcesses": [
+      "fdm-0.4",
+      "fdm-0.2"
+    ],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.4,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "validate it with fit profile `example-mk4s-petg-0.4`, the one it was built with, or build it again without a fit profile",
+        "message": "the part was built with fit profile `example-mk4s-petg-0.4` but is validated without a fit profile",
+        "rule": "FIT.PROCESS",
+        "severity": "blocker",
+        "threshold": null,
+        "value": null
+      }
+    ]
+  }
+}

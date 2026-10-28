@@ -90,6 +90,10 @@ fn data(root: &Path) -> bool {
         eprintln!("data: {problem}");
         ok = false;
     }
+    for problem in schemas.values().flat_map(schema::check_minor_version) {
+        eprintln!("data: {problem}");
+        ok = false;
+    }
     for problem in schemas.values().flat_map(schema::check_known_fields) {
         eprintln!("data: {problem}");
         ok = false;

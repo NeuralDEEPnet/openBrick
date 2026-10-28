@@ -1,0 +1,56 @@
+{
+  "description": "A part built without a fit profile (a nominal preview) validated against example-mk4s-petg-0.4: its mesh has none of the offsets, so the report would describe another part: blocker.",
+  "rule": "FIT.PROCESS",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [
+      "fdm-0.4",
+      "fdm-0.2"
+    ],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.4,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "build the part again with fit profile `example-mk4s-petg-0.4` before exporting it",
+        "message": "the part was built without a fit profile but is validated against fit profile `example-mk4s-petg-0.4`, so its mesh has none of that profile's offsets",
+        "rule": "FIT.PROCESS",
+        "severity": "blocker",
+        "threshold": null,
+        "value": null
+      }
+    ]
+  }
+}
