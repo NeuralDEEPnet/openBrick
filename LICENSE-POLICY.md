@@ -12,7 +12,7 @@ OpenBrick3D uses a three-tier licence layout so that code, data and documentatio
 
 ## What may not enter the repository
 
-- Code under GPL, AGPL or LGPL in any client crate or package (`cargo deny` enforces an allowlist: MIT, Apache-2.0, BSD-2/3-Clause, CC0-1.0, ISC, Zlib, Unicode, MPL-2.0 with review). GPL tools may be invoked as separate processes only.
+- Code under GPL, AGPL or LGPL in any client crate or package (`cargo deny` enforces an allowlist: MIT, Apache-2.0, BSD-2/3-Clause, CC0-1.0, ISC, Zlib, Unicode, BSL-1.0, MPL-2.0 with review; plus a per-crate MIT-0 exception for `borrow-or-share`, a dependency of the schema validator in the `xtask` dev tool). GPL tools may be invoked as separate processes only.
 - LDCad's connectivity shadow library or any of its data (all rights reserved). The SNAP meta syntax is a public specification and may be implemented.
 - Geometry or parameter files copied from CC BY-SA or CC BY-NC projects (PELA Blocks, MachineBlocks, cwesson/openBrick). Methods may be learned; files may not be copied.
 - BrickLink catalogue data. Rebrickable bulk data may be used with attribution and never for AI training.

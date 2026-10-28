@@ -105,7 +105,7 @@ Each row is one issue. Sizes: S, M, L. "Tests" names the acceptance test the age
 | # | Issue | Milestone | Size | Tests | Plan ref |
 |---|-------|-----------|------|-------|----------|
 | 1 | Kernel trait implementation on `manifold-rust`: extrude, revolve, union, difference, offset2d, to_mesh | M0 | M | brick primitive corpus is watertight; volumes match analytic values within 0.1 percent | D02, [02](02-architecture.md) |
-| 2 | Same trait on `manifold-csg` behind `feature = "ffi"`; conformance test comparing both on the corpus | M0 | M | same hashes or documented divergences | D02 |
+| 2 | Same trait on `manifold-csg` behind `feature = "manifold-csg"`; conformance test comparing both on the corpus | M0 | M | same hashes or documented divergences | D02 |
 | 3 | Device render harness: three.js page rendering N instanced bricks at 3 LODs, CSV output | M0 | M | page loads on WebGL2 and WebGPU; CSV schema test | D10, [07](07-assembler-engine.md) |
 | 4 | Connectivity-from-primitives spike: script over 200 raw LDraw `.dat` files; report coverage | M0 | S | coverage report reproducible | Q04 |
 | 5 | JSON Schemas for standard, process, fit, part; `cargo xtask data` validates against them | M0 | S | each example file validates; a broken fixture fails | [08](08-file-formats-and-interop.md) |
