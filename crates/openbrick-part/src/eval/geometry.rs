@@ -134,6 +134,37 @@ impl<K: Kernel> Geo<'_, K> {
             .map(|c| self.translate(solid, [c[0], c[1], z]))
             .collect()
     }
+
+    /// A `size[0]` x `size[1]` block from the origin, `height` tall, with a 45
+    /// degree chamfer of `chamfer` mm on its four bottom edges (the first-layer
+    /// chamfer that replaces elephant-foot compensation, docs/plan/05 section 6).
+    pub(crate) fn chamfered_box(
+        &self,
+        size: [f64; 2],
+        height: f64,
+        chamfer: f64,
+    ) -> Result<K::Solid, GeomError> {
+        let k = self.k;
+        let [w, d] = size;
+        let h = height;
+        let half = [w / 2.0, d / 2.0];
+        let c = chamfer;
+        let mut block = self.prism([0.0, 0.0], [w, d], 0.0, h)?;
+        if c > 0.0 {
+            // Half width w/2 - c at z = 0, growing 1:1 upward; starts at z = -c.
+            let z0 = -c;
+            let [tx, ty] = self.tapers(
+                half,
+                [half[0] - 2.0 * c, half[1] - 2.0 * c],
+                z0,
+                h + c,
+                1.0,
+                half,
+            )?;
+            block = k.intersection(&k.intersection(&block, &tx)?, &ty)?;
+        }
+        Ok(block)
+    }
 }
 
 /// The hollow body: outer block with first-layer and top chamfers, minus the
@@ -177,20 +208,7 @@ impl BodyGeom {
         let centre = self.centre();
         let c = self.first_layer_chamfer;
 
-        let mut outer = g.prism([0.0, 0.0], [w, d], 0.0, h)?;
-        if c > 0.0 {
-            // Half width w/2 - c at z = 0, growing 1:1 upward; starts at z = -c.
-            let z0 = -c;
-            let [tx, ty] = g.tapers(
-                centre,
-                [half[0] - 2.0 * c, half[1] - 2.0 * c],
-                z0,
-                h + c,
-                1.0,
-                half,
-            )?;
-            outer = k.intersection(&k.intersection(&outer, &tx)?, &ty)?;
-        }
+        let mut outer = g.chamfered_box(self.size, h, c)?;
         let rc = self.top_chamfer;
         if rc > 0.0 {
             // Half width w/2 - rc at z = h, shrinking 1:1 upward; starts at z = -rc.
@@ -276,6 +294,47 @@ impl StudGeom {
 pub(crate) struct Rib {
     pub min: [f64; 2],
     pub max: [f64; 2],
+}
+
+/// The wall ribs of a `size` body (minimum corner at the origin) with side walls
+/// `wall` mm thick: one rib on each wall at every stud centre line, where it
+/// touches the side of a stud below, reaching `depth` mm into the cavity and
+/// `width` mm wide. `xs` and `ys` are the stud centre lines along x and y. Order:
+/// for each x line the front then the back rib, then for each y line the left
+/// then the right rib.
+pub(crate) fn wall_ribs(
+    size: [f64; 2],
+    wall: f64,
+    depth: f64,
+    width: f64,
+    xs: &[f64],
+    ys: &[f64],
+) -> Vec<Rib> {
+    let half = width / 2.0;
+    let [w, d] = size;
+    let t = wall;
+    let mut ribs = Vec::with_capacity(2 * (xs.len() + ys.len()));
+    for &xc in xs {
+        ribs.push(Rib {
+            min: [xc - half, t],
+            max: [xc + half, t + depth],
+        });
+        ribs.push(Rib {
+            min: [xc - half, d - t - depth],
+            max: [xc + half, d - t],
+        });
+    }
+    for &yc in ys {
+        ribs.push(Rib {
+            min: [t, yc - half],
+            max: [t + depth, yc + half],
+        });
+        ribs.push(Rib {
+            min: [w - t - depth, yc - half],
+            max: [w - t, yc + half],
+        });
+    }
+    ribs
 }
 
 /// Underside tubes, 1-wide pins and wall ribs, all reaching from the bed (or the

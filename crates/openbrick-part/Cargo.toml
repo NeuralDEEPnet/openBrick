@@ -25,5 +25,9 @@ simplecss = { workspace = true }
 # whose closed-mesh checks prove the objects touch without breaking a shell.
 openbrick-io = { workspace = true }
 
+[dev-dependencies]
+# The coupon example writes the coupon as 3MF and STL.
+openbrick-io = { workspace = true }
+
 [lints]
 workspace = true

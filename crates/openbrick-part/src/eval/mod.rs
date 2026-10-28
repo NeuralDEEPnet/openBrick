@@ -28,7 +28,7 @@
 //! (x, -z, y) up to that origin shift, a proper rotation.
 
 mod expr;
-mod geometry;
+pub(crate) mod geometry;
 mod hash;
 mod params;
 mod relief;
@@ -52,7 +52,7 @@ pub use svg::{
     MAX_SVG_CSS_WORK, MAX_SVG_DEPTH, MAX_SVG_ELEMENTS, MAX_SVG_NODES, MAX_SVG_PATHS, MAX_SVG_WORK,
 };
 
-use geometry::{BodyGeom, Geo, Rib, StudGeom, TubeGeom};
+use geometry::{BodyGeom, Geo, StudGeom, TubeGeom};
 use params::{FVal, Scope};
 use relief::ReliefPlan;
 
@@ -407,6 +407,42 @@ fn first_layer_width(process: &ProcessProfile, wall: f64, chamfer: f64) -> f64 {
     wall - 2.0 * (chamfer - z).max(0.0)
 }
 
+/// The roof (top) thickness of a body: the standard roof, at least the process
+/// minimum (rule `ROOF.MIN`).
+pub(crate) fn roof_mm(process: &ProcessProfile) -> f64 {
+    mm("roof").max(process.min_roof_mm)
+}
+
+/// Wall rib depth before fit offsets, for side walls `wall` mm thick: wall plus
+/// rib is the standard side_wall + rib_depth, so a wall that quantising made
+/// thinner gets a deeper rib (docs/plan/04 section 6).
+pub(crate) fn nominal_rib_depth(wall: f64) -> f64 {
+    mm("side_wall") + mm("rib_depth") - wall
+}
+
+/// Height and top chamfer of a solid stud, as `stud.field` builds it.
+pub(crate) struct StudShape {
+    /// The standard stud height.
+    pub height: f64,
+    /// The process's stud-top chamfer, capped at a quarter of the diameter and
+    /// half the height.
+    pub top_chamfer: f64,
+    /// The chamfer the process asked for, when the cap lowered it.
+    pub capped_from: Option<f64>,
+}
+
+/// The shape of a solid stud of `diameter` mm on `process`.
+pub(crate) fn stud_shape(process: &ProcessProfile, diameter: f64) -> StudShape {
+    let height = mm("stud_height");
+    let asked = process.stud_top_chamfer_mm.max(0.0);
+    let cap = (diameter / 4.0).min(height / 2.0);
+    StudShape {
+        height,
+        top_chamfer: asked.min(cap),
+        capped_from: (asked > cap).then_some(asked),
+    }
+}
+
 /// The planned body (sizes are known before any geometry is built).
 struct BodyPlan {
     id: String,
@@ -533,7 +569,7 @@ fn plan_body(
         f64::from(studs[1]) * pitch - 2.0 * gap,
     ];
     let wall = process.quantise_wall(mm("side_wall"));
-    let roof = mm("roof").max(process.min_roof_mm);
+    let roof = roof_mm(process);
     if roof >= height {
         return Err(feat.fail(format!(
             "the roof ({roof} mm) leaves no cavity in a {height} mm body"
@@ -686,15 +722,16 @@ fn plan_studs(
     if diameter <= 0.0 {
         return Err(feat.fail(format!("stud diameter after offsets is {diameter} mm")));
     }
-    let height = mm("stud_height");
-    let mut top_chamfer = process.stud_top_chamfer_mm.max(0.0);
-    let cap = (diameter / 4.0).min(height / 2.0);
-    if top_chamfer > cap {
+    let StudShape {
+        height,
+        top_chamfer,
+        capped_from,
+    } = stud_shape(process, diameter);
+    if let Some(asked) = capped_from {
         warnings.push(format!(
-            "feature `{}`: stud-top chamfer {top_chamfer} mm is capped at {cap:.3} mm",
+            "feature `{}`: stud-top chamfer {asked} mm is capped at {top_chamfer:.3} mm",
             feat.id()
         ));
-        top_chamfer = cap;
     }
     let centres = body
         .stud_positions()
@@ -818,34 +855,12 @@ fn plan_tubes(
     // minimum printable feature.
     // Depths under MIN_LENGTH_MM count as none: 1.2 + 0.3 - 1.2 - 0.3 leaves
     // 5.6e-17 mm, which the kernel cannot extrude.
-    let rib_depth = mm("side_wall") + mm("rib_depth") - b.wall + offsets.rib_depth;
+    let rib_depth = nominal_rib_depth(b.wall) + offsets.rib_depth;
     let mut ribs = Vec::new();
     if rib_depth >= MIN_LENGTH_MM {
-        let half = process.min_feature_mm / 2.0;
-        let [w, d] = b.size;
-        let t = b.wall;
-        for i in 0..nx {
-            let xc = body.stud_centre(i, 0)[0];
-            ribs.push(Rib {
-                min: [xc - half, t],
-                max: [xc + half, t + rib_depth],
-            });
-            ribs.push(Rib {
-                min: [xc - half, d - t - rib_depth],
-                max: [xc + half, d - t],
-            });
-        }
-        for j in 0..ny {
-            let yc = body.stud_centre(0, j)[1];
-            ribs.push(Rib {
-                min: [t, yc - half],
-                max: [t + rib_depth, yc + half],
-            });
-            ribs.push(Rib {
-                min: [w - t - rib_depth, yc - half],
-                max: [w - t, yc + half],
-            });
-        }
+        let xs: Vec<f64> = (0..nx).map(|i| body.stud_centre(i, 0)[0]).collect();
+        let ys: Vec<f64> = (0..ny).map(|j| body.stud_centre(0, j)[1]).collect();
+        ribs = geometry::wall_ribs(b.size, b.wall, rib_depth, process.min_feature_mm, &xs, &ys);
     } else {
         warnings.push(format!(
             "feature `{}`: rib depth after offsets is {rib_depth:.3} mm (under {MIN_LENGTH_MM} mm), so the wall ribs are left out",
