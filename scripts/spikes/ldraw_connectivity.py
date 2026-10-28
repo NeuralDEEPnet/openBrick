@@ -21,7 +21,16 @@ it never copies LDraw geometry into its outputs. Outputs:
                                 in LDU, direction, length) and counts per kind
     --explain ID [--heuristic]  print the derived connectors of one part and exit
     --library-stats             also derive every current part in parts/ (about
-                                a minute) and print library-wide coverage
+                                a minute) and print library-wide coverage and the
+                                description probe (features named in the
+                                description versus features derived)
+    --bar-sample N              derive every current part with the bar-cylinder
+                                heuristic, print a deterministic sample of N
+                                parts with heuristic bars and the precision of
+                                the hand-labelled sample, and exit
+    --studf-holdout             score female stud synthesis on library parts
+                                outside the part list whose description fixes
+                                the count (plain W x L parts, Technic beams)
     --mapping                   print the primitive mapping table and exit
     --self-test                 check the pure logic (no library needed) and exit
 
@@ -29,25 +38,32 @@ Conventions: LDraw coordinates, LDU, right-handed, -Y is up. A type-1 line is
 "1 colour x y z a b c d e f g h i file"; the child-to-parent transform is
 p = [[a b c][d e f][g h i]] * v + (x y z).
 
-Brick numbers (module, plate height, bar diameter) come from
-standards/dimensions-v1.json (the ldraw_ldu column), never from literals here.
-Primitive-local axes and extents (for example "peghole.dat has its face at y=0
-and goes into +y") were read from the LDraw primitives themselves; the report
-docs/spikes/q04-ldraw-connectivity.md lists every mapping.
+Brick numbers (module, plate height, stud height and diameter, side wall, bar
+diameter) come from standards/dimensions-v1.json (the ldraw_ldu column), never
+from literals here. Primitive-local axes and extents (for example "peghole.dat
+has its face at y=0 and goes into +y") were read from the LDraw primitives
+themselves; the report docs/spikes/q04-ldraw-connectivity.md lists every mapping.
+
+Female studs (studF, the receptacle a stud plugs into) are not a primitive. The
+script synthesises them from the part's triangles (synth_studf: a stud-sized,
+stud-deep empty cylinder under the part on the stud grid) and scores that
+prototype separately and combined with the primitive scan.
 
 Ground truth lives in this file: RULE derives expected counts from regular
 descriptions ("Brick 2 x 4": 8 studs, 3 tubes) and HAND is the hand-checked
 table for irregular parts, with a note per entry and UNVERIFIED where the
-truth could not be established.
+truth could not be established. STUDF holds the expected female stud counts.
 """
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
 import re
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, os.pardir, os.pardir))
@@ -56,12 +72,12 @@ DEFAULT_CSV = os.path.join(HERE, "q04_results.csv")
 DEFAULT_STANDARD = os.path.join(REPO, "standards", "dimensions-v1.json")
 
 KIND_ORDER = (
-    "stud", "tube", "underpin", "pinhole", "axlehole", "pin", "axle", "bar",
+    "stud", "studF", "tube", "underpin", "pinhole", "axlehole", "pin", "axle", "bar",
     "clip", "hinge", "ball", "socket",
 )
 GENDER = {
-    "stud": "M", "tube": "F", "underpin": "F", "pinhole": "F", "axlehole": "F",
-    "pin": "M", "axle": "M", "bar": "M", "clip": "F", "hinge": "N",
+    "stud": "M", "studF": "F", "tube": "F", "underpin": "F", "pinhole": "F",
+    "axlehole": "F", "pin": "M", "axle": "M", "bar": "M", "clip": "F", "hinge": "N",
     "ball": "M", "socket": "F",
 }
 # How each kind is counted: "point" = one per instance, "module" = one per
@@ -69,11 +85,17 @@ GENDER = {
 # continuous coaxial shaft, "cluster" = one per group of primitives within one
 # module of each other (hinge halves).
 COUNTING = {
-    "stud": "point", "tube": "point", "underpin": "point", "clip": "point",
-    "ball": "point", "socket": "point", "pinhole": "module",
+    "stud": "point", "studF": "point", "tube": "point", "underpin": "point",
+    "clip": "point", "ball": "point", "socket": "point", "pinhole": "module",
     "axlehole": "module", "pin": "module", "axle": "run", "bar": "run",
     "hinge": "cluster",
 }
+# Kinds whose emitted axis is not calibrated per primitive: the clip's bar axis
+# and the hinge rotation axis are not the primitive's local -y (see the report).
+UNCALIBRATED = ("clip", "hinge")
+# Kinds with no meaningful lattice axis in this spike (point-like or uncalibrated).
+AXIS_FREE = ("clip", "hinge", "ball", "socket")
+HOLE_FAMILIES = ("technic_beam", "technic_brick")
 
 
 # ---------------------------------------------------------------- standard
@@ -83,14 +105,19 @@ def load_standard(path):
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
     ldu = {f["id"]: f.get("ldraw_ldu") for f in doc["features"]}
-    need = ("module", "plate_height", "bar_diameter")
+    need = ("module", "plate_height", "brick_height", "bar_diameter", "stud_height",
+            "stud_diameter", "side_wall")
     missing = [k for k in need if not isinstance(ldu.get(k), (int, float))]
     if missing:
         raise SystemExit(f"standard {path} lacks ldraw_ldu for {missing}")
     return {
         "module": float(ldu["module"]),
         "plate": float(ldu["plate_height"]),
+        "brick": float(ldu["brick_height"]),
         "bar_radius": float(ldu["bar_diameter"]) / 2.0,
+        "stud_height": float(ldu["stud_height"]),
+        "stud_radius": float(ldu["stud_diameter"]) / 2.0,
+        "side_wall": float(ldu["side_wall"]),
     }
 
 
@@ -168,6 +195,7 @@ class Library:
                     if fn.lower().endswith(".dat"):
                         self.index[(sub_dir, prefix + fn.lower())] = os.path.join(dirpath, fn)
         self._files = {}
+        self._faces = {}
 
     def locate(self, name):
         key = name.strip().replace("\\", "/").lower()
@@ -212,6 +240,30 @@ class Library:
         self._files[path] = result
         return result
 
+    def faces(self, path):
+        """Triangles (type 3, and type 4 split in two) of one file, as 9-tuples."""
+        cached = self._faces.get(path)
+        if cached is not None:
+            return cached
+        tris = []
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                tok = raw.split()
+                if not tok or tok[0] not in ("3", "4"):
+                    continue
+                n = 3 if tok[0] == "3" else 4
+                if len(tok) < 2 + 3 * n:
+                    continue
+                try:
+                    v = [float(x) for x in tok[2:2 + 3 * n]]
+                except ValueError:
+                    continue
+                tris.append(tuple(v[0:9]))
+                if n == 4:
+                    tris.append(tuple(v[0:3] + v[6:12]))
+        self._faces[path] = tris
+        return tris
+
     def latest_update(self):
         """Highest '!LDRAW_ORG ... UPDATE YYYY-RR' tag in parts/ and p/ headers."""
         best = ""
@@ -248,7 +300,8 @@ class Mod(float):
 
 
 UP = (0.0, -1.0, 0.0)      # LDraw primitive "outward" for studs and tubes
-PLUS_Y = (0.0, 1.0, 0.0)
+DOWN = (0.0, 1.0, 0.0)
+PLUS_Y = DOWN
 PLUS_Z = (0.0, 0.0, 1.0)
 PLUS_X = (1.0, 0.0, 0.0)
 
@@ -283,9 +336,12 @@ MAPPING_RULES = [
     (r"(connect3|connect4)\.dat", "pin", "segment", UP, (0.0, Mod(0.5)), "Technic pin 0.5 segment"),
     (r"confric(\d|1[0-2])?\.dat", "pin", "segment", UP, (0.0, Mod(1.0)),
      "Technic friction pin segment"),
-    (r"clip\d+\.dat", "clip", "point", UP, None, "clip (axis not calibrated per primitive)"),
-    (r"clh.*\.dat", "hinge", "cluster", UP, None, "click-lock hinge finger part"),
-    (r"(h1|h2|arm1|arm2|arm3)\.dat", "hinge", "cluster", UP, None, "hinge plate or arm fingers"),
+    (r"clip\d+\.dat", "clip", "point", UP, None,
+     "clip: position is the primitive origin; bar axis not calibrated"),
+    (r"clh.*\.dat", "hinge", "cluster", UP, None,
+     "click-lock hinge finger part; rotation axis not calibrated"),
+    (r"(h1|h2|arm1|arm2|arm3)\.dat", "hinge", "cluster", UP, None,
+     "hinge plate or arm fingers; rotation axis not calibrated"),
     (r"(phandle1|phandle2)\.dat", "bar", "end", PLUS_X, None, "bar handle attachment, paired"),
     (r"joint8ball\.dat", "ball", "point", UP, None, "Joint-8 ball"),
     (r"joint8socket\d\.dat", "socket", "point", UP, None, "Joint-8 socket"),
@@ -296,6 +352,10 @@ EXTENT_OVERRIDE = {"confric3.dat": (0.0, Mod(2.0))}
 # local x -3..3. phandle1 (one open side) starts the bar at x=3; phandle2 (two
 # open sides) lets the bar pass through, so its anchor is the far face x=-3.
 ANCHOR = {"phandle1.dat": (3.0, 2.0, 0.0), "phandle2.dat": (-3.0, 2.0, 0.0)}
+# Open studs whose bore takes a bar ("Stud Open", inner cylinder radius 4 LDU in
+# stud2, stud6 and stud17a). stud9 ("Stud Open with Small Holes") has a 2 LDU
+# bore radius, half a bar, so it is not open in this sense.
+OPEN_STUD = re.compile(r"^(stud2|stud2a|stud6|stud6a|stud17|stud17a|stud2-logo\d*)\.dat$")
 _COMPILED = [(re.compile("^" + r[0] + "$"),) + r[1:] for r in MAPPING_RULES]
 
 CYLINDER = re.compile(r"^(\d+)-(\d+)cyl[ico]\.dat$")
@@ -320,6 +380,8 @@ def mapping_table():
     for rx, kind, form, _axis, _extent, note in MAPPING_RULES:
         cell = rx.replace("|", "\\|")
         lines.append(f"| `{cell}` | {kind} | {GENDER[kind]} | {form} | {note} |")
+    lines.append(f"| `{OPEN_STUD.pattern[1:-1].replace('|', chr(92) + '|')}` | stud, `open: true` "
+                 "| M | point | open stud: the bore also takes a bar |")
     return "\n".join(lines)
 
 
@@ -377,6 +439,8 @@ class Deriver:
         d = mvec(m, axis)
         pos = add(mvec(m, ANCHOR[base]), t) if base in ANCHOR else t
         item = {"kind": kind, "form": form, "src": base, "pos": pos, "dir": unit(d)}
+        if kind == "stud" and OPEN_STUD.match(base):
+            item["open"] = True
         if form == "segment":
             p0 = add(mvec(m, scale(axis, extent[0])), t)
             p1 = add(mvec(m, scale(axis, extent[1])), t)
@@ -415,7 +479,10 @@ class Deriver:
             counting = COUNTING[kind]
             if counting == "point":
                 for it in dedupe_points(items):
-                    out.append(connector(kind, it["pos"], it["dir"], [it["src"]]))
+                    c = connector(kind, it["pos"], it["dir"], [it["src"]])
+                    if it.get("open"):
+                        c["open"] = True
+                    out.append(c)
             elif counting == "cluster":
                 for group in clusters(items, module):
                     pos = scale(add_all(g["pos"] for g in group), 1.0 / len(group))
@@ -606,6 +673,171 @@ def counts(conns):
     return c
 
 
+# ---------------------------------------------------------------- geometry
+#
+# Used for two things the primitive scan cannot give: the part's bounding box
+# (to check that derived connectors lie on the part) and the female stud
+# prototype. Every file is descended into here, mapped primitives included.
+
+def xform_tri(m, t, tri):
+    out = []
+    for i in (0, 3, 6):
+        x, y, z = tri[i], tri[i + 1], tri[i + 2]
+        out.append(m[0] * x + m[1] * y + m[2] * z + t[0])
+        out.append(m[3] * x + m[4] * y + m[5] * z + t[1])
+        out.append(m[6] * x + m[7] * y + m[8] * z + t[2])
+    return tuple(out)
+
+
+class Geometry:
+    """Flattened triangles per file; sub-files are cached, top-level parts are not."""
+
+    def __init__(self, lib):
+        self.lib = lib
+        self._flat = {}
+
+    def triangles(self, part_id):
+        loc = self.lib.locate(part_id + ".dat")
+        return [] if loc is None else self._flatten(loc[2], 0, cache=False)
+
+    def _flatten(self, path, depth, cache=True):
+        cached = self._flat.get(path)
+        if cached is not None:
+            return cached
+        out = list(self.lib.faces(path))
+        if depth < 40:
+            for _inv, lm, lt, name in self.lib.load(path)[2]:
+                loc = self.lib.locate(name)
+                if loc is None:
+                    continue
+                out.extend(xform_tri(lm, lt, tri) for tri in self._flatten(loc[2], depth + 1))
+        if cache:
+            self._flat[path] = out
+        return out
+
+
+def bbox_of(tris):
+    if not tris:
+        return None
+    lo = [min(t[i] for t in tris for i in (k, k + 3, k + 6)) for k in range(3)]
+    hi = [max(t[i] for t in tris for i in (k, k + 3, k + 6)) for k in range(3)]
+    return tuple(lo), tuple(hi)
+
+
+class Column:
+    """Vertical-line queries against a triangle soup, bucketed on the xz plane."""
+
+    def __init__(self, tris, cell):
+        self.cell = cell
+        self.buckets = {}
+        for tri in tris:
+            xs, ys, zs = tri[0::3], tri[1::3], tri[2::3]
+            area = ((tri[3] - tri[0]) * (tri[8] - tri[2])
+                    - (tri[6] - tri[0]) * (tri[5] - tri[2]))
+            rec = (tri, area, min(xs), max(xs), min(zs), max(zs), max(ys))
+            for bx in range(math.floor(rec[2] / cell), math.floor(rec[3] / cell) + 1):
+                for bz in range(math.floor(rec[4] / cell), math.floor(rec[5] / cell) + 1):
+                    self.buckets.setdefault((bx, bz), []).append(rec)
+
+    def hits(self, x, z):
+        """y of every non-vertical face crossed by the vertical line through (x, z)."""
+        out = []
+        key = (math.floor(x / self.cell), math.floor(z / self.cell))
+        for tri, area, *_rest in self.buckets.get(key, ()):
+            if abs(area) < 1e-9:
+                continue
+            x0, y0, z0, x1, y1, z1, x2, y2, z2 = tri
+            l1 = ((x - x0) * (z2 - z0) - (x2 - x0) * (z - z0)) / area
+            l2 = ((x1 - x0) * (z - z0) - (x - x0) * (z1 - z0)) / area
+            l0 = 1.0 - l1 - l2
+            if l0 >= -1e-9 and l1 >= -1e-9 and l2 >= -1e-9:
+                out.append(l0 * y0 + l1 * y1 + l2 * y2)
+        return out
+
+    def lowest(self, cx, cz, half):
+        """Largest y (lowest point, -Y is up) of any face touching the open square."""
+        best = None
+        x0, x1, z0, z1 = cx - half, cx + half, cz - half, cz + half
+        for bx in range(math.floor(x0 / self.cell), math.floor(x1 / self.cell) + 1):
+            for bz in range(math.floor(z0 / self.cell), math.floor(z1 / self.cell) + 1):
+                for rec in self.buckets.get((bx, bz), ()):
+                    if rec[3] <= x0 or rec[2] >= x1 or rec[5] <= z0 or rec[4] >= z1:
+                        continue
+                    if best is None or rec[6] > best:
+                        best = rec[6]
+        return best
+
+
+def synth_studf(tris, dims):
+    """Prototype: female studs under a part, from geometry alone.
+
+    A cell on the stud grid is a female stud when a stud-sized cylinder can
+    enter it from below to stud depth and something grips it there:
+      - room: nine vertical lines (the centre and eight at stud radius minus
+        1 LDU) cross no face within stud height above the cell's opening plane;
+      - cover: at least one of them meets a face above that (the part is there);
+      - grip: at least two of sixteen vertical lines 1.5 LDU outside the stud
+        surface cross a face within stud height (a wall, tube or pin that
+        touches the stud). Added after the first run, where the 1x4 arch got
+        studs under its opening; 16 lines, because 8 missed the walls of the
+        2x2 round parts. Both choices were made on this sample.
+    The opening plane is the lowest point of the material in the cell's
+    square. Both grid phases (on and between studs) are tried in x and z; the
+    phase with most cells wins. Only downward-facing receptacles are searched.
+    """
+    module = dims["module"]
+    half = module / 2.0
+    depth = dims["stud_height"] - 0.5
+    probe = dims["stud_radius"] - 1.0
+    reach = dims["stud_radius"] + 1.5
+    if not tris:
+        return []
+    col = Column(tris, half)
+    (x_lo, _y_lo, z_lo), (x_hi, _y_hi, z_hi) = bbox_of(tris)
+    rays = [(0.0, 0.0)] + [(probe * math.cos(k * math.pi / 4), probe * math.sin(k * math.pi / 4))
+                           for k in range(8)]
+    grips = [(reach * math.cos(k * math.pi / 8), reach * math.sin(k * math.pi / 8)) for k in range(16)]
+
+    def touches(x, z, y_open):
+        return any(y_open - depth < y <= y_open + 0.01 for y in col.hits(x, z))
+
+    def lattice(phase, lo, hi):
+        k = math.ceil((lo - 1.0 + half - phase) / module)
+        out = []
+        while phase + k * module + half <= hi + 1.0:
+            out.append(phase + k * module)
+            k += 1
+        return out
+
+    best = []
+    for px in (0.0, half):
+        for pz in (0.0, half):
+            found = []
+            for cx in lattice(px, x_lo, x_hi):
+                for cz in lattice(pz, z_lo, z_hi):
+                    y_open = col.lowest(cx, cz, half - 0.5)
+                    if y_open is None:
+                        continue
+                    covered, blocked = False, False
+                    for dx, dz in rays:
+                        for y in col.hits(cx + dx, cz + dz):
+                            if y > y_open + 0.01:
+                                continue
+                            if y > y_open - depth:
+                                blocked = True
+                                break
+                            covered = True
+                        if blocked:
+                            break
+                    if not covered or blocked:
+                        continue
+                    if sum(1 for dx, dz in grips if touches(cx + dx, cz + dz, y_open)) >= 2:
+                        found.append((cx, y_open, cz))
+            if len(found) > len(best):
+                best = found
+    return [connector("studF", p, DOWN, ["synthesised"]) for p in sorted(best)]
+
+
 # ---------------------------------------------------------------- ground truth
 #
 # Regular families: expected counts come from the description line.
@@ -642,8 +874,9 @@ HAND = {
     "2450": U("cut-corner plate: stud and tube layout not established"),
     "3176": U("plate 3x2 with hole: layout not established"),
     "2817": U("plate 2x2 with holes: hole type and count not established"),
-    # tile
-    "3069b": U("tile 1x2: whether the real part has an underside pin is not established; LDraw models none"),
+    # tile. 3069b ("Tile 1 x 2 with Groove") is scored by RULE like the other
+    # 1xN tiles (1 underside pin); LDraw models none. Whether the physical part
+    # has the pin is not settled here; the report gives the sensitivity.
     "2412b": U("grille tile 1x2: underside pin not established; LDraw models none"),
     "14719": U("corner tile: underside not established"),
     # slope
@@ -729,7 +962,11 @@ HAND = {
     "3647": T("gear 8: centre axle hole", axlehole=1),
     "32270": T("gear 12 double bevel: centre axle hole", axlehole=1),
     "94925": T("gear 16 reinforced: centre axle hole", axlehole=1),
-    "3648b": U("gear 24: other holes besides the single axle hole not established"),
+    # 3648b: first unverified because the holes around the centre were not
+    # established. The description names the centre axle hole, so that much is
+    # certain; the other holes stay unknown (None) and are not scored.
+    "3648b": T("gear 24: the single centre axle hole named in the description; other holes "
+               "not established", axlehole=1, pinhole=None),
     # bracket: horizontal plate studs up, vertical plate studs to the side, flat back
     "99781": T("1x2 - 1x2 down", stud=4, underpin=1, dirs={"stud": {"up": 2, "side": 2}}),
     "99780": T("1x2 - 1x2 up", stud=4, underpin=1, dirs={"stud": {"up": 2, "side": 2}}),
@@ -779,7 +1016,12 @@ HAND = {
     # continuous shaft and the thick stop splits this bar into a 96 LDU and a
     # 16 LDU section (6 modules = 120 LDU = 96 + 8 (stop) + 16).
     "63965a": T("bar 6L with thick stop: two bar sections either side of the stop", bar=2),
-    "4081b": U("clip light: ring holder semantics (clip or hollow stud) not settled"),
+    # 4081b: first unverified. The ring's bore (radius 4 LDU in the LDraw model,
+    # a bar) holds a bar, which in D06 is a clipF receptacle; that much is
+    # certain and no primitive gives it. Whether the two ring ends (drawn with
+    # open-stud primitives) also count as studs is not settled, so stud is None.
+    "4081b": T("clip light: ring bore holds a bar (clip); ring ends as studs not settled",
+               stud=None, clip=1),
     "2921": T("brick 1x1 with handle", stud=1, bar=1),
     # round
     "6141": T("1x1 round plate; underside form not established", stud=1, tube=None),
@@ -809,6 +1051,51 @@ HAND = {
     "4590": U("1x2 with 2 offset hollow studs: layout not established"),
 }
 
+# Female studs (studF): downward receptacles that take one stud each. Rule
+# parts: W*L (baseplates 0, their underside is flat). These families have no
+# stud receptacle: 0. Otherwise the table below (the underside of the part's
+# W x L plate or brick body, written from the description; brackets count the
+# horizontal plate only). Parts missing here are not established and are not
+# scored for studF: inverted and curved slopes, wedges and wings, cut-corner
+# plates and plates with holes, the old hinge tops and swivel plates, 3956,
+# 60474, 4590.
+STUDF_ZERO_FAMILIES = ("technic_beam", "technic_pin", "technic_axle", "technic_connector",
+                       "technic_gear")
+STUDF = {
+    # brick_modified (the 1x4 arch takes studs under its two legs only)
+    "2357": 3, "2877": 2, "30136": 2, "3659": 2,
+    # plate_modified
+    "2420": 3,
+    # tile
+    "2412b": 2, "14719": 3,
+    # slope
+    # 15068 and 11477 (curved) were first written as 4 and 2. The LDraw underside
+    # of 15068 is stepped (opening plane y=0 under one half, y=-8 under the
+    # other), which contradicts the flat underside assumed, so both curved
+    # slopes are now not established.
+    "3040b": 2, "3039": 4, "3037": 8, "3298": 6, "4286": 3, "4460b": 2, "3044b": 2,
+    "54200": 1, "3043": 4,
+    # technic_brick
+    "6541": 1, "3700": 2, "3701": 4, "3894": 6, "3702": 8, "2730": 10, "3703": 16,
+    "32000": 2, "32064b": 2, "3709b": 8, "3738": 16,
+    # bracket: the horizontal plate's underside
+    "99781": 2, "99780": 2, "44728": 2, "99207": 2, "2436a": 2, "36840": 1, "36841": 1,
+    "93274": 2,
+    # side_studs
+    "87087": 1, "4070": 1, "30414": 4, "26604": 1, "47905": 1, "4733": 1, "11211": 2,
+    "32952": 1,
+    # hinge
+    "44301a": 2, "44302a": 2, "60471": 2, "30383": 2, "3937": 2, "4275b": 2, "4276b": 2,
+    # bar_clip
+    "4085c": 1, "60897": 1, "15712": 1, "61252": 1, "63868": 2, "60470a": 2, "48336": 2,
+    "2540": 2, "87994": 0, "63965a": 0, "4081b": 1, "2921": 1,
+    # round
+    "6141": 1, "85861": 1, "3062b": 1, "4032a": 4, "3941": 4, "98138": 1, "14769": 4,
+    "4150": 4, "4589": 1, "3942b": 4,
+    # jumper
+    "3794b": 2, "15573": 2, "87580": 4, "34103": 3,
+}
+
 
 def rule_truth(desc):
     hit = RULE.match(desc)
@@ -825,6 +1112,17 @@ def rule_truth(desc):
         kinds["tube"] = (w - 1) * (n - 1)
     return {"kinds": kinds, "dirs": {}, "axle_modules": None, "grid": (w, n, fam),
             "note": f"rule from description ({fam} {w} x {n})"}
+
+
+def studf_expected(pid, family, desc):
+    """Expected female stud count, or None when not established."""
+    rule = rule_truth(desc or "")
+    if rule is not None:
+        w, n, fam = rule["grid"]
+        return 0 if fam == "Baseplate" else w * n
+    if family in STUDF_ZERO_FAMILIES:
+        return 0
+    return STUDF.get(pid)
 
 
 def grid(count, pitch):
@@ -857,7 +1155,52 @@ def dir_class(d):
     return "other"
 
 
-def evaluate(truth, conns, dims):
+def on_lattice(d):
+    """True when a direction is one of the six axis directions (Rot24 images of +y)."""
+    return max(abs(d[0]), abs(d[1]), abs(d[2])) > 0.999
+
+
+def connector_points(c):
+    """Position, plus both ends for connectors with an axial length."""
+    pts = [tuple(c["pos"])]
+    if c.get("length"):
+        half = c["length"] / 2.0
+        pts.append(add(c["pos"], scale(c["dir"], half)))
+        pts.append(add(c["pos"], scale(c["dir"], -half)))
+    return pts
+
+
+def geometry_problems(conns, bbox, family, module, offlattice=False):
+    """Position and axis checks that do not depend on the expected counts."""
+    problems = []
+    if bbox is not None:
+        lo, hi = bbox
+        tol = 1.0
+        for c in conns:
+            if any(p[i] < lo[i] - tol or p[i] > hi[i] + tol
+                   for p in connector_points(c) for i in range(3)):
+                problems.append(f"{c['kind']} at {c['pos']} outside the part's bounding box")
+                break
+    if not offlattice:
+        for c in conns:
+            if c["kind"] not in AXIS_FREE and not on_lattice(c["dir"]):
+                problems.append(f"{c['kind']} axis {c['dir']} not a lattice direction")
+                break
+    if family in HOLE_FAMILIES:
+        holes = [c for c in conns if c["kind"] in ("pinhole", "axlehole")]
+        if len(holes) >= 2:
+            if any(abs(dot(holes[0]["dir"], h["dir"])) < 0.999 for h in holes):
+                problems.append("hole axes not parallel")
+            for h in holes:
+                gap = min(norm(sub(h["pos"], o["pos"])) for o in holes if o is not h)
+                if abs(gap - module) > 0.5:
+                    problems.append(f"hole at {h['pos']}: nearest hole {gap:.1f} LDU away, "
+                                    f"expected one module")
+                    break
+    return problems
+
+
+def evaluate(truth, conns, dims, bbox=None, family=None, strict_axes=True):
     """Return (verdict, checks) for one part."""
     if truth is None or truth.get("unverified"):
         return UNVERIFIED, ["no ground truth"]
@@ -883,13 +1226,15 @@ def evaluate(truth, conns, dims):
         studs = {(round(c["pos"][0], 1), round(c["pos"][2], 1)) for c in conns if c["kind"] == "stud"}
         unders = {(round(c["pos"][0], 1), round(c["pos"][2], 1))
                   for c in conns if c["kind"] in ("tube", "underpin")}
-        ok = any((not studs or studs == s) and (not unders or unders == u)
+        fem = {(round(c["pos"][0], 1), round(c["pos"][2], 1)) for c in conns if c["kind"] == "studF"}
+        ok = any((not studs or studs == s) and (not unders or unders == u) and (not fem or fem == s)
                  for s, u in expected_grids(w, n, module))
         if not ok:
             problems.append("positions off the expected grid")
         if any(dir_class(c["dir"]) != "up" for c in conns if c["kind"] == "stud"):
             problems.append("stud not pointing up")
-        if any(dir_class(c["dir"]) != "down" for c in conns if c["kind"] in ("tube", "underpin")):
+        if any(dir_class(c["dir"]) != "down" for c in conns
+               if c["kind"] in ("tube", "underpin", "studF")):
             problems.append("underside connector not pointing down")
     for k, want in truth.get("dirs", {}).items():
         got = {}
@@ -905,6 +1250,11 @@ def evaluate(truth, conns, dims):
             got = modules_of(lengths[0], module)
             if got != truth["axle_modules"]:
                 problems.append(f"axle length {lengths[0]} LDU, expected {truth['axle_modules']} modules")
+    problems += geometry_problems(conns, bbox, family, module, truth.get("offlattice", False))
+    if strict_axes:
+        loose = sorted({c["kind"] for c in conns if c["kind"] in UNCALIBRATED})
+        if loose:
+            problems.append(f"{'/'.join(loose)} axis not calibrated (position is the primitive origin)")
     if not problems:
         if unknown:
             return UNVERIFIED, ["known kinds match; " + ", ".join(sorted(unknown)) + " not established"]
@@ -918,6 +1268,34 @@ def evaluate(truth, conns, dims):
     if recall >= 0.5 and precision >= 0.5:
         return "partial", problems
     return "wrong", problems
+
+
+def with_studf(truth, expected):
+    """A copy of a truth with the female stud expectation added."""
+    if truth is None or truth.get("unverified"):
+        return truth
+    out = dict(truth)
+    out["kinds"] = dict(truth["kinds"], studF=expected)
+    return out
+
+
+def known_kinds(truth, studf):
+    """Expected count per kind where the truth is established (for the per-kind table)."""
+    out = {}
+    if truth is not None and not truth.get("unverified"):
+        out.update({k: v for k, v in truth["kinds"].items() if v is not None})
+    if studf is not None:
+        out["studF"] = studf
+    return out
+
+
+def studf_only(truth, expected):
+    if expected is None:
+        return None
+    out = {"kinds": {"studF": expected}, "dirs": {}, "axle_modules": None}
+    if truth is not None and "grid" in truth:
+        out["grid"] = truth["grid"]
+    return out
 
 
 def fmt_counts(c):
@@ -971,18 +1349,69 @@ def summarise(rows, key):
     return out
 
 
-def library_stats(lib, deriver):
-    """Coverage over every non-alias part in parts/ (no ground truth)."""
-    total = with_any = 0
-    per_kind, empty_words = {}, {}
+def print_summary(label, s):
+    pv, pa = s["pct_verified"], s["pct_all"]
+    print(f"[{label}] full {s['full']}, partial {s['partial']}, wrong {s['wrong']}, "
+          f"unverified {s[UNVERIFIED]}")
+    print(f"  over verified ({s['verified']}): fully correct {pv['full']:.1f}%, "
+          f"at least partially correct {pv['at_least_partial']:.1f}%, wrong {pv['wrong']:.1f}%")
+    print(f"  over all {s['parts']}: fully correct {pa['full']:.1f}%, "
+          f"at least partially correct {pa['at_least_partial']:.1f}%, wrong {pa['wrong']:.1f}%, "
+          f"unverified {pa['unverified']:.1f}%")
+
+
+def per_kind(rows):
+    """Expected, derived and matched connector counts per kind over verified parts."""
+    acc = {}
+    for r in rows:
+        derived = r["_counts"]
+        for k, e in r["_known"].items():
+            d = derived.get(k, 0)
+            a = acc.setdefault(k, [0, 0, 0, 0])
+            a[0] += 1 if e else 0
+            a[1] += e
+            a[2] += d
+            a[3] += min(e, d)
+    print("per kind over parts with that kind established: kind parts-expecting expected derived matched")
+    for k in KIND_ORDER:
+        if k in acc:
+            a = acc[k]
+            print(f"  {k:9s} {a[0]:4d} {a[1]:6d} {a[2]:6d} {a[3]:6d}")
+
+
+# Features named in a part's description and the kinds that satisfy them. A
+# blind check of recall over the whole library: the description is written by
+# LDraw authors, not by this spike. Noisy by construction (see the report).
+DESC_FEATURES = [
+    ("axle hole", r"axle ?holes?", ("axlehole",)),
+    ("pin hole", r"(?:pin|peg) ?holes?", ("pinhole",)),
+    ("clip", r"\bclips?\b", ("clip",)),
+    ("bar or bar handle", r"\bbar\b(?! holder)|\bhandle\b", ("bar",)),
+    ("hinge or fingers", r"\bhinge\b|\bfingers?\b", ("hinge",)),
+    ("towball", r"towball", ("ball",)),
+    ("Technic gear wheel (any hole)", r"^technic gear\s+\d+ tooth", ("axlehole", "pinhole")),
+]
+
+
+def current_parts(lib):
     for (sub_dir, key), path in sorted(lib.index.items()):
         if sub_dir != "parts" or "/" in key:
             continue
         desc, _org, _e = lib.load(path)
         if desc.startswith(("~", "=", "_")) or "(Obsolete)" in desc:
             continue
+        yield key[:-4], desc
+
+
+def library_stats(lib, deriver):
+    """Coverage over every current part in parts/ (no ground truth)."""
+    total = with_any = 0
+    per_kind_parts, empty_words = {}, {}
+    probe = {label: [0, 0, []] for label, _rx, _k in DESC_FEATURES}
+    compiled = [(label, re.compile(rx, re.IGNORECASE), want) for label, rx, want in DESC_FEATURES]
+    for pid, desc in current_parts(lib):
         total += 1
-        _d, raw, _m = deriver.raw(key[:-4])
+        _d, raw, _m = deriver.raw(pid)
         c = counts(deriver.connectors(raw))
         if c:
             with_any += 1
@@ -990,19 +1419,169 @@ def library_stats(lib, deriver):
             word = (desc.split() or ["?"])[0]
             empty_words[word] = empty_words.get(word, 0) + 1
         for k in c:
-            per_kind[k] = per_kind.get(k, 0) + 1
+            per_kind_parts[k] = per_kind_parts.get(k, 0) + 1
+        for label, rx, want in compiled:
+            hit = rx.search(desc)
+            if not hit or re.search(r"\bwithout\b", desc[:hit.start()], re.IGNORECASE):
+                continue
+            p = probe[label]
+            p[0] += 1
+            if any(c.get(k) for k in want):
+                p[1] += 1
+            elif len(p[2]) < 8:
+                p[2].append(pid)
     print(f"library-wide: {total} current part files, {with_any} "
           f"({100.0 * with_any / max(total, 1):.1f}%) get at least one connector from primitive names")
     print("  parts with at least one connector of kind: " +
-          ", ".join(f"{k} {per_kind[k]}" for k in KIND_ORDER if k in per_kind))
+          ", ".join(f"{k} {per_kind_parts[k]}" for k in KIND_ORDER if k in per_kind_parts))
     top = sorted(empty_words.items(), key=lambda kv: (-kv[1], kv[0]))[:15]
     print("  parts with no connector, by first word of the description: " +
           ", ".join(f"{w} {n}" for w, n in top))
+    print("description probe (feature named in the description -> at least one such connector "
+          "derived): feature named derived recall examples-missed")
+    for label, _rx, _want in DESC_FEATURES:
+        named, found, missed = probe[label]
+        pct = 100.0 * found / named if named else 0.0
+        print(f"  {label:30s} {named:5d} {found:5d} {pct:5.1f}%  {' '.join(missed)}")
+
+
+# Bar-cylinder heuristic precision: a deterministic sample of library parts in
+# which the heuristic finds a bar (the first 50 by SHA-256 of the part id, 2026-10
+# library), labelled by hand. True = every heuristic bar in the part is a real
+# bar (a bar-diameter shaft a clip or hand can grip); False = at least one is
+# not; None = not decidable from the description and the printed bar positions.
+# Labels were written before the precision was computed, from the description
+# and positions only (no physical parts), so they are judgement, not truth.
+BAR_SAMPLE_LABELS = {
+    "90395": (None, "float: a strap handle may be a bar; three cylinders found"),
+    "u9310c06": (False, "door hinge pins inside a complete assembly"),
+    "92820p06": (False, "figure hip pins"),
+    "11408": (False, "figure neck post"),
+    "36198p03": (False, "figure hip pins"),
+    "3899p05": (None, "cup handle shape not decidable"),
+    "60800b": (None, "shutter hinge pins: bar-sized pins into frame holes"),
+    "18394p03": (True, "bar named in the description"),
+    "66967": (None, "rotor pins at the arm tips"),
+    "98367p01": (True, "shield grip"),
+    "817c03": (None, "trailer hitch"),
+    "18031": (True, "sword grip"),
+    "36083c": (True, "bar named in the description"),
+    "2586p4h": (True, "shield grip"),
+    "u9230c02": (False, "mechanism pins inside a complete assembly"),
+    "97787": (True, "spatula handle"),
+    "6572": (False, "towball neck"),
+    "98567-f1": (None, "belt end pieces"),
+    "47511p01": (False, "figure shoulder axles"),
+    "75174p01c01": (False, "joint pins inside a complete assembly"),
+    "35032e": (True, "bar named in the description"),
+    "42114c02": (True, "hilt and bar-diameter blade"),
+    "92456p0h": (False, "figure neck post"),
+    "57539": (True, "flexible hose tips are bar-diameter"),
+    "3957b": (True, "antenna whip"),
+    "636": (None, "axle ends that sit in bearing holes"),
+    "6053c01": (False, "rudder pivot pins inside a complete assembly"),
+    "447c01": (False, "train wheel stub axle"),
+    "20312": (True, "handle bars named in the description"),
+    "75902p06": (True, "shield grip"),
+    "245c01": (False, "train wheel stub axle"),
+    "3899p07": (None, "cup handle shape not decidable"),
+    "u9310c01": (False, "door hinge pins inside a complete assembly"),
+    "4790c01": (None, "ship wheel: handles are bars, spokes inside the rim may not be"),
+    "3846p4e": (None, "shield: grip found, second cylinder unclear"),
+    "4219b": (False, "guide pins at the door ends; the named handle is not found"),
+    "u9040c01": (False, "internal parts of a complete battery box"),
+    "18675ps6": (True, "handle named in the description"),
+    "3628": (True, "bar named in the description"),
+    "90370p03": (True, "microphone handle"),
+    "5330p02": (True, "hilt grip and bar named in the description"),
+    "80623": (None, "flex-system hose sheath"),
+    "11407p02": (False, "figure hip pins"),
+    "6122c02": (False, "helmet pivot pins"),
+    "90370p05": (True, "microphone handle"),
+    "92241p08": (False, "figure neck post"),
+    "26490": (False, "figure hip pins"),
+    "2582pa0": (False, "panel hinge pins"),
+    "30518": (None, "girder rail"),
+    "60849": (True, "nozzle body held as a bar"),
+}
+
+
+def bar_sample(lib, dims, n):
+    deriver = Deriver(lib, dims, heuristics=True)
+    hits = []
+    for pid, desc in current_parts(lib):
+        _d, raw, _m = deriver.raw(pid)
+        bars = [c for c in deriver.connectors(raw) if c["kind"] == "bar" and c.get("heuristic")]
+        if bars:
+            hits.append((hashlib.sha256(pid.encode()).hexdigest(), pid, desc, bars))
+    hits.sort()
+    print(f"parts with heuristic bars: {len(hits)}; sample: the first {n} by SHA-256 of the part id")
+    tally = {True: 0, False: 0, None: 0}
+    unlabelled = 0
+    for _h, pid, desc, bars in hits[:n]:
+        label = BAR_SAMPLE_LABELS.get(pid)
+        if label is None:
+            unlabelled += 1
+            tag = "?"
+        else:
+            tally[label[0]] += 1
+            tag = {True: "bar", False: "not-bar", None: "unsure"}[label[0]]
+        where = "; ".join(f"{c['pos']} dir {c['dir']} len {c['length']}" for c in bars)
+        print(f"  {pid:12s} {tag:8s} {desc[:60]:60s} {len(bars)} bar(s): {where}")
+    yes, no, unsure = tally[True], tally[False], tally[None]
+    decided = yes + no
+    if decided:
+        total = decided + unsure
+        print(f"precision (parts whose heuristic bars are all real bars): {yes}/{decided} = "
+              f"{100.0 * yes / decided:.1f}% of decided labels; {unsure} undecided, so between "
+              f"{100.0 * yes / total:.1f}% and {100.0 * (yes + unsure) / total:.1f}%"
+              + (f"; {unlabelled} sampled parts have no label" if unlabelled else ""))
+    return 0
+
+
+HOLDOUT_ZERO = re.compile(r"^Technic Beam\b")
+
+
+def studf_holdout(lib, dims, sample_ids):
+    """Female stud synthesis on library parts outside the sample whose count the
+    description fixes: RULE parts (W*L, baseplates 0) and Technic beams (0)."""
+    geometry = Geometry(lib)
+    tally = {}
+    fails = []
+    for pid, desc in current_parts(lib):
+        if pid in sample_ids:
+            continue
+        rule = rule_truth(desc)
+        if rule is not None:
+            group, truth = "rule (W x L)", studf_only(rule, studf_expected(pid, "", desc))
+        elif HOLDOUT_ZERO.match(desc):
+            group, truth = "Technic beam (0)", studf_only(None, 0)
+        else:
+            continue
+        tris = geometry.triangles(pid)
+        fem = synth_studf(tris, dims)
+        verdict, problems = evaluate(truth, fem, dims, bbox_of(tris))
+        for key in (group, "all"):
+            t = tally.setdefault(key, {"n": 0, "full": 0, "partial": 0, "wrong": 0})
+            t["n"] += 1
+            t[verdict] += 1
+        if verdict != "full":
+            fails.append(f"{pid} ({desc}): {'; '.join(problems)}")
+    print("studF hold-out: library parts outside the sample whose description fixes the count")
+    for key in sorted(tally, key=lambda k: k == "all"):
+        t = tally[key]
+        print(f"  {key:18s} parts {t['n']:4d}  full {t['full']:4d} ({100.0 * t['full'] / t['n']:.1f}%)  "
+              f"partial {t['partial']:3d}  wrong {t['wrong']:3d}")
+    for line in fails:
+        print("  " + line)
+    return 0
 
 
 def self_test():
-    """Checks of the pure logic; needs no LDraw library."""
-    module = load_standard(DEFAULT_STANDARD)["module"]
+    """Checks of the pure logic and of a tiny synthetic library; no LDraw needed."""
+    dims = load_standard(DEFAULT_STANDARD)
+    module = dims["module"]
+    half = module / 2.0
 
     def kinds(desc):
         return rule_truth(desc)["kinds"]
@@ -1010,16 +1589,22 @@ def self_test():
     assert kinds("Brick  2 x  4") == {"stud": 8, "tube": 3}
     assert kinds("Plate  1 x  4") == {"stud": 4, "underpin": 3}
     assert kinds("Tile  2 x  2 with Groove") == {"stud": 0, "tube": 1}
+    assert kinds("Tile  1 x  2 with Groove") == {"stud": 0, "underpin": 1}
     assert kinds("Brick  1 x  2 x  2 without Understud") == {"stud": 2}
     assert kinds("Baseplate 32 x 32") == {"stud": 1024}
     assert rule_truth("Brick  2 x  2 Corner") is None
+    assert studf_expected("x", "brick", "Brick  2 x  4") == 8
+    assert studf_expected("x", "baseplate", "Baseplate 16 x 16") == 0
+    assert studf_expected("x", "technic_beam", "Technic Beam  3") == 0
     assert lookup("stud.dat")[0] == "stud" and lookup("8/stud.dat")[0] == "stud"
     assert lookup("stud22a.dat")[0] == "tube" and lookup("stud3a.dat")[0] == "underpin"
     assert lookup("stud20.dat") is None and lookup("48/4-4cyli.dat") is None
     assert lookup("axlehol8.dat")[0] == "axle" and lookup("axl2hol8.dat")[0] == "axlehole"
-    ends = [{"kind": "pinhole", "src": "peghole.dat", "pos": (0.0, 0.0, z), "dir": (0.0, 0.0, z / 10)}
-            for z in (-10.0, 10.0)]
-    segs = pair_ends(ends, 2 * module, inward=False, lone_length=module / 2)
+    assert OPEN_STUD.match("stud2a.dat") and not OPEN_STUD.match("stud9.dat")
+    # Two peg hole openings half a module either side of the origin, facing out.
+    ends = [{"kind": "pinhole", "src": "peghole.dat", "pos": (0.0, 0.0, z),
+             "dir": (0.0, 0.0, z / half)} for z in (-half, half)]
+    segs = pair_ends(ends, 2 * module, inward=False, lone_length=half)
     assert len(segs) == 1 and abs(norm(sub(segs[0]["p1"], segs[0]["p0"])) - module) < 1e-9
     a = {"src": "a", "p0": ORIGIN, "p1": (module, 0.0, 0.0), "dir": PLUS_X}
     b = {"src": "b", "p0": (module, 0.0, 0.0), "p1": (2 * module, 0.0, 0.0), "dir": PLUS_X}
@@ -1027,8 +1612,95 @@ def self_test():
     runs = sorted(merge_runs([a, b, c]), key=lambda r: r["length"])
     assert [r["length"] for r in runs] == [module, 2 * module]
     assert modules_of(module / 2, module) == 1 and modules_of(2 * module, module) == 2
+    self_test_nested(dims)
+    self_test_studf(dims)
     print("self-test: ok")
     return 0
+
+
+def self_test_nested(dims):
+    """Transform composition through three levels with non-commuting rotations.
+
+    Level 1 (part -> s/q04t1): R1 = 90 deg about z, (x, y, z) -> (-y, x, z), t1 = (m, 0, 0).
+    Level 2 (s/q04t1 -> s/q04t2): R2 = 90 deg about x, (x, y, z) -> (x, -z, y), t2 = (h, 0, 0).
+    Level 3 (s/q04t2): stud.dat at t3 = (h, 0, 0); axlehole.dat at the origin, scaled m in y.
+    m = module, h = m / 2. World = R1 (R2 p + t2) + t1.
+      stud position  R1 R2 t3 + R1 t2 + t1 = (0, h, 0) + (0, h, 0) + (m, 0, 0) = (m, m, 0)
+      stud direction R1 R2 (0, -1, 0) = R1 (0, 0, -1) = (0, 0, -1)
+      axle hole      from R1 t2 + t1 = (m, h, 0) to that + R1 R2 (0, m, 0) = (m, h, m):
+                     centre (m, h, h), axis +-z, length m
+    Composing in the wrong order (R2 R1) puts the stud at (m, h, h) facing +x; not
+    rotating child translations puts it at (2m, 0, 0).
+    """
+    m = dims["module"]
+    h = m / 2.0
+    files = {
+        "parts/q04t.dat": f"0 Q04 self-test part\n1 16 {m} 0 0 0 -1 0 1 0 0 0 0 1 s/q04t1.dat\n",
+        "parts/s/q04t1.dat": f"0 ~level 1\n1 16 {h} 0 0 1 0 0 0 0 -1 0 1 0 s\\q04t2.dat\n",
+        "parts/s/q04t2.dat": (f"0 ~level 2\n1 16 {h} 0 0 1 0 0 0 1 0 0 0 1 stud.dat\n"
+                              f"1 16 0 0 0 1 0 0 0 {m} 0 0 0 1 axlehole.dat\n"),
+    }
+    with tempfile.TemporaryDirectory() as root:
+        for rel, text in files.items():
+            path = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        deriver = Deriver(Library(root), dims, heuristics=False)
+        desc, raw, missing = deriver.raw("q04t")
+        conns = deriver.connectors(raw)
+    assert desc == "Q04 self-test part" and not missing, (desc, missing)
+    assert counts(conns) == {"stud": 1, "axlehole": 1}, counts(conns)
+    stud = next(c for c in conns if c["kind"] == "stud")
+    hole = next(c for c in conns if c["kind"] == "axlehole")
+
+    def close(p, q):
+        return norm(sub(tuple(p), tuple(q))) < 1e-6
+
+    assert close(stud["pos"], (m, m, 0.0)), stud
+    assert close(stud["dir"], (0.0, 0.0, -1.0)), stud
+    assert close(hole["pos"], (m, h, h)), hole
+    assert abs(abs(hole["dir"][2]) - 1.0) < 1e-6 and abs(hole["length"] - m) < 1e-6, hole
+
+
+def self_test_studf(dims):
+    """A 1x1 brick shell has one female stud; closing its bottom removes it."""
+    m, h, wall, height = dims["module"], dims["module"] / 2.0, dims["side_wall"], dims["brick"]
+
+    def quad(x0, x1, z0, z1, y):
+        return [(x0, y, z0, x1, y, z0, x1, y, z1), (x0, y, z0, x1, y, z1, x0, y, z1)]
+
+    def brick_shell(nx):
+        """Top, underside of the top and wall rims of a 1 x nx brick (no walls'
+        vertical faces: vertical lines never cross them)."""
+        xa, xb = -h * nx, h * nx
+        out = quad(xa, xb, -h, h, 0.0) + quad(xa, xb, -h, h, wall)
+        out += quad(xa, xa + wall, -h, h, height) + quad(xb - wall, xb, -h, h, height)
+        out += quad(xa, xb, -h, -h + wall, height) + quad(xa, xb, h - wall, h, height)
+        return out
+
+    shell = brick_shell(1)
+    found = synth_studf(shell, dims)
+    assert len(found) == 1 and found[0]["pos"] == [0.0, height, 0.0], found
+    assert found[0]["dir"] == [0.0, 1.0, 0.0]
+    closed = shell + quad(-h, h, -h, h, height)        # a solid bottom face
+    assert synth_studf(closed, dims) == []
+    # Shifted by half a module in x, the other grid phase finds the same cell.
+    shifted = [tuple(v + (h if i % 3 == 0 else 0.0) for i, v in enumerate(t)) for t in shell]
+    moved = synth_studf(shifted, dims)
+    assert len(moved) == 1 and moved[0]["pos"] == [h, height, 0.0], moved
+    # A 1 x 3 shell has three cells, on the grid phase of an odd length.
+    three = synth_studf(brick_shell(3), dims)
+    assert [c["pos"][0] for c in three] == [-m, 0.0, m], three
+    # A 1 x 3 arch: 1x1 legs at the ends, a top over the middle and two feet
+    # reaching the floor at the leg faces (as the arch curve does). The middle
+    # cell has room and cover but nothing touches a stud there: no female stud.
+    legs = [tuple(v + (s * m if i % 3 == 0 else 0.0) for i, v in enumerate(t))
+            for s in (-1.0, 1.0) for t in brick_shell(1)]
+    top = quad(-h, h, -h, h, 0.0) + quad(-h, h, -h, h, wall)
+    feet = quad(-h, -h + 1.0, -h, h, height) + quad(h - 1.0, h, -h, h, height)
+    arch = synth_studf(legs + top + feet, dims)
+    assert [c["pos"][0] for c in arch] == [-m, m], arch
 
 
 def main(argv=None):
@@ -1047,6 +1719,10 @@ def main(argv=None):
     ap.add_argument("--self-test", action="store_true", help="check the pure logic and exit")
     ap.add_argument("--library-stats", action="store_true",
                     help="also derive connectors for every part file in parts/ and print coverage")
+    ap.add_argument("--bar-sample", type=int, default=0, metavar="N",
+                    help="print a sample of N parts with heuristic bars and the labelled precision")
+    ap.add_argument("--studf-holdout", action="store_true",
+                    help="score female stud synthesis on library parts outside the sample and exit")
     args = ap.parse_args(argv)
     if args.mapping:
         print(mapping_table())
@@ -1058,15 +1734,22 @@ def main(argv=None):
 
     dims = load_standard(args.standard)
     lib = Library(args.library)
+    if args.bar_sample:
+        return bar_sample(lib, dims, args.bar_sample)
+    if args.studf_holdout:
+        return studf_holdout(lib, dims, {pid for pid, _fam in read_parts(args.parts)})
     names_only = Deriver(lib, dims, heuristics=False)
     with_geom = Deriver(lib, dims, heuristics=True)
+    geometry = Geometry(lib)
 
     if args.explain:
         deriver = with_geom if args.heuristic else names_only
         desc, raw, missing = deriver.raw(args.explain)
         conns = deriver.connectors(raw)
+        tris = geometry.triangles(args.explain)
         print(json.dumps({"part": args.explain, "description": desc, "counts": counts(conns),
-                          "connectors": conns, "unresolved": missing}, indent=1))
+                          "connectors": conns, "studF_synthesised": synth_studf(tris, dims),
+                          "bbox": bbox_of(tris), "unresolved": missing}, indent=1))
         return 0
 
     version = "" if args.no_version_scan else lib.latest_update()
@@ -1077,11 +1760,17 @@ def main(argv=None):
             rows.append({"part_id": pid, "family": fam, "description": "MISSING",
                          "expected": "", "derived": "", "verdict": UNVERIFIED,
                          "truth": "missing", "derived_geom": "", "verdict_geom": UNVERIFIED,
-                         "notes": "part not in library"})
+                         "verdict_lenient": UNVERIFIED, "studf_expected": "",
+                         "studf_derived": "", "verdict_studf": UNVERIFIED,
+                         "verdict_combined": UNVERIFIED, "notes": "part not in library",
+                         "_known": {}, "_counts": {}})
             continue
         conns = names_only.connectors(raw)
         _d, raw_g, _m = with_geom.raw(pid)
         conns_g = with_geom.connectors(raw_g)
+        tris = geometry.triangles(pid)
+        box = bbox_of(tris)
+        fem = synth_studf(tris, dims)
         truth = HAND.get(pid)
         source = "hand" if truth is not None else ""
         if truth is None:
@@ -1089,31 +1778,44 @@ def main(argv=None):
             source = "rule" if truth is not None else "none"
         if truth is not None and truth.get("unverified"):
             source = UNVERIFIED
-        verdict, problems = evaluate(truth, conns, dims)
-        verdict_g, problems_g = evaluate(truth, conns_g, dims)
+        verdict, problems = evaluate(truth, conns, dims, box, fam)
+        verdict_l, _p = evaluate(truth, conns, dims, box, fam, strict_axes=False)
+        verdict_g, problems_g = evaluate(truth, conns_g, dims, box, fam)
+        f_exp = studf_expected(pid, fam, desc)
+        verdict_f, problems_f = evaluate(studf_only(truth, f_exp), fem, dims, box, fam)
+        verdict_c, problems_c = evaluate(with_studf(truth, f_exp), conns + fem, dims, box, fam)
         note = "; ".join(problems) if problems else ""
         if truth is not None and truth.get("note") and source != "rule":
             note = (truth["note"] + (" | " + note if note else ""))
+        if problems_f and verdict_f != UNVERIFIED:
+            note += (" | " if note else "") + "studF: " + "; ".join(problems_f)
         if missing:
             note += (" | " if note else "") + "unresolved: " + ",".join(sorted(set(missing)))
+        all_counts = counts(conns + fem)
         rows.append({
             "part_id": pid, "family": fam, "description": desc,
             "expected": fmt_truth(truth), "derived": fmt_counts(counts(conns)),
             "verdict": verdict, "truth": source,
+            "studf_expected": "?" if f_exp is None else f_exp, "studf_derived": len(fem),
+            "verdict_studf": verdict_f, "verdict_combined": verdict_c,
+            "verdict_lenient": verdict_l,
             "derived_geom": fmt_counts(counts(conns_g)), "verdict_geom": verdict_g,
-            "notes": note,
+            "notes": note, "_known": known_kinds(truth, f_exp), "_counts": all_counts,
         })
         dump[pid] = {"family": fam, "description": desc, "counts": counts(conns),
-                     "connectors": conns, "counts_with_bar_heuristic": counts(conns_g),
+                     "connectors": conns, "studF_synthesised": fem, "bbox": box,
+                     "counts_with_bar_heuristic": counts(conns_g),
                      "verdict": verdict, "problems": problems,
+                     "verdict_studf": verdict_f, "problems_studf": problems_f,
+                     "verdict_combined": verdict_c, "problems_combined": problems_c,
                      "verdict_with_bar_heuristic": verdict_g, "problems_with_bar_heuristic": problems_g}
-
-    s_names = summarise(rows, "verdict")
-    s_geom = summarise(rows, "verdict_geom")
 
     if args.csv != "-":
         # No LDraw text or geometry in the CSV: ids, our labels and counts only.
+        # The derived columns are derived from the LDraw Parts Library (CC BY 2.0
+        # or CC BY 4.0); see q04_results.csv.license and the report.
         fields = ["part_id", "family", "expected", "derived", "verdict", "truth",
+                  "studf_expected", "studf_derived", "verdict_studf", "verdict_combined",
                   "derived_geom", "verdict_geom", "notes"]
         with open(args.csv, "w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
@@ -1125,27 +1827,31 @@ def main(argv=None):
             json.dump({"library_update": version, "parts": dump}, fh, indent=1, sort_keys=True)
 
     print(f"LDraw library: {lib.root} (latest UPDATE tag {version or 'not scanned'})")
-    print(f"parts: {s_names['parts']}  verified ground truth: {s_names['verified']}  "
-          f"unverified: {s_names[UNVERIFIED]}")
-    for label, s in (("primitive names only", s_names), ("names + bar-cylinder heuristic", s_geom)):
-        pv, pa = s["pct_verified"], s["pct_all"]
-        print(f"[{label}] full {s['full']}, partial {s['partial']}, wrong {s['wrong']}, "
-              f"unverified {s[UNVERIFIED]}")
-        print(f"  over verified ({s['verified']}): fully correct {pv['full']:.1f}%, "
-              f"at least partially correct {pv['at_least_partial']:.1f}%, wrong {pv['wrong']:.1f}%")
-        print(f"  over all {s['parts']}: fully correct {pa['full']:.1f}%, "
-              f"at least partially correct {pa['at_least_partial']:.1f}%, wrong {pa['wrong']:.1f}%, "
-              f"unverified {pa['unverified']:.1f}%")
+    print(f"parts: {len(rows)}")
+    print_summary("A: primitive names only (strict: clip and hinge axes count as missing)",
+                  summarise(rows, "verdict"))
+    print_summary("A': primitive names only, clip and hinge axes accepted (sensitivity)",
+                  summarise(rows, "verdict_lenient"))
+    print_summary("B: names + bar-cylinder heuristic (strict)", summarise(rows, "verdict_geom"))
+    print_summary("C: female stud synthesis alone (studF only)", summarise(rows, "verdict_studf"))
+    print_summary("D: names + female stud synthesis (strict), the decision measure",
+                  summarise(rows, "verdict_combined"))
     if args.library_stats:
         library_stats(lib, names_only)
+    per_kind(rows)
+    cols = ("verdict", "verdict_combined")
     fams = {}
     for r in rows:
-        f = fams.setdefault(r["family"], {"n": 0, "full": 0, "partial": 0, "wrong": 0, UNVERIFIED: 0})
+        empty = {"full": 0, "partial": 0, "wrong": 0, UNVERIFIED: 0}
+        f = fams.setdefault(r["family"], {"n": 0, **{c: dict(empty) for c in cols}})
         f["n"] += 1
-        f[r["verdict"]] += 1
-    print("per family (names only): family n full partial wrong unverified")
+        for c in cols:
+            f[c][r[c]] += 1
+    print("per family: family n | A full partial wrong unverified | D full partial wrong unverified")
     for fam, f in fams.items():
-        print(f"  {fam:18s} {f['n']:3d} {f['full']:4d} {f['partial']:7d} {f['wrong']:5d} {f[UNVERIFIED]:10d}")
+        a, d = f["verdict"], f["verdict_combined"]
+        print(f"  {fam:18s} {f['n']:3d} | {a['full']:4d} {a['partial']:7d} {a['wrong']:5d} "
+              f"{a[UNVERIFIED]:10d} | {d['full']:4d} {d['partial']:7d} {d['wrong']:5d} {d[UNVERIFIED]:10d}")
     return 0
 
 

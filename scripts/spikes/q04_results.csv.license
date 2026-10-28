@@ -1,0 +1,12 @@
+Attribution for q04_results.csv
+
+The derived counts and verdicts in q04_results.csv (columns derived,
+studf_derived, derived_geom and the verdict columns) were computed by
+ldraw_connectivity.py from the LDraw Parts Library, update 2026-10
+(https://library.ldraw.org/library/updates/complete.zip, SHA-256
+023083918da2d3697c794fb4267975509584f3611b993095874206a803fa610f). Library
+files are licensed under CC BY 2.0 or CC BY 4.0 per file; see CAreadme.txt in
+the library. The CSV holds part ids, OpenBrick3D family labels, counts, verdicts
+and our own notes only; no LDraw text or geometry is copied into it.
+
+This software uses the LDraw Parts Library.
