@@ -22,11 +22,11 @@ Three roles, whatever the head count:
 
 | Role | Who | Owns |
 |------|-----|------|
-| **Decider** | the founder (product) and one engineer (technical lead) | priorities, the ADR table, merges, anything that touches money, accounts, legal, or a physical print |
+| **Decider** | the founder (product) and one engineer (technical lead) | priorities, the ADR table, after-merge review, anything that touches money, accounts, legal, or a physical print |
 | **Executor** | AI coding agents (Claude Code sessions in this repository), plus any engineer's own hands | implementation of agent-ready issues, tests, docs, refactors, benchmarks, first-pass reviews |
 | **Judge** | CI and the repository's own tests, then a human review | whether a change is correct, within policy, and small enough to understand |
 
-Principles: the repository is the single source of truth and the only memory agents have (CLAUDE.md, docs/plan, tests); GitHub issues are the work queue; every merge is small; a human never reviews what CI could have rejected; nothing physical, legal or financial is delegated.
+Principles: the repository is the single source of truth and the only memory agents have (CLAUDE.md, docs/plan, tests); GitHub issues are the work queue; every merge is small; agent pull requests merge automatically when CI is green, and humans review merged work rather than gate it; a human never reviews what CI could have rejected; nothing physical, legal or financial is delegated.
 
 ## 2. What agents do well here, and what they must not do
 
@@ -47,11 +47,11 @@ flowchart LR
   C --> D["Agent: self-review against the checklist, open PR with the template"]
   D --> E["CI: fmt, clippy -D warnings, tests, data, links, DCO, cargo deny"]
   E -->|red| C
-  E -->|green| F["Human: 10-minute review of diff and tests; merge or request one change"]
+  E -->|green| F["Automatic merge; human reviews merged work daily and reverts or files a follow-up"]
   F --> G["Changelog line, issue closed, next issue"]
 ```
 
-Rules of the loop: tests before code (the acceptance tests in the issue become the first commit); one issue, one pull request, under about 400 changed lines; the agent explains anything it could not verify; a red CI goes back to the agent, never to the human; a human request for change is one sentence naming the rule and the document.
+Rules of the loop: tests before code (the acceptance tests in the issue become the first commit); one issue, one pull request, under about 400 changed lines; the agent explains anything it could not verify; a red CI goes back to the agent, never to the human; a human request for change after the merge is one sentence naming the rule and the document, and becomes a follow-up issue or a revert.
 
 ## 4. Task shapes and the agent-ready issue
 
@@ -82,7 +82,7 @@ Token rules: research sessions and implementation sessions are separate; an impl
 
 ## 7. Cadence
 
-- **Daily:** the decider refreshes the `agent-ready` queue (three to six issues), reviews merged work for ten minutes per PR, and prints anything that needs a physical test.
+- **Daily:** the decider refreshes the `agent-ready` queue (three to six issues), reviews the day's automatically merged work for ten minutes per PR, reverts or files a follow-up when needed, and prints anything that needs a physical test.
 - **Weekly:** a 30-minute checkpoint against the milestone's demo criterion; move at most one item between milestones; log any new assumption in [13](13-risks-and-open-questions.md).
 - **Per milestone:** the definition of done in [11](11-roadmap.md); a recorded demo; a tagged release where the milestone has one.
 - **Monthly:** a dependency and licence audit (`cargo deny`, `pnpm licenses`), a token and cost review, and a look at the watch list in [03](03-tech-stack-decisions.md).

@@ -4,6 +4,9 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 
 ## Unreleased
 
+### Changed
+- Agent pull requests merge automatically once CI is green (GOVERNANCE.md, plan 14); commits and pull requests are attributed to the Neuraldeep.net design agents (CLAUDE.md).
+
 ### Fixed
 - `deny.toml` used a value current cargo-deny rejects, so the licence policy could not be checked; CI now runs `cargo deny --all-features check`, and a `geom-manifold-csg` job runs the C++ kernel cross-check.
 - `canonical_fingerprint` uses `as_chunks`, which the clippy lint added in Rust 1.99 requires.
