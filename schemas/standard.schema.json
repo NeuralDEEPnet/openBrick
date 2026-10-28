@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/standard.schema.json",
+  "title": "OpenBrick3D Dimensional Standard",
+  "description": "The Dimensional Standard (standards/dimensions-v1.json): one row per brick feature with its nominal size, LDraw size, print targets, confidence and source. Read by openbrick-units (crates/openbrick-units/src/standard.rs); see docs/plan/04. Unknown fields are rejected because serde would silently drop them.",
+  "type": "object",
+  "required": ["openbrick", "kind", "version", "license", "credit", "ldu_mm", "features"],
+  "properties": {
+    "openbrick": { "$ref": "#/$defs/pragma" },
+    "kind": { "const": "standard" },
+    "version": {
+      "$ref": "#/$defs/semver",
+      "description": "Version of the standard's content, separate from the schema pragma."
+    },
+    "license": { "$ref": "#/$defs/spdx" },
+    "credit": { "$ref": "#/$defs/credit" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "ldu_mm": {
+      "description": "Nominal millimetres per LDraw unit used for every conversion at the file boundary.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "notes": { "type": "string" },
+    "features": {
+      "description": "Feature rows; ids are unique (looked up by id through STANDARD.get().mm(id)).",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/feature" }
+    },
+    "tolerances": {
+      "description": "Measured manufacturing tolerances and their sources, as numbers or free-text ranges.",
+      "type": "object",
+      "additionalProperties": { "type": ["number", "string"] }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "feature": {
+      "description": "One row of the standard (openbrick_units::standard::Feature).",
+      "type": "object",
+      "required": ["id", "name", "confidence", "source"],
+      "properties": {
+        "id": {
+          "description": "Stable snake_case id, the key code uses to read the value.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "nominal_mm": {
+          "description": "Nominal design value in millimetres (a plain factor for unitless rows); null when the row has no length.",
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "ldraw_ldu": {
+          "description": "The same feature as LDraw models it, in LDU; null when LDraw has no equivalent.",
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "print_target": {
+          "description": "Starting print targets by process profile id, as free-text ranges; fit profiles override them.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/profileId" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "confidence": {
+          "description": "verified: from a primary source or two independent measurements; likely: community consensus; inferred: neither (docs/plan/04 section 2).",
+          "enum": ["verified", "likely", "inferred"]
+        },
+        "note": { "type": "string" },
+        "source": {
+          "description": "Where the number comes from. Required: every geometry number cites its source (CLAUDE.md).",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "pragma": {
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Readers accept every 1.x.",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
+    },
+    "semver": {
+      "description": "A Semantic Versioning 2.0.0 version (pattern from semver.org).",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*)?(\\+[0-9a-zA-Z-]+(\\.[0-9a-zA-Z-]+)*)?$"
+    },
+    "spdx": {
+      "description": "An SPDX licence id, or a simple AND, OR or WITH expression of ids (LICENSE-POLICY.md).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*( (AND|OR|WITH) [A-Za-z0-9][A-Za-z0-9.+-]*)*$"
+    },
+    "credit": {
+      "description": "Who made the document. Keeping it is a community norm, not a legal condition (LICENSE-POLICY.md).",
+      "type": "object",
+      "required": ["author"],
+      "properties": {
+        "author": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "description": "Where the data came from, so attribution travels with it through conversion, export and printing (LICENSE-POLICY.md, docs/plan/06 section 2).",
+      "type": "object",
+      "properties": {
+        "source": { "description": "original, or the upstream file or project the data derives from.", "type": "string" },
+        "author": { "type": "string" },
+        "license": { "$ref": "#/$defs/spdx" },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" },
+        "modified": { "type": "boolean" },
+        "history": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "profileId": {
+      "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+(\\.[a-z0-9]+)*)*$"
+    }
+  }
+}

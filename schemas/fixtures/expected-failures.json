@@ -1,0 +1,21 @@
+{
+  "description": "Each fixture in invalid/ breaks exactly one rule. cargo xtask data and the xtask tests require every error it raises to be at this JSON pointer (\"\" is the document root) with this schema keyword.",
+  "fixtures": {
+    "standard-bad-confidence.json": { "pointer": "/features/0/confidence", "keyword": "enum" },
+    "standard-missing-source.json": { "pointer": "/features/0", "keyword": "required" },
+    "standard-zero-ldu-mm.json": { "pointer": "/ldu_mm", "keyword": "exclusiveMinimum" },
+    "process-negative-min-feature.json": { "pointer": "/minFeatureMm", "keyword": "exclusiveMinimum" },
+    "process-bad-id.json": { "pointer": "/id", "keyword": "pattern" },
+    "process-unknown-hole-strategy.json": { "pointer": "/horizontalHoleStrategy", "keyword": "enum" },
+    "process-misspelled-optional-field.json": { "pointer": "", "keyword": "additionalProperties" },
+    "fit-missing-chosen-cells.json": { "pointer": "/calibration", "keyword": "required" },
+    "fit-unknown-cell.json": { "pointer": "/calibration/chosenCells", "keyword": "propertyNames" },
+    "fit-bad-intent.json": { "pointer": "/intent", "keyword": "enum" },
+    "fit-offset-in-microns.json": { "pointer": "/offsetsMm/tubeInnerDiameter", "keyword": "maximum" },
+    "part-unknown-op.json": { "pointer": "/features/0/op", "keyword": "enum" },
+    "part-missing-credit.json": { "pointer": "", "keyword": "required" },
+    "part-bad-version.json": { "pointer": "/version", "keyword": "pattern" },
+    "part-unknown-param-type.json": { "pointer": "/params/size/type", "keyword": "enum" },
+    "part-dotted-feature-id.json": { "pointer": "/features/0/id", "keyword": "pattern" }
+  }
+}

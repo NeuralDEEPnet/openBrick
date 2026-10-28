@@ -1,0 +1,96 @@
+{
+  "openbrick": "1.0",
+  "kind": "part",
+  "id": "fixture.explicit-snap",
+  "version": "1.0.0-rc.1",
+  "name": "Plate with an explicit connector list",
+  "license": "CC-BY-4.0",
+  "credit": {
+    "author": "OpenBrick3D contributors",
+    "url": "https://github.com/NeuralDEEPnet/openBrick"
+  },
+  "provenance": {
+    "source": "original",
+    "author": "OpenBrick3D contributors",
+    "license": "CC-BY-4.0",
+    "modified": false,
+    "history": []
+  },
+  "params": {
+    "size": {
+      "type": "vector",
+      "unit": "stud",
+      "default": [1, 2],
+      "min": [1, 1],
+      "max": [4, 4],
+      "manipulator": "corner"
+    },
+    "finish": {
+      "type": "enum",
+      "default": "matte",
+      "options": [
+        {
+          "value": "matte",
+          "label": "Matte"
+        },
+        "gloss"
+      ],
+      "onChange": "keep"
+    }
+  },
+  "presets": [
+    {
+      "name": "Small",
+      "params": {
+        "size": [1, 1]
+      }
+    }
+  ],
+  "features": [
+    {
+      "id": "body",
+      "op": "body.plate",
+      "size": "$size",
+      "colorRole": "body"
+    },
+    {
+      "id": "studs",
+      "op": "stud.field",
+      "on": "body.top",
+      "studType": "solid",
+      "if": "$finish != 'gloss'"
+    },
+    {
+      "id": "mark",
+      "op": "relief.text",
+      "on": "body.bottom",
+      "text": "A",
+      "height": "0.4mm",
+      "colorRole": "serial",
+      "minStroke": "profile.minFeature"
+    }
+  ],
+  "snap": [
+    {
+      "type": "studM",
+      "pos": [0, 0, 0],
+      "dir": "-y"
+    }
+  ],
+  "print": {
+    "up": "top",
+    "profiles": ["fdm-0.4"],
+    "fitCritical": [],
+    "rules": [
+      {
+        "check": "strokeWidth >= profile.minFeature"
+      }
+    ]
+  },
+  "export": {
+    "formats": ["3mf", "stl"]
+  },
+  "lock": {
+    "kernel": "manifold-rust 0.19.1"
+  }
+}

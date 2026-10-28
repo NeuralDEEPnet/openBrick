@@ -9,6 +9,10 @@ publish = false
 
 [dependencies]
 serde_json = { workspace = true }
+# JSON Schema (draft 2020-12) validation for `cargo xtask data`. MIT. Default
+# features are off: they pull reqwest, rustls and aws-lc-rs to fetch remote
+# `$ref`s over HTTP, and our schemas are self-contained and read from disk.
+jsonschema = { version = "0.60.2", default-features = false }
 
 [lints]
 workspace = true

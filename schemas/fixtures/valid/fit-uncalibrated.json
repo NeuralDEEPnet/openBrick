@@ -1,0 +1,27 @@
+{
+  "openbrick": "1.0",
+  "kind": "fit",
+  "id": "fixture-uncalibrated",
+  "credit": {
+    "author": "OpenBrick3D contributors"
+  },
+  "process": "fdm-0.4",
+  "printer": "Any printer",
+  "nozzleMm": 0.4,
+  "material": {
+    "type": "PLA"
+  },
+  "intent": "fits-itself",
+  "offsetsMm": {
+    "studDiameter": 0.0,
+    "tubeInnerDiameter": 0.0,
+    "tubeOuterDiameter": 0.0,
+    "ribDepth": 0.0,
+    "pinDiameter": 0.0,
+    "horizontalHoleDiameter": 0.0,
+    "axleHole": 0.0,
+    "barDiameter": 0.0,
+    "clipOpening": 0.0,
+    "firstLayerChamfer": 0.0
+  }
+}

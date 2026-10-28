@@ -1,0 +1,17 @@
+{
+  "openbrick": "1.0",
+  "id": "fixture.minimal-plate",
+  "version": "0.1.0",
+  "name": "Minimal plate",
+  "license": "CC0-1.0",
+  "credit": {
+    "author": "OpenBrick3D contributors"
+  },
+  "features": [
+    {
+      "id": "body.main",
+      "op": "body.plate",
+      "size": [2, 2]
+    }
+  ]
+}

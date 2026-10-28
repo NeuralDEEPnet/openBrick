@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/fit-profile.schema.json",
+  "title": "OpenBrick3D fit profile",
+  "description": "One printer, nozzle and material combination after calibration (profiles/fit/*.json, .obprofile.json). Read by openbrick-print as FitProfile with camelCase fields; see docs/plan/05 sections 3 and 4. Fit offsets live here, never in part documents. Unknown fields are rejected because serde would silently drop them; material is free-form beyond its type.",
+  "type": "object",
+  "required": ["openbrick", "kind", "id", "credit", "process", "printer", "nozzleMm", "material", "intent", "offsetsMm"],
+  "properties": {
+    "openbrick": { "$ref": "#/$defs/pragma" },
+    "kind": { "const": "fit" },
+    "id": { "$ref": "#/$defs/profileId" },
+    "credit": { "$ref": "#/$defs/credit" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "process": {
+      "$ref": "#/$defs/profileId",
+      "description": "Id of the process profile this calibration belongs to; batch export refuses a part whose process does not match."
+    },
+    "printer": { "type": "string", "minLength": 1 },
+    "nozzleMm": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "material": {
+      "description": "Filament or resin; type is required, other fields (brand, colour, ...) are free-form.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "brand": { "type": "string" },
+        "colour": { "type": "string" }
+      }
+    },
+    "slicer": { "type": "string" },
+    "intent": {
+      "description": "What the offsets aim at: genuine bricks or other prints from the same profile (open question Q05 in docs/plan/13).",
+      "enum": ["fits-genuine-bricks", "fits-itself"]
+    },
+    "offsetsMm": { "$ref": "#/$defs/offsets" },
+    "calibration": { "$ref": "#/$defs/calibration" },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "offsetMm": {
+      "description": "Offset in millimetres on a diameter (or depth for ribs) applied to nominal geometry at export: chosen coupon cell minus nominal. Coupon sweeps stay within 0.35 mm of nominal (docs/plan/05 section 4), so a magnitude above 1 mm is a unit mistake.",
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "offsets": {
+      "description": "Offsets by geometry kind (openbrick_print::Offsets).",
+      "type": "object",
+      "required": [
+        "studDiameter",
+        "tubeInnerDiameter",
+        "tubeOuterDiameter",
+        "ribDepth",
+        "pinDiameter",
+        "horizontalHoleDiameter",
+        "axleHole",
+        "barDiameter",
+        "clipOpening",
+        "firstLayerChamfer"
+      ],
+      "properties": {
+        "studDiameter": { "$ref": "#/$defs/offsetMm" },
+        "tubeInnerDiameter": { "$ref": "#/$defs/offsetMm" },
+        "tubeOuterDiameter": { "$ref": "#/$defs/offsetMm" },
+        "ribDepth": { "$ref": "#/$defs/offsetMm" },
+        "pinDiameter": { "$ref": "#/$defs/offsetMm" },
+        "horizontalHoleDiameter": { "$ref": "#/$defs/offsetMm" },
+        "axleHole": { "$ref": "#/$defs/offsetMm" },
+        "barDiameter": { "$ref": "#/$defs/offsetMm" },
+        "clipOpening": { "$ref": "#/$defs/offsetMm" },
+        "firstLayerChamfer": {
+          "description": "Bottom-edge chamfer in millimetres against elephant's foot; not a diameter, so never negative.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "xyScale": {
+          "description": "Uniform XY scale applied last; defaults to 1. Shrinkage compensation is a few percent at most, so anything outside 0.9 to 1.1 is a mistake.",
+          "type": "number",
+          "minimum": 0.9,
+          "maximum": 1.1
+        }
+      },
+      "additionalProperties": false
+    },
+    "calibration": {
+      "description": "The record the coupon wizard writes (openbrick_print::Calibration). Without it, or without the cell a fit-critical connector needs, rule FIT.MISSING blocks export.",
+      "type": "object",
+      "required": ["couponVersion", "chosenCells"],
+      "properties": {
+        "couponVersion": { "type": "integer", "minimum": 1 },
+        "chosenCells": {
+          "description": "Best-fitting coupon cell by row, in millimetres (diameters; pocketRib is a rib depth). Keys are the coupon rows of docs/plan/05 section 4 as required_cells() names them.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "enum": ["stud", "tube", "pocketTubeOD", "pocketRib", "technicH", "pin", "axle", "bar", "clip"]
+          },
+          "additionalProperties": { "type": "number", "exclusiveMinimum": 0 }
+        },
+        "date": {
+          "description": "Calendar date of the calibration, YYYY-MM-DD.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+        },
+        "pullTestN": {
+          "description": "Separation force of a printed part on genuine bricks in newtons (docs/plan/05 section 12); null until measured.",
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "controlPullTestN": {
+          "description": "Genuine-on-genuine control pull on the same rig, in newtons; null until measured.",
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "pragma": {
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Readers accept every 1.x.",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
+    },
+    "spdx": {
+      "description": "An SPDX licence id, or a simple AND, OR or WITH expression of ids (LICENSE-POLICY.md).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*( (AND|OR|WITH) [A-Za-z0-9][A-Za-z0-9.+-]*)*$"
+    },
+    "credit": {
+      "description": "Who made the document. Keeping it is a community norm, not a legal condition (LICENSE-POLICY.md).",
+      "type": "object",
+      "required": ["author"],
+      "properties": {
+        "author": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "description": "Where the data came from, so attribution travels with it through conversion, export and printing (LICENSE-POLICY.md, docs/plan/06 section 2).",
+      "type": "object",
+      "properties": {
+        "source": { "description": "original, or the upstream file or project the data derives from.", "type": "string" },
+        "author": { "type": "string" },
+        "license": { "$ref": "#/$defs/spdx" },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" },
+        "modified": { "type": "boolean" },
+        "history": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "profileId": {
+      "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+(\\.[a-z0-9]+)*)*$"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "openbrick": "1.0",
+  "kind": "standard",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "credit": {
+    "author": "OpenBrick3D contributors"
+  },
+  "ldu_mm": 0.4,
+  "features": [
+    {
+      "id": "module",
+      "name": "Module (stud pitch)",
+      "nominal_mm": 8.0,
+      "ldraw_ldu": 20,
+      "confidence": "certain",
+      "source": "LUGNET / Munafo measurement; Cailliau"
+    },
+    {
+      "id": "click_hinge_detent_deg",
+      "name": "Click hinge detent (degrees)",
+      "nominal_mm": null,
+      "ldraw_ldu": null,
+      "confidence": "likely",
+      "source": "LDraw clh primitives"
+    }
+  ]
+}

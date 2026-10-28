@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/process-profile.schema.json",
+  "title": "OpenBrick3D process profile",
+  "description": "What a manufacturing process can resolve (profiles/process/*.json, .obprofile.json). Read by openbrick-print as ProcessProfile with camelCase fields; see docs/plan/05 section 3. Validator thresholds come from these values. Unknown fields are rejected because serde would silently drop them.",
+  "type": "object",
+  "required": [
+    "openbrick",
+    "kind",
+    "id",
+    "name",
+    "lineWidthMm",
+    "layerHeightMm",
+    "minWallMm",
+    "wallQuantiseMm",
+    "minFeatureMm",
+    "minTubeWallMm",
+    "minCavityDepthMm",
+    "minReliefHeightMm",
+    "maxReliefHeightMm",
+    "minRoofMm",
+    "maxUnsupportedBridgeMm",
+    "maxOverhangDeg",
+    "firstLayerChamferMm",
+    "studTopChamferMm",
+    "wallRoofFilletMm",
+    "supportsAllowed",
+    "horizontalHoleStrategy"
+  ],
+  "properties": {
+    "openbrick": { "$ref": "#/$defs/pragma" },
+    "kind": { "const": "process" },
+    "id": { "$ref": "#/$defs/profileId" },
+    "name": { "type": "string", "minLength": 1 },
+    "credit": { "$ref": "#/$defs/credit" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "experimental": {
+      "description": "Experimental processes may break the minFeature = 2 x lineWidth rule and carry no clutch data yet.",
+      "type": "boolean"
+    },
+    "lineWidthMm": { "$ref": "#/$defs/positiveMm" },
+    "layerHeightMm": {
+      "description": "Supported layer heights, finest first or in any order.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/positiveMm" }
+    },
+    "minWallMm": { "$ref": "#/$defs/positiveMm" },
+    "wallQuantiseMm": {
+      "$ref": "#/$defs/positiveMm",
+      "description": "Walls are rounded to multiples of this (usually the line width)."
+    },
+    "minFeatureMm": {
+      "$ref": "#/$defs/positiveMm",
+      "description": "Smallest printable stroke or detail; rule FEATURE.MIN and the morphological opening of artwork use it."
+    },
+    "minFeatureRule": {
+      "description": "Human-readable derivation of minFeatureMm, for example 2 x lineWidthMm.",
+      "type": "string"
+    },
+    "minTubeWallMm": {
+      "$ref": "#/$defs/positiveMm",
+      "description": "Thinnest underside tube wall after fit offsets (rule TUBE.WALL)."
+    },
+    "minCavityDepthMm": {
+      "$ref": "#/$defs/positiveMm",
+      "description": "Cavity depth a deboss must leave so studs below still enter (rule CAVITY.DEPTH)."
+    },
+    "minReliefHeightMm": { "$ref": "#/$defs/positiveMm" },
+    "maxReliefHeightMm": { "$ref": "#/$defs/positiveMm" },
+    "minRoofMm": {
+      "$ref": "#/$defs/positiveMm",
+      "description": "Thinnest roof (rule ROOF.MIN)."
+    },
+    "maxUnsupportedBridgeMm": { "$ref": "#/$defs/nonNegativeMm" },
+    "maxOverhangDeg": {
+      "description": "Steepest printable overhang in degrees from vertical.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 90
+    },
+    "firstLayerChamferMm": {
+      "$ref": "#/$defs/nonNegativeMm",
+      "description": "Bottom-edge chamfer against elephant's foot; 0 for processes without it."
+    },
+    "studTopChamferMm": { "$ref": "#/$defs/nonNegativeMm" },
+    "wallRoofFilletMm": {
+      "description": "Inner wall-to-roof fillet radius by body kind (the body.* ops).",
+      "type": "object",
+      "propertyNames": { "enum": ["brick", "plate", "tile", "baseplate"] },
+      "additionalProperties": { "$ref": "#/$defs/nonNegativeMm" }
+    },
+    "supportsAllowed": { "type": "boolean" },
+    "horizontalHoleStrategy": {
+      "description": "How horizontal Technic holes are compensated (docs/plan/05 section 6).",
+      "$ref": "#/$defs/holeStrategy"
+    },
+    "horizontalHoleStrategies": {
+      "description": "Strategies this process can use; horizontalHoleStrategy is the default.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/holeStrategy" }
+    },
+    "tessellation": {
+      "description": "Mesh resolution defaults for this process.",
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "studSegments": {
+          "description": "Segments per full circle of a stud.",
+          "type": "integer",
+          "minimum": 3
+        },
+        "minEdgeMm": { "$ref": "#/$defs/positiveMm" }
+      },
+      "additionalProperties": false
+    },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "positiveMm": {
+      "description": "A length in millimetres greater than zero.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "nonNegativeMm": {
+      "description": "A length in millimetres, zero or more.",
+      "type": "number",
+      "minimum": 0
+    },
+    "holeStrategy": {
+      "description": "polyhole: polygon with corrected circumradius; ellipse: slightly taller hole; teardrop: pointed ceiling, no overhang.",
+      "enum": ["polyhole", "ellipse", "teardrop"]
+    },
+    "pragma": {
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Readers accept every 1.x.",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
+    },
+    "spdx": {
+      "description": "An SPDX licence id, or a simple AND, OR or WITH expression of ids (LICENSE-POLICY.md).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*( (AND|OR|WITH) [A-Za-z0-9][A-Za-z0-9.+-]*)*$"
+    },
+    "credit": {
+      "description": "Who made the document. Keeping it is a community norm, not a legal condition (LICENSE-POLICY.md).",
+      "type": "object",
+      "required": ["author"],
+      "properties": {
+        "author": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "description": "Where the data came from, so attribution travels with it through conversion, export and printing (LICENSE-POLICY.md, docs/plan/06 section 2).",
+      "type": "object",
+      "properties": {
+        "source": { "description": "original, or the upstream file or project the data derives from.", "type": "string" },
+        "author": { "type": "string" },
+        "license": { "$ref": "#/$defs/spdx" },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" },
+        "modified": { "type": "boolean" },
+        "history": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "profileId": {
+      "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+(\\.[a-z0-9]+)*)*$"
+    }
+  }
+}
