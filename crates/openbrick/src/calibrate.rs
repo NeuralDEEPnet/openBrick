@@ -10,7 +10,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use clap::{Args, Subcommand};
 use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_io::ExportMeta;
-use openbrick_part::coupon::{build_coupon, CouponOptions, PocketSet};
+use openbrick_part::coupon::{build_coupon, Arrangement, CouponOptions, PocketSet};
 use openbrick_print::{
     coupon_v1, record, FitProfile, RecordInput, DEFAULT_POCKET_SET, FIT_INTENTS, POCKET_SETS,
 };
@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 
 use crate::export::{self, Format, Solid};
 use crate::files::{absolute, relative_to, write_file};
-use crate::part::{choose_process, eval_fail};
+use crate::part::{choose_process, eval_fail, is_fdm};
 use crate::ui::{num, signed, Fail, Outcome, Ui, GENERATOR};
 
 #[derive(Subcommand, Debug)]
@@ -237,6 +237,33 @@ fn civil_date(days: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// How the copies of the cell set lie on the coupon, as a sentence.
+fn arrangement_text(arrangement: Arrangement, copies: u32) -> String {
+    match (arrangement, copies) {
+        (_, 0 | 1) => "One copy of the cell set.".into(),
+        (Arrangement::Stacked, _) => format!(
+            "The {copies} copies of the cell set lie one behind the other: copy 1 at the back."
+        ),
+        (Arrangement::SideBySide, _) => format!(
+            "The {copies} copies of the cell set lie side by side: copy 1 on the left, so each line has a twin beside it at the same depth."
+        ),
+    }
+}
+
+/// Where a copy lies, for the table: back or front, left or right (two
+/// copies), or nothing (one copy, or more than two).
+fn copy_place(arrangement: Arrangement, copy: usize, copies: u32) -> Option<&'static str> {
+    if copies != 2 {
+        return None;
+    }
+    Some(match (arrangement, copy) {
+        (Arrangement::Stacked, 0) => "back",
+        (Arrangement::Stacked, _) => "front",
+        (Arrangement::SideBySide, 0) => "left",
+        (Arrangement::SideBySide, _) => "right",
+    })
+}
+
 /// A short name for the line a cell belongs to.
 fn line_name(cell_id: &str) -> String {
     match cell_id {
@@ -319,11 +346,21 @@ pub fn coupon(args: &CouponArgs, ui: Ui) -> Result<Outcome, Fail> {
     let entry = export::write(&out_path, &bytes, entry)?;
     let write_ms = ms(t);
 
-    // Lines, back to front; cells left to right.
+    // Lines from the back (largest y) to the front, and left to right where
+    // copies stand side by side; cells left to right.
     let mut lines: BTreeMap<usize, Vec<&openbrick_part::CouponCellLayout>> = BTreeMap::new();
     for c in &coupon.cells {
         lines.entry(c.row).or_default().push(c);
     }
+    let mut lines: Vec<_> = lines.into_values().collect();
+    for cells in &mut lines {
+        cells.sort_by(|a, b| a.center_mm[0].total_cmp(&b.center_mm[0]));
+    }
+    lines.sort_by(|a, b| {
+        b[0].center_mm[1]
+            .total_cmp(&a[0].center_mm[1])
+            .then(a[0].center_mm[0].total_cmp(&b[0].center_mm[0]))
+    });
     let mut lines_json = Vec::new();
     ui.say(format!(
         "Calibration coupon v{} (revision {}) for {}: {pockets} pockets, {} copies, {} x {} mm, {} mm tall.",
@@ -335,13 +372,13 @@ pub fn coupon(args: &CouponArgs, ui: Ui) -> Result<Outcome, Fail> {
         num(s.footprint_mm[1]),
         num(s.height_mm)
     ));
+    ui.say(arrangement_text(s.arrangement, s.copies));
     ui.say("Lines from the back of the coupon (labels read upright), cells left to right:");
     ui.say(format!(
-        "  {:>4} {:>4}  {:<46} values (mm)",
+        "  {:>4} {:<9}  {:<46} values (mm)",
         "line", "copy", "cell"
     ));
-    for (row, cells) in &mut lines {
-        cells.sort_by(|a, b| a.center_mm[0].total_cmp(&b.center_mm[0]));
+    for cells in &lines {
         let first = cells[0];
         let values: Vec<String> = cells
             .iter()
@@ -350,19 +387,25 @@ pub fn coupon(args: &CouponArgs, ui: Ui) -> Result<Outcome, Fail> {
                 None => format!("{:.2}", c.value_mm),
             })
             .collect();
+        let place = copy_place(s.arrangement, first.copy, s.copies);
+        let copy = match place {
+            Some(p) => format!("{} {p}", first.copy + 1),
+            None => format!("{}", first.copy + 1),
+        };
         ui.say(format!(
-            "  {:>4} {:>4}  {:<46} {}",
-            row + 1,
-            first.copy + 1,
+            "  {:>4} {copy:<9}  {:<46} {}",
+            first.row + 1,
             line_name(&first.cell_id),
             values.join(" ")
         ));
         lines_json.push(json!({
-            "line": row + 1,
+            "line": first.row + 1,
             "copy": first.copy + 1,
+            "place": place,
             "cellId": first.cell_id,
             "crossCellId": first.cross.as_ref().map(|x| x.cell_id.clone()),
             "name": line_name(&first.cell_id),
+            "centerYMm": first.center_mm[1],
             "values": values,
         }));
     }
@@ -373,21 +416,36 @@ pub fn coupon(args: &CouponArgs, ui: Ui) -> Result<Outcome, Fail> {
         ));
     }
     let layers: Vec<String> = process.layer_height_mm.iter().map(|h| num(*h)).collect();
+    let fdm = is_fdm(&process);
+    if fdm {
+        ui.say(format!(
+            "Plastic: {:.0} mm3, about {:.0} g of PLA; roughly {:.0} min at {} mm3/s (the slicer has the real time).",
+            e.volume_mm3,
+            e.mass_g_pla,
+            e.time_s / 60.0,
+            num(e.flow_mm3_s)
+        ));
+        ui.say(format!(
+            "Slice it flat side down as written, no supports, {} mm layers ({}); XY and elephant-foot compensation 0 (the first-layer chamfer is in the model).",
+            layers.join(" or "),
+            process.id
+        ));
+    } else {
+        ui.say(format!(
+            "Resin: {:.0} mm3, about {:.0} ml before supports (the slicer has the print time).",
+            e.volume_mm3,
+            e.volume_mm3 / 1000.0
+        ));
+        ui.say(format!(
+            "Place it flat on the build plate as written, no supports and no tilt, {} mm layers ({}); note your slicer's exposure and any XY or elephant-foot compensation with --notes when you record.",
+            layers.join(" or "),
+            process.id
+        ));
+    }
     ui.say(format!(
-        "Plastic: {:.0} mm3, about {:.0} g of PLA; roughly {:.0} min at {} mm3/s (the slicer has the real time).",
-        e.volume_mm3,
-        e.mass_g_pla,
-        e.time_s / 60.0,
-        num(e.flow_mm3_s)
-    ));
-    ui.say(format!(
-        "Slice it flat side down as written, no supports, {} mm layers ({}); XY and elephant-foot compensation 0 (the first-layer chamfer is in the model).",
-        layers.join(" or "),
-        process.id
-    ));
-    ui.say(format!(
-        "Then press genuine bricks onto the cells and record the best fit:\n  openbrick calibrate record --process {} --pocket-set {pockets} --printer \"YOUR PRINTER\" --material PLA --stud V --tube V --pocket OD/RIB --out my-fit.json",
-        process.id
+        "Then press genuine bricks onto the cells and record the best fit:\n  openbrick calibrate record --process {} --pocket-set {pockets} --printer \"YOUR PRINTER\" --material {} --stud V --tube V --pocket OD/RIB --out my-fit.json",
+        process.id,
+        if fdm { "PLA" } else { "\"tough resin\"" }
     ));
     ui.say(format!(
         "Wrote {} ({} bytes, {}).",

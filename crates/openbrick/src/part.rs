@@ -184,6 +184,9 @@ struct Evaluated {
     built: Built,
     report: Report,
     params: Value,
+    /// The asset files named on the command line: parameter, the name the
+    /// evaluator read it under, and the file.
+    asset_files: Vec<Value>,
     timings: serde_json::Map<String, Value>,
 }
 
@@ -195,14 +198,23 @@ fn evaluate_part(args: &PartArgs) -> Result<Evaluated, Fail> {
     let doc =
         PartDoc::parse(&text).map_err(|e| Fail::Input(format!("{}: {e}", args.file.display())))?;
     let pairs: Vec<String> = args.param.iter().chain(&args.params).cloned().collect();
-    let cli = params::parse(&doc, &pairs).map_err(Fail::Input)?;
+    let mut cli = params::parse(&doc, &pairs).map_err(Fail::Input)?;
     let part_dir = match args.file.parent() {
         Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
         _ => PathBuf::from("."),
     };
     let mut assets = FileAssets::new(part_dir);
-    for path in &cli.asset_paths {
-        assets.add_given(path).map_err(Fail::Input)?;
+    let mut asset_files = Vec::new();
+    for (param, path) in &cli.assets {
+        // The evaluator gets the file under a name that does not depend on
+        // how the path was typed, so the content hash is reproducible.
+        let name = assets.add_given(path).map_err(Fail::Input)?;
+        asset_files.push(json!({
+            "param": param,
+            "name": name,
+            "path": absolute(std::path::Path::new(path)).to_string_lossy(),
+        }));
+        cli.values.values.insert(param.clone(), Value::String(name));
     }
     let fit = args.fit.as_deref().map(load_fit).transpose()?;
     let process = choose_process(
@@ -241,6 +253,7 @@ fn evaluate_part(args: &PartArgs) -> Result<Evaluated, Fail> {
         built,
         report,
         params,
+        asset_files,
         timings,
     })
 }
@@ -267,34 +280,70 @@ fn face_down(built: &Built) -> bool {
         .is_some_and(|a| a.face_on_bed == "top")
 }
 
-/// The first layer whose middle lies above `z` mm, with a first layer `first`
-/// mm thick and `layer` mm layers after it: (1-based layer number, height
-/// where it starts). Slicers give a layer the outline at its middle, so this
-/// is the first layer that holds nothing below `z`.
-pub fn first_layer_above(z: f64, first: f64, layer: f64) -> (u32, f64) {
-    if first / 2.0 > z || layer <= 0.0 {
+/// Whether `process` is an FDM process: the bundled profiles name their
+/// technology in the id (`fdm-0.4`, `fdm-0.2`, `resin-msla`). Filament
+/// changes, PLA mass and the FDM slicer settings are only shown for these.
+pub fn is_fdm(process: &ProcessProfile) -> bool {
+    process.id.starts_with("fdm")
+}
+
+/// Layer middles closer than this to a colour boundary count as on it, mm.
+/// Far below any layer height, far above f64 rounding of layer sums.
+pub const TIE_MM: f64 = 1e-6;
+
+/// Which colour a layer whose middle lies exactly on the boundary prints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tie {
+    /// The colour below the boundary. Emboss: that layer holds the body's top
+    /// skin, which must stay in the body colour, so the change goes after it.
+    Below,
+    /// The colour above the boundary. Inlay printed face down: that layer can
+    /// hold the floor of the logo recesses, which must be in the body colour
+    /// or the logo disappears, so the change goes before it.
+    Above,
+}
+
+/// The first layer that prints the colour above the boundary at `z` mm, with
+/// a first layer `first` mm thick and `layer` mm layers after it: (1-based
+/// layer number, height where it starts). Slicers give a layer the outline at
+/// its middle, so this is the first layer whose middle lies above `z`, or on
+/// it (within [`TIE_MM`]) for [`Tie::Above`].
+pub fn change_layer(z: f64, first: f64, layer: f64, tie: Tie) -> (u32, f64) {
+    let above = |middle: f64| match tie {
+        Tie::Below => middle > z + TIE_MM,
+        Tie::Above => middle >= z - TIE_MM,
+    };
+    if above(first / 2.0) || layer <= 0.0 {
         return (1, 0.0);
     }
-    // Layer k >= 2 spans first + (k - 2) layer .. first + (k - 1) layer.
-    let k = ((z - first) / layer + 1.5 + 1e-9).floor().max(1.0) + 1.0;
+    // Layer k >= 2 spans first + (k - 2) layer .. first + (k - 1) layer, so
+    // its middle is first + (k - 1.5) layer, which equals z at k = x.
+    let x = (z - first) / layer + 1.5;
+    let slack = TIE_MM / layer;
+    let k = match tie {
+        Tie::Below => (x + slack).floor() + 1.0,
+        Tie::Above => (x - slack).ceil(),
+    }
+    .max(2.0);
     (k as u32, first + (k - 2.0) * layer)
 }
 
 /// Where a single-extruder filament change goes for a two-colour relief, for
 /// each layer height of the process (first layer as thick as the thickest).
+/// Empty for one colour and for processes other than FDM.
 fn colour_changes(built: &Built, process: &ProcessProfile) -> Vec<Value> {
     let Some(a) = &built.artwork else {
         return Vec::new();
     };
-    if built.objects.len() < 2 {
+    if built.objects.len() < 2 || !is_fdm(process) {
         return Vec::new();
     }
     // Emboss: the artwork starts at the body top. Inlay (face down): the body
     // starts above the face slab.
-    let z = if a.face_on_bed == "top" {
-        a.height_mm
+    let (z, tie) = if a.face_on_bed == "top" {
+        (a.height_mm, Tie::Above)
     } else {
-        a.face_z_mm
+        (a.face_z_mm, Tie::Below)
     };
     let first = process
         .layer_height_mm
@@ -305,15 +354,33 @@ fn colour_changes(built: &Built, process: &ProcessProfile) -> Vec<Value> {
         .layer_height_mm
         .iter()
         .map(|&h| {
-            let (layer, start) = first_layer_above(z, first, h);
+            let (layer, start) = change_layer(z, first, h, tie);
             let end = start + if layer == 1 { first } else { h };
+            let middle = |j: u32| {
+                if j <= 1 {
+                    first / 2.0
+                } else {
+                    first + (f64::from(j) - 1.5) * h
+                }
+            };
+            // The layer whose middle lies on the boundary, if one does: the
+            // change layer itself (tie above) or the one before it (below).
+            let tied = match tie {
+                Tie::Above => layer,
+                Tie::Below => layer.saturating_sub(1),
+            };
+            let boundary_layer = (tied >= 1 && (middle(tied) - z).abs() <= TIE_MM).then_some(tied);
+            let round = |v: f64| (v * 1e6).round() / 1e6;
             json!({
                 "firstLayerMm": first,
                 "layerHeightMm": h,
                 "layer": layer,
-                "startsAtMm": (start * 1e6).round() / 1e6,
+                "boundaryMm": round(z),
+                "startsAtMm": round(start),
                 // Slicer layer sliders show a layer by its top.
-                "endsAtMm": (end * 1e6).round() / 1e6,
+                "endsAtMm": round(end),
+                "boundaryLayer": boundary_layer,
+                "tie": match tie { Tie::Below => "below", Tie::Above => "above" },
             })
         })
         .collect()
@@ -365,6 +432,7 @@ fn base_json(command: &str, code: u8, ev: &Evaluated) -> serde_json::Map<String,
         }),
     );
     out.insert("params".into(), ev.params.clone());
+    out.insert("assetFiles".into(), json!(ev.asset_files));
     out.insert("process".into(), json!(ev.process.id));
     out.insert(
         "fitProfile".into(),
@@ -550,10 +618,17 @@ pub fn build(args: &BuildArgs, ui: Ui) -> Result<Outcome, Fail> {
         written.join(", ")
     ));
     let volume = s["volumeMm3"].as_f64().unwrap_or(0.0);
-    ui.say(format!(
-        "  volume      {volume:.0} mm3, about {:.1} g of PLA ({PLA_DENSITY_G_CM3} g/cm3)",
-        s["massGPla"].as_f64().unwrap_or(0.0)
-    ));
+    if is_fdm(&ev.process) {
+        ui.say(format!(
+            "  volume      {volume:.0} mm3, about {:.1} g of PLA ({PLA_DENSITY_G_CM3} g/cm3)",
+            s["massGPla"].as_f64().unwrap_or(0.0)
+        ));
+    } else {
+        ui.say(format!(
+            "  volume      {volume:.0} mm3, about {:.1} ml of resin before supports",
+            volume / 1000.0
+        ));
+    }
     let changes = colour_changes(&ev.built, &ev.process);
     if let Some(a) = &ev.built.artwork {
         let how = if turned {
@@ -571,8 +646,13 @@ pub fn build(args: &BuildArgs, ui: Ui) -> Result<Outcome, Fail> {
         ui.say("  colours     multi-material (tool changer, AMS): give each object its own filament in the slicer.");
         for c in &changes {
             let mm = |key: &str| format!("{:.2}", c[key].as_f64().unwrap_or(0.0));
+            let boundary = match (c["boundaryLayer"].as_u64(), turned) {
+                (Some(_), true) => "; its middle is on the top of the face slab, and changing before it keeps the floor of the logo in the body colour".to_string(),
+                (Some(k), false) => format!("; layer {k} has its middle on the body top and stays in the body colour"),
+                (None, _) => String::new(),
+            };
             ui.say(format!(
-                "              one extruder, {} mm first layer and {} mm layers: filament change before layer {} ({} to {} mm)",
+                "              one extruder, {} mm first layer and {} mm layers: filament change before layer {} ({} to {} mm){boundary}",
                 num(c["firstLayerMm"].as_f64().unwrap_or(0.0)),
                 num(c["layerHeightMm"].as_f64().unwrap_or(0.0)),
                 c["layer"],
@@ -581,6 +661,15 @@ pub fn build(args: &BuildArgs, ui: Ui) -> Result<Outcome, Fail> {
             ));
         }
         ui.say("              (other layer settings: before the first layer the slicer preview shows in the second colour)");
+    } else if ev.built.objects.len() > 1
+        && !is_fdm(&ev.process)
+        && format == Format::ThreeMf
+        && !args.fuse
+    {
+        ui.say(format!(
+            "  colours     {} prints one material at a time: the accent is its own object, so print it separately or paint it.",
+            ev.process.id
+        ));
     }
     ui.say(format!("  hash        {}", ev.built.content_hash));
     ui.say(format!(
@@ -651,24 +740,116 @@ fn solids_for(ev: &Evaluated, format: Format, fuse: bool) -> Result<Vec<Solid>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openbrick_units::STANDARD;
+
+    /// The change layer found by walking the layers one by one: the first
+    /// whose middle is above `z` (or on it, for a tie above).
+    fn walk(z: f64, first: f64, layer: f64, tie: Tie) -> (u32, f64) {
+        let mut start = 0.0;
+        for k in 1..100_000u32 {
+            let thick = if k == 1 { first } else { layer };
+            let middle = start + thick / 2.0;
+            let above = match tie {
+                Tie::Below => middle > z + TIE_MM,
+                Tie::Above => middle >= z - TIE_MM,
+            };
+            if above {
+                return (k, start);
+            }
+            start += thick;
+        }
+        unreachable!("z is a few millimetres")
+    }
+
+    fn fdm_layers() -> (f64, Vec<f64>) {
+        let p = default_process_profiles()
+            .into_iter()
+            .find(|p| p.id == "fdm-0.4")
+            .expect("fdm-0.4 is bundled");
+        let first = p.layer_height_mm.iter().copied().fold(0.0, f64::max);
+        (first, p.layer_height_mm)
+    }
 
     #[test]
-    fn layer_that_holds_only_the_second_colour() {
-        // Emboss on a plate-height tile: the body top is at 3.2 mm. With a
-        // 0.2 mm first layer and 0.2 mm layers, layer 16 ends at 3.2 and layer
-        // 17 starts there; with 0.16 mm layers, layer 20 spans 3.08 to 3.24
-        // (middle 3.16, still body) and layer 21 starts at 3.24.
-        let (k, z) = first_layer_above(3.2, 0.2, 0.2);
-        assert_eq!(k, 17);
-        assert!((z - 3.2).abs() < 1e-9);
-        let (k, z) = first_layer_above(3.2, 0.2, 0.16);
-        assert_eq!(k, 21);
-        assert!((z - 3.24).abs() < 1e-9);
-        // Inlay face slab of 0.4 mm: layers 1 and 2 hold the slab either way.
-        assert_eq!(first_layer_above(0.4, 0.2, 0.2).0, 3);
-        assert_eq!(first_layer_above(0.4, 0.2, 0.16).0, 3);
-        // A slab thinner than half the first layer leaves none of its own.
-        assert_eq!(first_layer_above(0.05, 0.2, 0.2), (1, 0.0));
+    fn change_layer_matches_walking_the_layers() {
+        // Plain layer arithmetic, so arbitrary numbers (not brick sizes):
+        // first layers, layer heights, and boundaries on a fine grid plus
+        // every boundary that falls exactly on a layer middle.
+        for first in [0.31, 0.27, 0.11, 0.07] {
+            for layer in [0.11, 0.07, 0.29, 0.23, 0.13] {
+                let mut zs: Vec<f64> = (0..=300).map(|i| f64::from(i) * 0.013).collect();
+                zs.push(first / 2.0);
+                zs.extend((2..40).map(|k| first + (f64::from(k) - 1.5) * layer));
+                for z in zs {
+                    for tie in [Tie::Below, Tie::Above] {
+                        let (k, start) = change_layer(z, first, layer, tie);
+                        let (wk, wstart) = walk(z, first, layer, tie);
+                        assert_eq!(k, wk, "z {z}, first {first}, layer {layer}, {tie:?}");
+                        assert!((start - wstart).abs() < 1e-9, "z {z}: {start} vs {wstart}");
+                    }
+                }
+            }
+        }
+        // A boundary below the middle of the first layer leaves the second
+        // colour from layer 1 on.
+        assert_eq!(change_layer(0.01, 0.31, 0.11, Tie::Below), (1, 0.0));
+    }
+
+    #[test]
+    fn emboss_change_on_a_plate_height_tile() {
+        // Emboss: the relief starts at the body top, a plate height. With the
+        // fdm-0.4 layers (0.2 mm first layer; 0.2 or 0.16 mm layers), the 3.2
+        // mm plate is 16 layers of 0.2 mm, so the change goes before layer 17
+        // at 3.2 mm; with 0.16 mm layers layer 20 spans 3.08 to 3.24 (middle
+        // 3.16, still body), so the change goes before layer 21 at 3.24 mm.
+        // docs/guides/print-test.md quotes the first of these.
+        let plate = STANDARD.get().mm("plate_height");
+        let (first, layers) = fdm_layers();
+        let got: Vec<u32> = layers
+            .iter()
+            .map(|&h| change_layer(plate, first, h, Tie::Below).0)
+            .collect();
+        let want: Vec<u32> = layers
+            .iter()
+            .map(|&h| walk(plate, first, h, Tie::Below).0)
+            .collect();
+        assert_eq!(got, want);
+        let at = |h: f64| {
+            layers
+                .iter()
+                .position(|&l| (l - h).abs() < 1e-12)
+                .map(|i| got[i])
+        };
+        assert_eq!(at(first), Some(17));
+        assert_eq!(
+            at(layers.iter().copied().fold(f64::INFINITY, f64::min)),
+            Some(21)
+        );
+    }
+
+    #[test]
+    fn inlay_tie_goes_to_the_body_colour() {
+        // A brick-height inlay keeps the part's default relief height as its
+        // face slab (0.6 mm in the logo tile). With a 0.2 mm first layer and
+        // 0.16 mm layers, layer 4 spans 0.52 to 0.68 mm: its middle,
+        // 0.2 + 2.5 x 0.16 = 0.6, is exactly the slab top. That layer may hold
+        // the floor of the logo recesses, so it must already be the body
+        // colour: the change goes before layer 4, not 5.
+        let doc = PartDoc::parse(include_str!("../../../parts/ndn.logo-tile.obpart.json"))
+            .expect("parses");
+        let slab = doc.params["reliefHeight"]
+            .default
+            .as_f64()
+            .expect("a default relief height");
+        let (first, layers) = fdm_layers();
+        let fine = layers.iter().copied().fold(f64::INFINITY, f64::min);
+        let (k, start) = change_layer(slab, first, fine, Tie::Above);
+        assert_eq!(k, 4);
+        assert!((start - (first + 2.0 * fine)).abs() < 1e-9, "{start}");
+        let middle = start + fine / 2.0;
+        assert!((middle - slab).abs() <= TIE_MM, "a tie: {middle} vs {slab}");
+        // Ties the other way (emboss) wait one layer.
+        assert_eq!(change_layer(slab, first, fine, Tie::Below).0, 5);
     }
 
     #[test]

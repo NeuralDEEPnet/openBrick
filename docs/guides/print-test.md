@@ -32,8 +32,10 @@ Run the commands below from the `openBrick` folder, so the example part
 ## 2. Print the calibration coupon
 
 Every printer squeezes plastic a little differently, so the first print
-measures yours. The coupon holds two copies of three lines of test cells:
-studs, tube bores and 2x2 pockets, each labelled with its size in millimetres.
+measures yours. The coupon holds two copies of four lines of test cells:
+studs, tube bores and two lines of 2x2 pockets (one varies the tube outer
+diameter, the other the rib depth), each cell labelled with its size in
+millimetres.
 
 ```sh
 openbrick calibrate coupon --process fdm-0.4 --out coupon.3mf --manifest coupon.json
@@ -42,7 +44,9 @@ openbrick calibrate coupon --process fdm-0.4 --out coupon.3mf --manifest coupon.
 The default coupon is 118.4 x 160.8 x 3.2 mm, about 32 g of PLA, so it fits
 the MINI+ bed (180 x 180 mm, with 5 mm kept free at each edge) and of course the
 A1 and the XL. The command prints a table of the lines, back to front, with the
-value of every cell from left to right; `coupon.json` keeps the same map.
+value of every cell from left to right; `coupon.json` keeps the same map. On
+a bed too short for one copy behind the other, the copies lie side by side,
+and the table marks each line `left` or `right`.
 
 On the A1 or the XL you may print the full pocket cross instead (202.4 x
 212.8 mm, about 78 g): add `--pockets full --bed 256x256` (A1) or
@@ -73,8 +77,10 @@ copies of every line.
   bore.
 - **2x2 pockets:** turn a genuine 2x2 plate or brick over and press it into each
   pocket. Each pocket label has two numbers: the tube outer diameter over the
-  rib depth (for example 6.65 over 0.30). This is the grip a printed tile has
-  on a brick below it, so take your time here.
+  rib depth (for example 6.65 over 0.30). The default coupon prints a cross:
+  one line varies the tube OD at rib 0.30, the other varies the rib depth at
+  OD 6.50. This is the grip a printed tile has on a brick below it, so take
+  your time here.
 
 The best cell presses on with a clear, firm push, holds when you turn the
 coupon over and shake it, and comes off by hand without tools. Too loose: it
@@ -165,10 +171,13 @@ recessed in the face colour.
 
 - XL and A1: assign the face colour to the accent part and the body colour to
   the body part, as for emboss.
-- MINI+: load the face colour first. Add the colour change before the first
-  layer the preview shows as body: with a 0.2 mm first layer that is layer 3,
-  from 0.40 to 0.60 mm with 0.2 mm layers (slider shows 0.60), or from 0.36 to
-  0.52 mm with 0.16 mm layers (slider shows 0.52). Then load the body colour.
+- MINI+: load the face colour first. Add the colour change before the layer
+  the build named. On a plate-height tile with a 0.2 mm first layer that is
+  layer 3, from 0.40 to 0.60 mm with 0.2 mm layers (slider shows 0.60), or
+  from 0.36 to 0.52 mm with 0.16 mm layers (slider shows 0.52). Then load the
+  body colour. When a layer sits exactly on the top of the face slab, the
+  build says so and puts the change before that layer, so the floor of the
+  logo prints in the body colour.
 
 Let the print cool before you take it off the bed.
 
@@ -187,9 +196,13 @@ scale is not accurate enough at 2 to 4 N and is not accepted.
    passes "fits genuine bricks" when its median is between 0.7 and 1.5 times the
    control median.
 
-If it is too loose, pick a pocket one step tighter (a larger tube OD or a
-deeper rib) and record again; if too tight, one step looser. Then build and
-pull again.
+If it is too loose, pick a pocket one step tighter and record again; if too
+tight, one step looser. Then build and pull again. The new pocket must be one
+your coupon printed, as its label reads: on the default cross, step along the
+line you chose from (a larger or smaller tube OD at rib 0.30, or a deeper or
+shallower rib at OD 6.50). `openbrick calibrate record` refuses any other pair
+and lists the printed ones. For more choice, print the full pocket set
+(`--pockets full`, section 2).
 
 ## 8. Share your result
 

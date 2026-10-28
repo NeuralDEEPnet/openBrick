@@ -9,11 +9,12 @@
 //! Every number a test compares comes from the coupon data, the Dimensional
 //! Standard or the CLI's own JSON, never from a literal.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use openbrick_part::coupon::CouponOptions;
+use openbrick_part::coupon::{coupon_layout, Arrangement, CouponOptions};
 use openbrick_print::{coupon_v1, FitProfile};
 use openbrick_units::STANDARD;
 use serde_json::Value;
@@ -56,9 +57,14 @@ impl Drop for Scratch {
 }
 
 fn openbrick(args: &[&str]) -> Output {
+    openbrick_in(&repo(), args)
+}
+
+/// Run the binary from another folder, with arguments that need not be UTF-8.
+fn openbrick_in<A: AsRef<OsStr>>(dir: &Path, args: &[A]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_openbrick"))
         .args(args)
-        .current_dir(repo())
+        .current_dir(dir)
         .output()
         .expect("the openbrick binary runs")
 }
@@ -507,12 +513,74 @@ fn reliefs_are_laid_out_the_way_they_print() {
     assert!(close(bounds(&j, "body", "min", 2), slab));
     let height = j["summary"]["sizeMm"][2].as_f64().expect("height");
     assert!(close(bounds(&j, "body", "max", 2), height));
-    // The filament change goes at the first layer above the slab.
-    for c in j["colourChanges"].as_array().expect("hints") {
+    // The filament change goes at the first layer whose middle reaches the
+    // top of the slab.
+    assert_changes_at_the_slab_top(&j, slab);
+}
+
+/// Every single-extruder hint of an inlay names the first layer whose middle
+/// is at or above the top of the face slab: the layer before it lies below.
+fn assert_changes_at_the_slab_top(j: &Value, slab: f64) {
+    let changes = j["colourChanges"].as_array().expect("hints");
+    assert!(!changes.is_empty(), "{j}");
+    for c in changes {
+        assert_eq!(c["tie"], "above", "{c}");
         let starts = c["startsAtMm"].as_f64().expect("start");
+        let first = c["firstLayerMm"].as_f64().expect("first layer");
         let layer = c["layerHeightMm"].as_f64().expect("layer");
-        assert!(starts <= slab + 1e-9 && starts + layer / 2.0 > slab, "{c}");
+        let k = c["layer"].as_u64().expect("layer number");
+        assert!(k >= 2, "{c}");
+        let tol = 1e-6;
+        assert!(starts <= slab + tol, "{c}");
+        assert!(starts + layer / 2.0 >= slab - tol, "{c}");
+        let before = if k == 2 {
+            first / 2.0
+        } else {
+            starts - layer / 2.0
+        };
+        assert!(
+            before < slab - tol,
+            "the layer before is still the slab: {c}"
+        );
     }
+}
+
+#[test]
+fn a_brick_height_inlay_changes_colour_at_the_tie_layer() {
+    // A brick-height inlay keeps the default relief height as its face slab.
+    // With a 0.16 mm layer height that slab top lies exactly on a layer
+    // middle (0.2 + 2.5 x 0.16 = 0.6 mm), and that layer must already print
+    // the body colour, or the floor of the logo comes out in the face colour.
+    let dir = Scratch::new("inlay-brick");
+    let o = openbrick(&[
+        "build",
+        LOGO_TILE,
+        "--fit",
+        "example",
+        "--params",
+        "height=brick",
+        "relief=inlay",
+        "--out",
+        &dir.arg("inlay.3mf"),
+        "--json",
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let j = json_of(&o);
+    let slab = j["artwork"]["heightMm"].as_f64().expect("depth");
+    assert_changes_at_the_slab_top(&j, slab);
+    let tied: Vec<&Value> = j["colourChanges"]
+        .as_array()
+        .expect("hints")
+        .iter()
+        .filter(|c| !c["boundaryLayer"].is_null())
+        .collect();
+    assert_eq!(tied.len(), 1, "one layer height ties: {j}");
+    assert_eq!(tied[0]["boundaryLayer"], tied[0]["layer"]);
+    assert!(
+        stderr(&o).contains("keeps the floor of the logo in the body colour"),
+        "{}",
+        stderr(&o)
+    );
 }
 
 #[test]
@@ -573,6 +641,99 @@ fn coupon_writes_the_file_and_the_cell_map() {
             "{size} on {:?}",
             opts.bed_mm
         );
+    }
+    // Copies one behind the other: the table runs from the back copy to the
+    // front one.
+    assert_eq!(j["summary"]["arrangement"], "stacked");
+    assert_lines_back_to_front(&j);
+    assert!(
+        table.contains("1 back") && table.contains("2 front"),
+        "{table}"
+    );
+}
+
+/// The coupon's lines run from the back (largest y) to the front, and left
+/// to right at the same depth.
+fn assert_lines_back_to_front(j: &Value) {
+    let lines = j["lines"].as_array().expect("lines");
+    let cells = j["cells"].as_array().expect("cells");
+    assert_eq!(
+        lines.len(),
+        cells
+            .iter()
+            .filter_map(|c| c["row"].as_u64())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    );
+    for w in lines.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        let (ya, yb) = (
+            a["centerYMm"].as_f64().expect("y"),
+            b["centerYMm"].as_f64().expect("y"),
+        );
+        assert!(ya >= yb, "{a} before {b}");
+        if ya == yb {
+            assert!(a["copy"].as_u64() < b["copy"].as_u64(), "{a} before {b}");
+        }
+    }
+}
+
+#[test]
+fn coupon_copies_side_by_side_are_marked_left_and_right() {
+    // A bed too shallow for one copy behind the other, but wide enough for
+    // two side by side; the layout API (no geometry) confirms it.
+    let process = openbrick_print::default_process_profiles()
+        .into_iter()
+        .find(|p| p.id == "fdm-0.4")
+        .expect("fdm-0.4");
+    let opts = CouponOptions::default();
+    let stacked = coupon_layout(&process, &opts).expect("layout").summary;
+    let margin = opts.bed_margin_mm;
+    // Twice as wide as the stacked coupon, and three fifths of its depth:
+    // more than one copy needs, less than two.
+    let bed = [
+        2.0 * stacked.footprint_mm[0] + 2.0 * margin,
+        stacked.footprint_mm[1] * 3.0 / 5.0 + 2.0 * margin,
+    ];
+    let side = coupon_layout(
+        &process,
+        &CouponOptions {
+            bed_mm: bed,
+            ..opts.clone()
+        },
+    )
+    .expect("layout")
+    .summary;
+    assert_eq!(side.arrangement, Arrangement::SideBySide);
+
+    let dir = Scratch::new("coupon-side");
+    let o = openbrick(&[
+        "calibrate",
+        "coupon",
+        "--bed",
+        &format!("{:.3}x{:.3}", bed[0], bed[1]),
+        "--out",
+        &dir.arg("coupon.3mf"),
+        "--json",
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let j = json_of(&o);
+    assert_eq!(j["summary"]["arrangement"], "sideBySide");
+    assert_lines_back_to_front(&j);
+    let table = stderr(&o);
+    assert!(table.contains("side by side"), "{table}");
+    assert!(
+        table.contains("1 left") && table.contains("2 right"),
+        "{table}"
+    );
+    // Each line of copy 1 has its twin from copy 2 right after it, at the
+    // same depth.
+    let lines = j["lines"].as_array().expect("lines");
+    for pair in lines.chunks(2) {
+        assert_eq!(pair[0]["place"], "left", "{pair:?}");
+        assert_eq!(pair[1]["place"], "right", "{pair:?}");
+        assert_eq!(pair[0]["centerYMm"], pair[1]["centerYMm"]);
+        assert_eq!(pair[0]["values"], pair[1]["values"]);
     }
 }
 
@@ -708,4 +869,191 @@ fn existing_commands_are_unchanged() {
     json_of(&o);
     // Still to come: exit 3 with a pointer to the roadmap.
     assert_eq!(code(&openbrick(&["serve"])), 3);
+}
+
+#[cfg(unix)]
+#[test]
+fn arguments_that_are_not_utf8_are_usage_errors() {
+    use std::os::unix::ffi::OsStrExt;
+    // A Linux file name can be any bytes; such an argument is an input or
+    // usage error (exit 2), never a panic (exit 101).
+    let bad_part = OsStr::from_bytes(b"parts/\xff.obpart.json");
+    let bad = OsStr::from_bytes(b"\xff");
+    let dir = Scratch::new("utf8");
+    let out = dir.arg("tile.3mf");
+    let cases: Vec<Vec<&OsStr>> = vec![
+        // A usage error (no --out) on a line that holds a non-UTF-8 argument.
+        vec!["build".as_ref(), bad_part],
+        // A value clap must read as text.
+        vec![
+            "build".as_ref(),
+            LOGO_TILE.as_ref(),
+            "--fit".as_ref(),
+            bad,
+            "--out".as_ref(),
+            out.as_ref(),
+        ],
+        // A path that is fine as an OS string but names no file.
+        vec![
+            "build".as_ref(),
+            bad_part,
+            "--fit".as_ref(),
+            "example".as_ref(),
+            "--out".as_ref(),
+            out.as_ref(),
+        ],
+    ];
+    for args in cases {
+        let o = openbrick_in(&repo(), &args);
+        assert_eq!(code(&o), 2, "{args:?}: {}", stderr(&o));
+        assert!(!stderr(&o).contains("panicked"), "{}", stderr(&o));
+        let mut args = args.clone();
+        args.push("--json".as_ref());
+        let o = openbrick_in(&repo(), &args);
+        assert_eq!(code(&o), 2, "{args:?} --json: {}", stderr(&o));
+        let j = json_of(&o);
+        assert_eq!(j["ok"], false);
+        assert_eq!(j["exitCode"], 2);
+    }
+    assert!(!dir.path("tile.3mf").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_document_asset_may_not_link_out_of_the_part_folder() {
+    // The part document names assets/mark.svg, which here is a symbolic link
+    // to a file outside the part's folder, as an extracted archive can carry.
+    let dir = Scratch::new("symlink");
+    std::fs::create_dir_all(dir.path("part/assets")).expect("folder");
+    std::fs::create_dir_all(dir.path("outside")).expect("folder");
+    std::fs::copy(repo().join(LOGO_TILE), dir.path("part/tile.obpart.json")).expect("copy");
+    std::fs::copy(
+        repo().join("parts/assets/mark.svg"),
+        dir.path("outside/secret.svg"),
+    )
+    .expect("copy");
+    std::os::unix::fs::symlink("../../outside/secret.svg", dir.path("part/assets/mark.svg"))
+        .expect("symlink");
+    let o = openbrick(&[
+        "build",
+        &dir.arg("part/tile.obpart.json"),
+        "--fit",
+        "example",
+        "--out",
+        &dir.arg("tile.3mf"),
+    ]);
+    assert_eq!(code(&o), 2, "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("symbolic link") && stderr(&o).contains("outside the part's folder"),
+        "{}",
+        stderr(&o)
+    );
+    assert!(!dir.path("tile.3mf").exists());
+    // The same file passed on the command line is the user's choice: fine.
+    let o = openbrick(&[
+        "build",
+        &dir.arg("part/tile.obpart.json"),
+        "--fit",
+        "example",
+        "--param",
+        &format!("logo={}", dir.arg("outside/secret.svg")),
+        "--out",
+        &dir.arg("tile.3mf"),
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+}
+
+#[test]
+fn the_content_hash_does_not_depend_on_how_an_asset_path_is_typed() {
+    let dir = Scratch::new("asset-names");
+    std::fs::copy(
+        repo().join("parts/assets/mark.svg"),
+        dir.path("my-logo.svg"),
+    )
+    .expect("copy");
+    let part = repo().join(LOGO_TILE).to_string_lossy().into_owned();
+    let absolute = dir.arg("my-logo.svg");
+    // The same file, typed three ways, from two folders.
+    let runs = [
+        (dir.0.clone(), "my-logo.svg".to_string()),
+        (dir.0.clone(), "./my-logo.svg".to_string()),
+        (repo(), absolute.clone()),
+    ];
+    let mut hashes = Vec::new();
+    for (cwd, path) in &runs {
+        let o = openbrick_in(
+            cwd,
+            &[
+                "validate",
+                &part,
+                "--fit",
+                "example",
+                "--param",
+                &format!("logo={path}"),
+                "--json",
+            ],
+        );
+        assert_eq!(code(&o), 0, "{path}: {}", stderr(&o));
+        let j = json_of(&o);
+        assert_eq!(j["params"]["logo"], "my-logo.svg", "{path}");
+        assert_eq!(j["assetFiles"][0]["param"], "logo");
+        assert_eq!(j["assetFiles"][0]["name"], "my-logo.svg");
+        let file = j["assetFiles"][0]["path"].as_str().expect("path");
+        assert!(Path::new(file).is_absolute(), "{file}");
+        hashes.push(j["contentHash"].clone());
+    }
+    assert!(hashes.windows(2).all(|w| w[0] == w[1]), "{hashes:?}");
+}
+
+#[test]
+fn resin_builds_give_no_filament_advice() {
+    let dir = Scratch::new("resin");
+    let spec = coupon_v1();
+    let stud = spec.cell("stud").expect("stud").values()[4];
+    let tube = spec.cell("tube").expect("tube").values()[3];
+    let (od, rib) = *spec
+        .printed_pockets("cross")
+        .expect("cross")
+        .last()
+        .expect("a pocket");
+    let o = openbrick(&[
+        "calibrate",
+        "record",
+        "--process",
+        "resin-msla",
+        "--printer",
+        "Resin printer",
+        "--material",
+        "tough resin",
+        "--date",
+        "2026-10-28",
+        "--stud",
+        &format!("{stud:.2}"),
+        "--tube",
+        &format!("{tube:.2}"),
+        "--pocket",
+        &format!("{od:.2}/{rib:.2}"),
+        "--out",
+        &dir.arg("resin-fit.json"),
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    // The process follows the fit profile.
+    let o = openbrick(&[
+        "build",
+        LOGO_TILE,
+        "--fit",
+        &dir.arg("resin-fit.json"),
+        "--out",
+        &dir.arg("tile.3mf"),
+        "--json",
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let j = json_of(&o);
+    assert_eq!(j["process"], "resin-msla");
+    assert_eq!(j["colourChanges"], serde_json::json!([]));
+    let human = stderr(&o);
+    assert!(human.contains("ml of resin"), "{human}");
+    for fdm in ["filament change", "g of PLA", "elephant"] {
+        assert!(!human.contains(fdm), "`{fdm}` in a resin summary:\n{human}");
+    }
 }

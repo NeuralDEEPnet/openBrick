@@ -138,7 +138,9 @@ fn parse() -> Result<Cli, ExitCode> {
                     | ErrorKind::DisplayVersion
                     | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
             );
-            if usage && std::env::args().any(|a| a == "--json") {
+            // args_os, not args: an argument that is not UTF-8 (a file name on
+            // Linux can be any bytes) must give a usage error, never a panic.
+            if usage && std::env::args_os().any(|a| a == "--json") {
                 let _ = e.print();
                 let message = e.render().to_string();
                 // The error paragraph, before the usage line, on one line.

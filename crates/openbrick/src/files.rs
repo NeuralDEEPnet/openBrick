@@ -4,11 +4,16 @@
 //! Asset names (SVG artwork, images, fonts) come from two places:
 //!
 //! - **The command line** (`--param logo=./my-logo.svg`): a path relative to
-//!   the current directory, read before the evaluation starts.
+//!   the current directory, read before the evaluation starts. The evaluator
+//!   gets the file under its file name (`my-logo.svg`), not the path as typed,
+//!   because the name is part of the content hash: the same file then gives
+//!   the same hash, the same 3MF UUIDs and the same bytes whether it was typed
+//!   as `my-logo.svg`, `./my-logo.svg` or an absolute path, from any folder.
 //! - **The part document** (the default `assets/mark.svg` of the logo tile): a
 //!   path relative to the part file's folder. A downloaded part document is
 //!   untrusted, so it may only name files inside its own folder: absolute paths
-//!   and `..` are refused.
+//!   and `..` are refused, and so is a symbolic link that leads out of the
+//!   folder (an archive can carry one).
 //!
 //! Either way the file must be a regular file of at most
 //! [`MAX_ASSET_BYTES`], the evaluator's own SVG size limit.
@@ -18,7 +23,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
-use openbrick_part::eval::MAX_SVG_BYTES;
+use openbrick_part::eval::{sha256_hex, MAX_SVG_BYTES};
 use openbrick_part::AssetResolver;
 
 /// Largest asset file the CLI reads: the evaluator's SVG limit (4 MiB).
@@ -93,12 +98,56 @@ impl FileAssets {
         }
     }
 
-    /// Read an asset the user named on the command line, relative to the
-    /// current directory. The evaluator then finds it under the same name.
-    pub fn add_given(&mut self, name: &str) -> Result<(), String> {
-        let bytes = read_regular_file(Path::new(name), MAX_ASSET_BYTES, "asset")?;
-        self.given.insert(name.to_string(), bytes);
-        Ok(())
+    /// Read an asset the user named on the command line, a path relative to
+    /// the current directory, and return the name the evaluator gets for it:
+    /// its file name, so the content hash does not depend on how the path was
+    /// typed or where the command ran. When two different files share a file
+    /// name, the later one is named by its content too
+    /// (`<first 16 hex digits of its SHA-256>-<file name>`).
+    pub fn add_given(&mut self, path: &str) -> Result<String, String> {
+        let bytes = read_regular_file(Path::new(path), MAX_ASSET_BYTES, "asset")?;
+        let file_name = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("asset");
+        let name = match self.given.get(file_name) {
+            Some(known) if *known != bytes => {
+                format!("{}-{file_name}", &sha256_hex(&bytes)[..16])
+            }
+            _ => file_name.to_string(),
+        };
+        self.given.insert(name.clone(), bytes);
+        Ok(name)
+    }
+
+    /// Read an asset the part document names, from the part's folder. The
+    /// name must stay inside the folder ([`stays_inside`]), and so must the
+    /// file it leads to once symbolic links are followed.
+    fn read_document_asset(&self, name: &str) -> Result<Vec<u8>, String> {
+        let outside = |what: String| {
+            format!(
+                "the part document names `{name}`, which {what}; a part document may only name files inside its own folder. To use a file of your own, pass it on the command line, for example --param logo=./my-logo.svg"
+            )
+        };
+        if !stays_inside(name) {
+            return Err(outside("is outside the part's folder".into()));
+        }
+        let path = self.part_dir.join(name);
+        let folder = std::fs::canonicalize(&self.part_dir).map_err(|e| {
+            format!(
+                "cannot read the part's folder {}: {e}",
+                self.part_dir.display()
+            )
+        })?;
+        let real = std::fs::canonicalize(&path)
+            .map_err(|e| format!("cannot read asset {}: {e}", path.display()))?;
+        if !real.starts_with(&folder) {
+            return Err(outside(format!(
+                "leads through a symbolic link to {}, outside the part's folder",
+                real.display()
+            )));
+        }
+        read_regular_file(&real, MAX_ASSET_BYTES, "asset")
     }
 }
 
@@ -107,12 +156,7 @@ impl AssetResolver for FileAssets {
         if let Some(bytes) = self.given.get(name) {
             return Ok(bytes.clone());
         }
-        if !stays_inside(name) {
-            return Err(format!(
-                "the part document names `{name}`, which is outside the part's folder; a part document may only name files inside its own folder. To use a file of your own, pass it on the command line, for example --param logo=./my-logo.svg"
-            ));
-        }
-        read_regular_file(&self.part_dir.join(name), MAX_ASSET_BYTES, "asset")
+        self.read_document_asset(name)
     }
 }
 
@@ -204,5 +248,83 @@ mod tests {
         let assets = FileAssets::new(std::env::temp_dir());
         let e = assets.read("../x.svg").expect_err("outside");
         assert!(e.contains("outside the part's folder"), "{e}");
+    }
+
+    /// A fresh folder under the system temp directory, removed on drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Scratch {
+            let dir =
+                std::env::temp_dir().join(format!("openbrick-files-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("create the scratch folder");
+            Scratch(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_links_cannot_lead_out_of_the_part_folder() {
+        let s = Scratch::new("symlink");
+        let part = s.0.join("part");
+        let outside = s.0.join("outside");
+        std::fs::create_dir_all(part.join("assets")).expect("folder");
+        std::fs::create_dir_all(&outside).expect("folder");
+        std::fs::write(outside.join("secret.svg"), b"<svg/>").expect("write");
+        std::fs::write(part.join("assets/own.svg"), b"<svg>own</svg>").expect("write");
+        // A link out of the folder, as an extracted archive can carry it.
+        std::os::unix::fs::symlink(outside.join("secret.svg"), part.join("assets/mark.svg"))
+            .expect("symlink");
+        // A link that stays inside is fine.
+        std::os::unix::fs::symlink("own.svg", part.join("assets/alias.svg")).expect("symlink");
+        // So is a part folder that is itself reached through a link.
+        std::os::unix::fs::symlink(&part, s.0.join("linked-part")).expect("symlink");
+
+        let assets = FileAssets::new(part.clone());
+        let e = assets.read("assets/mark.svg").expect_err("leads outside");
+        assert!(
+            e.contains("symbolic link") && e.contains("outside the part's folder"),
+            "{e}"
+        );
+        assert_eq!(
+            assets.read("assets/alias.svg").as_deref(),
+            Ok(&b"<svg>own</svg>"[..])
+        );
+        let linked = FileAssets::new(s.0.join("linked-part"));
+        assert_eq!(
+            linked.read("assets/own.svg").as_deref(),
+            Ok(&b"<svg>own</svg>"[..])
+        );
+        assert!(linked.read("assets/mark.svg").is_err());
+    }
+
+    #[test]
+    fn command_line_assets_are_named_by_file_name() {
+        let s = Scratch::new("names");
+        std::fs::create_dir_all(s.0.join("a")).expect("folder");
+        std::fs::create_dir_all(s.0.join("b")).expect("folder");
+        std::fs::write(s.0.join("a/logo.svg"), b"<svg>a</svg>").expect("write");
+        std::fs::write(s.0.join("b/logo.svg"), b"<svg>b</svg>").expect("write");
+        let a = s.0.join("a/logo.svg").to_string_lossy().into_owned();
+        let b = s.0.join("b/logo.svg").to_string_lossy().into_owned();
+        let mut assets = FileAssets::new(s.0.clone());
+        // However the path is written, the evaluator sees the file name.
+        assert_eq!(assets.add_given(&a).as_deref(), Ok("logo.svg"));
+        assert_eq!(assets.add_given(&a).as_deref(), Ok("logo.svg"));
+        // Another file with the same name is told apart by its content.
+        let other = assets.add_given(&b).expect("reads");
+        assert_eq!(
+            other,
+            format!("{}-logo.svg", &sha256_hex(b"<svg>b</svg>")[..16])
+        );
+        assert_eq!(assets.read("logo.svg").as_deref(), Ok(&b"<svg>a</svg>"[..]));
+        assert_eq!(assets.read(&other).as_deref(), Ok(&b"<svg>b</svg>"[..]));
     }
 }

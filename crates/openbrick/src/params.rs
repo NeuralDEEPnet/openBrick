@@ -7,7 +7,7 @@
 //! | int, length, angle | `0.6`, or with a unit, `0.6mm` | a number, or the text for the evaluator to convert |
 //! | bool | `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` | `true` or `false` |
 //! | enum | one of the options | the option (a number when the option is one) |
-//! | svg, image, font | a file path, relative to the current directory | the path; the file is read now |
+//! | svg, image, font | a file path, relative to the current directory | the file's name; the file is read now |
 //! | list | JSON, `[1,2]` | the JSON |
 //! | string, color, other | any text | the text |
 //!
@@ -23,9 +23,11 @@ use serde_json::Value;
 #[derive(Debug, Default)]
 pub struct CliParams {
     pub values: ParamValues,
-    /// Asset paths given on the command line (svg, image and font parameters),
-    /// relative to the current directory.
-    pub asset_paths: Vec<String>,
+    /// Asset parameters given on the command line (svg, image and font), as
+    /// (parameter, path relative to the current directory). The caller reads
+    /// each file and replaces the parameter's value with the name the
+    /// evaluator finds it under (`FileAssets::add_given`).
+    pub assets: Vec<(String, String)>,
 }
 
 /// Parse every `NAME=VALUE` pair against the part's parameters.
@@ -61,7 +63,7 @@ pub fn parse(doc: &PartDoc, pairs: &[String]) -> Result<CliParams, String> {
         }
         let value = convert(param, raw.trim()).map_err(|m| format!("parameter `{name}`: {m}"))?;
         if matches!(param.ty.as_str(), "svg" | "image" | "font") {
-            out.asset_paths.push(raw.trim().to_string());
+            out.assets.push((name.to_string(), raw.trim().to_string()));
         }
         out.values.values.insert(name.to_string(), value);
     }
@@ -211,7 +213,10 @@ mod tests {
         // Not an option: passed on, and the evaluator names the options.
         assert_eq!(one("relief=sparkle"), Ok(json!("sparkle")));
         let p = parse(&doc(), &["logo=./my logo.svg".into()]).expect("parses");
-        assert_eq!(p.asset_paths, vec!["./my logo.svg".to_string()]);
+        assert_eq!(
+            p.assets,
+            vec![("logo".to_string(), "./my logo.svg".to_string())]
+        );
         assert_eq!(p.values.values["logo"], json!("./my logo.svg"));
     }
 
