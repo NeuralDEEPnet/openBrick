@@ -39,11 +39,16 @@
 //!   the spring of a real tube (docs/plan/04 section 5: the walls are the spring).
 //! - **Pocket cells:** a 2x2 plate's underside turned up: four side walls of the
 //!   process-quantised wall thickness with one rib on each wall at each stud
-//!   centre line (the rib layout of `tube.field`), ribs of the cell's depth and
-//!   `minFeatureMm` wide, and a central tube of the cell's outer diameter with
-//!   the standard bore (narrowed only if the wall would drop below
-//!   `minTubeWallMm`). Turn a genuine 2x2 plate or brick over and press its
-//!   studs in: this is the grip the pull test of section 12 loads.
+//!   centre line (the rib layout of `tube.field`), ribs `minFeatureMm` wide, and
+//!   a central tube of the cell's outer diameter with the standard bore
+//!   (narrowed only if the wall would drop below `minTubeWallMm`). Turn a
+//!   genuine 2x2 plate or brick over and press its studs in: this is the grip
+//!   the pull test of section 12 loads. A cell's rib depth is measured against
+//!   the standard `side_wall`, as the standard's `rib_depth` is: the rib tip
+//!   sits `side_wall + value` from the outer face on every process. Where the
+//!   process quantises the wall thinner (fdm-0.2: five 0.22 mm lines, 1.1 mm)
+//!   the rib is built deeper by the difference, exactly as a part's rib is
+//!   (docs/plan/04 section 6), so the grip a cell shows is the grip a part gets.
 //! - **Labels:** embossed on the base below each cell, never on a stud top
 //!   (CLAUDE.md), in an original pixel font (module `font`) whose pixel is one
 //!   stroke: the plan's 0.8 mm stroke, at least the process `minFeatureMm`; the
@@ -54,7 +59,13 @@
 //! The coupon measures the printer, so it is built from the nominal values in
 //! the coupon data and nothing else: [`build_coupon`] takes no fit profile and
 //! [`CouponOptions`] has no field for one. The wizard then writes
-//! `offset = chosen cell - nominal` (docs/plan/05 section 4).
+//! `offset = chosen cell - nominal` (docs/plan/05 section 4), where the nominal
+//! is the standard value of the cell's `standard_id` (stud_diameter,
+//! tube_inner_diameter, tube_outer_diameter, rib_depth), the same on every
+//! process. Each cell is built as the evaluator builds that feature of a part
+//! whose fit profile holds exactly that offset, so a part built with the
+//! recorded offsets reproduces the chosen cells on every process; the tests
+//! check this for the rib on fdm-0.2, where the wall is quantised.
 //!
 //! # Pocket sets
 //!
@@ -85,6 +96,13 @@
 //!
 //! Cell centres, line pitches and the base outline are whole LDU (CLAUDE.md);
 //! the label strokes and cell solids are generated in millimetres from them.
+//! A line's pitch is the smallest even LDU count that keeps one stroke between
+//! the genuine pieces of neighbouring cells and a word space between their
+//! labels (32 LDU for stud and bore cells, 42 LDU for pockets), not a whole
+//! number of studs: no genuine piece spans two cells, so nothing depends on the
+//! stud grid, and rounding up to whole studs (40 and 60 LDU) would widen the
+//! default coupon from 118.4 to 161.6 mm, about 6,900 mm3 more base and 137
+//! minutes by the model below, past the two-hour budget.
 //! Every dimension comes from `standards/dimensions-v1.json` (through
 //! `openbrick-units`), the [`ProcessProfile`] or the coupon data.
 
@@ -101,12 +119,14 @@ use serde_json::json;
 use crate::eval::geometry::{self, Geo, StudGeom, TubeGeom};
 use crate::eval::{
     canonical_json, nominal_rib_depth, roof_mm, sha256_hex, stud_shape, Built, EvalError, RoleMesh,
-    EVALUATOR_REVISION,
+    EVALUATOR_REVISION, MIN_LENGTH_MM,
 };
 
 /// Bump when the coupon generator builds different geometry or a different
-/// layout for the same inputs.
-pub const COUPON_REVISION: u32 = 1;
+/// layout for the same inputs. 2: pocket rib values are measured against the
+/// standard side wall (deeper ribs and a different nominal line where the
+/// process quantises the wall, as on fdm-0.2; fdm-0.4 is unchanged).
+pub const COUPON_REVISION: u32 = 2;
 
 /// Most copies of the set one coupon may carry: a resource guard, like the
 /// evaluator's `MAX_STUDS_PER_SIDE`, not a print rule (the plan prints two).
@@ -208,12 +228,25 @@ fn coupon_spec() -> &'static CouponSpec {
     })
 }
 
-/// Label relief and stroke, mm (docs/plan/05 section 4: "Each cell has an
-/// embossed label (relief 0.6 mm, stroke 0.8 mm)").
-// TODO(integrator): read these from the coupon data too if coupon-v1.json
-// carries them.
-fn label_from_plan() -> (f64, f64) {
-    (0.6, 0.8)
+/// The coupon-wide settings of the coupon data.
+struct PlanDefaults {
+    /// Identical copies of the whole set.
+    copies: u32,
+    label_relief_mm: f64,
+    label_stroke_mm: f64,
+}
+
+/// Docs/plan/05 section 4: "two identical rows (repeatability)" and "Each cell
+/// has an embossed label (relief 0.6 mm, stroke 0.8 mm)".
+// TODO(integrator): read these from openbrick_print::coupon_v1() as well
+// (`copies` and `label.reliefMm` / `label.strokeMm` in coupon-v1.json), so the
+// coupon data is the one source of the copies and the label size.
+fn defaults_from_plan() -> PlanDefaults {
+    PlanDefaults {
+        copies: 2,
+        label_relief_mm: 0.6,
+        label_stroke_mm: 0.8,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,8 +260,10 @@ pub enum PocketSet {
     /// The nominal row and column of the cross: one line with every tube OD at
     /// the nominal rib depth, one with every rib depth at the nominal tube OD
     /// (the pocket at both nominals is in both lines). The nominals are the
-    /// sweep values nearest the standard tube OD and the rib depth a part gets
-    /// on this process (standard side wall plus rib minus the quantised wall).
+    /// sweep values nearest the standard tube OD and the standard rib depth, on
+    /// every process: rib values are measured against the standard side wall
+    /// (see the module docs), so the nominal rib cell is the rib a part gets
+    /// with no offset, whatever the process does to the wall.
     #[default]
     Cross,
     /// [`PocketSet::Cross`] plus a line with the diagonal of the cross (the
@@ -263,6 +298,10 @@ pub enum Arrangement {
 /// Coupon settings. There is deliberately no fit profile here: the coupon
 /// measures the printer and is never compensated (see the module docs).
 ///
+/// In JSON every field is optional and takes its default when left out (so
+/// `{"pockets": "full"}` is the default coupon with the full cross), but an
+/// unknown field, such as `fit`, is refused.
+///
 /// ```compile_fail
 /// // A fit profile cannot be passed to the coupon.
 /// let _ = openbrick_part::coupon::CouponOptions {
@@ -271,7 +310,7 @@ pub enum Arrangement {
 /// };
 /// ```
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct CouponOptions {
     pub pockets: PocketSet,
     /// Identical copies of the whole set: two (docs/plan/05 section 4, for
@@ -295,14 +334,14 @@ pub struct CouponOptions {
 
 impl Default for CouponOptions {
     fn default() -> Self {
-        let (label_relief_mm, label_stroke_mm) = label_from_plan();
+        let plan = defaults_from_plan();
         CouponOptions {
             pockets: PocketSet::default(),
-            copies: 2,
+            copies: plan.copies,
             bed_mm: [180.0, 180.0],
             bed_margin_mm: 5.0,
-            label_relief_mm,
-            label_stroke_mm,
+            label_relief_mm: plan.label_relief_mm,
+            label_stroke_mm: plan.label_stroke_mm,
             estimate_speed_mm_s: 50.0,
         }
     }
@@ -319,6 +358,9 @@ pub struct CellValue {
 
 /// Where one cell is and what it measures: what the wizard shows and records
 /// (tapping a cell records `cell_id = value_mm`, plus `cross` when present).
+/// The fit offset is the value minus the standard value of its sweep's
+/// `standard_id`, on every process: a part built with that offset reproduces
+/// the cell (see the module docs).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CouponCellLayout {
@@ -444,19 +486,39 @@ const ROWS: &[RowDef] = &[
     },
 ];
 
+/// One swept value of a cell and the nominal it is measured against.
+#[derive(Clone, Debug)]
+struct Swept {
+    value: CellValue,
+    /// The standard value of the sweep's `standard_id`, the same on every
+    /// process: the wizard records `value - nominal` as the fit offset.
+    nominal_mm: f64,
+}
+
 /// One cell to build: the swept values it carries, the primary first.
 #[derive(Clone, Debug)]
 struct CellPlan {
-    values: Vec<CellValue>,
+    values: Vec<Swept>,
 }
 
 impl CellPlan {
     fn label(&self) -> String {
         self.values
             .iter()
-            .map(|v| format!("{:.2}", v.value_mm))
+            .map(|v| format!("{:.2}", v.value.value_mm))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The `i`-th swept value, mm.
+    fn value(&self, i: usize) -> Option<f64> {
+        self.values.get(i).map(|v| v.value.value_mm)
+    }
+
+    /// The fit offset the wizard records for the `i`-th value: value minus
+    /// nominal. A cell is built as a part is built with this offset.
+    fn offset(&self, i: usize) -> Option<f64> {
+        self.values.get(i).map(|v| v.value.value_mm - v.nominal_mm)
     }
 }
 
@@ -505,11 +567,24 @@ fn sweep_values(cell: &CouponCell) -> Result<Vec<f64>, EvalError> {
     Ok(values)
 }
 
+/// The standard value of a sweep's `standard_id`.
+fn nominal_of(cell: &CouponCell) -> Result<f64, EvalError> {
+    STANDARD
+        .get()
+        .feature(&cell.standard_id)
+        .and_then(|f| f.nominal_mm)
+        .ok_or_else(|| {
+            fail(format!(
+                "coupon cell `{}` names `{}`, which has no nominal in standards/dimensions-v1.json",
+                cell.id, cell.standard_id
+            ))
+        })
+}
+
 /// The lines of one copy, in plan order, and the ids of the coupon data that no
 /// row reads.
 fn plan_lines(
     spec: &CouponSpec,
-    process: &ProcessProfile,
     pockets: PocketSet,
 ) -> Result<(Vec<Line>, Vec<String>), EvalError> {
     let mut lines = Vec::new();
@@ -523,11 +598,14 @@ fn plan_lines(
                 .find(|c| c.id == *id)
                 .ok_or_else(|| fail(format!("the coupon data has no `{id}` sweep")))?;
             used.insert(cell.id.clone());
-            sweeps.push((cell, sweep_values(cell)?));
+            sweeps.push((cell, sweep_values(cell)?, nominal_of(cell)?));
         }
-        let value = |cell: &CouponCell, v: f64| CellValue {
-            cell_id: cell.id.clone(),
-            value_mm: v,
+        let value = |cell: &CouponCell, v: f64, nominal_mm: f64| Swept {
+            value: CellValue {
+                cell_id: cell.id.clone(),
+                value_mm: v,
+            },
+            nominal_mm,
         };
         let new_line = |cells: Vec<CellPlan>| Line {
             kind: row.kind,
@@ -536,24 +614,29 @@ fn plan_lines(
         };
         match row.kind {
             CellKind::Stud | CellKind::Bore => {
-                let (cell, values) = &sweeps[0];
+                let (cell, values, nominal) = &sweeps[0];
                 lines.push(new_line(
                     values
                         .iter()
                         .map(|&v| CellPlan {
-                            values: vec![value(cell, v)],
+                            values: vec![value(cell, v, *nominal)],
                         })
                         .collect(),
                 ));
             }
             CellKind::Pocket => {
-                let (od_cell, ods) = &sweeps[0];
-                let (rib_cell, ribs) = &sweeps[1];
-                let io = nearest(ods, mm(&od_cell.standard_id));
-                let wall = process.quantise_wall(mm("side_wall"));
-                let ir = nearest(ribs, nominal_rib_depth(wall));
+                let (od_cell, ods, od_nominal) = &sweeps[0];
+                let (rib_cell, ribs, rib_nominal) = &sweeps[1];
+                // The nominal pocket is the one a part gets with no offsets, on
+                // every process (rib values are measured against the standard
+                // side wall; build_cell deepens the rib on a thinner wall).
+                let io = nearest(ods, *od_nominal);
+                let ir = nearest(ribs, *rib_nominal);
                 let pocket = |o: usize, r: usize| CellPlan {
-                    values: vec![value(od_cell, ods[o]), value(rib_cell, ribs[r])],
+                    values: vec![
+                        value(od_cell, ods[o], *od_nominal),
+                        value(rib_cell, ribs[r], *rib_nominal),
+                    ],
                 };
                 match pockets {
                     PocketSet::Full => {
@@ -757,7 +840,7 @@ fn plan_coupon(process: &ProcessProfile, opts: &CouponOptions) -> Result<Plan, E
     }
 
     let spec = coupon_spec();
-    let (lines, unbuilt) = plan_lines(spec, process, opts.pockets)?;
+    let (lines, unbuilt) = plan_lines(spec, opts.pockets)?;
     let lines = lines
         .into_iter()
         .map(|l| place_line(l, &style))
@@ -818,7 +901,7 @@ fn plan_coupon(process: &ProcessProfile, opts: &CouponOptions) -> Result<Plan, E
             let cy = footprint[1] - edge / 2 - dy - centre_y[k];
             for (i, (cell, (label, _))) in l.line.cells.iter().zip(&l.labels).enumerate() {
                 let centre = [left + i as i32 * l.pitch_ldu, cy];
-                let mut values = cell.values.iter();
+                let mut values = cell.values.iter().map(|v| &v.value);
                 let first = values
                     .next()
                     .ok_or_else(|| fail("a cell carries no value"))?;
@@ -910,7 +993,7 @@ fn build_cell<K: Kernel>(
 ) -> Result<Vec<K::Solid>, EvalError> {
     let (k, z, depth) = (g.k, plan.base, plan.depth);
     let segments = process.stud_segments();
-    let value = |i: usize| cell.values.get(i).map(|v| v.value_mm);
+    let value = |i: usize| cell.value(i);
     let lift = |solids: Vec<K::Solid>| -> Vec<K::Solid> {
         solids
             .iter()
@@ -941,12 +1024,16 @@ fn build_cell<K: Kernel>(
             .map_err(kernel_err(format!("the stud cell {label}")))
         }
         CellKind::Bore => {
-            let bore = value(0).ok_or_else(|| fail("a bore cell needs a diameter"))?;
+            let (Some(bore), Some(offset)) = (value(0), cell.offset(0)) else {
+                return Err(fail("a bore cell needs a diameter"));
+            };
             let (od, id) = (mm("tube_outer_diameter"), mm("tube_inner_diameter"));
-            // The tube a part gets with this bore: Offsets::tube grows the outer
-            // diameter so the wall keeps minTubeWallMm. No fit profile is involved.
+            // The tube a part gets with the tubeInnerDiameter offset the wizard
+            // records for this cell (bore - nominal): Offsets::tube grows the
+            // outer diameter so the wall keeps minTubeWallMm. No fit profile is
+            // involved.
             let tube = Offsets {
-                tube_inner_diameter: bore - id,
+                tube_inner_diameter: offset,
                 ..Offsets::default()
             }
             .tube(od, id, process.min_tube_wall_mm);
@@ -978,17 +1065,31 @@ fn build_cell<K: Kernel>(
         }
         CellKind::Pocket => {
             let od = value(0).ok_or_else(|| fail("a pocket cell needs a tube OD"))?;
-            let rib = value(1).ok_or_else(|| fail("a pocket cell needs a rib depth"))?;
+            let rib_offset = cell
+                .offset(1)
+                .ok_or_else(|| fail("a pocket cell needs a rib depth"))?;
             let (module, undersize) = (mm("module"), mm("undersize_per_side"));
             let side = 2.0 * module - 2.0 * undersize;
             let wall = process.quantise_wall(mm("side_wall"));
             let half_inner = side / 2.0 - wall;
+            // The rib a part gets on this process with the ribDepth offset the
+            // wizard records for this cell (value - nominal), as the evaluator
+            // builds it: the rib tip sits side_wall + value from the outer face,
+            // so a wall quantised thinner gets a deeper rib.
+            let rib = nominal_rib_depth(wall) + rib_offset;
+            if rib < MIN_LENGTH_MM {
+                return Err(fail(format!(
+                    "pocket {label}: on this process's {wall} mm wall the rib would be {rib:.3} mm deep (its tip {:.3} mm from the outer face, inside the wall), so it cannot be built (rule WALL.QUANTISED); start the rib sweep at least {:.3} mm higher",
+                    mm("side_wall") + value(1).unwrap_or(0.0),
+                    MIN_LENGTH_MM - rib
+                )));
+            }
             // The tube keeps the standard bore unless its wall would get thinner
             // than minTubeWallMm; the outer diameter is what the cell measures.
             let id = mm("tube_inner_diameter").min(od - 2.0 * process.min_tube_wall_mm);
-            if id <= 0.0 || od / 2.0 >= half_inner - rib || rib <= 0.0 {
+            if id <= 0.0 || od / 2.0 >= half_inner - rib {
                 return Err(fail(format!(
-                    "pocket {label}: a {od} mm tube with {rib} mm ribs does not fit a {side} mm pocket with {wall} mm walls"
+                    "pocket {label}: a {od} mm tube with {rib:.3} mm ribs does not fit a {side} mm pocket with {wall} mm walls"
                 )));
             }
             stats.tube_wall((od - id) / 2.0);

@@ -7,10 +7,13 @@
 //! labels' pixels counted from an independent table of the font); the bounding
 //! box; cell values against the table in docs/plan/05 section 4 (read from the
 //! document itself, so the generator's data and the plan cannot drift apart);
-//! two identical copies; whole-LDU cell centres; one label per cell; stud,
-//! bore, pocket tube and rib sizes measured on slices of the mesh; the print
-//! estimate and the bed; and the canonical mesh fingerprint, recorded for
-//! `manifold-rust 0.19.1` and asserted on x86-64 Linux only, as in
+//! two identical copies; whole-LDU cell centres; one label per cell, counted
+//! as separate blocks on a slice of the mesh, and none on a stud top; stud,
+//! bore, pocket tube and rib sizes measured on slices of the mesh; that a part
+//! built with the offsets the wizard records (chosen cell minus the standard
+//! nominal) reproduces the chosen pocket on fdm-0.2, whose wall is quantised;
+//! the print estimate and the bed; and the canonical mesh fingerprint, recorded
+//! for `manifold-rust 0.19.1` and asserted on x86-64 Linux only, as in
 //! `eval_golden.rs`. If the fingerprint changes on purpose, bump
 //! `COUPON_REVISION` and record the new value.
 
@@ -26,7 +29,7 @@ use openbrick_part::coupon::{
     COUPON_REVISION,
 };
 use openbrick_part::EvalError;
-use openbrick_print::ProcessProfile;
+use openbrick_print::{example_fit_profile, FitProfile, Offsets, ProcessProfile};
 use openbrick_units::ldu_to_mm;
 
 /// Canonical fingerprint of the default fdm-0.4 coupon on manifold-rust 0.19.1.
@@ -49,6 +52,21 @@ fn coupon() -> &'static Coupon {
 
 fn mesh() -> &'static Mesh {
     &coupon().built.objects[0].mesh
+}
+
+/// The default coupon on fdm-0.2, whose 1.2 mm wall quantises to five 0.22 mm
+/// lines (1.1 mm): the process where a rib measured against the quantised wall
+/// instead of the standard one would show.
+fn coupon_fdm_02() -> &'static Coupon {
+    static C: OnceLock<Coupon> = OnceLock::new();
+    C.get_or_init(|| {
+        build_coupon(
+            &ManifoldRust,
+            &process("fdm-0.2"),
+            &CouponOptions::default(),
+        )
+        .expect("the default fdm-0.2 coupon builds")
+    })
 }
 
 // --- The plan table, read from the document --------------------------------
@@ -82,6 +100,14 @@ fn sweep(start: f64, end: f64, step: f64) -> Vec<f64> {
 
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-9
+}
+
+/// The value of `v` nearest `x`.
+fn nearest(v: &[f64], x: f64) -> f64 {
+    v.iter()
+        .copied()
+        .min_by(|a, b| (a - x).abs().total_cmp(&(b - x).abs()))
+        .unwrap()
 }
 
 // --- An independent model of the coupon ------------------------------------
@@ -141,6 +167,17 @@ fn quantised_wall(p: &ProcessProfile) -> f64 {
         * q
 }
 
+/// The depth a pocket cell's ribs are built to on `p`. A rib value is measured
+/// against the standard side wall, as the standard's rib_depth is, so the tip
+/// sits side_wall + value from the outer face on every process; on a wall
+/// quantised thinner the rib is deeper by the difference. This is the rib a
+/// part gets with the recorded offset (value minus rib_depth), which is
+/// (side_wall + rib_depth minus wall) + (value minus rib_depth) by docs/plan/04
+/// section 6. On fdm-0.2: 1.2 - 1.1 + value = value + 0.1 mm.
+fn built_rib(value: f64, p: &ProcessProfile) -> f64 {
+    value + mm("side_wall") - quantised_wall(p)
+}
+
 /// The exact volume of the coupon: every part only touches the others, so the
 /// union is the sum.
 fn analytic_volume(c: &Coupon, p: &ProcessProfile) -> f64 {
@@ -172,7 +209,7 @@ fn analytic_volume(c: &Coupon, p: &ProcessProfile) -> f64 {
                 let id = mm("tube_inner_diameter").min(x - 2.0 * p.min_tube_wall_mm);
                 v += (side * side - inner * inner) * depth;
                 // One rib per wall per stud centre line: 2 x 2 walls x 2 lines.
-                v += 8.0 * p.min_feature_mm * rib.value_mm * depth;
+                v += 8.0 * p.min_feature_mm * built_rib(rib.value_mm, p) * depth;
                 v += k * ((x / 2.0).powi(2) - (id / 2.0).powi(2)) * depth;
             }
             other => panic!("unexpected cell {other:?}"),
@@ -246,7 +283,6 @@ fn default_coupon_is_one_manifold_body_with_the_analytic_volume() {
 #[test]
 fn cells_follow_the_plan_table_in_order() {
     let c = coupon();
-    let p = process("fdm-0.4");
     let per_copy = c.summary.rows_per_copy;
     assert_eq!(per_copy, 4, "studs, bores and the two lines of the cross");
     let line = |row: usize| -> Vec<&CouponCellLayout> {
@@ -281,19 +317,9 @@ fn cells_follow_the_plan_table_in_order() {
     let (pockets, pocket_step) = plan_row("2x2 pockets");
     let ods = sweep(pockets[0], pockets[1], pocket_step);
     let ribs = sweep(pockets[2], pockets[3], pocket_step);
-    // The nominals: the sweep values nearest the standard tube OD and the rib a
-    // part gets on fdm-0.4 (standard wall plus rib minus the 1.2 mm wall).
-    let nearest = |v: &[f64], x: f64| {
-        v.iter()
-            .copied()
-            .min_by(|a, b| (a - x).abs().total_cmp(&(b - x).abs()))
-            .unwrap()
-    };
+    // The nominals: the sweep values nearest the standard tube OD and rib depth.
     let od0 = nearest(&ods, mm("tube_outer_diameter"));
-    let rib0 = nearest(
-        &ribs,
-        mm("side_wall") + mm("rib_depth") - quantised_wall(&p),
-    );
+    let rib0 = nearest(&ribs, mm("rib_depth"));
     let od_line = line(2);
     assert!(od_line
         .iter()
@@ -382,29 +408,148 @@ fn cells_sit_on_whole_ldu_at_a_fixed_pitch() {
     }
 }
 
+/// Where the plane z cuts the mesh's triangles: one segment per cut triangle.
+fn slice_segments(mesh: &Mesh, z: f64) -> Vec<[[f64; 2]; 2]> {
+    let mut segs = Vec::new();
+    for tri in mesh.indices.as_chunks::<3>().0 {
+        let p = tri.map(|i| mesh.positions[i as usize].map(f64::from));
+        let mut cut = Vec::new();
+        for e in 0..3 {
+            let (a, b) = (p[e], p[(e + 1) % 3]);
+            if (a[2] - z) * (b[2] - z) < 0.0 {
+                let t = (z - a[2]) / (b[2] - a[2]);
+                cut.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+            }
+        }
+        if cut.len() == 2 {
+            segs.push([cut[0], cut[1]]);
+        }
+    }
+    segs
+}
+
+fn root(parent: &mut [usize], mut i: usize) -> usize {
+    while parent[i] != i {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+    }
+    i
+}
+
+/// A bounding box: (min, max).
+type Bounds = ([f64; 2], [f64; 2]);
+
+const EMPTY: Bounds = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+
+/// Grows `b` to take in the box from `lo` to `hi`.
+fn grow(b: &mut Bounds, lo: [f64; 2], hi: [f64; 2]) {
+    b.0 = [b.0[0].min(lo[0]), b.0[1].min(lo[1])];
+    b.1 = [b.1[0].max(hi[0]), b.1[1].max(hi[1])];
+}
+
+/// End points on a grid, with the segment each belongs to.
+type PointGrid = std::collections::HashMap<(i64, i64), Vec<(usize, [f64; 2])>>;
+
+/// Groups the slice segments `keep` accepts (by midpoint) into blocks. First
+/// the segments join into closed loops (one segment ends where the next
+/// starts); then loops whose bounding boxes come within `link` mm of each other
+/// (the gap between the boxes, horizontally and vertically) share a block.
+/// Returns each block's bounding box.
+fn slice_blocks(mesh: &Mesh, z: f64, keep: impl Fn([f64; 2]) -> bool, link: f64) -> Vec<Bounds> {
+    let segs: Vec<_> = slice_segments(mesh, z)
+        .into_iter()
+        .filter(|[a, b]| keep([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]))
+        .collect();
+    // Loops: end points that coincide (both cut the same mesh edge; 1e-9 mm,
+    // as in `section_area`) join their segments. A micrometre grid finds them.
+    const CLOSE: f64 = 1e-9;
+    let key = |q: [f64; 2]| ((q[0] * 1e6).round() as i64, (q[1] * 1e6).round() as i64);
+    let mut parent: Vec<usize> = (0..segs.len()).collect();
+    let mut at = PointGrid::new();
+    for (i, seg) in segs.iter().enumerate() {
+        for q in seg {
+            let (kx, ky) = key(*q);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for &(j, r) in at.get(&(kx + dx, ky + dy)).into_iter().flatten() {
+                        if (q[0] - r[0]).abs() <= CLOSE && (q[1] - r[1]).abs() <= CLOSE {
+                            let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                            parent[a] = b;
+                        }
+                    }
+                }
+            }
+            at.entry((kx, ky)).or_default().push((i, *q));
+        }
+    }
+    let mut loops: std::collections::BTreeMap<usize, Bounds> = std::collections::BTreeMap::new();
+    for (i, seg) in segs.iter().enumerate() {
+        let b = loops.entry(root(&mut parent, i)).or_insert(EMPTY);
+        for q in seg {
+            grow(b, *q, *q);
+        }
+    }
+    // Blocks: loops whose boxes are within `link` of each other.
+    let loops: Vec<Bounds> = loops.into_values().collect();
+    let mut parent: Vec<usize> = (0..loops.len()).collect();
+    for i in 0..loops.len() {
+        for j in 0..i {
+            let gap = |k: usize| {
+                (loops[j].0[k] - loops[i].1[k])
+                    .max(loops[i].0[k] - loops[j].1[k])
+                    .max(0.0)
+            };
+            if gap(0).hypot(gap(1)) <= link {
+                let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                parent[a] = b;
+            }
+        }
+    }
+    let mut blocks: std::collections::BTreeMap<usize, Bounds> = std::collections::BTreeMap::new();
+    for (i, (lo, hi)) in loops.iter().enumerate() {
+        grow(
+            blocks.entry(root(&mut parent, i)).or_insert(EMPTY),
+            *lo,
+            *hi,
+        );
+    }
+    blocks.into_values().collect()
+}
+
 #[test]
 fn every_cell_carries_its_own_label() {
     let c = coupon();
     let s = &c.summary;
     let stroke = s.label_stroke_mm;
     let z = s.base_mm + s.label_relief_mm / 2.0;
-    let mut labelled = 0;
-    for cell in &c.cells {
+    // The label block of each cell: centred under the cell, one stroke below
+    // its footprint.
+    let boxes: Vec<Bounds> = c
+        .cells
+        .iter()
+        .map(|cell| {
+            let (_, [w, h]) = label_pixels(&cell.label);
+            let [cx, cy] = cell.center_mm;
+            let top = cy - reserve(cell) - stroke;
+            let half = w as f64 * stroke / 2.0;
+            ([cx - half, top - h as f64 * stroke], [cx + half, top])
+        })
+        .collect();
+    for (cell, (lo, hi)) in c.cells.iter().zip(&boxes) {
         // Values in mm with two decimals; a pocket's OD over its rib depth.
         let want = match &cell.cross {
             None => format!("{:.2}", cell.value_mm),
             Some(r) => format!("{:.2}\n{:.2}", cell.value_mm, r.value_mm),
         };
         assert_eq!(cell.label, want);
-        // The label block: centred under the cell, one stroke below its footprint.
-        let (pixels, [w, h]) = label_pixels(&cell.label);
-        let [cx, cy] = cell.center_mm;
-        let top = cy - reserve(cell) - stroke;
-        let (x0, x1) = (cx - w as f64 * stroke / 2.0, cx + w as f64 * stroke / 2.0);
-        let (y0, y1) = (top - h as f64 * stroke, top);
+        // The block holds exactly the label's pixels.
+        let (pixels, _) = label_pixels(&cell.label);
         let margin = stroke / 2.0;
         let area = section_area(mesh(), z, |q| {
-            q[0] > x0 - margin && q[0] < x1 + margin && q[1] > y0 - margin && q[1] < y1 + margin
+            q[0] > lo[0] - margin
+                && q[0] < hi[0] + margin
+                && q[1] > lo[1] - margin
+                && q[1] < hi[1] + margin
         });
         let expected = pixels as f64 * stroke * stroke;
         assert!(
@@ -413,9 +558,57 @@ fn every_cell_carries_its_own_label() {
             cell.label,
             cell.row
         );
-        labelled += 1;
     }
-    assert_eq!(labelled, c.cells.len(), "one label per cell");
+
+    // Count the labels on the mesh itself: at half the relief, everything
+    // outside the cells' clear footprints is label. The glyphs of one label are
+    // one pixel apart, side by side and line over line (the boxes of '.' and
+    // '7' too, though their pixels are farther apart), while neighbouring
+    // labels keep a word space of three pixels and labels of neighbouring
+    // lines a whole footprint. Joining glyph boxes up to two pixels apart
+    // therefore makes each label one block and nothing more.
+    let outside = |q: [f64; 2]| {
+        c.cells.iter().all(|cell| {
+            let [cx, cy] = cell.center_mm;
+            (q[0] - cx).abs().max((q[1] - cy).abs()) > reserve(cell) + stroke / 2.0
+        })
+    };
+    let blocks = slice_blocks(mesh(), z, outside, 2.0 * stroke);
+    assert_eq!(blocks.len(), c.cells.len(), "one label block per cell");
+    // Each block is exactly one cell's label box (every glyph fills its first
+    // and last column and its top and bottom row, so the boxes are tight).
+    for (cell, (lo, hi)) in c.cells.iter().zip(&boxes) {
+        let matching = blocks
+            .iter()
+            .filter(|(blo, bhi)| {
+                (0..2).all(|k| (blo[k] - lo[k]).abs() < 1e-4 && (bhi[k] - hi[k]).abs() < 1e-4)
+            })
+            .count();
+        assert_eq!(matching, 1, "label {:?} of row {}", cell.label, cell.row);
+    }
+
+    // Never text on a stud top (CLAUDE.md): nothing in a stud cell's footprint
+    // rises above the stud.
+    let top = s.base_mm + mm("stud_height");
+    for cell in c.cells.iter().filter(|x| x.cell_id == "stud") {
+        let [cx, cy] = cell.center_mm;
+        let highest = mesh()
+            .positions
+            .iter()
+            .filter(|q| {
+                (f64::from(q[0]) - cx)
+                    .abs()
+                    .max((f64::from(q[1]) - cy).abs())
+                    < reserve(cell)
+            })
+            .map(|q| f64::from(q[2]))
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (highest - top).abs() < 1e-4,
+            "stud {}: {highest}",
+            cell.value_mm
+        );
+    }
 }
 
 #[test]
@@ -455,45 +648,50 @@ fn stud_cells_measure_their_value() {
 
 /// Bounding box of the points where mesh edges cross the plane z, within
 /// `reach` (max norm) of `centre`.
-fn slice_extent(mesh: &Mesh, z: f64, centre: [f64; 2], reach: f64) -> ([f64; 2], [f64; 2]) {
-    let mut lo = [f64::INFINITY; 2];
-    let mut hi = [f64::NEG_INFINITY; 2];
-    for tri in mesh.indices.as_chunks::<3>().0 {
-        let p = tri.map(|i| mesh.positions[i as usize].map(f64::from));
-        for e in 0..3 {
-            let (a, b) = (p[e], p[(e + 1) % 3]);
-            if (a[2] - z) * (b[2] - z) < 0.0 {
-                let t = (z - a[2]) / (b[2] - a[2]);
-                let q = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
-                if (q[0] - centre[0]).abs() < reach && (q[1] - centre[1]).abs() < reach {
-                    for k in 0..2 {
-                        lo[k] = lo[k].min(q[k]);
-                        hi[k] = hi[k].max(q[k]);
-                    }
-                }
-            }
+fn slice_extent(mesh: &Mesh, z: f64, centre: [f64; 2], reach: f64) -> Bounds {
+    let mut b = EMPTY;
+    for q in slice_segments(mesh, z).iter().flatten() {
+        if (q[0] - centre[0]).abs() < reach && (q[1] - centre[1]).abs() < reach {
+            grow(&mut b, *q, *q);
         }
     }
-    (lo, hi)
+    b
 }
 
-#[test]
-fn bore_and_pocket_cells_measure_their_values() {
-    let c = coupon();
-    let p = process("fdm-0.4");
-    let n = segments(&p);
+/// How far the rib on the wall whose outer face is the plane x = `outer_x`
+/// reaches from that face, at height z: the largest x - `outer_x` of the slice
+/// points within `half_width` (plus f32 slack) of the rib's centre line y =
+/// `line_y`, short of x = `x_max`. The rib's vertical tip edges cross the plane
+/// exactly at its tip; the wall's inner face and the outer face are nearer.
+fn rib_tip(mesh: &Mesh, z: f64, outer_x: f64, x_max: f64, line_y: f64, half_width: f64) -> f64 {
+    slice_segments(mesh, z)
+        .iter()
+        .flatten()
+        .filter(|q| {
+            (q[1] - line_y).abs() <= half_width + 1e-4 && q[0] > outer_x - 1e-4 && q[0] < x_max
+        })
+        .map(|q| q[0] - outer_x)
+        .fold(f64::NEG_INFINITY, f64::max)
+}
+
+/// Bore and pocket cells of `c`, built on `p`, measure their values on slices.
+fn check_bore_and_pocket_cells(c: &Coupon, p: &ProcessProfile) {
+    let mesh = &c.built.objects[0].mesh;
+    let n = segments(p);
     let s = &c.summary;
     // Above the labels, inside the tubes and walls.
     let z = s.base_mm + (s.label_relief_mm + s.cell_depth_mm) / 2.0;
-    let wall = quantised_wall(&p);
+    let wall = quantised_wall(p);
+    let (mut bores, mut pockets) = (0, 0);
     for cell in &c.cells {
         let x = cell.value_mm;
         match cell.cell_id.as_str() {
             "tube" => {
+                bores += 1;
                 // The bore is the cell's value, never value plus a fit offset.
                 let od = mm("tube_outer_diameter").max(x + 2.0 * p.min_tube_wall_mm);
                 let split = (x + od) / 4.0;
-                let (ro, ri) = ring_radii(mesh(), z, cell.center_mm, split, reserve(cell), n);
+                let (ro, ri) = ring_radii(mesh, z, cell.center_mm, split, reserve(cell), n);
                 assert!((2.0 * ri - x).abs() < 1e-4, "bore {x}: {}", 2.0 * ri);
                 assert!(
                     (2.0 * ro - od).abs() < 1e-4,
@@ -502,13 +700,14 @@ fn bore_and_pocket_cells_measure_their_values() {
                 );
             }
             "pocketTubeOD" => {
+                pockets += 1;
                 let rib = cell.cross.as_ref().unwrap().value_mm;
                 let id = mm("tube_inner_diameter").min(x - 2.0 * p.min_tube_wall_mm);
                 // Half a module from the pocket centre is outside the tube
                 // (radius at most 3.33 mm here) and inside the wall faces and
-                // the rib tips (6.7 and at least 6.2 mm away).
+                // the rib tips (at least 7.9 - 1.2 - 0.5 = 6.2 mm away).
                 let reach = mm("module") / 2.0;
-                let (ro, ri) = ring_radii(mesh(), z, cell.center_mm, (x + id) / 4.0, reach, n);
+                let (ro, ri) = ring_radii(mesh, z, cell.center_mm, (x + id) / 4.0, reach, n);
                 assert!(
                     (2.0 * ro - x).abs() < 1e-4,
                     "pocket tube OD {x}: {}",
@@ -516,23 +715,130 @@ fn bore_and_pocket_cells_measure_their_values() {
                 );
                 assert!((2.0 * ri - id).abs() < 1e-4);
                 // The cavity loop (wall inner faces with the eight ribs): its area
-                // gives the rib depth.
+                // gives the depth the ribs were built to.
                 let side = 2.0 * reserve(cell);
                 let inner = side - 2.0 * wall;
                 let [cx, cy] = cell.center_mm;
-                let hole = -section_area(mesh(), z, |q| {
+                let hole = -section_area(mesh, z, |q| {
                     let (dx, dy) = ((q[0] - cx).abs(), (q[1] - cy).abs());
                     dx.max(dy) < side / 2.0 - wall / 2.0 && dx.hypot(dy) > reach
                 });
                 let measured = (inner * inner - hole) / (8.0 * p.min_feature_mm);
                 assert!(
-                    (measured - rib).abs() < 1e-4,
+                    (measured - built_rib(rib, p)).abs() < 1e-4,
                     "pocket rib {rib}: measured {measured}"
+                );
+                // And where the tip of the rib on the left wall, at the lower
+                // stud centre line, sits: side_wall + the cell's value from the
+                // outer face, as on a part (docs/plan/04 section 6).
+                let tip = rib_tip(
+                    mesh,
+                    z,
+                    cx - side / 2.0,
+                    cx,
+                    cy - mm("module") / 2.0,
+                    p.min_feature_mm / 2.0,
+                );
+                assert!(
+                    (tip - (mm("side_wall") + rib)).abs() < 1e-4,
+                    "pocket rib {rib}: tip {tip} mm from the outer face"
                 );
             }
             _ => {}
         }
     }
+    assert!(bores > 0 && pockets > 0);
+}
+
+#[test]
+fn bore_and_pocket_cells_measure_their_values() {
+    check_bore_and_pocket_cells(coupon(), &process("fdm-0.4"));
+}
+
+#[test]
+fn bore_and_pocket_cells_measure_their_values_on_a_quantised_wall() {
+    // fdm-0.2: 1.1 mm walls, so every rib is built 0.1 mm deeper than its value
+    // and its tip still sits side_wall + value from the outer face.
+    let p = process("fdm-0.2");
+    assert!((quantised_wall(&p) - mm("side_wall")).abs() > 0.05);
+    check_bore_and_pocket_cells(coupon_fdm_02(), &p);
+}
+
+#[test]
+fn a_part_built_with_the_recorded_offsets_matches_its_pocket_cell() {
+    // The wizard and `openbrick calibrate record` write offset = chosen cell
+    // minus the standard nominal of the cell's standardId (docs/plan/05 section
+    // 4). A part built with those offsets must reproduce the chosen pocket: the
+    // same tube OD and the same rib tip, measured from the outer face. fdm-0.2
+    // is the case that matters: its wall quantises to 1.1 mm, so a cell whose
+    // rib were the literal value on that wall would sit 0.1 mm (two coupon
+    // steps) shallower than the part's rib (1.1 + 0.4 against 1.1 + (1.2 + 0.3
+    // - 1.1) + (0.4 - 0.3) for the 0.40 cell).
+    let p = process("fdm-0.2");
+    let c = coupon_fdm_02();
+    let mesh = &c.built.objects[0].mesh;
+    let n = segments(&p);
+    let s = &c.summary;
+    let (module, undersize) = (mm("module"), mm("undersize_per_side"));
+    let half_rib = p.min_feature_mm / 2.0;
+    let z_cell = s.base_mm + (s.label_relief_mm + s.cell_depth_mm) / 2.0;
+    // Half-way up a plate's cavity (the part opens downward).
+    let z_part = (mm("plate_height") - mm("roof").max(p.min_roof_mm)) / 2.0;
+    let doc = part("body.plate", [2, 2], None, true, true);
+    let mut checked = 0;
+    for cell in c.cells.iter().filter(|x| x.copy == 0 && x.cross.is_some()) {
+        let (od, rib) = (cell.value_mm, cell.cross.as_ref().unwrap().value_mm);
+        let fit = FitProfile {
+            process: p.id.clone(),
+            offsets_mm: Offsets {
+                tube_outer_diameter: od - mm("tube_outer_diameter"),
+                rib_depth: rib - mm("rib_depth"),
+                ..Offsets::default()
+            },
+            ..example_fit_profile()
+        };
+        let b = build(&doc, &p, Some(&fit));
+        assert!(b.warnings.is_empty(), "{:?}", b.warnings);
+        let part_mesh = &b.objects[0].mesh;
+        let (lo, hi) = part_mesh.bounds();
+        let (lo, hi) = (lo.map(f64::from), hi.map(f64::from));
+        let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+        // The part's rib on its left wall at its first stud centre line.
+        let line = lo[1] + module / 2.0 - undersize;
+        let part_tip = rib_tip(part_mesh, z_part, lo[0], centre[0], line, half_rib);
+        let [cx, cy] = cell.center_mm;
+        let side = 2.0 * reserve(cell);
+        let cell_tip = rib_tip(
+            mesh,
+            z_cell,
+            cx - side / 2.0,
+            cx,
+            cy - module / 2.0,
+            half_rib,
+        );
+        assert!(
+            (part_tip - cell_tip).abs() < 1e-4,
+            "pocket {od} / {rib}: part rib tip {part_tip} mm, cell rib tip {cell_tip} mm"
+        );
+        assert!((cell_tip - (mm("side_wall") + rib)).abs() < 1e-4);
+        // The tube OD: the part's tube (reach: half a module, clear of walls
+        // and ribs) against the cell's value.
+        let (ro, _) = ring_radii(
+            part_mesh,
+            z_part,
+            centre,
+            (od + mm("tube_inner_diameter")) / 4.0,
+            module / 2.0,
+            n,
+        );
+        assert!(
+            (2.0 * ro - od).abs() < 1e-4,
+            "pocket {od}: part tube OD {}",
+            2.0 * ro
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 13, "the cross: six ODs and seven rib depths");
 }
 
 #[test]
@@ -628,39 +934,97 @@ fn larger_pocket_sets_lay_out_on_larger_beds() {
 }
 
 #[test]
-fn the_nominal_rib_follows_the_process_wall() {
-    // fdm-0.2 quantises the 1.2 mm wall to five 0.22 mm lines (1.1 mm), so a
-    // part's rib is 0.1 mm deeper (docs/plan/04 section 6) and the OD line of
-    // the cross sits at that rib depth.
-    let p = process("fdm-0.2");
-    let l = coupon_layout(&p, &CouponOptions::default()).expect("fdm-0.2 coupon");
-    let wall = quantised_wall(&p);
-    assert!((wall - 5.0 * p.wall_quantise_mm).abs() < 1e-12);
-    let rib = mm("side_wall") + mm("rib_depth") - wall;
-    let od_line: Vec<_> = l.cells.iter().filter(|x| x.row == 2).collect();
-    assert!(od_line
-        .iter()
-        .all(|x| (x.cross.as_ref().unwrap().value_mm - rib).abs() < 0.025 + 1e-9));
-    // The label stroke stays the plan's 0.8 mm, above fdm-0.2's minimum feature.
-    assert!(l.summary.label_stroke_mm >= p.min_feature_mm);
-    assert_eq!(
-        l.summary.label_stroke_mm,
-        CouponOptions::default().label_stroke_mm
-    );
+fn a_rib_tip_inside_a_thicker_wall_is_refused() {
+    // A process whose lines quantise the wall thicker than side_wall + the
+    // shallowest rib value cannot show that cell: 0.75 mm lines make the 1.2 mm
+    // wall two lines, 1.5 mm, while the 0.20 cell's tip belongs 1.2 + 0.2 =
+    // 1.4 mm from the outer face, inside the wall. The coupon says so instead
+    // of building a cell that does not show its value.
+    let mut p = process("fdm-0.4");
+    p.wall_quantise_mm = 0.75;
+    assert!((quantised_wall(&p) - 2.0 * p.wall_quantise_mm).abs() < 1e-12);
+    match build_coupon(&ManifoldRust, &p, &CouponOptions::default()) {
+        Err(EvalError::Feature { feature, message }) => {
+            assert_eq!(feature, "coupon");
+            assert!(message.contains("WALL.QUANTISED"), "{message}");
+        }
+        Err(other) => panic!("{other:?}"),
+        Ok(_) => panic!("the 0.20 rib cell cannot be built on a 1.5 mm wall"),
+    }
+}
+
+#[test]
+fn the_nominal_pocket_is_the_standard_one_on_every_process() {
+    // Rib values are measured against the standard side wall, so the nominal
+    // rib cell is the standard rib_depth whatever the process does to the wall
+    // (fdm-0.2 quantises it to five 0.22 mm lines, 1.1 mm): the cell a part
+    // gets with a zero ribDepth offset. Likewise the nominal tube OD.
+    for id in ["fdm-0.4", "fdm-0.2", "resin-msla"] {
+        let p = process(id);
+        let l = coupon_layout(&p, &CouponOptions::default()).expect(id);
+        let (pockets, step) = plan_row("2x2 pockets");
+        let rib0 = nearest(&sweep(pockets[2], pockets[3], step), mm("rib_depth"));
+        let od0 = nearest(
+            &sweep(pockets[0], pockets[1], step),
+            mm("tube_outer_diameter"),
+        );
+        let od_line: Vec<_> = l.cells.iter().filter(|x| x.row == 2).collect();
+        assert!(od_line
+            .iter()
+            .all(|x| close(x.cross.as_ref().unwrap().value_mm, rib0)));
+        let rib_line: Vec<_> = l.cells.iter().filter(|x| x.row == 3).collect();
+        assert!(rib_line.iter().all(|x| close(x.value_mm, od0)));
+        // The label stroke stays the plan's 0.8 mm, above every bundled
+        // process's minimum feature.
+        assert!(l.summary.label_stroke_mm >= p.min_feature_mm);
+        assert_eq!(
+            l.summary.label_stroke_mm,
+            CouponOptions::default().label_stroke_mm
+        );
+    }
+    let fdm_02 = process("fdm-0.2");
+    assert!((quantised_wall(&fdm_02) - 5.0 * fdm_02.wall_quantise_mm).abs() < 1e-12);
 }
 
 #[test]
 fn a_fit_profile_cannot_reach_the_coupon() {
-    // build_coupon takes no fit profile, CouponOptions has no field for one (a
-    // compile_fail doc test on CouponOptions shows it), and JSON options naming
-    // one are refused rather than silently ignored.
-    let fit = serde_json::to_value(openbrick_print::example_fit_profile()).unwrap();
+    // build_coupon takes no fit profile and CouponOptions has no field for one
+    // (a compile_fail doc test on CouponOptions shows it); JSON options naming
+    // one are refused rather than silently ignored. That no offset reaches the
+    // geometry is measured on the mesh by the tests above: every stud, bore and
+    // tube OD is its cell's value, and every rib tip sits side_wall + its value
+    // from the outer face.
+    let fit = serde_json::to_value(example_fit_profile()).unwrap();
     let mut opts = serde_json::to_value(CouponOptions::default()).unwrap();
-    opts["fit"] = fit;
+    opts["fit"] = fit.clone();
     let err = serde_json::from_value::<CouponOptions>(opts).unwrap_err();
     assert!(err.to_string().contains("unknown field `fit`"), "{err}");
-    let m = &coupon().built.measurements;
-    assert_eq!(m.fit_profile, None);
+    // Also when the other fields are left to their defaults.
+    let err =
+        serde_json::from_value::<CouponOptions>(serde_json::json!({ "fit": fit })).unwrap_err();
+    assert!(err.to_string().contains("unknown field `fit`"), "{err}");
+}
+
+#[test]
+fn json_options_take_the_defaults_for_missing_fields() {
+    // A wizard, CLI or wasm caller names only what it changes.
+    let o: CouponOptions = serde_json::from_str("{}").unwrap();
+    assert_eq!(o, CouponOptions::default());
+    let o: CouponOptions =
+        serde_json::from_str(r#"{ "pockets": "full", "bedMm": [256, 256] }"#).unwrap();
+    assert_eq!(
+        o,
+        CouponOptions {
+            pockets: PocketSet::Full,
+            bed_mm: [256.0, 256.0],
+            ..CouponOptions::default()
+        }
+    );
+    // The plan's defaults (docs/plan/05 section 4): two copies, labels 0.6 mm
+    // high and 0.8 mm wide.
+    let d = CouponOptions::default();
+    assert_eq!(d.copies, 2);
+    assert_eq!((d.label_relief_mm, d.label_stroke_mm), (0.6, 0.8));
 }
 
 #[test]
@@ -724,10 +1088,10 @@ fn the_fdm_0_2_coupon_matches_its_model_too() {
     // A different wall (five 0.22 mm lines), rib width, tube wall minimum,
     // first-layer chamfer and circle segments: the same model must hold.
     let p = process("fdm-0.2");
-    let c = build_coupon(&ManifoldRust, &p, &CouponOptions::default()).expect("builds");
+    let c = coupon_fdm_02();
     let m = &c.built.measurements;
     assert!(m.is_manifold && m.components == 1 && m.genus == 0);
-    let expected = analytic_volume(&c, &p);
+    let expected = analytic_volume(c, &p);
     let rel = ((m.volume_mm3 - expected) / expected).abs();
     assert!(rel < VOLUME_TOL, "volume {} vs {expected}", m.volume_mm3);
     assert_eq!(m.min_body_wall_mm, Some(quantised_wall(&p)));
