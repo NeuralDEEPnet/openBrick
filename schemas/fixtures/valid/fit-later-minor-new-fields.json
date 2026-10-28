@@ -1,5 +1,5 @@
 {
-  "openbrick": "1.1",
+  "openbrick": "1.2",
   "kind": "fit",
   "id": "fixture-later-minor",
   "credit": {
@@ -35,5 +35,5 @@
     "pullTestN": null
   },
   "chamberTemperatureC": 45,
-  "notes": "A 1.1 document: bushingDiameter and chamberTemperatureC stand for fields a later minor might add. The 1.0 schema checks the fields it knows and lets these through (docs/plan/08 section 9); 1.0 readers ignore them."
+  "notes": "A 1.2 document: bushingDiameter and chamberTemperatureC stand for fields a later minor might add. The 1.1 schema checks the fields it knows and lets these through (docs/plan/08 section 9); 1.1 readers ignore them."
 }

@@ -853,8 +853,11 @@ mod tests {
         assert_eq!(failures.len(), 1, "{failures:#?}");
         assert_eq!(failures[0].pointer, "/offsetsMm");
         assert_eq!(failures[0].keyword, "additionalProperties");
+        // Fit profiles are at schema 1.1, so 1.2 is the first later minor.
         doc["openbrick"] = serde_json::json!("1.1");
-        assert!(fit.failures(&doc).is_empty(), "1.1 may add offsets");
+        assert_eq!(fit.failures(&doc).len(), 1, "1.1 is strict too");
+        doc["openbrick"] = serde_json::json!("1.2");
+        assert!(fit.failures(&doc).is_empty(), "1.2 may add offsets");
         doc["offsetsMm"]["studDiameter"] = serde_json::json!(5.0);
         let failures = fit.failures(&doc);
         assert_eq!(

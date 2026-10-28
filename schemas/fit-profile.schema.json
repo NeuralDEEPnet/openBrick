@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://openbrick3d.org/schemas/1.0/fit-profile.schema.json",
+  "$id": "https://openbrick3d.org/schemas/1.1/fit-profile.schema.json",
   "title": "OpenBrick3D fit profile",
-  "description": "One printer, nozzle and material combination after calibration (profiles/fit/*.json, .obprofile.json). Read by openbrick-print as FitProfile with camelCase fields; see docs/plan/05 sections 3 and 4. Fit offsets live here, never in part documents. A 1.0 document may use only the fields named here ($defs/knownFields); material is free-form beyond its type.",
+  "description": "One printer, nozzle and material combination after calibration (profiles/fit/*.json, .obprofile.json). Read by openbrick-print as FitProfile with camelCase fields; see docs/plan/05 sections 3 and 4. Fit offsets live here, never in part documents. Schema 1.1 adds the optional calibration.pocketSet to 1.0; a 1.0 or 1.1 document may use only the fields named here ($defs/knownFields), and a 1.0 document none added since 1.0 ($defs/since1_1); material is free-form beyond its type.",
   "type": "object",
   "required": ["openbrick", "kind", "id", "credit", "process", "printer", "nozzleMm", "material", "intent", "offsetsMm"],
   "properties": {
@@ -42,9 +42,22 @@
   },
   "if": { "$ref": "#/$defs/atThisMinor" },
   "then": { "$ref": "#/$defs/knownFields" },
+  "allOf": [{ "$ref": "#/$defs/since1_1" }],
   "$defs": {
+    "since1_1": {
+      "description": "The fields added in schema 1.1 (calibration.pocketSet). A document that uses one declares 1.1 or later in its pragma (schemas/README.md, Versioning), so a tool that only has the 1.0 schema reads it leniently; a 1.0 document that uses one is an error at that field.",
+      "if": {
+        "required": ["openbrick"],
+        "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+      },
+      "then": {
+        "properties": {
+          "calibration": { "properties": { "pocketSet": false } }
+        }
+      }
+    },
     "knownFields": {
-      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error: serde would drop it silently, so a misspelt optional field would change nothing. Objects not listed here are open on purpose. cargo xtask data checks that these lists match the properties the schema declares.",
+      "description": "The fields schema 1.1 names (those of 1.0 plus calibration.pocketSet), object by object; true means the value is checked by the main schema. Applied only to 1.0 and 1.1 documents (see atThisMinor), where any other field is an error: serde would drop it silently, so a misspelt optional field would change nothing. Objects not listed here are open on purpose. cargo xtask data checks that these lists match the properties the schema declares.",
       "properties": {
         "openbrick": true,
         "kind": true,
@@ -77,7 +90,7 @@
           "additionalProperties": false
         },
         "calibration": {
-          "properties": { "couponVersion": true, "chosenCells": true, "date": true, "pullTestN": true, "controlPullTestN": true },
+          "properties": { "couponVersion": true, "pocketSet": true, "chosenCells": true, "date": true, "pullTestN": true, "controlPullTestN": true },
           "additionalProperties": false
         },
         "notes": true
@@ -85,9 +98,9 @@
       "additionalProperties": false
     },
     "atThisMinor": {
-      "description": "Matches a document whose pragma names this schema's minor version, 1.0 (or a 1.0.x patch). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9).",
+      "description": "Matches a document whose pragma names a minor version this schema knows, 1.0 or 1.1 (or a patch of either). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9). Unlike the other shared definitions this one follows the schema's own minor version (cargo xtask data checks it against $id).",
       "required": ["openbrick"],
-      "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+      "properties": { "openbrick": { "type": "string", "pattern": "^1\\.(0|1)(\\.|$)" } }
     },
     "offsetMm": {
       "description": "Offset in millimetres on a diameter (or depth for ribs) applied to nominal geometry at export: chosen coupon cell minus nominal. The coupon sweeps of docs/plan/05 section 4 reach at most 0.30 mm from nominal (horizontal Technic holes, 5.10 - 4.80), so a magnitude above 1 mm is a unit mistake.",
@@ -144,6 +157,10 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 4294967295
+        },
+        "pocketSet": {
+          "description": "Since 1.1. The pocket set of the printed coupon (openbrick_part::coupon::PocketSet: cross, the default, is the nominal row and column of the tube OD x rib depth cross; crossAndDiagonal adds its diagonal; full is every pair). chosenCells.pocketTubeOD and chosenCells.pocketRib are the two values of one pocket of this set, the one that fits best, never the best of each line (one stud presses on the tube and the ribs at once; docs/plan/05 section 4). openbrick calibrate record writes it with the pocket cells and refuses a pocket the set does not print. Optional: 1.0 documents and documents without pocket cells leave it out.",
+          "enum": ["cross", "crossAndDiagonal", "full"]
         },
         "chosenCells": {
           "description": "Best-fitting coupon cell by row, in millimetres (diameters; pocketRib is a rib depth). Keys are the coupon rows of docs/plan/05 section 4 as required_cells() names them.",

@@ -29,7 +29,9 @@ use openbrick_part::coupon::{
     COUPON_REVISION,
 };
 use openbrick_part::EvalError;
-use openbrick_print::{example_fit_profile, FitProfile, Offsets, ProcessProfile};
+use openbrick_print::{
+    example_fit_profile, record, FitProfile, Offsets, ProcessProfile, RecordError, RecordInput,
+};
 use openbrick_units::ldu_to_mm;
 
 /// Canonical fingerprint of the default fdm-0.4 coupon on manifold-rust 0.19.1.
@@ -1096,4 +1098,97 @@ fn the_fdm_0_2_coupon_matches_its_model_too() {
     assert!(rel < VOLUME_TOL, "volume {} vs {expected}", m.volume_mm3);
     assert_eq!(m.min_body_wall_mm, Some(quantised_wall(&p)));
     assert_ne!(c.built.content_hash, coupon().built.content_hash);
+}
+
+#[test]
+fn record_accepts_exactly_the_pockets_each_pocket_set_prints() {
+    // openbrick_print::record decides which pockets a coupon printed from the
+    // coupon data alone (openbrick-print cannot depend on this crate), so it
+    // repeats the rule of plan_lines: check, pair by pair over the whole cross,
+    // that the two never drift apart. A pocket the set prints records; any other
+    // is refused, naming the printed choices.
+    let p = process("fdm-0.4");
+    let spec = openbrick_print::coupon_v1();
+    let [od_id, rib_id] = openbrick_print::POCKET_CELLS;
+    let ods = spec.cell(od_id).expect("tube OD sweep").values();
+    let ribs = spec.cell(rib_id).expect("rib sweep").values();
+    // The beds of larger_pocket_sets_lay_out_on_larger_beds.
+    for (set, bed_mm) in [
+        (PocketSet::Cross, CouponOptions::default().bed_mm),
+        (PocketSet::CrossAndDiagonal, [250.0, 210.0]),
+        (PocketSet::Full, [256.0, 256.0]),
+    ] {
+        let layout = coupon_layout(
+            &p,
+            &CouponOptions {
+                pockets: set,
+                bed_mm,
+                ..CouponOptions::default()
+            },
+        )
+        .unwrap_or_else(|e| panic!("{}: {e}", set.name()));
+        let printed: Vec<(f64, f64)> = layout
+            .cells
+            .iter()
+            .filter_map(|c| {
+                let rib = c.cross.as_ref()?;
+                assert_eq!((c.cell_id.as_str(), rib.cell_id.as_str()), (od_id, rib_id));
+                Some((c.value_mm, rib.value_mm))
+            })
+            .collect();
+        // The print crate lists the same pockets.
+        let listed = spec.printed_pockets(set.name()).expect("a known set");
+        for &(o, r) in &printed {
+            assert!(
+                listed.iter().any(|&(lo, lr)| close(lo, o) && close(lr, r)),
+                "{}: the coupon prints {o}/{r}, which openbrick-print does not list",
+                set.name()
+            );
+        }
+        for &(lo, lr) in &listed {
+            assert!(
+                printed.iter().any(|&(o, r)| close(lo, o) && close(lr, r)),
+                "{}: openbrick-print lists {lo}/{lr}, which the coupon does not print",
+                set.name()
+            );
+        }
+        let mut accepted = 0;
+        for &od in &ods {
+            for &rib in &ribs {
+                let input = RecordInput {
+                    process: p.id.clone(),
+                    printer: "Coupon check".into(),
+                    nozzle_mm: p.line_width_mm,
+                    material: "PLA".into(),
+                    intent: "fits-genuine-bricks".into(),
+                    cells: [(od_id.to_string(), od), (rib_id.to_string(), rib)].into(),
+                    pocket_set: Some(set.name().into()),
+                    ..RecordInput::default()
+                };
+                let on_coupon = printed.iter().any(|&(o, r)| close(o, od) && close(r, rib));
+                match record(&input) {
+                    Ok(f) => {
+                        assert!(on_coupon, "{}: {od}/{rib} is not printed", set.name());
+                        let cal = f.calibration.expect("calibration");
+                        assert_eq!(cal.pocket_set.as_deref(), Some(set.name()));
+                        accepted += 1;
+                    }
+                    Err(RecordError::PocketNotPrinted { set: s, .. }) => {
+                        assert!(!on_coupon, "{}: {od}/{rib} is printed", set.name());
+                        assert_eq!(s, set.name());
+                    }
+                    Err(e) => panic!("{}: {od}/{rib}: {e}", set.name()),
+                }
+            }
+        }
+        assert_eq!(accepted, listed.len(), "{}", set.name());
+        if set == PocketSet::Cross {
+            // The nominal row and column: one pocket fewer than the two sweeps,
+            // since they share the nominal pocket.
+            assert_eq!(accepted, ods.len() + ribs.len() - 1);
+        }
+        if set == PocketSet::Full {
+            assert_eq!(accepted, ods.len() * ribs.len());
+        }
+    }
 }

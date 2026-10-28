@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbrick3d.org/schemas/1.1/process-profile.schema.json",
   "title": "OpenBrick3D process profile",
-  "description": "What a manufacturing process can resolve (profiles/process/*.json, .obprofile.json). Read by openbrick-print as ProcessProfile with camelCase fields; see docs/plan/05 section 3. Validator thresholds come from these values. Schema 1.1 adds the optional recommendedTubeWallMm and maxRemovedAreaPct to 1.0; a 1.0 or 1.1 document may use only the fields named here ($defs/knownFields).",
+  "description": "What a manufacturing process can resolve (profiles/process/*.json, .obprofile.json). Read by openbrick-print as ProcessProfile with camelCase fields; see docs/plan/05 section 3. Validator thresholds come from these values. Schema 1.1 adds the optional recommendedTubeWallMm and maxRemovedAreaPct to 1.0; a 1.0 or 1.1 document may use only the fields named here ($defs/knownFields), and a 1.0 document none added since 1.0 ($defs/since1_1).",
   "type": "object",
   "required": [
     "openbrick",
@@ -68,7 +68,7 @@
       "description": "Since 1.1. Tube walls from minTubeWallMm up to this value print but get a TUBE.WALL warning (docs/plan/05 section 5: minTubeWallMm 0.7, warning below 0.8). Optional: without it there is no warning band. Should be at least minTubeWallMm."
     },
     "maxRemovedAreaPct": {
-      "description": "Since 1.1. Share of the artwork area, in percent, the morphological opening at minFeatureMm may remove before rule FEATURE.MIN reports it: a blocker on fit-critical artwork, a warning otherwise (docs/plan/05 section 5: report the removed area percent; docs/plan/06 section 5). The opening also bevels convex corners (0.18 % of a 13.2 mm square at 0.8 mm), so keep it above that. Optional: without it the removed area is never a trigger.",
+      "description": "Since 1.1. Share of the artwork area, in percent, the morphological opening at minFeatureMm may remove before rule FEATURE.MIN reports it: a blocker on fit-critical artwork, a warning otherwise (docs/plan/05 section 5: report the removed area percent; docs/plan/06 section 5). Rule FEATURE.MIN reports more than this; exactly this much passes. The opening also rounds convex corners (0.11 % of a 13.2 mm square at 0.8 mm), so keep it above that. Optional: without it the removed area is never a trigger.",
       "type": "number",
       "minimum": 0,
       "maximum": 100
@@ -130,7 +130,18 @@
   },
   "if": { "$ref": "#/$defs/atThisMinor" },
   "then": { "$ref": "#/$defs/knownFields" },
+  "allOf": [{ "$ref": "#/$defs/since1_1" }],
   "$defs": {
+    "since1_1": {
+      "description": "The fields added in schema 1.1 (recommendedTubeWallMm and maxRemovedAreaPct). A document that uses one declares 1.1 or later in its pragma (schemas/README.md, Versioning), so a tool that only has the 1.0 schema reads it leniently; a 1.0 document that uses one is an error at that field.",
+      "if": {
+        "required": ["openbrick"],
+        "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+      },
+      "then": {
+        "properties": { "recommendedTubeWallMm": false, "maxRemovedAreaPct": false }
+      }
+    },
     "knownFields": {
       "description": "The fields schema 1.1 names (those of 1.0 plus recommendedTubeWallMm and maxRemovedAreaPct), object by object; true means the value is checked by the main schema. Applied only to 1.0 and 1.1 documents (see atThisMinor), where any other field is an error: serde would drop it silently, so a misspelt optional field would change nothing. Objects not listed here are open on purpose. cargo xtask data checks that these lists match the properties the schema declares.",
       "properties": {

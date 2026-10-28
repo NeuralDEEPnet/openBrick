@@ -1236,6 +1236,7 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
     let measurements = Measurements {
         process: process.id.clone(),
         fit_profile: input.fit.map(|f| f.id.clone()),
+        fit_offsets: input.fit.map(|f| f.offsets_mm.clone()),
         allowed_processes,
         fit_critical_artwork,
         triangle_count: objects.iter().map(|o| o.mesh.triangle_count()).sum(),

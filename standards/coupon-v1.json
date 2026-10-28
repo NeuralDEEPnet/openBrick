@@ -4,7 +4,7 @@
   "version": 1,
   "license": "CC0-1.0",
   "credit": { "author": "OpenBrick3D contributors", "url": "https://github.com/NeuralDEEPnet/openBrick" },
-  "notes": "The calibration coupon sweep, version 1 (calibration.couponVersion in a fit profile). One cell per sweep: values run from startMm to endMm in steps of stepMm, and a fit offset is the chosen value minus the nominal of standardId in standards/dimensions-v1.json. Cells that share a row are printed in one row: the pocket row crosses every tube outer diameter with every rib depth, and the bar and clip row holds both sweeps. Read by openbrick_print::coupon_v1(); the coupon generator, openbrick calibrate record and rule CLUTCH.RISK all use these numbers.",
+  "notes": "The calibration coupon sweep, version 1 (calibration.couponVersion in a fit profile). One cell per sweep: values run from startMm to endMm in steps of stepMm, and a fit offset is the chosen value minus the nominal of standardId in standards/dimensions-v1.json. Cells that share a row are printed in one row: the pocket row crosses tube outer diameter with rib depth (the pocket set of the coupon chooses which pairs: by default the nominal row and column of the cross, every pair in the full set; openbrick_print::CouponSpec::printed_pockets), and the bar and clip row holds both sweeps. Read by openbrick_print::coupon_v1(); the coupon generator, openbrick calibrate record and rule CLUTCH.RISK all use these numbers.",
   "source": "docs/plan/05 section 4: the coupon has two identical rows of every sweep (repeatability), and each cell has an embossed label (relief 0.6 mm, stroke 0.8 mm). The sweep of each cell cites its own source.",
   "copies": 2,
   "label": { "reliefMm": 0.6, "strokeMm": 0.8 },
@@ -95,7 +95,7 @@
       "endMm": 5.00,
       "stepMm": 0.05,
       "offsetField": "axleHole",
-      "source": "docs/plan/05 section 4, row Axle holes: envelope 4.75 to 5.00 mm, step 0.05 mm; the nominal hole envelope is the axle across tips (standards/dimensions-v1.json axle_across_tips, 4.80), as the section 3 example implies (axle 4.86 with axleHole +0.06)"
+      "source": "docs/plan/05 section 4, row Axle holes: envelope 4.75 to 5.00 mm, step 0.05 mm; the nominal hole envelope is the axle across tips (standards/dimensions-v1.json axle_across_tips, 4.80), as the section 3 example implies (axle 4.85 with axleHole +0.05)"
     },
     {
       "id": "bar",

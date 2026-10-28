@@ -36,7 +36,7 @@
     "minTubeWallAtBedMm": 0.45,
     "minTubeWallMm": 0.85,
     "process": "fdm-0.4",
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 2640,
     "tubeInnerDiameterMm": 4.95,

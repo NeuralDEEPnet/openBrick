@@ -35,7 +35,7 @@
     "process": "fdm-0.4",
     "reliefHeightMm": 0.6,
     "removedAreaPct": 1.0,
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 2640,
     "tubeInnerDiameterMm": 4.95,

@@ -1,0 +1,70 @@
+{
+  "description": "Built with an earlier recording of example-mk4s-petg-0.4 (ribDepth 0.1 mm, from a pocket the default coupon does not print) and validated against the current one (ribDepth 0): the same id with other offsets, so the report would describe another mesh: blocker.",
+  "rule": "FIT.PROCESS",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [
+      "fdm-0.4",
+      "fdm-0.2"
+    ],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitOffsets": {
+      "axleHole": 0.05,
+      "barDiameter": -0.04,
+      "clipOpening": 0.02,
+      "firstLayerChamfer": 0.2,
+      "horizontalHoleDiameter": 0.2,
+      "pinDiameter": -0.1,
+      "ribDepth": 0.1,
+      "studDiameter": 0.0,
+      "tubeInnerDiameter": 0.15,
+      "tubeOuterDiameter": 0.136,
+      "xyScale": 1.0
+    },
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.4,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "build the part again with the current fit profile `example-mk4s-petg-0.4` before exporting it",
+        "message": "the part was built with other offsets than fit profile `example-mk4s-petg-0.4` holds now (for example ribDepth 0.1 mm built, 0 mm given): it was built with another recording of that profile",
+        "rule": "FIT.PROCESS",
+        "severity": "blocker",
+        "threshold": null,
+        "value": null
+      }
+    ]
+  }
+}

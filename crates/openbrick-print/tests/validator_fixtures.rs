@@ -168,6 +168,58 @@ fn write_fixture(doc: &Value) -> String {
     format!("{{\n{}\n}}\n", fields.join(",\n"))
 }
 
+/// Whether `message` shows `x` as a number of its own, written with zero to
+/// six decimals, with or without trailing zeros (the validator writes lengths
+/// with at most three decimals and trailing zeros dropped, and percentages
+/// with one decimal or more): `0.8` is found in "is 0.8 mm" but not in
+/// "is 0.85 mm" or "10.8".
+fn shows_number(message: &str, x: f64) -> bool {
+    let bytes = message.as_bytes();
+    // Digits inside a word or an id such as `fdm-0.4` are not a number of their own.
+    let joined = |i: usize| {
+        let c = bytes[i];
+        c.is_ascii_alphanumeric()
+            || c == b'.'
+            || c == b'_'
+            || (c == b'-' && i > 0 && bytes[i - 1].is_ascii_alphanumeric())
+    };
+    let found = |s: &str| {
+        message.match_indices(s).any(|(at, _)| {
+            let end = at + s.len();
+            let before = at == 0 || !joined(at - 1);
+            // A full stop that ends a sentence is not part of the number.
+            let after = end == bytes.len()
+                || !(bytes[end].is_ascii_digit()
+                    || (bytes[end] == b'.' && bytes.get(end + 1).is_some_and(u8::is_ascii_digit)));
+            before && after
+        })
+    };
+    (0..=6).any(|places| {
+        let s = format!("{x:.places$}");
+        let trimmed = if s.contains('.') {
+            s.trim_end_matches('0').trim_end_matches('.').to_string()
+        } else {
+            s.clone()
+        };
+        found(&s) || found(&trimmed)
+    })
+}
+
+#[test]
+fn numbers_are_found_only_on_their_own() {
+    assert!(shows_number("the wall is 0.8 mm", 0.8));
+    assert!(shows_number("the wall is 0.80 mm", 0.8));
+    assert!(shows_number("removed 1.03 % of it", 1.0324211814310704));
+    assert!(shows_number("ends at 4.95.", 4.95));
+    assert!(shows_number("the volume is -5 mm3", -5.0));
+    assert!(!shows_number("the wall is 0.85 mm", 0.8));
+    assert!(!shows_number("process `fdm-0.4`", 0.8));
+    assert!(!shows_number("process `fdm-0.4`", 0.4));
+    assert!(!shows_number("profile `mk4s-petg`", 4.0));
+    assert!(!shows_number("is 10.8 mm", 0.8));
+    assert!(!shows_number("is 0.8.1", 0.8));
+}
+
 fn json_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
@@ -233,15 +285,18 @@ fn every_rule_passes_and_fails_its_fixtures() {
                     ));
                 }
                 for f in findings {
-                    let (Some(v), Some(t)) = (f.value, f.threshold) else {
-                        continue;
-                    };
-                    // A finding's message shows the value it carries.
-                    if !f.message.chars().any(|c| c.is_ascii_digit()) {
-                        problems.push(format!("{shown}: message names no value: {}", f.message));
-                    }
-                    if !(v.is_finite() && t.is_finite()) {
-                        problems.push(format!("{shown}: value {v} or threshold {t} is not finite"));
+                    // A finding's message shows the value and the threshold it
+                    // carries (CLAUDE.md), as numbers of their own.
+                    for (what, x) in [("value", f.value), ("threshold", f.threshold)] {
+                        let Some(x) = x else { continue };
+                        if !x.is_finite() {
+                            problems.push(format!("{shown}: {what} {x} is not finite"));
+                        } else if !shows_number(&f.message, x) {
+                            problems.push(format!(
+                                "{shown}: message does not show its {what} {x}: {}",
+                                f.message
+                            ));
+                        }
                     }
                 }
                 for f in findings {
@@ -282,6 +337,7 @@ fn blockers_and_warnings_follow_the_rule_table() {
         ("WALL.MIN/fail", false),
         ("TUBE.WALL/fail", false),
         ("TUBE.WALL/fail-warning", true),
+        ("TUBE.WALL/fail-warning-grown", true),
         ("CAVITY.DEPTH/fail", false),
         ("WALL.QUANTISED/fail", true),
         ("ROOF.MIN/fail", false),
@@ -289,6 +345,8 @@ fn blockers_and_warnings_follow_the_rule_table() {
         ("FEATURE.MIN/fail-removed-area", true),
         ("FEATURE.MIN/fail-fit-critical", false),
         ("FEATURE.MIN/fail-fit-critical-removed-area", false),
+        ("FEATURE.MIN/fail-not-measured", true),
+        ("FEATURE.MIN/fail-fit-critical-not-measured", false),
         ("RELIEF.HEIGHT/fail", true),
         ("RELIEF.HEIGHT/fail-too-high", true),
         ("FIT.PROCESS/fail", false),
@@ -296,6 +354,7 @@ fn blockers_and_warnings_follow_the_rule_table() {
         ("FIT.PROCESS/fail-built-for-another-process", false),
         ("FIT.PROCESS/fail-built-without-fit", false),
         ("FIT.PROCESS/fail-validated-without-fit", false),
+        ("FIT.PROCESS/fail-built-with-other-offsets", false),
         ("FIT.MISSING/fail", false),
         ("FIT.MISSING/fail-cell-missing", false),
         ("CLUTCH.RISK/fail", true),
@@ -335,6 +394,9 @@ fn findings_are_sorted_blockers_first_then_by_rule() {
         .into_iter()
         .find(|p| p.id == "fdm-0.4")
         .expect("fdm-0.4");
+    // A relief comes with its measured stroke, here at the minimum; without one
+    // FEATURE.MIN would report a stroke that was not measured.
+    m.min_stroke_mm = Some(process.min_feature_mm);
     case.report = validate(&m, &process, None);
     let order: Vec<(&str, Severity)> = case
         .report

@@ -1,0 +1,60 @@
+{
+  "description": "A tube the evaluator grew: tube bore 4.80 + 0.25 = 5.05 mm and tube OD 6.514 - 0.114 = 6.40 mm would leave a 0.675 mm wall, so the OD grew 0.05 mm to 6.45 mm and the wall is the 0.7 mm minimum, under the recommended 0.8 mm: warning. The hint must raise the tubeOuterDiameter offset by 0.05 + 2 x (0.8 - 0.7) = 0.25 mm, to 6.65 mm and a 0.8 mm wall; 2 x (0.8 - 0.7) = 0.2 mm alone gives (6.60 - 5.05) / 2 = 0.775 mm.",
+  "rule": "TUBE.WALL",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "fitPatch": {
+    "offsetsMm": {
+      "tubeInnerDiameter": 0.25,
+      "tubeOuterDiameter": -0.114
+    }
+  },
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.8,
+    "minBodyWallMm": 1.2,
+    "minTubeWallAtBedMm": 0.3,
+    "minTubeWallMm": 0.7,
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 5.05,
+    "tubeOuterDiameterMm": 6.45,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "raise the tubeOuterDiameter offset in fit profile `example-mk4s-petg-0.4` by 0.25 mm, or record a tube cell with a smaller bore, so the wall reaches 0.8 mm (the tube was grown 0.05 mm past nominal plus that offset to keep the 0.7 mm minimum, and the offset has to make up that growth first)",
+        "message": "the thinnest tube wall is 0.7 mm after fit offsets: printable, but below the recommended 0.8 mm of process `fdm-0.4`",
+        "rule": "TUBE.WALL",
+        "severity": "warning",
+        "threshold": 0.8,
+        "value": 0.7
+      }
+    ]
+  }
+}

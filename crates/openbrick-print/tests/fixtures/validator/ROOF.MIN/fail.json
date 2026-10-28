@@ -1,5 +1,5 @@
 {
-  "description": "A 0.6 mm roof: blocker.",
+  "description": "A 0.6 mm roof (and so a 2.6 mm cavity in the 3.2 mm body): blocker. Only hand-written measurements have one today: the evaluator builds the standard roof or minRoofMm, whichever is larger, and thickens it under a deboss.",
   "rule": "ROOF.MIN",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",
@@ -16,7 +16,7 @@
       0.0,
       0.0
     ],
-    "cavityDepthMm": 2.2,
+    "cavityDepthMm": 2.6,
     "components": 1,
     "featureVolumeSumMm3": 848.85,
     "firstLayerChamferMm": 0.2,
@@ -31,7 +31,7 @@
     "minTubeWallAtBedMm": 0.45,
     "minTubeWallMm": 0.85,
     "process": "fdm-0.4",
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 0.6,
     "triangleCount": 2640,
     "tubeInnerDiameterMm": 4.95,
@@ -42,7 +42,7 @@
     "findings": [
       {
         "feature": null,
-        "fix": "make the roof at least 1 mm: a deboss or serial on top thins it by its depth, so make it 0.4 mm shallower",
+        "fix": "build the part again for process `fdm-0.4`: the evaluator makes the roof the standard roof or minRoofMm, whichever is larger, and thickens it under a deboss or serial rather than thinning it, so the rebuilt roof is at least 1 mm",
         "message": "the roof is 0.6 mm thick, below the 1 mm minimum roof of process `fdm-0.4`",
         "rule": "ROOF.MIN",
         "severity": "blocker",

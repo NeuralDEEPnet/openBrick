@@ -8,7 +8,9 @@
 //!   openbrick-print lists them;
 //! - every coupon sweep in `standards/coupon-*.json` records, at both ends of
 //!   every recordable cell, a fit profile that `schemas/fit-profile.schema.json`
-//!   accepts (so no coupon cell can produce an offset the schema refuses).
+//!   accepts (so no coupon cell can produce an offset the schema refuses). The
+//!   two pocket cells are one choice, so they are recorded together, from the
+//!   `full` pocket set, which prints every pair.
 
 use std::path::Path;
 
@@ -117,8 +119,9 @@ pub fn check_rule_ids(report: &Schema) -> Vec<String> {
 }
 
 /// Record the first and the last value of every recordable cell of every coupon
-/// sweep, one cell at a time and all cells together, and check each fit profile
-/// against the fit-profile schema. Returns one line per problem.
+/// sweep, one cell at a time (the two pocket cells as one pocket) and all cells
+/// together, and check each fit profile against the fit-profile schema. Returns
+/// one line per problem.
 pub fn check_coupon_records(root: &Path, fit: &Schema) -> Vec<String> {
     let mut problems = Vec::new();
     for set in DATA_SETS.iter().filter(|s| s.kind == Some("coupon")) {
@@ -160,8 +163,14 @@ pub fn check_coupon_records(root: &Path, fit: &Schema) -> Vec<String> {
                     .iter()
                     .filter_map(|c| pick(c).map(|v| (c.id.clone(), v)))
                     .collect();
-                for one in &all {
+                let pocket = |id: &str| openbrick_print::POCKET_CELLS.contains(&id);
+                for one in all.iter().filter(|c| !pocket(&c.0)) {
                     choices.push((format!("{} = {}", one.0, one.1), vec![one.clone()]));
+                }
+                let pair: Vec<(String, f64)> =
+                    all.iter().filter(|c| pocket(&c.0)).cloned().collect();
+                if !pair.is_empty() {
+                    choices.push((format!("the pocket at its {end} values"), pair));
                 }
                 choices.push((format!("every cell at its {end} value"), all));
             }
@@ -173,6 +182,7 @@ pub fn check_coupon_records(root: &Path, fit: &Schema) -> Vec<String> {
                     material: "PLA".into(),
                     intent: "fits-genuine-bricks".into(),
                     cells: cells.into_iter().collect(),
+                    pocket_set: Some("full".into()),
                     ..openbrick_print::RecordInput::default()
                 };
                 let profile = match openbrick_print::record_with(&spec, &input) {

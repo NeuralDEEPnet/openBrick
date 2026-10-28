@@ -48,32 +48,42 @@
 //!   `recommendedTubeWallMm` (0.8 mm for `fdm-0.4`, from "minTubeWallMm 0.7
 //!   (warning below 0.8)" in the rule table); a profile without that field has
 //!   no warning band. Hollow-stud walls are not measured yet.
-//! - `FEATURE.MIN` has two triggers: the thinnest artwork stroke
+//! - `FEATURE.MIN` has three triggers: the thinnest artwork stroke
 //!   ([`Measurements::min_stroke_mm`], after the morphological opening) below
-//!   `minFeatureMm`, and the share of the artwork area the opening removed
-//!   ([`Measurements::removed_area_pct`]) above the process's
-//!   `maxRemovedAreaPct`. Both are blockers when the part's artwork is
-//!   fit-critical ([`Measurements::fit_critical_artwork`], a label someone reads
-//!   to calibrate, which must print as drawn) and warnings otherwise. The opening
-//!   also rounds or bevels convex corners: on a 13.2 mm square at 0.8 mm that
-//!   is 0.18 % of the area, under the 1 % of the bundled profiles, but small
-//!   text at the minimum stroke can lose more than 1 % to its corners alone, so
+//!   `minFeatureMm`; a stroke that was not measured (the part has artwork but
+//!   no `min_stroke_mm`, because the estimate ran out of its work budget); and
+//!   the share of the artwork area the opening removed
+//!   ([`Measurements::removed_area_pct`]) more than the process's
+//!   `maxRemovedAreaPct` (exactly that much passes; the evaluator's
+//!   removed-area warning uses the same boundary). All three are blockers when
+//!   the part's artwork is fit-critical ([`Measurements::fit_critical_artwork`],
+//!   a label someone reads to calibrate, which must print as drawn) and
+//!   warnings otherwise. The opening also rounds convex corners (round joins of
+//!   8 chords per turn, 2 per right-angled corner): on a 13.2 mm square at
+//!   0.8 mm that is 4 r^2 (1 - sin 45 deg) = 0.19 mm2 with r = 0.4 mm, 0.11 %
+//!   of the area, under the 1 % of the bundled profiles, but small text at the
+//!   minimum stroke can lose more than 1 % to its corners alone, so
 //!   fit-critical text needs bolder strokes or a larger size.
 //! - `FIT.PROCESS` blocks when the part, its build and the profiles disagree: a
 //!   fit profile calibrated for another process; a process the part does not
 //!   allow (`print.profiles`); a part built for another process than the one it
 //!   is validated against; and a part built with another fit profile than the
 //!   one it is validated against, or with one when none is given, or without
-//!   one when one is given ([`Measurements::fit_profile`]). The last ones keep a
-//!   nominal preview from passing as a calibrated export: the report must
-//!   describe the mesh that is exported.
+//!   one when one is given ([`Measurements::fit_profile`]), or with the same
+//!   id but other offsets ([`Measurements::fit_offsets`]: recording the coupon
+//!   again keeps the id). The last ones keep a nominal preview or a stale build
+//!   from passing as a calibrated export: the report must describe the mesh
+//!   that is exported.
 //! - `CLUTCH.RISK` warns when the stud, tube bore or tube outer diameter after
 //!   offsets lies outside the coupon cells `stud`, `tube` or `pocketTubeOD`; and
 //!   when the solid pin under a 1-wide part is not at its nominal. The fit
 //!   offset that sizes that pin, `pinDiameter`, is calibrated on the Technic pin
 //!   row of the coupon (cell `pin`), and no coupon cell tests the solid pin, so
 //!   any change to it is untested (an open question for docs/plan/05: a
-//!   separate offset or a 1-wide pin row).
+//!   separate offset or a 1-wide pin row). The rib depth is not checked: the
+//!   rule table names the stud, the bore and the tube OD, and
+//!   [`Measurements::rib_depth_mm`] is the built depth, which a check against
+//!   the `pocketRib` sweep would first have to bring into the coupon's frame.
 //!
 //! Not implemented yet, because they need mesh analysis or data the evaluator
 //! does not provide: `MESH.SELF_INTERSECT` (needs a self-intersection test of
@@ -86,7 +96,7 @@ use openbrick_units::STANDARD;
 
 use crate::coupon::coupon_v1;
 use crate::{
-    check_fit_missing, Finding, FitProfile, Measurements, ProcessProfile, Report, Severity,
+    check_fit_missing, Finding, FitProfile, Measurements, Offsets, ProcessProfile, Report, Severity,
 };
 
 /// `MESH.VOLUME` tolerance: "matches expected within 5 percent of the nominal
@@ -229,6 +239,19 @@ fn below(value: f64, threshold: f64) -> bool {
     value < threshold - LENGTH_TOLERANCE_MM
 }
 
+/// A percentage `pct` that is above `max`, with one decimal or as many more as
+/// it takes to read as above `max` (1.03, not 1.0, against 1): a message never
+/// seems to contradict its own threshold.
+fn pct_above(pct: f64, max: f64) -> String {
+    for places in 1..=12 {
+        let s = format!("{pct:.places$}");
+        if s.parse::<f64>().is_ok_and(|v| v > max) {
+            return s;
+        }
+    }
+    format!("{pct}")
+}
+
 struct Validator<'a> {
     m: &'a Measurements,
     p: &'a ProcessProfile,
@@ -308,7 +331,7 @@ impl Validator<'_> {
                 "MESH.MANIFOLD",
                 Severity::Blocker,
                 format!(
-                    "the mesh is empty (0 components, {} triangles): there is nothing to print",
+                    "the mesh is empty (0 components, {} triangles; a printable part has at least 1): there is nothing to print",
                     m.triangle_count
                 ),
                 Some(0.0),
@@ -359,7 +382,7 @@ impl Validator<'_> {
                 "MESH.VOLUME",
                 Severity::Warning,
                 format!(
-                    "the mesh volume is {} mm3; a printable part has a positive volume",
+                    "the mesh volume is {} mm3; a printable part has a volume above 0 mm3",
                     mm(m.volume_mm3)
                 ),
                 Some(m.volume_mm3),
@@ -461,12 +484,29 @@ impl Validator<'_> {
                 mm(recommended),
                 self.of_process()
             );
-            let fix = format!(
-                "raise the tubeOuterDiameter offset in {} by {} mm, or record a tube cell with a smaller bore, so the wall reaches {} mm",
-                self.fit_name(),
-                mm(2.0 * (recommended - wall)),
-                mm(recommended)
-            );
+            // The wall is (OD - ID) / 2, and OD is nominal plus the offset plus
+            // what the evaluator grew it by to keep minTubeWallMm. Raising the
+            // offset first uses up that growth, so it must rise by the growth
+            // plus twice the missing wall.
+            let grown = self.tube_grown();
+            let raise = 2.0 * (recommended - wall) + grown;
+            let fix = if grown > LENGTH_TOLERANCE_MM {
+                format!(
+                    "raise the tubeOuterDiameter offset in {} by {} mm, or record a tube cell with a smaller bore, so the wall reaches {} mm (the tube was grown {} mm past nominal plus that offset to keep the {} mm minimum, and the offset has to make up that growth first)",
+                    self.fit_name(),
+                    mm(raise),
+                    mm(recommended),
+                    mm(grown),
+                    mm(min)
+                )
+            } else {
+                format!(
+                    "raise the tubeOuterDiameter offset in {} by {} mm, or record a tube cell with a smaller bore, so the wall reaches {} mm",
+                    self.fit_name(),
+                    mm(raise),
+                    mm(recommended)
+                )
+            };
             self.push(
                 "TUBE.WALL",
                 Severity::Warning,
@@ -477,6 +517,19 @@ impl Validator<'_> {
             )
             .feature = feature;
         }
+    }
+
+    /// How much the evaluator grew the tube outer diameter past nominal plus
+    /// the fit profile's `tubeOuterDiameter` offset to keep `minTubeWallMm`
+    /// ([`crate::Offsets::tube`]), as drawn; zero when the measurements carry
+    /// no tube outer diameter.
+    fn tube_grown(&self) -> f64 {
+        let Some(mesh) = self.m.tube_outer_diameter_mm else {
+            return 0.0;
+        };
+        let offset = self.fit.map_or(0.0, |f| f.offsets_mm.tube_outer_diameter);
+        let planned = STANDARD.get().mm("tube_outer_diameter") + offset;
+        (self.drawn(mesh) - planned).max(0.0)
     }
 
     fn cavity_depth(&mut self) {
@@ -558,9 +611,9 @@ impl Validator<'_> {
                 self.of_process()
             );
             let fix = format!(
-                "make the roof at least {} mm: a deboss or serial on top thins it by its depth, so make it {} mm shallower",
-                mm(min),
-                mm(min - roof)
+                "build the part again for process `{}`: the evaluator makes the roof the standard roof or minRoofMm, whichever is larger, and thickens it under a deboss or serial rather than thinning it, so the rebuilt roof is at least {} mm",
+                self.p.id,
+                mm(min)
             );
             self.push(
                 "ROOF.MIN",
@@ -581,6 +634,7 @@ impl Validator<'_> {
         } else {
             (Severity::Warning, "artwork")
         };
+        let has_artwork = self.m.removed_area_pct.is_some() || self.m.relief_height_mm.is_some();
         if let Some(mesh) = self.m.min_stroke_mm {
             let stroke = self.drawn(mesh);
             if below(stroke, min) {
@@ -593,36 +647,53 @@ impl Validator<'_> {
                 );
                 let fix = if critical {
                     format!(
-                        "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes at least {} mm wide (a bolder weight or a larger size) and keep minStroke at the process minimum",
+                        "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes at least {} mm wide (a bolder weight or a larger size), and leave minFeature of the relief.svg feature out or at the process minimum",
                         mm(min)
                     )
                 } else {
                     format!(
-                        "make strokes at least {} mm wide (a bolder weight or a larger size), or keep minStroke at the process minimum so thinner lines are removed",
+                        "make strokes at least {} mm wide (a bolder weight or a larger size), or leave minFeature of the relief.svg feature out (it defaults to the process minimum) so thinner lines are removed",
                         mm(min)
                     )
                 };
                 self.push("FEATURE.MIN", severity, msg, Some(stroke), Some(min), fix);
             }
+        } else if has_artwork {
+            // The stroke estimate ran out of its work budget: no number shows
+            // that the strokes reach the minimum, so the rule measured nothing.
+            let msg = format!(
+                "the thinnest stroke of the {artwork} was not measured: the artwork is too detailed for the stroke estimate's work limit, so nothing shows that its strokes reach the {} mm minimum feature {}",
+                mm(min),
+                self.of_process()
+            );
+            let fix = if critical {
+                "fit-critical artwork, such as a label someone reads to calibrate, must be shown to print as drawn: simplify it (fewer, smoother outlines; Inkscape: Path > Simplify, and no texture finer than the minimum feature) until its strokes are measured".to_string()
+            } else {
+                "simplify the artwork (fewer, smoother outlines; Inkscape: Path > Simplify) if you want its strokes checked; the opening still removed every stroke thinner than the relief.svg feature's minFeature (the process minimum unless the feature sets one), so you may export as it is".to_string()
+            };
+            self.push("FEATURE.MIN", severity, msg, None, None, fix);
         }
         if let (Some(pct), Some(max)) = (self.m.removed_area_pct, self.p.max_removed_area_pct) {
+            // More than maxRemovedAreaPct is reported; exactly that much passes.
             if pct.is_finite() && pct > max + 1e-9 {
                 let msg = format!(
-                    "the morphological opening removed {pct:.1} % of the {artwork} area, more than the {} % allowed (maxRemovedAreaPct {}): strokes thinner than the {} mm minimum feature do not print, and the removed regions are shown in red in the preview",
+                    "the morphological opening removed {} % of the {artwork} area, more than the {} % allowed (maxRemovedAreaPct {}): strokes thinner than the {} mm minimum feature do not print, and the removed regions are shown in red in the preview",
+                    pct_above(pct, max),
                     mm(max),
                     self.of_process(),
                     mm(min)
                 );
                 let fix = if critical {
                     format!(
-                        "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes wider than {} mm (a bolder weight or a larger size) until the opening removes at most {} %",
+                        "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes wider than {} mm (a bolder weight or a larger size) until the opening removes at most {} % (the rule reports more than maxRemovedAreaPct)",
                         mm(min),
                         mm(max)
                     )
                 } else {
                     format!(
-                        "if the red regions matter, make those lines wider than {} mm or the artwork larger; otherwise you may export as it is",
-                        mm(min)
+                        "if the red regions matter, make those lines wider than {} mm or the artwork larger, until the opening removes at most {} % (the rule reports more than maxRemovedAreaPct); otherwise you may export as it is",
+                        mm(min),
+                        mm(max)
                     )
                 };
                 self.push("FEATURE.MIN", severity, msg, Some(pct), Some(max), fix);
@@ -719,6 +790,37 @@ impl Validator<'_> {
                 ),
             };
             self.push("FIT.PROCESS", Severity::Blocker, message, None, None, fix);
+        } else if let (Some(built), Some(fit)) = (&m.fit_offsets, self.fit) {
+            // The same id: a profile recorded again keeps it, so compare what
+            // the part was built with.
+            let given = &fit.offsets_mm;
+            let differs = Offsets::KEYS
+                .iter()
+                .copied()
+                .chain(["firstLayerChamfer", "xyScale"])
+                .find(|k| {
+                    let (a, b) = (built.get(k), given.get(k));
+                    !matches!((a, b), (Some(a), Some(b)) if (a - b).abs() <= LENGTH_TOLERANCE_MM)
+                });
+            if let Some(key) = differs {
+                let unit = if key == "xyScale" { "" } else { " mm" };
+                self.push(
+                    "FIT.PROCESS",
+                    Severity::Blocker,
+                    format!(
+                        "the part was built with other offsets than fit profile `{}` holds now (for example {key} {}{unit} built, {}{unit} given): it was built with another recording of that profile",
+                        fit.id,
+                        mm(built.get(key).unwrap_or(f64::NAN)),
+                        mm(given.get(key).unwrap_or(f64::NAN))
+                    ),
+                    None,
+                    None,
+                    format!(
+                        "build the part again with the current fit profile `{}` before exporting it",
+                        fit.id
+                    ),
+                );
+            }
         }
         if !m.allowed_processes.is_empty() && !m.allowed_processes.contains(process) {
             let allowed: Vec<String> = m
@@ -913,6 +1015,19 @@ mod tests {
             let json = serde_json::to_value(f).expect("serialises");
             assert!(json["value"].is_null() && json["threshold"].is_null());
             assert!(r.export_allowed());
+        }
+    }
+
+    #[test]
+    fn percentages_above_a_threshold_read_as_above_it() {
+        // The sample mark on fdm-0.4: 1.03 %, not 1.0 %, against 1 %.
+        assert_eq!(pct_above(1.0324211814310704, 1.0), "1.03");
+        assert_eq!(pct_above(3.1, 1.0), "3.1");
+        assert_eq!(pct_above(40.0, 1.0), "40.0");
+        assert_eq!(pct_above(1.0000004, 1.0), "1.0000004");
+        for (pct, max) in [(1.0 + 2e-9, 1.0), (0.11, 0.1), (99.99, 99.9)] {
+            let shown: f64 = pct_above(pct, max).parse().expect("a number");
+            assert!(shown > max, "{pct} against {max}");
         }
     }
 

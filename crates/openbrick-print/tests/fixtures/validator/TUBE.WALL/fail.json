@@ -1,5 +1,5 @@
 {
-  "description": "A 0.65 mm tube wall under minTubeWallMm 0.7: blocker.",
+  "description": "A 0.65 mm tube wall under minTubeWallMm 0.7: blocker. The rule reads only minTubeWallMm, so the tube diameters are left out rather than contradict it.",
   "rule": "TUBE.WALL",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",
@@ -31,11 +31,9 @@
     "minTubeWallAtBedMm": 0.25,
     "minTubeWallMm": 0.65,
     "process": "fdm-0.4",
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 2640,
-    "tubeInnerDiameterMm": 4.95,
-    "tubeOuterDiameterMm": 6.65,
     "volumeMm3": 848.418
   },
   "report": {

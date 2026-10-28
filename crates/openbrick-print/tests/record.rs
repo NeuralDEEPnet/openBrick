@@ -1,12 +1,12 @@
 //! `record` (docs/plan/05 section 4): chosen coupon cells become a fit profile
-//! with offsets equal to chosen minus nominal, and only cells of the coupon grid
-//! are accepted.
+//! with offsets equal to chosen minus nominal, only cells of the coupon grid
+//! are accepted, and a pocket is one cell the coupon printed.
 
 use std::collections::BTreeMap;
 
 use openbrick_print::{
     coupon_v1, example_fit_profile, is_profile_id, record, FitProfile, Offsets, RecordError,
-    RecordInput, GRID_TOLERANCE_MM,
+    RecordInput, DEFAULT_POCKET_SET, GRID_TOLERANCE_MM, POCKET_CELLS, POCKET_SETS,
 };
 use openbrick_units::STANDARD;
 
@@ -26,6 +26,30 @@ fn input(cells: &[(&str, f64)]) -> RecordInput {
 /// The first value of a coupon cell.
 fn first(cell: &str) -> f64 {
     coupon_v1().cell(cell).expect("coupon cell").start_mm
+}
+
+/// The cells of `pocket` (tube OD, rib depth) plus `others`.
+fn with_pocket(pocket: (f64, f64), others: &[(&str, f64)]) -> RecordInput {
+    let mut i = input(others);
+    i.cells.insert(POCKET_CELLS[0].into(), pocket.0);
+    i.cells.insert(POCKET_CELLS[1].into(), pocket.1);
+    i
+}
+
+/// A printed pocket of the default set whose `cell` value is `v` (the pocket
+/// sits on the nominal line of the other sweep).
+fn default_pocket_with(cell: &str, v: f64) -> (f64, f64) {
+    let printed = coupon_v1()
+        .printed_pockets(DEFAULT_POCKET_SET)
+        .expect("the default set");
+    let k = POCKET_CELLS
+        .iter()
+        .position(|c| *c == cell)
+        .expect("a pocket cell");
+    *printed
+        .iter()
+        .find(|p| ((if k == 0 { p.0 } else { p.1 }) - v).abs() < GRID_TOLERANCE_MM)
+        .unwrap_or_else(|| panic!("the default set prints {cell} = {v}"))
 }
 
 #[test]
@@ -59,7 +83,15 @@ fn the_example_fit_profile_is_what_record_writes() {
     i.id = Some(example.id.clone());
     i.date = Some(cal.date.clone());
     i.brand = example.material["brand"].as_str().map(String::from);
-    let f = record(&i).expect("the example cells lie on the coupon grid");
+    i.pocket_set = cal.pocket_set.clone();
+    let f = record(&i).expect("the example cells lie on the coupon grid and its pocket is printed");
+    // The pocket set is a schema 1.1 field, and both say so.
+    assert_eq!(f.openbrick, example.openbrick);
+    assert_eq!(
+        f.calibration.as_ref().expect("cal").pocket_set,
+        cal.pocket_set
+    );
+    assert_eq!(cal.pocket_set.as_deref(), Some(DEFAULT_POCKET_SET));
     for key in Offsets::KEYS {
         assert_eq!(
             f.offsets_mm.get(key),
@@ -100,9 +132,18 @@ fn every_grid_value_round_trips_through_its_offset() {
                 cell.id
             );
         }
+        // A pocket value is recorded with the printed pocket of the default set
+        // that has it; every other cell on its own.
+        let alone = |cell_id: &str, v: f64| {
+            if POCKET_CELLS.contains(&cell_id) {
+                with_pocket(default_pocket_with(cell_id, v), &[])
+            } else {
+                input(&[(cell_id, v)])
+            }
+        };
         for v in values {
-            let f = record(&input(&[(&cell.id, v)]))
-                .unwrap_or_else(|e| panic!("{} = {v}: {e}", cell.id));
+            let f =
+                record(&alone(&cell.id, v)).unwrap_or_else(|e| panic!("{} = {v}: {e}", cell.id));
             let offset = f.offsets_mm.get(field).expect("offset field");
             assert!(
                 (nominal + offset - v).abs() < 1e-9,
@@ -119,7 +160,9 @@ fn every_grid_value_round_trips_through_its_offset() {
             );
             // Within the grid tolerance the value snaps to the cell.
             for nudge in [-0.9 * GRID_TOLERANCE_MM, 0.9 * GRID_TOLERANCE_MM] {
-                let g = record(&input(&[(&cell.id, v + nudge)])).expect("within tolerance");
+                let mut nudged = alone(&cell.id, v);
+                *nudged.cells.get_mut(&cell.id).expect("the cell") += nudge;
+                let g = record(&nudged).expect("within tolerance");
                 assert_eq!(g.offsets_mm.get(field), Some(offset), "{}", cell.id);
                 assert_eq!(
                     g.calibration.expect("cal").chosen_cells[&cell.id],
@@ -156,9 +199,9 @@ fn values_off_the_grid_are_refused_with_the_valid_range() {
         );
         assert!(msg.contains(&range), "{msg}");
     }
-    // The axle example of docs/plan/05 section 3 (4.86) belongs to the 0.02 mm
-    // fine pass, which coupon v1 does not have: 4.86 - 4.75 = 0.11 is 2.2 steps
-    // of 0.05.
+    // A value of the optional 0.02 mm fine pass (docs/plan/05 section 4), such
+    // as 4.86 around the axle cell, is not a cell of coupon v1: 4.86 - 4.75 =
+    // 0.11 is 2.2 steps of 0.05.
     let axle = coupon_v1().cell("axle").expect("axle cell");
     let err = record(&input(&[("axle", 4.86)])).expect_err("not a v1 cell");
     let range = format!("from {} to {} mm", axle.start_mm, axle.end_mm);
@@ -267,8 +310,10 @@ fn the_written_profile_reads_back_and_omits_what_is_absent() {
     {
         cells.insert(c.id.clone(), c.end_mm);
     }
+    // The last tube OD with the last rib depth is a pocket of the full set only.
     let f = record(&RecordInput {
         cells,
+        pocket_set: Some("full".into()),
         ..input(&[])
     })
     .expect("records");
@@ -276,6 +321,8 @@ fn the_written_profile_reads_back_and_omits_what_is_absent() {
     let text = serde_json::to_string_pretty(&f).expect("serialises");
     let v: serde_json::Value = serde_json::from_str(&text).expect("JSON");
     assert_eq!(v["kind"], "fit");
+    assert_eq!(v["openbrick"], "1.1", "pocketSet is a 1.1 field");
+    assert_eq!(v["calibration"]["pocketSet"], "full");
     assert_eq!(v["credit"]["author"], "anonymous");
     assert!(v["calibration"].get("date").is_none(), "no empty date");
     assert!(v["material"].get("brand").is_none(), "no empty brand");
@@ -285,4 +332,75 @@ fn the_written_profile_reads_back_and_omits_what_is_absent() {
         back.calibration.expect("cal").chosen_cells,
         f.calibration.expect("cal").chosen_cells
     );
+}
+
+#[test]
+fn a_pocket_is_one_printed_cell() {
+    let spec = coupon_v1();
+    let od_cell = spec.cell(POCKET_CELLS[0]).expect("tube OD sweep");
+    let rib_cell = spec.cell(POCKET_CELLS[1]).expect("rib sweep");
+    // The default coupon's rib line runs at the standard rib depth, which is a
+    // cell of the sweep.
+    let rib0 = rib_cell
+        .grid_value(STANDARD.get().mm("rib_depth"))
+        .expect("the standard rib depth is a coupon cell");
+    let od = od_cell.end_mm;
+    // The pocket the example profile records: the tightest tube OD on the
+    // nominal rib line, which the default coupon prints.
+    let f = record(&with_pocket((od, rib0), &[])).expect("a printed pocket");
+    assert_eq!(f.offsets_mm.rib_depth, 0.0);
+    let cal = f.calibration.as_ref().expect("cal");
+    assert_eq!(cal.pocket_set.as_deref(), Some(DEFAULT_POCKET_SET));
+    assert_eq!(f.openbrick, "1.1");
+
+    // That OD with a rib two steps deeper (6.65/0.40, the plan's former
+    // example): the best OD of the OD line with the best rib of the rib line,
+    // which the default coupon never prints.
+    let rib = rib0 + 2.0 * rib_cell.step_mm;
+    let err = record(&with_pocket((od, rib), &[])).expect_err("not printed");
+    let RecordError::PocketNotPrinted { set, printed, .. } = &err else {
+        panic!("{err:?}");
+    };
+    assert_eq!(set, DEFAULT_POCKET_SET);
+    let msg = err.to_string();
+    assert!(msg.contains(&format!("{od:.2}/{rib:.2}")), "{msg}");
+    // The message names every printed choice, the one recorded above included.
+    let choices = spec.printed_pockets(DEFAULT_POCKET_SET).expect("cross");
+    assert_eq!(printed.split(", ").count(), choices.len(), "{printed}");
+    assert!(printed.contains(&format!("{od:.2}/{rib0:.2}")), "{printed}");
+
+    // The full set prints it.
+    let mut full = with_pocket((od, rib), &[]);
+    full.pocket_set = Some("full".into());
+    let f = record(&full).expect("the full set prints every pair");
+    assert_eq!(
+        f.calibration.expect("cal").pocket_set.as_deref(),
+        Some("full")
+    );
+}
+
+#[test]
+fn both_pocket_values_come_together_from_a_known_set() {
+    let od = first(POCKET_CELLS[0]);
+    let rib = first(POCKET_CELLS[1]);
+    for (cells, missing) in [
+        (vec![(POCKET_CELLS[0], od)], POCKET_CELLS[1]),
+        (vec![(POCKET_CELLS[1], rib)], POCKET_CELLS[0]),
+    ] {
+        let err = record(&input(&cells)).expect_err("half a pocket");
+        assert_eq!(err, RecordError::PocketIncomplete { missing }, "{err}");
+        assert!(err.to_string().contains(missing), "{err}");
+    }
+    let mut bad = with_pocket((od, rib), &[]);
+    bad.pocket_set = Some("diagonal".into());
+    let err = record(&bad).expect_err("unknown set");
+    assert_eq!(err, RecordError::UnknownPocketSet("diagonal".into()));
+    for set in POCKET_SETS {
+        assert!(err.to_string().contains(set), "{err}");
+    }
+    // Without pocket cells nothing is said about pockets, and the profile stays
+    // a 1.0 document.
+    let f = record(&input(&[("stud", first("stud"))])).expect("records");
+    assert_eq!(f.openbrick, "1.0");
+    assert_eq!(f.calibration.expect("cal").pocket_set, None);
 }

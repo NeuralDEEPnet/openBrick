@@ -52,7 +52,7 @@
           "minLength": 1
         },
         "value": {
-          "description": "The measured value, in the frame the rule compares: millimetres, with lengths in the bed plane as drawn plus fit offsets (the mesh length divided by the fit profile's xyScale); except MESH.VOLUME (deviation in percent; the volume in mm3 when it is not positive), FEATURE.MIN on the removed area (percent of the artwork area) and MESH.MANIFOLD on an empty mesh (component count). Null when the rule measures no number (FIT.PROCESS, FIT.MISSING, a non-manifold mesh, a volume that is not a finite number).",
+          "description": "The measured value, in the frame the rule compares: millimetres, with lengths in the bed plane as drawn plus fit offsets (the mesh length divided by the fit profile's xyScale); except MESH.VOLUME (deviation in percent; the volume in mm3 when it is not positive), FEATURE.MIN on the removed area (percent of the artwork area) and MESH.MANIFOLD on an empty mesh (component count). Null when the rule measures no number (FIT.PROCESS, FIT.MISSING, a non-manifold mesh, a volume that is not a finite number, an artwork stroke that was not measured).",
           "type": ["number", "null"]
         },
         "threshold": {

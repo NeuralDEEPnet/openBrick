@@ -30,7 +30,7 @@
     "minBodyWallMm": 1.2,
     "pinDiameterMm": 3.08,
     "process": "fdm-0.4",
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "studDiameterMm": 4.8,
     "triangleCount": 2640,

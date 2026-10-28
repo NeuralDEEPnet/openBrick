@@ -1,5 +1,5 @@
 {
-  "description": "The part allows fdm-0.4 and fdm-0.2, and the fit profile is calibrated for fdm-0.4, the process it is built and validated for.",
+  "description": "The part allows fdm-0.4 and fdm-0.2, and the fit profile is calibrated for fdm-0.4, the process it is built and validated for; the part was built with that profile's id and offsets.",
   "rule": "FIT.PROCESS",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",
@@ -26,6 +26,19 @@
     "fitCriticalConnectors": [
       "tubeF"
     ],
+    "fitOffsets": {
+      "axleHole": 0.05,
+      "barDiameter": -0.04,
+      "clipOpening": 0.02,
+      "firstLayerChamfer": 0.2,
+      "horizontalHoleDiameter": 0.2,
+      "pinDiameter": -0.1,
+      "ribDepth": 0.0,
+      "studDiameter": 0.0,
+      "tubeInnerDiameter": 0.15,
+      "tubeOuterDiameter": 0.136,
+      "xyScale": 1.0
+    },
     "fitProfile": "example-mk4s-petg-0.4",
     "genus": 0,
     "isManifold": true,
@@ -34,7 +47,7 @@
     "minTubeWallAtBedMm": 0.45,
     "minTubeWallMm": 0.85,
     "process": "fdm-0.4",
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 2640,
     "tubeInnerDiameterMm": 4.95,

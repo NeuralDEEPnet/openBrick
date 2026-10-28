@@ -1,5 +1,5 @@
 {
-  "description": "A tube wall of exactly the recommended 0.8 mm.",
+  "description": "A tube wall of exactly the recommended 0.8 mm. The rule reads only minTubeWallMm, so the tube diameters are left out rather than contradict it.",
   "rule": "TUBE.WALL",
   "process": "fdm-0.4",
   "fit": "example-mk4s-petg-0.4",
@@ -31,11 +31,9 @@
     "minTubeWallAtBedMm": 0.4,
     "minTubeWallMm": 0.8,
     "process": "fdm-0.4",
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 2640,
-    "tubeInnerDiameterMm": 4.95,
-    "tubeOuterDiameterMm": 6.65,
     "volumeMm3": 848.418
   },
   "report": {

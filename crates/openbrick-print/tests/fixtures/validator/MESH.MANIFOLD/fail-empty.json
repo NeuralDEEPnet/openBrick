@@ -31,7 +31,7 @@
     "minTubeWallAtBedMm": 0.45,
     "minTubeWallMm": 0.85,
     "process": "fdm-0.4",
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 0,
     "tubeInnerDiameterMm": 4.95,
@@ -43,7 +43,7 @@
       {
         "feature": null,
         "fix": "check that the part has a body feature and that its size is at least 1 x 1 stud",
-        "message": "the mesh is empty (0 components, 0 triangles): there is nothing to print",
+        "message": "the mesh is empty (0 components, 0 triangles; a printable part has at least 1): there is nothing to print",
         "rule": "MESH.MANIFOLD",
         "severity": "blocker",
         "threshold": 1.0,

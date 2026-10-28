@@ -35,7 +35,7 @@
     "process": "fdm-0.4",
     "reliefHeightMm": 0.6,
     "removedAreaPct": 0.0,
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 2640,
     "tubeInnerDiameterMm": 4.95,
@@ -46,7 +46,7 @@
     "findings": [
       {
         "feature": null,
-        "fix": "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes at least 0.8 mm wide (a bolder weight or a larger size) and keep minStroke at the process minimum",
+        "fix": "fit-critical artwork, such as a label someone reads to calibrate, must print as drawn: make its strokes at least 0.8 mm wide (a bolder weight or a larger size), and leave minFeature of the relief.svg feature out or at the process minimum",
         "message": "the thinnest stroke of the fit-critical artwork is 0.6 mm, below the 0.8 mm minimum feature of process `fdm-0.4`",
         "rule": "FEATURE.MIN",
         "severity": "blocker",

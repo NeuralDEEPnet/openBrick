@@ -11,7 +11,10 @@ mod coupon;
 mod record;
 mod validate;
 
-pub use coupon::{coupon_v1, CouponCell, CouponLabel, CouponSpec, GRID_TOLERANCE_MM};
+pub use coupon::{
+    coupon_v1, CouponCell, CouponLabel, CouponSpec, DEFAULT_POCKET_SET, GRID_TOLERANCE_MM,
+    POCKET_CELLS, POCKET_SETS,
+};
 pub use record::{
     is_profile_id, record, record_with, slug_id, RecordError, RecordInput, ANONYMOUS_AUTHOR,
     FIT_INTENTS, RECORD_DECIMALS,
@@ -43,10 +46,11 @@ pub struct ProcessProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_tube_wall_mm: Option<f64>,
     pub min_cavity_depth_mm: f64,
-    /// Share of artwork area, in percent, the morphological opening may remove
-    /// before rule `FEATURE.MIN` reports it (a blocker on fit-critical artwork,
-    /// a warning otherwise; docs/plan/05 section 5 asks the rule to report the
-    /// removed area). Absent means the removed area is never a trigger.
+    /// Share of artwork area, in percent, the morphological opening may remove:
+    /// rule `FEATURE.MIN` reports more than this (a blocker on fit-critical
+    /// artwork, a warning otherwise; docs/plan/05 section 5 asks the rule to
+    /// report the removed area), and exactly this passes. Absent means the
+    /// removed area is never a trigger.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_removed_area_pct: Option<f64>,
     pub min_relief_height_mm: f64,
@@ -271,6 +275,14 @@ pub struct Measurements {
     /// Fit profile id, if one was applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fit_profile: Option<String>,
+    /// The offsets of that fit profile, as the part was built with them. A
+    /// profile recorded again keeps its id ([`crate::record`] derives it from
+    /// printer, material and process), so rule `FIT.PROCESS` compares these
+    /// with the given profile's offsets too. `None` without a fit profile, and
+    /// in measurements written before the field existed (then only the ids
+    /// are compared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_offsets: Option<Offsets>,
     /// Process ids the part document allows (`print.profiles`); empty means any
     /// (rule `FIT.PROCESS`).
     #[serde(default)]
@@ -336,7 +348,15 @@ pub struct Measurements {
     /// Solid pin diameter under 1-wide parts after the `pinDiameter` offset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_diameter_mm: Option<f64>,
-    /// Wall rib depth after the `ribDepth` offset.
+    /// Wall rib depth as built, after the `ribDepth` offset: measured from the
+    /// wall the rib stands on, so on a process that quantises the side wall
+    /// thinner than the standard `side_wall` the rib is built deeper by the
+    /// difference (docs/plan/04 section 6; fdm-0.2: 0.1 mm deeper). The coupon's
+    /// `pocketRib` values are measured against the standard side wall instead,
+    /// so the comparable value is `min_body_wall_mm + rib_depth_mm - side_wall`
+    /// (lengths divided by `xyScale`). No rule reads it yet: `CLUTCH.RISK` covers
+    /// the stud, the tube bore and the tube outer diameter (the rule table of
+    /// docs/plan/05 section 5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rib_depth_mm: Option<f64>,
     /// Connector kinds of fit-critical features (for example `tubeF`, `studM`),
@@ -344,7 +364,10 @@ pub struct Measurements {
     #[serde(default)]
     pub fit_critical_connectors: Vec<String>,
     /// Reserved for artwork (filled by `relief.*`): thinnest stroke after the
-    /// morphological opening (rule `FEATURE.MIN`).
+    /// morphological opening (rule `FEATURE.MIN`). `None` on a part with
+    /// artwork (`removed_area_pct` or `relief_height_mm` set) means the stroke
+    /// was not measured, because the estimate ran out of its work budget; rule
+    /// `FEATURE.MIN` then reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_stroke_mm: Option<f64>,
     /// Reserved for artwork: area removed by the opening, in percent.
@@ -370,6 +393,13 @@ pub struct Calibration {
     pub coupon_version: u32,
     /// Chosen coupon cells by connector type: stud, tube, pocketTubeOD, pocketRib, technicH, pin, axle, bar, clip.
     pub chosen_cells: BTreeMap<String, f64>,
+    /// The pocket set of the coupon the pocket was chosen from (one of
+    /// [`POCKET_SETS`]; since schema 1.1). `pocketTubeOD` and `pocketRib` are
+    /// one pocket of that set, not the best of each line. Absent in profiles
+    /// without pocket cells and in 1.0 profiles, which do not say (the default
+    /// coupon prints [`DEFAULT_POCKET_SET`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pocket_set: Option<String>,
     /// Calendar date, YYYY-MM-DD; omitted when written if unknown.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub date: String,
@@ -573,6 +603,18 @@ mod tests {
         assert!((f.offsets_mm.stud_diameter - stud).abs() < 1e-9);
         assert!((f.offsets_mm.tube_inner_diameter - tube).abs() < 1e-9);
         assert!((f.offsets_mm.tube_outer_diameter - od).abs() < 0.01);
+        let rib = c.chosen_cells["pocketRib"] - s.mm("rib_depth");
+        assert!((f.offsets_mm.rib_depth - rib).abs() < 1e-9);
+        // Its pocket is one the coupon of its pocket set printed.
+        let set = c.pocket_set.as_deref().unwrap_or(DEFAULT_POCKET_SET);
+        let printed = coupon_v1().printed_pockets(set).expect("a pocket set");
+        let pocket = (c.chosen_cells["pocketTubeOD"], c.chosen_cells["pocketRib"]);
+        assert!(
+            printed
+                .iter()
+                .any(|&(o, r)| (o - pocket.0).abs() < 1e-9 && (r - pocket.1).abs() < 1e-9),
+            "{pocket:?} is not a pocket of `{set}`"
+        );
         let wall = (s.mm("tube_outer_diameter") + f.offsets_mm.tube_outer_diameter
             - (s.mm("tube_inner_diameter") + f.offsets_mm.tube_inner_diameter))
             / 2.0;

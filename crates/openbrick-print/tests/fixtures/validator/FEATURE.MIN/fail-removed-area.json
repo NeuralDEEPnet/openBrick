@@ -34,7 +34,7 @@
     "process": "fdm-0.4",
     "reliefHeightMm": 0.6,
     "removedAreaPct": 3.1,
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 2640,
     "tubeInnerDiameterMm": 4.95,
@@ -45,7 +45,7 @@
     "findings": [
       {
         "feature": null,
-        "fix": "if the red regions matter, make those lines wider than 0.8 mm or the artwork larger; otherwise you may export as it is",
+        "fix": "if the red regions matter, make those lines wider than 0.8 mm or the artwork larger, until the opening removes at most 1 % (the rule reports more than maxRemovedAreaPct); otherwise you may export as it is",
         "message": "the morphological opening removed 3.1 % of the artwork area, more than the 1 % allowed (maxRemovedAreaPct of process `fdm-0.4`): strokes thinner than the 0.8 mm minimum feature do not print, and the removed regions are shown in red in the preview",
         "rule": "FEATURE.MIN",
         "severity": "warning",

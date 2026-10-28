@@ -3,7 +3,10 @@
 //!
 //! The coupon generator prints these cells, [`crate::record`] turns the chosen
 //! cells into fit offsets, and rule `CLUTCH.RISK` ([`crate::validate`]) warns when
-//! a fit falls outside them, so all three agree on one set of numbers. Every
+//! a fit falls outside them, so all three agree on one set of numbers. Which
+//! pockets of the tube OD x rib depth cross a pocket set prints is
+//! [`CouponSpec::printed_pockets`], so the generator and the record agree on
+//! those too. Every
 //! number in the file cites its source (docs/plan/05 section 4 and the
 //! `print_target` notes in `standards/dimensions-v1.json`).
 
@@ -18,6 +21,22 @@ use crate::Offsets;
 /// millimetres: one nanometre, far below any printer and far above the
 /// floating-point residue of `start + i x step` (about 1e-15 mm).
 pub const GRID_TOLERANCE_MM: f64 = 1e-6;
+
+/// The two sweeps a 2x2 pocket cell crosses: its tube outer diameter and its
+/// wall rib depth (docs/plan/05 section 4). One stud of the brick below
+/// presses on the tube and on the ribs at once, so a pocket is one choice:
+/// [`crate::record`] takes both values together, from a pocket the coupon
+/// printed.
+pub const POCKET_CELLS: [&str; 2] = ["pocketTubeOD", "pocketRib"];
+
+/// The pocket sets a coupon can carry, by the names the coupon generator
+/// writes (`openbrick_part::coupon::PocketSet::name`), smallest first. See
+/// [`CouponSpec::printed_pockets`] for which pockets each one prints.
+pub const POCKET_SETS: [&str; 3] = ["cross", "crossAndDiagonal", "full"];
+
+/// The pocket set of the default coupon, and the one a fit profile without
+/// `calibration.pocketSet` was recorded from.
+pub const DEFAULT_POCKET_SET: &str = "cross";
 
 /// The whole coupon document.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -132,6 +151,52 @@ impl CouponSpec {
         self.cells.iter().find(|c| c.id == id)
     }
 
+    /// The distinct pockets (tube outer diameter, rib depth) a coupon with the
+    /// pocket set `set` prints, in the order of its lines; `None` when `set` is
+    /// not one of [`POCKET_SETS`] or the spec has no [`POCKET_CELLS`] sweeps.
+    ///
+    /// The rule is the coupon generator's (`plan_lines` in
+    /// `openbrick_part::coupon`; `tests/coupon.rs` there checks that the two
+    /// agree): the nominal row and column use the sweep values nearest the
+    /// standard tube OD and rib depth (the first on a tie).
+    ///
+    /// - `cross`: every OD at the nominal rib depth, then every rib depth at
+    ///   the nominal OD;
+    /// - `crossAndDiagonal`: the cross, then the i-th OD with the i-th rib
+    ///   depth for each i that both sweeps have;
+    /// - `full`: every OD with every rib depth.
+    pub fn printed_pockets(&self, set: &str) -> Option<Vec<(f64, f64)>> {
+        let od_cell = self.cell(POCKET_CELLS[0])?;
+        let rib_cell = self.cell(POCKET_CELLS[1])?;
+        let (ods, ribs) = (od_cell.values(), rib_cell.values());
+        let io = nearest(&ods, od_cell.nominal_mm());
+        let ir = nearest(&ribs, rib_cell.nominal_mm());
+        let mut index_pairs: Vec<(usize, usize)> = Vec::new();
+        match set {
+            "full" => {
+                for r in 0..ribs.len() {
+                    index_pairs.extend((0..ods.len()).map(|o| (o, r)));
+                }
+            }
+            "cross" | "crossAndDiagonal" => {
+                index_pairs.extend((0..ods.len()).map(|o| (o, ir)));
+                index_pairs.extend((0..ribs.len()).map(|r| (io, r)));
+                if set == "crossAndDiagonal" {
+                    index_pairs.extend((0..ods.len().min(ribs.len())).map(|i| (i, i)));
+                }
+            }
+            _ => return None,
+        }
+        let mut seen = BTreeSet::new();
+        Some(
+            index_pairs
+                .into_iter()
+                .filter(|p| seen.insert(*p))
+                .map(|(o, r)| (ods[o], ribs[r]))
+                .collect(),
+        )
+    }
+
     /// What JSON Schema cannot check: unique ids, nominals that exist, offset
     /// fields that exist and are set by one cell only, a positive step and an
     /// end a whole number of steps after the start. Returns one line per
@@ -192,6 +257,18 @@ impl CouponSpec {
     }
 }
 
+/// Index of the value nearest `x`, the first on a tie (as the coupon generator
+/// picks its nominal row and column).
+fn nearest(values: &[f64], x: f64) -> usize {
+    let mut best = 0;
+    for (i, v) in values.iter().enumerate() {
+        if (v - x).abs() < (values[best] - x).abs() - 1e-12 {
+            best = i;
+        }
+    }
+    best
+}
+
 /// `x` rounded to `places` decimal places, as the `f64` closest to that decimal
 /// (0.136, not 0.13600000000000012). `10^places` is exact for the few places
 /// used here, so the division rounds once.
@@ -216,4 +293,42 @@ pub fn coupon_v1() -> &'static CouponSpec {
         );
         spec
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_prefers_the_first_on_a_tie() {
+        assert_eq!(nearest(&[1.0, 2.0, 3.0], 2.5), 1);
+        assert_eq!(nearest(&[1.0, 2.0, 3.0], 2.6), 2);
+        assert_eq!(nearest(&[1.0, 2.0, 3.0], -5.0), 0);
+    }
+
+    #[test]
+    fn pocket_sets_print_what_their_names_say() {
+        let spec = coupon_v1();
+        let ods = spec.cell(POCKET_CELLS[0]).expect("od sweep").values();
+        let ribs = spec.cell(POCKET_CELLS[1]).expect("rib sweep").values();
+        let n = |set| spec.printed_pockets(set).expect(set).len();
+        // The cross shares its nominal pocket between its row and column.
+        assert_eq!(n("cross"), ods.len() + ribs.len() - 1);
+        // The diagonal adds one pocket per index both sweeps have, except where
+        // it meets the cross (the nominal OD index and the nominal rib index).
+        let cross = spec.printed_pockets("cross").expect("cross");
+        let diagonal_new = (0..ods.len().min(ribs.len()))
+            .filter(|&i| !cross.contains(&(ods[i], ribs[i])))
+            .count();
+        assert_eq!(n("crossAndDiagonal"), n("cross") + diagonal_new);
+        assert_eq!(n("full"), ods.len() * ribs.len());
+        assert_eq!(spec.printed_pockets("diagonal"), None);
+        // Every set prints the nominal pocket.
+        for set in POCKET_SETS {
+            let printed = spec.printed_pockets(set).expect(set);
+            let od0 = ods[nearest(&ods, STANDARD.get().mm("tube_outer_diameter"))];
+            let rib0 = ribs[nearest(&ribs, STANDARD.get().mm("rib_depth"))];
+            assert!(printed.contains(&(od0, rib0)), "{set}");
+        }
+    }
 }

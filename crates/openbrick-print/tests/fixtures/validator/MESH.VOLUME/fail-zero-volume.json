@@ -31,7 +31,7 @@
     "minTubeWallAtBedMm": 0.45,
     "minTubeWallMm": 0.85,
     "process": "fdm-0.4",
-    "ribDepthMm": 0.4,
+    "ribDepthMm": 0.3,
     "roofMm": 1.0,
     "triangleCount": 2640,
     "tubeInnerDiameterMm": 4.95,
@@ -43,7 +43,7 @@
       {
         "feature": null,
         "fix": "check that the body has a positive size and that no feature cuts it away completely",
-        "message": "the mesh volume is 0 mm3; a printable part has a positive volume",
+        "message": "the mesh volume is 0 mm3; a printable part has a volume above 0 mm3",
         "rule": "MESH.VOLUME",
         "severity": "warning",
         "threshold": 0.0,

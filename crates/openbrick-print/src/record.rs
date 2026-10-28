@@ -6,12 +6,22 @@
 //! +0.15; pin 4.70 - 4.80 = -0.10. Which offset each cell sets, and which
 //! nominal it is measured from, is data: `offsetField` and `standardId` of the
 //! cell in `standards/coupon-v1.json` ([`crate::coupon_v1`]).
+//!
+//! A 2x2 pocket is one choice: one stud of the brick below presses on the
+//! tube and on the wall ribs at once (docs/plan/05 section 4), so the best tube
+//! outer diameter of one line and the best rib depth of another add their
+//! interference on that stud, a fit no printed cell has tested. `pocketTubeOD`
+//! and `pocketRib` are therefore recorded together, as the two values of the one
+//! pocket that fits best, and that pocket must be one the coupon printed
+//! ([`RecordInput::pocket_set`], [`CouponSpec::printed_pockets`]).
 
 use std::collections::BTreeMap;
 
 use openbrick_units::Credit;
 
-use crate::coupon::{coupon_v1, round_dp, CouponSpec};
+use crate::coupon::{
+    coupon_v1, round_dp, CouponSpec, DEFAULT_POCKET_SET, POCKET_CELLS, POCKET_SETS,
+};
 use crate::{Calibration, FitProfile, Offsets};
 
 /// Offsets and chosen cells are written with this many decimal places
@@ -53,8 +63,14 @@ pub struct RecordInput {
     /// Free text; `None` writes a note naming the coupon version.
     pub notes: Option<String>,
     /// Chosen value by cell id (`stud`, `tube`, `pocketTubeOD`, `pocketRib`,
-    /// `technicH`, `pin`, `axle`, `bar`, `clip`; any subset), in millimetres.
+    /// `technicH`, `pin`, `axle`, `bar`, `clip`; any subset, except that the
+    /// two pocket values come together), in millimetres.
     pub cells: BTreeMap<String, f64>,
+    /// The pocket set of the printed coupon, one of [`POCKET_SETS`] (`cross`,
+    /// `crossAndDiagonal`, `full`; `openbrick_part::coupon::PocketSet::name`);
+    /// `None` means [`DEFAULT_POCKET_SET`]. The chosen pocket must be one this
+    /// set prints, and the profile records the set as `calibration.pocketSet`.
+    pub pocket_set: Option<String>,
 }
 
 /// Why a record was refused. Every message names what to change.
@@ -91,6 +107,17 @@ pub enum RecordError {
     UnknownProcess { process: String, known: String },
     #[error("date `{0}` is not a calendar date written YYYY-MM-DD")]
     Date(String),
+    #[error("pocket set `{0}` is not one of cross, crossAndDiagonal, full (the pockets option of the coupon that was printed)")]
+    UnknownPocketSet(String),
+    #[error("a pocket is one cell: record the tube outer diameter and the rib depth of the pocket that fits best together, as pocketTubeOD and pocketRib (the two numbers on its label); `{missing}` is missing")]
+    PocketIncomplete { missing: &'static str },
+    #[error("pocket {od}/{rib} mm (pocketTubeOD/pocketRib) is not a pocket of the `{set}` pocket set, so no printed cell has tested it: one stud presses on the tube and the ribs at once, so the best tube OD of one line and the best rib of another add up to a tighter fit than either. Record the one pocket that fits best, one of {printed}; or print a coupon whose pocket set has this pocket")]
+    PocketNotPrinted {
+        od: String,
+        rib: String,
+        set: String,
+        printed: String,
+    },
 }
 
 /// Record against the bundled coupon, [`coupon_v1`].
@@ -133,6 +160,10 @@ pub fn record_with(spec: &CouponSpec, input: &RecordInput) -> Result<FitProfile,
     }
     if !FIT_INTENTS.contains(&input.intent.as_str()) {
         return Err(RecordError::Intent(input.intent.clone()));
+    }
+    let pocket_set = input.pocket_set.as_deref().unwrap_or(DEFAULT_POCKET_SET);
+    if !POCKET_SETS.contains(&pocket_set) {
+        return Err(RecordError::UnknownPocketSet(pocket_set.into()));
     }
     let id = match &input.id {
         Some(id) if is_profile_id(id) => id.clone(),
@@ -183,6 +214,7 @@ pub fn record_with(spec: &CouponSpec, input: &RecordInput) -> Result<FitProfile,
         *slot = offset;
         chosen.insert(cell.id.clone(), round_dp(on_grid, RECORD_DECIMALS));
     }
+    let pocket = check_pocket(spec, &chosen, pocket_set)?;
 
     let mut material = serde_json::Map::new();
     material.insert("type".into(), input.material.trim().into());
@@ -201,7 +233,9 @@ pub fn record_with(spec: &CouponSpec, input: &RecordInput) -> Result<FitProfile,
         .filter(|a| !a.is_empty())
         .unwrap_or(ANONYMOUS_AUTHOR);
     Ok(FitProfile {
-        openbrick: "1.0".into(),
+        // calibration.pocketSet is a field of schema 1.1, and a document that
+        // uses it declares that minor (schemas/README.md).
+        openbrick: if pocket { "1.1" } else { "1.0" }.into(),
         kind: "fit".into(),
         id,
         credit: Some(Credit {
@@ -218,6 +252,7 @@ pub fn record_with(spec: &CouponSpec, input: &RecordInput) -> Result<FitProfile,
         calibration: Some(Calibration {
             coupon_version: spec.version,
             chosen_cells: chosen,
+            pocket_set: pocket.then(|| pocket_set.to_string()),
             date,
             pull_test_n: None,
             control_pull_test_n: None,
@@ -229,6 +264,50 @@ pub fn record_with(spec: &CouponSpec, input: &RecordInput) -> Result<FitProfile,
             )
         }),
     })
+}
+
+/// Whether `chosen` holds a pocket, after checking that it holds both of its
+/// values and that `set` prints that pocket.
+fn check_pocket(
+    spec: &CouponSpec,
+    chosen: &BTreeMap<String, f64>,
+    set: &str,
+) -> Result<bool, RecordError> {
+    let [od_id, rib_id] = POCKET_CELLS;
+    let (od, rib) = match (chosen.get(od_id), chosen.get(rib_id)) {
+        (None, None) => return Ok(false),
+        (Some(_), None) => return Err(RecordError::PocketIncomplete { missing: rib_id }),
+        (None, Some(_)) => return Err(RecordError::PocketIncomplete { missing: od_id }),
+        (Some(&od), Some(&rib)) => (od, rib),
+    };
+    let printed = spec
+        .printed_pockets(set)
+        .ok_or_else(|| RecordError::UnknownPocketSet(set.into()))?;
+    // Both values are grid values already, rounded alike.
+    let close = |a: f64, b: f64| (a - b).abs() <= crate::GRID_TOLERANCE_MM;
+    if printed.iter().any(|&(o, r)| close(o, od) && close(r, rib)) {
+        return Ok(true);
+    }
+    Err(RecordError::PocketNotPrinted {
+        od: cell_text(od),
+        rib: cell_text(rib),
+        set: set.into(),
+        printed: printed
+            .iter()
+            .map(|&(o, r)| format!("{}/{}", cell_text(o), cell_text(r)))
+            .collect::<Vec<_>>()
+            .join(", "),
+    })
+}
+
+/// A cell value as its label shows it: two decimals, more only when the value
+/// has them (6.50, 0.30).
+fn cell_text(v: f64) -> String {
+    if (round_dp(v, 2) - v).abs() < 1e-9 {
+        format!("{v:.2}")
+    } else {
+        format!("{}", round_dp(v, 6))
+    }
 }
 
 /// A profile id made of the given parts: lower case, every run of characters
