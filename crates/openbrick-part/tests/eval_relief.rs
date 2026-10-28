@@ -930,6 +930,207 @@ fn thin_face_material_left_by_a_cut_is_reported() {
     );
 }
 
+/// The logo tile with its top chamfer set to `round` mm (`None`: no `round`)
+/// and the artwork fitted with a `margin` mm margin, filling the face box in
+/// both directions (keepAspect false), so a square leaves a rim of margin plus
+/// chamfer all around.
+fn logo_tile_filling(round: Option<f64>, margin: f64) -> PartDoc {
+    let mut doc: Value = serde_json::from_str(LOGO_TILE).expect("JSON");
+    let body = &mut doc["features"][0];
+    assert_eq!(body["id"], "body");
+    match round {
+        Some(c) => body["round"]["radius"] = json!(format!("{c}mm")),
+        None => {
+            body.as_object_mut().expect("object").remove("round");
+        }
+    }
+    let art = &mut doc["features"][2];
+    assert_eq!(art["id"], "art");
+    art["fit"] = json!({ "margin": format!("{margin}mm"), "align": "center", "keepAspect": false });
+    PartDoc::parse(&doc.to_string()).expect("parses")
+}
+
+/// The thin face area, removed_area_pct and FEATURE.MIN findings of `doc` with
+/// `svg` in `mode`, each mode with reliefHeight `depth` mm when given.
+fn thin_report(
+    doc: &PartDoc,
+    svg: Vec<u8>,
+    mode: &str,
+    depth: Option<f64>,
+) -> (f64, f64, Vec<openbrick_print::Severity>, Built) {
+    let mut params = ParamValues::new().with("relief", json!(mode));
+    if let Some(d) = depth {
+        params = params.with("reliefHeight", json!(d));
+    }
+    let b = eval_doc(doc, svg, params).unwrap_or_else(|e| panic!("{mode}: {e}"));
+    let art = b.artwork.as_ref().expect("report");
+    let pct = b.measurements.removed_area_pct.expect("measured");
+    eprintln!(
+        "{mode}: thin {} mm2, removed {pct} %, warnings {:?}",
+        art.thin_face_area_mm2, b.warnings
+    );
+    (art.thin_face_area_mm2, pct, feature_min(&b), b)
+}
+
+/// Bounds on the thin area of a rim `rim` wide between a `w` x `d` outline and
+/// a square that fills the face box, opened at radius `r`: at most the ring
+/// between the two (the square's corners, which the stroke opening rounds, are
+/// counted as removed artwork, not as face material); at least the ring less,
+/// at each corner, its part within `rim + 2 r` of the outline's corner. The
+/// rounded corners of the square leave the ring fatter there, and the opening
+/// keeps that, but a point of a side strip farther than `rim + r` from the
+/// corner lies within `rim - r` of both the outline and the square, so no
+/// eroded point is there and nothing kept reaches farther than `rim + 2 r`.
+fn rim_bounds(w: f64, d: f64, rim: f64, r: f64) -> (f64, f64) {
+    let ring = w * d - (w - 2.0 * rim) * (d - 2.0 * rim);
+    let l = rim + 2.0 * r;
+    (ring - 4.0 * (l * l - (l - rim) * (l - rim)), ring)
+}
+
+#[test]
+fn face_material_exactly_min_feature_wide_is_not_thin() {
+    // "Thinner than minFeature" is strict: a rim of exactly minFeature (margin
+    // plus top chamfer) is what the warning's hint asks for, so following it
+    // clears the report. An inset by exactly half of it would leave nothing of
+    // a strip that wide; the check opens at half of it less 1 um instead.
+    // Before that, the 0.8 mm rim around this square counted 66.6 mm2, 15.6 %.
+    let p = fdm();
+    let mf = p.min_feature_mm;
+    let rc = top_chamfer();
+    let margin = mf - rc;
+    assert_eq!(rc + margin, mf, "the rim is exactly minFeature");
+    let emboss = tile(fixture("square.svg"), ParamValues::new()).expect("builds");
+    let corners_only = emboss.measurements.removed_area_pct.expect("measured");
+    for mode in ["deboss", "inlay"] {
+        let (thin, pct, findings, b) = thin_report(
+            &logo_tile_filling(Some(rc), margin),
+            fixture("square.svg"),
+            mode,
+            None,
+        );
+        assert_eq!(thin, 0.0, "{mode}");
+        assert!(findings.is_empty(), "{mode}: {findings:?}");
+        assert!(
+            b.warnings.iter().all(|w| !w.contains("maxRemovedAreaPct")),
+            "{mode}: {:?}",
+            b.warnings
+        );
+        // Only the opening's rounding of the square's corners is removed.
+        assert!(pct < corners_only, "{mode}: {pct} vs {corners_only}");
+
+        // A hundredth of a millimetre less and the rim is thin all along the
+        // sides of the square.
+        let less = margin - 0.01;
+        let (thin, _, findings, b) = thin_report(
+            &logo_tile_filling(Some(rc), less),
+            fixture("square.svg"),
+            mode,
+            None,
+        );
+        let f = face();
+        let bounds = rim_bounds(f.w, f.d, rc + less, r0());
+        assert_between(&format!("{mode} rim"), thin, bounds);
+        assert_eq!(findings, vec![openbrick_print::Severity::Warning], "{mode}");
+        assert!(
+            b.warnings.iter().any(|w| w.contains("at the body edge")),
+            "{mode}: {:?}",
+            b.warnings
+        );
+    }
+    // Sharp top edges: the rim is the margin alone.
+    let (thin, _, findings, _) = thin_report(
+        &logo_tile_filling(None, mf),
+        fixture("square.svg"),
+        "deboss",
+        None,
+    );
+    assert_eq!(thin, 0.0);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn a_rim_over_a_chamfer_deeper_than_the_cut_is_measured_at_the_cut() {
+    // The material between a recess and the body edge is the margin wide at
+    // the face and widens down the 45 degree chamfer, to margin plus depth at
+    // the bottom of the cut when the chamfer is deeper than the cut. A 0.6 mm
+    // chamfer with a 0.4 mm cut and a 0.3 mm margin leaves 0.7 mm, under
+    // minFeature, through the whole cut (and at the bed for an inlay, whose
+    // slab face is inset by the whole chamfer). Measured on the body outline it
+    // read 0.9 mm and was not reported.
+    let p = fdm();
+    let mf = p.min_feature_mm;
+    let (c, depth, margin) = (0.6, 0.4, 0.3);
+    assert!(margin + depth < mf && mf < margin + c);
+    let f = face();
+    let r = r0();
+    for mode in ["deboss", "inlay"] {
+        let doc = logo_tile_filling(Some(c), margin);
+        let (thin, _, findings, b) = thin_report(&doc, fixture("square.svg"), mode, Some(depth));
+        assert_eq!(b.measurements.relief_height_mm, Some(depth), "{mode}");
+        assert_eq!(b.artwork.as_ref().expect("report").face_chamfer_mm, c);
+        // The rim between the outline at the bottom of the cut (inset by
+        // c - depth) and the face box (inset by c + margin).
+        let out = c - depth;
+        let bounds = rim_bounds(f.w - 2.0 * out, f.d - 2.0 * out, margin + depth, r);
+        assert_between(&format!("{mode} rim"), thin, bounds);
+        assert_eq!(findings, vec![openbrick_print::Severity::Warning], "{mode}");
+
+        // A margin of minFeature less the depth makes the rim exactly
+        // minFeature at the bottom of the cut: not thin.
+        let doc = logo_tile_filling(Some(c), mf - depth);
+        let (thin, _, findings, _) = thin_report(&doc, fixture("square.svg"), mode, Some(depth));
+        assert_eq!(thin, 0.0, "{mode}");
+        assert!(findings.is_empty(), "{mode}: {findings:?}");
+    }
+}
+
+/// A plus sign, its arms one third of its size: fitted 13.2 mm wide on the
+/// tile, so 4.4 mm arms, and at least the 1.3 mm rim (margin plus chamfer) to
+/// the body edge.
+fn plus() -> Vec<u8> {
+    br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3 3">
+        <path d="M1 0 H2 V1 H3 V2 H2 V3 H1 V2 H0 V1 H1 Z"/>
+    </svg>"#
+        .to_vec()
+}
+
+#[test]
+fn rounded_corners_of_the_face_material_are_not_thin() {
+    // The plus sign's four inside corners are sharp corners of the face
+    // material around it, which the opening rounds (r^2 (1 - pi/4) each, plus
+    // the chords: 0.187 mm2 in all), but no wall or rim is thinner than
+    // minFeature: nothing is reported, and deboss and inlay remove what emboss
+    // removes. The sample mark (its narrowest face material about 2.7 mm, the
+    // rim 1.3 mm) reported 0.354 mm2 of corners before.
+    let p = fdm();
+    for (what, svg) in [("plus", plus()), ("mark", mark_svg())] {
+        let emboss = tile(svg.clone(), ParamValues::new()).expect("builds");
+        let e_pct = emboss.measurements.removed_area_pct.expect("measured");
+        for mode in ["deboss", "inlay"] {
+            let (thin, pct, _, b) = thin_report(&logo_tile(), svg.clone(), mode, None);
+            assert_eq!(thin, 0.0, "{what} {mode}");
+            assert_eq!(pct, e_pct, "{what} {mode}");
+            assert!(
+                b.warnings
+                    .iter()
+                    .all(|w| !w.contains("face material thinner")),
+                "{what} {mode}: {:?}",
+                b.warnings
+            );
+        }
+    }
+    // A sharp wedge of face material is thin near its tip and still counts:
+    // two triangles whose facing sides meet at 30 degrees leave a wedge that
+    // stays under minFeature for r cot(15 degrees) = 1.49 mm from its tip.
+    let wedge = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+        <path d="M0 0 H5 L2.32 10 H0 Z"/><path d="M10 0 H5 L7.68 10 H10 Z"/>
+    </svg>"#
+        .to_vec();
+    let (thin, _, _, _) = thin_report(&logo_tile(), wedge, "deboss", None);
+    let r = p.min_feature_mm / 2.0;
+    assert!(thin >= r * r, "the wedge's tip: {thin}");
+}
+
 #[test]
 fn the_removed_area_warning_uses_the_rules_threshold() {
     // The evaluator's warning and rule FEATURE.MIN read the same profile value

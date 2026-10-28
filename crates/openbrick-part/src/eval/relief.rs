@@ -46,12 +46,16 @@
 //!    colour. The multi-material variant, whose artwork fill is its own object,
 //!    is not built yet.
 //! 7. Thin face material (deboss and inlay): what prints is the face around the
-//!    cuts, so the body footprint minus the opened artwork is opened at the same
-//!    radius too (see [`thin_face`]). Walls between recesses and rims between
-//!    the artwork and the body edge thinner than `minFeature` are not removed,
-//!    but they count in `removed` (red in the preview) and in
-//!    `removed_area_pct`, so rule FEATURE.MIN reports them. Emboss prints the
-//!    artwork itself and is measured in step 5 only.
+//!    cuts, so the body footprint at the bottom of the cut minus the opened
+//!    artwork is opened at the same radius too (see [`thin_face`]). Walls
+//!    between recesses and rims between the artwork and the body edge strictly
+//!    thinner than `minFeature` are not removed, but they count in `removed`
+//!    (red in the preview) and in `removed_area_pct`, so rule FEATURE.MIN
+//!    reports them. Material exactly `minFeature` wide does not count, nor
+//!    does the rounding of the face material's corners (the artwork's inside
+//!    corners), except corners sharper than about 50 degrees, which are thin
+//!    near their tip. Emboss prints the artwork itself and is measured in
+//!    step 5 only.
 //!
 //! Inlay prints face down, so the top edges are its first layer: the top
 //! chamfer is raised to the first-layer chamfer (the larger of the process
@@ -185,11 +189,14 @@ pub struct Artwork {
     /// face material thinner than `minFeature` (see `thin_face_area_mm2`).
     pub removed: Vec<Polygon>,
     /// Area of the face material, among `removed`, that a deboss or inlay
-    /// leaves thinner than `minFeature`: walls between recesses, and rims
-    /// between the artwork and the body edge (measured on the body footprint,
-    /// so a rim counts with the top chamfer under it). It is still built; it
-    /// counts in `removed_area_pct` so rule FEATURE.MIN reports it. Always 0
-    /// for emboss.
+    /// leaves strictly thinner than `minFeature`: walls between recesses, and
+    /// rims between the artwork and the body edge. It is measured at the bottom
+    /// of the cut, so a rim is the margin plus as much of the top chamfer as
+    /// the cut reaches. The rounding of the face material's corners (the
+    /// artwork's inside corners) is not a wall and is not counted; corners
+    /// sharper than about 50 degrees are thin near their tip and are. It is
+    /// still built; it counts in `removed_area_pct` so rule FEATURE.MIN reports
+    /// it. Always 0 for emboss.
     #[serde(default)]
     pub thin_face_area_mm2: f64,
     /// Paths whose stroke was ignored (v1 builds fills only).
@@ -659,33 +666,61 @@ fn opening<K: Kernel>(k: &K, s: &CrossSection, r: f64) -> Result<Opened, GeomErr
 
 /// Face material thinner than `2 r` that cutting `art` (already opened) into the
 /// top of a body with footprint `size` leaves (deboss and inlay): the footprint
-/// minus `art`, less its opening at radius `r`. That finds walls between
-/// recesses and rims between the artwork and the body edge. The footprint's own
-/// corners, which any opening rounds, are not counted: only what lies inside the
-/// opening of the bare footprint is.
+/// inset by `inset` minus `art`, less its opening. That finds walls between
+/// recesses and rims between the artwork and the body edge. Three things are
+/// not counted:
 ///
-/// The footprint is the body outline, not the flat face inside the top chamfer,
-/// because the material around a recess reaches the outline below the chamfer:
-/// a rim is as wide as the margin plus the chamfer under it, and artwork that
-/// reaches the face box with no margin leaves the chamfer as a knife edge, which
-/// this finds. `None` when an offset would need more than [`MAX_ARTWORK_SWEEP`].
+/// - Material exactly `2 r` wide, which is not thinner than `2 r`: an inset by
+///   exactly `r` leaves nothing of a strip that wide, so the opening radius is
+///   `r` less [`MIN_LENGTH_MM`], the evaluator's zero length.
+/// - The footprint's own corners, which any opening rounds: only what lies
+///   inside the opening of the bare footprint counts.
+/// - Pieces smaller than `r^2`, as [`min_stroke`] does not count them as
+///   strokes: the rounding of a corner of the face material (an inside corner
+///   of the artwork) is not a wall. A corner of angle a rounds off
+///   r^2 (cot(a / 2) - (pi - a) / 2) with true arcs, a little more with the
+///   chords of the round joins: for 90 degrees 0.21 r^2, 0.29 r^2 at 8 chords
+///   per turn (r = 0.4 mm) and at most 0.5 r^2 (4 chords per turn). Corners
+///   sharper than 50 degrees (true arcs) to 56 degrees (4 chords per turn)
+///   round off more than r^2: they are thin near their tip and count.
+///
+/// The footprint is the body outline at the bottom of the cut (`inset` is what
+/// is left of the top chamfer below the depth, 0 when the cut reaches below
+/// the chamfer), not the flat face inside the chamfer, because the material
+/// around a recess is that wide at its base: a rim is the margin plus as much
+/// of the chamfer as the cut reaches, and artwork that reaches the face box
+/// with no margin leaves a knife edge, which this finds. `None` when an offset
+/// would need more than [`MAX_ARTWORK_SWEEP`].
 fn thin_face<K: Kernel>(
     k: &K,
     size: [f64; 2],
+    inset: f64,
     art: &CrossSection,
     r: f64,
 ) -> Result<Option<CrossSection>, GeomError> {
-    let footprint = CrossSection::from(vec![Polygon::rect([0.0, 0.0], size)]);
+    let footprint = CrossSection::from(vec![Polygon::rect(
+        [inset, inset],
+        [size[0] - 2.0 * inset, size[1] - 2.0 * inset],
+    )]);
     let material = region::difference(&footprint, art);
-    let Opened::Done { opened: kept, .. } = opening(k, &material, r)? else {
+    let rt = r - MIN_LENGTH_MM;
+    let Opened::Done { opened: kept, .. } = opening(k, &material, rt)? else {
         return Ok(None);
     };
-    let Opened::Done { opened: whole, .. } = opening(k, &footprint, r)? else {
+    let Opened::Done { opened: whole, .. } = opening(k, &footprint, rt)? else {
         return Ok(None);
     };
-    Ok(Some(region::intersection(
-        &region::difference(&material, &kept),
-        &whole,
+    let thin = region::intersection(&region::difference(&material, &kept), &whole);
+    // Holes go through the same filter, and none is dropped: a hole of a piece
+    // holds a whole piece of the artwork or of `kept`, each of which holds the
+    // round-join polygon of a disc of radius rt or more (2 rt^2 at 4 chords
+    // per turn, 2.8 rt^2 at 8), more than r^2 for any r over 4 um. Only
+    // slivers of rounding go.
+    Ok(Some(CrossSection::from(
+        thin.polygons
+            .into_iter()
+            .filter(|p| p.signed_area().abs() >= r * r)
+            .collect(),
     )))
 }
 
@@ -947,12 +982,51 @@ pub(crate) fn plan_relief<K: Kernel>(
         )));
     }
     let mut removed = region::difference(&art, &opened);
+
+    // The depth of a cut keeps the cavity (docs/plan/05 section 6).
+    let mut height = requested;
+    if mode.cuts() {
+        let cavity = g.cavity_depth();
+        let room = cavity - process.min_cavity_depth_mm;
+        let mut depth = if requested <= room {
+            requested
+        } else {
+            // The slack keeps a room of 0.39999999999999997 at 0.4.
+            (room / DEPTH_GRID_MM + 1e-9).floor() * DEPTH_GRID_MM
+        };
+        while depth > 0.0 && g.height - (g.roof + depth) < process.min_cavity_depth_mm {
+            depth -= DEPTH_GRID_MM;
+        }
+        if depth < MIN_LENGTH_MM {
+            return Err(feat.fail(format!(
+                "no room to {}: the cavity under the {} mm roof is {cavity:.3} mm deep and must keep {} mm (minCavityDepthMm of {}); use emboss, or a taller body",
+                mode.name(),
+                g.roof,
+                process.min_cavity_depth_mm,
+                process.id
+            )));
+        }
+        if depth < requested - 1e-9 {
+            warnings.push(format!(
+                "feature `{}`: {} depth {requested} mm is clamped to {depth:.3} mm so the cavity keeps {} mm (minCavityDepthMm of {}); the cavity under the thickened roof measures {:.3} mm (rule CAVITY.DEPTH)",
+                feat.id(),
+                mode.name(),
+                process.min_cavity_depth_mm,
+                process.id,
+                g.height - (g.roof + depth)
+            ));
+        }
+        height = depth;
+    }
+
     // A deboss or inlay prints the face around the cuts: face material thinner
     // than minFeature is still built, but shown and counted with the removed
-    // strokes (see `thin_face`).
+    // strokes (see `thin_face`). It is measured at the bottom of the cut, where
+    // the top chamfer reaches in by what is left of it below the depth.
     let mut thin_area = 0.0;
     if mode.cuts() && r0 > 0.0 {
-        match thin_face(kernel, g.size, &opened, r0).map_err(super::kernel_err(&what))? {
+        let inset = (g.top_chamfer - height).max(0.0);
+        match thin_face(kernel, g.size, inset, &opened, r0).map_err(super::kernel_err(&what))? {
             Some(thin) => {
                 // A removed stroke is not cut, so it is face material too:
                 // count each region once.
@@ -1000,41 +1074,6 @@ pub(crate) fn plan_relief<K: Kernel>(
         ));
     }
 
-    // The depth of a cut keeps the cavity (docs/plan/05 section 6).
-    let mut height = requested;
-    if mode.cuts() {
-        let cavity = g.cavity_depth();
-        let room = cavity - process.min_cavity_depth_mm;
-        let mut depth = if requested <= room {
-            requested
-        } else {
-            // The slack keeps a room of 0.39999999999999997 at 0.4.
-            (room / DEPTH_GRID_MM + 1e-9).floor() * DEPTH_GRID_MM
-        };
-        while depth > 0.0 && g.height - (g.roof + depth) < process.min_cavity_depth_mm {
-            depth -= DEPTH_GRID_MM;
-        }
-        if depth < MIN_LENGTH_MM {
-            return Err(feat.fail(format!(
-                "no room to {}: the cavity under the {} mm roof is {cavity:.3} mm deep and must keep {} mm (minCavityDepthMm of {}); use emboss, or a taller body",
-                mode.name(),
-                g.roof,
-                process.min_cavity_depth_mm,
-                process.id
-            )));
-        }
-        if depth < requested - 1e-9 {
-            warnings.push(format!(
-                "feature `{}`: {} depth {requested} mm is clamped to {depth:.3} mm so the cavity keeps {} mm (minCavityDepthMm of {}); the cavity under the thickened roof measures {:.3} mm (rule CAVITY.DEPTH)",
-                feat.id(),
-                mode.name(),
-                process.min_cavity_depth_mm,
-                process.id,
-                g.height - (g.roof + depth)
-            ));
-        }
-        height = depth;
-    }
     if mode == Mode::Inlay {
         // The slicer assigns each layer to an object by where the layer lies,
         // and a first layer plus whole layers need not add up to the depth (a
