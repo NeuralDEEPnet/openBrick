@@ -44,9 +44,7 @@ use serde_json::{json, Value};
 
 pub use hash::{canonical_json, sha256_hex};
 pub use params::{resolve_params, ResolvedParams};
-pub use relief::{
-    Artwork, FLATTEN_TOLERANCE_MM, MAX_ARTWORK_POINTS, MAX_ARTWORK_SWEEP, REMOVED_WARN_PCT,
-};
+pub use relief::{Artwork, FLATTEN_TOLERANCE_MM, MAX_ARTWORK_POINTS, MAX_ARTWORK_SWEEP};
 pub use svg::{
     MAX_CSS_SELECTOR_PARTS, MAX_SVG_ATTRIBUTES, MAX_SVG_BYTES, MAX_SVG_CSS_DECLARATIONS,
     MAX_SVG_CSS_WORK, MAX_SVG_DEPTH, MAX_SVG_ELEMENTS, MAX_SVG_NODES, MAX_SVG_PATHS, MAX_SVG_WORK,
@@ -59,8 +57,9 @@ use relief::ReliefPlan;
 use crate::{Feature, PartDoc, PartError};
 
 /// Bump when the evaluator builds different geometry or connectors for the same
-/// inputs, so content hashes made by older builds no longer match.
-pub const EVALUATOR_REVISION: u32 = 1;
+/// inputs, so content hashes made by older builds no longer match. 2: an inlay
+/// raises the top chamfer to the first-layer chamfer (the face is on the bed).
+pub const EVALUATOR_REVISION: u32 = 2;
 
 /// The ops [`evaluate`] builds.
 pub const SUPPORTED_OPS: &[&str] = &[
@@ -1016,7 +1015,8 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
                 studs = Some((feat.id().to_string(), plan));
             }
             "relief.svg" => {
-                let b = body.as_ref().ok_or(EvalError::NoBody)?;
+                // Mutable: an inlay raises the body's top chamfer.
+                let b = body.as_mut().ok_or(EvalError::NoBody)?;
                 if let Some(other) = &relief {
                     return Err(feat.fail(format!(
                         "the body already has the relief `{}`; one relief.svg per part is built so far, so combine the artwork into one SVG",
@@ -1071,6 +1071,10 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
     // artwork keeps its thickness; the whole ceiling moves down (see the module
     // comment of `relief`).
     let mut roof_under_artwork = None;
+    // Volume where tubes, pins and ribs reach into the thickened roof, which
+    // the body already fills: rule MESH.VOLUME compares the union with the sum
+    // of the solids, so this overlap is taken off that sum once.
+    let mut roof_overlap_mm3 = 0.0;
     if let Some(r) = relief.as_ref().filter(|r| r.mode.cuts()) {
         let roof = body.geom.roof;
         roof_under_artwork = Some(roof);
@@ -1092,7 +1096,9 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         // apart depending on rounding: measured on manifold-rust 0.19.1, a plain
         // 2x4 tile with a 1.4 mm roof keeps its three tubes as loose solids.
         if let Some((_, plan)) = &mut tubes {
-            plan.geom.top = body.geom.cavity_depth() + r.height.min(roof / 2.0);
+            let ceiling = body.geom.cavity_depth();
+            plan.geom.top = ceiling + r.height.min(roof / 2.0);
+            roof_overlap_mm3 = (plan.geom.top - ceiling) * plan.geom.section_area(offsets.xy_scale);
         }
     }
 
@@ -1130,7 +1136,8 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
             pieces.push((plan.role.clone(), s));
         }
     }
-    let mut feature_volume_sum: f64 = pieces.iter().map(|(_, s)| s.volume_mm3()).sum();
+    let mut feature_volume_sum: f64 =
+        pieces.iter().map(|(_, s)| s.volume_mm3()).sum::<f64>() - roof_overlap_mm3;
 
     // Per role: the body (when it has this role) and the feature solids.
     type Group<S> = (Option<S>, Vec<S>);

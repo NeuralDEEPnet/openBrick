@@ -356,6 +356,25 @@ pub(crate) struct TubeGeom {
 }
 
 impl TubeGeom {
+    /// Area of the horizontal section through every tube, pin and rib above
+    /// their bottom chamfers, in mm2 with the `xyScale` `xy` applied: the
+    /// regular `segments`-gon rings and discs [`TubeGeom::build`] revolves
+    /// (vertices on the circle, so a ring of radii R and r has area
+    /// n/2 sin(2 pi / n) (R^2 - r^2)) and the rib rectangles.
+    pub(crate) fn section_area(&self, xy: f64) -> f64 {
+        let n = f64::from(self.segments.max(3));
+        let ngon = n / 2.0 * (std::f64::consts::TAU / n).sin();
+        let r2 = |d: f64| (d / 2.0 * xy).powi(2);
+        let tubes = self.tubes.len() as f64 * ngon * (r2(self.tube_outer) - r2(self.tube_inner));
+        let pins = self.pins.len() as f64 * ngon * r2(self.pin_diameter);
+        let ribs: f64 = self
+            .ribs
+            .iter()
+            .map(|b| (b.max[0] - b.min[0]) * (b.max[1] - b.min[1]) * xy * xy)
+            .sum();
+        tubes + pins + ribs
+    }
+
     pub(crate) fn build<K: Kernel>(&self, g: &Geo<K>) -> Result<Vec<K::Solid>, GeomError> {
         let mut out = Vec::new();
         let top = self.top;

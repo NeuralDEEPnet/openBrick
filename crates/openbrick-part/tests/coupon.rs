@@ -271,7 +271,15 @@ fn default_coupon_is_one_manifold_body_with_the_analytic_volume() {
     assert_eq!(m.min_stroke_mm, Some(p.min_feature_mm));
     assert_eq!(m.relief_height_mm, Some(c.summary.label_relief_mm));
     assert_eq!(m.min_body_wall_mm, Some(mm("side_wall")));
-    assert!(m.min_tube_wall_mm.unwrap() >= p.min_tube_wall_mm);
+    // No tube wall for rule TUBE.WALL, whose fix is a fit-profile offset: the
+    // coupon takes none. Every cell's wall is measured on the mesh instead, at
+    // least minTubeWallMm (check_bore_and_pocket_cells).
+    assert_eq!(
+        (m.min_tube_wall_mm, m.min_tube_wall_at_bed_mm),
+        (None, None)
+    );
+    // The labels are read to calibrate.
+    assert!(m.fit_critical_artwork);
 
     if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
         assert_eq!(
@@ -700,6 +708,13 @@ fn check_bore_and_pocket_cells(c: &Coupon, p: &ProcessProfile) {
                     "bore {x}: tube OD {}",
                     2.0 * ro
                 );
+                // The wall a part gets with this bore offset, thin on purpose
+                // but never under the process minimum.
+                assert!(
+                    ro - ri >= p.min_tube_wall_mm - 1e-4,
+                    "bore {x}: wall {}",
+                    ro - ri
+                );
             }
             "pocketTubeOD" => {
                 pockets += 1;
@@ -716,6 +731,11 @@ fn check_bore_and_pocket_cells(c: &Coupon, p: &ProcessProfile) {
                     2.0 * ro
                 );
                 assert!((2.0 * ri - id).abs() < 1e-4);
+                assert!(
+                    ro - ri >= p.min_tube_wall_mm - 1e-4,
+                    "pocket tube OD {x}: wall {}",
+                    ro - ri
+                );
                 // The cavity loop (wall inner faces with the eight ribs): its area
                 // gives the depth the ribs were built to.
                 let side = 2.0 * reserve(cell);
@@ -1191,4 +1211,61 @@ fn record_accepts_exactly_the_pockets_each_pocket_set_prints() {
             assert_eq!(accepted, ods.len() * ribs.len());
         }
     }
+}
+
+#[test]
+fn the_coupon_validates_without_findings() {
+    // validate() on the coupon's own measurements: no TUBE.WALL advice to
+    // change a fit profile the coupon never takes (its bore cells are as thin
+    // as a part's tube gets with that bore offset, on purpose), and nothing
+    // else either, on fdm-0.4 (whose 0.8 mm recommended tube wall the 4.95 to
+    // 5.05 bore cells are under) and on fdm-0.2.
+    for (c, id) in [(coupon(), "fdm-0.4"), (coupon_fdm_02(), "fdm-0.2")] {
+        let p = process(id);
+        let report = openbrick_part::validate(&c.built, &p, None);
+        assert!(report.findings.is_empty(), "{id}: {:?}", report.findings);
+        assert!(report.export_allowed());
+    }
+    // The labels are fit-critical artwork: a stroke under the process
+    // minimum would block export, not just warn.
+    let p = process("fdm-0.4");
+    let mut thin = coupon().built.clone();
+    thin.measurements.min_stroke_mm = Some(p.min_feature_mm / 2.0);
+    let report = openbrick_part::validate(&thin, &p, None);
+    let feature_min: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.rule == "FEATURE.MIN")
+        .map(|f| f.severity)
+        .collect();
+    assert_eq!(feature_min, vec![openbrick_print::Severity::Blocker]);
+}
+
+#[test]
+fn the_print_estimate_is_always_a_finite_number() {
+    // JSON has no infinity: a time that overflowed would be written as null
+    // and not read back. A speed so small that the extrusion rate underflows to
+    // zero (5e-324 mm/s), or that leaves the bounding box over the rate past
+    // f64 (1e-305 mm/s: 0.4 x 0.2 x 1e-305 = 8e-307 mm3/s, and the default
+    // coupon's box is about 6.1e4 mm3, so about 7.6e310 s), is refused.
+    let p = process("fdm-0.4");
+    for speed in [5e-324, 1e-305] {
+        let o = CouponOptions {
+            estimate_speed_mm_s: speed,
+            ..CouponOptions::default()
+        };
+        match coupon_layout(&p, &o) {
+            Err(EvalError::Feature { feature, message }) => {
+                assert_eq!(feature, "coupon");
+                assert!(message.contains("estimateSpeedMmS"), "{message}");
+            }
+            other => panic!("speed {speed:e}: {other:?}"),
+        }
+    }
+    let e = &coupon().estimate;
+    assert!(e.time_s.is_finite() && e.time_s > 0.0);
+    let json = serde_json::to_string(e).expect("serialises");
+    let back: openbrick_part::coupon::PrintEstimate =
+        serde_json::from_str(&json).expect("reads back");
+    assert_eq!(&back, e);
 }

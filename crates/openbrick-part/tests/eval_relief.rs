@@ -51,6 +51,15 @@ fn logo_tile_with_art_field(field: &str, v: Value) -> PartDoc {
     PartDoc::parse(&doc.to_string()).expect("parses")
 }
 
+/// The logo tile whose body has no `round` field: sharp top edges.
+fn logo_tile_without_round() -> PartDoc {
+    let mut doc: Value = serde_json::from_str(LOGO_TILE).expect("JSON");
+    let body = &mut doc["features"][0];
+    assert_eq!(body["id"], "body");
+    body.as_object_mut().expect("object").remove("round");
+    PartDoc::parse(&doc.to_string()).expect("parses")
+}
+
 fn fixture(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/svg")
@@ -523,16 +532,44 @@ fn inlay_splits_off_the_face_slab_minus_the_logo() {
         (art.mode.as_str(), art.face_on_bed.as_str()),
         ("inlay", "top")
     );
-    assert!(
-        b.warnings.iter().any(|w| w.contains("face down")),
-        "{:?}",
-        b.warnings
-    );
+    // The warning says which variant this is: the single-extruder swap, with
+    // the artwork a recess in the body colour; the multi-material variant
+    // (the artwork fill as its own object) is still to come; and where the
+    // swap goes when the layers do not add up to the slab depth.
+    let inlay = b
+        .warnings
+        .iter()
+        .find(|w| w.contains("face down"))
+        .unwrap_or_else(|| panic!("{:?}", b.warnings));
+    for words in [
+        "single-extruder filament-swap variant",
+        "recess in the body colour",
+        "multi-material variant",
+        "is coming",
+        "first layer the slicer's preview shows as the body",
+        &format!("{t:.3} mm face slab"),
+    ] {
+        assert!(inlay.contains(words), "`{words}` in: {inlay}");
+    }
 
     // The slab is the top t of the tile (its 0.3 mm top chamfer lies inside it)
     // minus the square; the body is the thickened tile below it.
     let rc = top_chamfer();
     assert!(rc <= t);
+    // The tile's own 0.3 mm chamfer is above the first-layer chamfer, so it
+    // stays, and it is the chamfer of the face on the bed.
+    assert!(rc >= p.first_layer_chamfer_mm);
+    assert_eq!(art.face_chamfer_mm, rc);
+    assert!(
+        b.warnings
+            .iter()
+            .all(|w| !w.contains("top chamfer is raised")),
+        "{:?}",
+        b.warnings
+    );
+    // The square leaves no face material thinner than minFeature: a 1.3 mm
+    // rim (chamfer plus margin) to the long edges, more to the short ones.
+    assert!(art.thin_face_area_mm2 < 1e-9, "{}", art.thin_face_area_mm2);
     let slab_full = f.w * f.d * t - edge_chamfer(f.w, f.d, rc);
     let s = f.box_size()[0].min(f.box_size()[1]);
     let (a_lo, a_hi) = opened_square_area(s, r0());
@@ -566,6 +603,364 @@ fn inlay_splits_off_the_face_slab_minus_the_logo() {
     assert_eq!(m.genus, 1, "the slab is a frame around the square");
     check_fingerprint("inlay body", &body.mesh, 0x2300_1b60_c274_3581);
     check_fingerprint("inlay slab", &slab.mesh, 0xf569_6c2c_0869_0014);
+}
+
+#[test]
+fn inlay_without_round_puts_the_first_layer_chamfer_on_the_bed() {
+    // An inlay prints face down, so its top edges are the first layer. Without
+    // a `round` chamfer they get the first-layer chamfer that replaces
+    // elephant-foot compensation (docs/plan/05 section 6), with a warning; the
+    // face box moves inside it.
+    let p = fdm();
+    let c = p.first_layer_chamfer_mm;
+    assert!(c > 0.0);
+    let b = eval_doc(
+        &logo_tile_without_round(),
+        fixture("square.svg"),
+        ParamValues::new().with("relief", json!("inlay")),
+    )
+    .expect("builds");
+    eprintln!("warnings: {:?}", b.warnings);
+    let raised = format!("top chamfer is raised from 0 mm to {c} mm");
+    assert!(
+        b.warnings
+            .iter()
+            .any(|w| w.contains(&raised) && w.contains("elephant-foot")),
+        "{:?}",
+        b.warnings
+    );
+    let art = b.artwork.as_ref().expect("report");
+    assert_eq!(art.face_on_bed, "top");
+    assert_eq!(art.face_chamfer_mm, c);
+    let m = &b.measurements;
+    let t = m.relief_height_mm.expect("measured");
+    assert!(c <= t, "the chamfer lies inside the slab");
+
+    // The face box is inside the raised chamfer.
+    let (pitch, gap) = (mm("module"), mm("undersize_per_side"));
+    let (w, d, h) = (
+        2.0 * pitch - 2.0 * gap,
+        4.0 * pitch - 2.0 * gap,
+        mm("plate_height"),
+    );
+    let inset = c + param_default("margin");
+    for k in 0..2 {
+        assert!((art.box_min_mm[k] - inset).abs() < 1e-12);
+    }
+    let s = (w - 2.0 * inset).min(d - 2.0 * inset);
+    let (a_lo, a_hi) = opened_square_area(s, r0());
+    let (body, slab) = (&b.objects[0], &b.objects[1]);
+    assert_eq!((body.role.as_str(), slab.role.as_str()), ("body", "accent"));
+
+    // Independent volumes: the slab is the top t of a tile with a c chamfer on
+    // its top edges, minus the square; the body is the tile with that chamfer
+    // and the roof thickened by t, minus the slab.
+    let slab_full = w * d * t - edge_chamfer(w, d, c);
+    assert_between(
+        "slab volume",
+        slab.volume_mm3,
+        (slab_full - a_hi * t, slab_full - a_lo * t),
+    );
+    let mut q = p.clone();
+    q.min_roof_mm = mm("roof").max(p.min_roof_mm) + t;
+    q.wall_roof_fillet_mm.insert("plate".into(), 0.0);
+    let full = analytic_volume(
+        Shape {
+            top_chamfer: c,
+            ..tile_shape()
+        },
+        &q,
+        &Offsets::default(),
+    );
+    assert!(
+        (body.volume_mm3 - (full - slab_full)).abs() < 1e-6 * full,
+        "{} vs {}",
+        body.volume_mm3,
+        full - slab_full
+    );
+
+    // On the bed (the face plane) the slab's outline is inset by the chamfer:
+    // a slice just inside the face is the rectangle inset by c - 0.05 minus
+    // the square; lower down, below the chamfer, the slab reaches the outline.
+    let z = h - 0.05;
+    let inner = (w - 2.0 * (c - 0.05)) * (d - 2.0 * (c - 0.05));
+    let face = section_area(&slab.mesh, z, |_| true);
+    assert_between("slab at the bed", face, (inner - a_hi, inner - a_lo));
+    let below = section_area(&slab.mesh, h - c - 0.05, |_| true);
+    assert_between(
+        "slab below the chamfer",
+        below,
+        (w * d - a_hi, w * d - a_lo),
+    );
+    assert_bounds("slab", &slab.mesh, [0.0, 0.0, h - t], [w, d, h]);
+
+    // The Measurements first-layer fields keep describing the bottom edges at
+    // z = 0 (where the walls and tubes get the first-layer chamfer); the face
+    // on the bed is described by the artwork report above.
+    assert_eq!(m.first_layer_chamfer_mm, Some(c));
+    let wall = m.min_body_wall_mm.expect("measured");
+    assert!((m.min_body_wall_at_bed_mm.expect("measured") - (wall - 2.0 * c)).abs() < 1e-12);
+    let plain = eval_doc(
+        &logo_tile_without_round(),
+        fixture("square.svg"),
+        ParamValues::new(),
+    )
+    .expect("emboss builds");
+    let pm = &plain.measurements;
+    assert_eq!(
+        (m.min_body_wall_at_bed_mm, m.min_tube_wall_at_bed_mm),
+        (pm.min_body_wall_at_bed_mm, pm.min_tube_wall_at_bed_mm)
+    );
+    // Emboss prints face up and leaves the sharp top edges alone.
+    assert_eq!(plain.artwork.as_ref().expect("report").face_chamfer_mm, 0.0);
+    assert!(plain
+        .warnings
+        .iter()
+        .all(|w| !w.contains("top chamfer is raised")));
+
+    let fused = b.fused.as_ref().expect("two objects");
+    assert_eq!(shells(&fused.mesh), 1);
+    assert!(m.is_manifold && m.components == 2 && m.genus == 1);
+    // Both chamfers, the tile's 0.3 mm and this 0.2 mm, lie inside the 0.4 mm
+    // slab, so the body below the split is the rounded inlay's body exactly.
+    check_fingerprint("inlay sharp body", &body.mesh, 0x2300_1b60_c274_3581);
+    check_fingerprint("inlay sharp slab", &slab.mesh, 0x12c4_6d6b_269c_a77f);
+}
+
+#[test]
+fn the_feature_volume_sum_counts_the_roof_overlap_once() {
+    // Deboss and inlay extend the tubes, pins and ribs into the thickened roof,
+    // so the union merges them through an overlap instead of a shared plane.
+    // The feature volume sum takes that designed overlap off once, so rule
+    // MESH.VOLUME compares like with like. Counted twice, it put large tiles
+    // past the 5 % tolerance (checked below from the analytic overlap).
+    let mut fit = openbrick_print::example_fit_profile();
+    // 4.80 mm bores (a cell a user can record) and the example 6.65 mm tubes.
+    fit.offsets_mm.tube_inner_diameter = 0.0;
+    let p = fdm();
+    let assets = MemoryAssets::new().with("art.svg", fixture("square.svg"));
+    for (size, mode) in [([16, 16], "deboss"), ([2, 4], "inlay"), ([1, 4], "deboss")] {
+        let params = ParamValues::new()
+            .with("logo", json!("art.svg"))
+            .with("size", json!(size))
+            .with("relief", json!(mode));
+        let start = std::time::Instant::now();
+        let b = run_with_assets(&logo_tile(), &params, &p, Some(&fit), &assets, false)
+            .unwrap_or_else(|e| panic!("{size:?} {mode}: {e}"));
+        let m = &b.measurements;
+        let dev = (m.volume_mm3 - m.feature_volume_sum_mm3).abs() / m.feature_volume_sum_mm3;
+        eprintln!(
+            "{size:?} {mode}: volume {:.3}, feature sum {:.3}, {dev:e}, {:?}",
+            m.volume_mm3,
+            m.feature_volume_sum_mm3,
+            start.elapsed()
+        );
+        // Every solid touches or overlaps by design, and the plate-height
+        // cut leaves no wall-to-roof chamfer for the ribs to overlap: the sum
+        // is the union exactly, up to rounding.
+        assert!(dev < 1e-7, "{size:?} {mode}: {dev:e}");
+        let report = openbrick_part::validate(&b, &p, Some(&fit));
+        assert!(
+            report.findings.iter().all(|f| f.rule != "MESH.VOLUME"),
+            "{size:?} {mode}: {:?}",
+            report.findings
+        );
+        if size == [16, 16] {
+            // The overlap from the plan's shapes: 15 x 15 tubes, regular
+            // n-gon rings with their vertices on the circles, and 2 (16 + 16)
+            // ribs minFeature wide, each reaching min(depth, roof / 2) into
+            // the roof (225 x 64/2 sin(2 pi/64) (3.325^2 - 2.4^2) x 0.4 =
+            // 1,495 mm3, plus 8 mm3 of ribs). Counted twice, the sum would
+            // exceed the union by more than the rule's tolerance.
+            let reach = m
+                .relief_height_mm
+                .expect("depth")
+                .min(m.roof_mm.expect("roof") / 2.0);
+            let ro = m.tube_outer_diameter_mm.expect("tubes") / 2.0;
+            let ri = m.tube_inner_diameter_mm.expect("tubes") / 2.0;
+            let tubes = 225.0 * ngon(segments(&p)) * (ro * ro - ri * ri) * reach;
+            let ribs = 64.0 * p.min_feature_mm * m.rib_depth_mm.expect("ribs") * reach;
+            let twice = 100.0 * (tubes + ribs) / (m.volume_mm3 + tubes + ribs);
+            eprintln!("overlap {tubes:.1} + {ribs:.1} mm3: {twice:.2} % if counted twice");
+            assert!(
+                twice > openbrick_print::MESH_VOLUME_TOLERANCE_PCT,
+                "{twice}"
+            );
+        }
+    }
+}
+
+/// Two 4.9 x 10 unit blocks 0.2 units apart in a 10 x 10 viewBox: fitted 13.2
+/// mm wide (1.32 mm per unit), so 6.468 mm wide blocks and a 0.264 mm gap.
+fn two_blocks() -> Vec<u8> {
+    br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+        <rect width="4.9" height="10"/><rect x="5.1" width="4.9" height="10"/>
+    </svg>"#
+        .to_vec()
+}
+
+fn feature_min(b: &Built) -> Vec<openbrick_print::Severity> {
+    openbrick_part::validate(b, &fdm(), None)
+        .findings
+        .iter()
+        .filter(|f| f.rule == "FEATURE.MIN")
+        .map(|f| f.severity)
+        .collect()
+}
+
+#[test]
+fn thin_face_material_left_by_a_cut_is_reported() {
+    // Deboss and inlay print the face around the cuts. The 0.264 mm wall
+    // between the two blocks, under the 0.8 mm minFeature, is still built, but
+    // it is shown with the removed regions and counted in removed_area_pct, so
+    // rule FEATURE.MIN reports it. Emboss prints the blocks themselves (6.468
+    // mm wide) and is unchanged.
+    let f = face();
+    let unit = f.box_size()[0] / 10.0;
+    let (gap, height) = (0.2 * unit, 10.0 * unit);
+    let r = r0();
+    let [cx, cy] = f.centre();
+    let emboss = tile(two_blocks(), ParamValues::new()).expect("builds");
+    let e = emboss.artwork.as_ref().expect("report");
+    let emboss_pct = emboss.measurements.removed_area_pct.expect("measured");
+    eprintln!("emboss: {emboss_pct} %, warnings {:?}", emboss.warnings);
+    assert_eq!(e.thin_face_area_mm2, 0.0);
+    assert!(emboss_pct < 1.0, "only the corners: {emboss_pct}");
+    assert!(feature_min(&emboss).is_empty());
+    let inside = |art: &openbrick_part::eval::Artwork, p: [f64; 2]| {
+        art.removed
+            .iter()
+            .map(|poly| winding(&poly.points, p))
+            .sum::<i32>()
+            != 0
+    };
+    assert!(!inside(e, [cx, cy]));
+
+    for mode in ["deboss", "inlay"] {
+        let b = tile(two_blocks(), ParamValues::new().with("relief", json!(mode))).expect(mode);
+        let art = b.artwork.as_ref().expect("report");
+        let m = &b.measurements;
+        let pct = m.removed_area_pct.expect("measured");
+        eprintln!(
+            "{mode}: thin {} mm2, {pct} %, warnings {:?}",
+            art.thin_face_area_mm2, b.warnings
+        );
+        // At least the wall between the straight sides of the blocks (their
+        // corners are rounded by r), at most the wall over the blocks' whole
+        // height plus, at each of its two ends, the mouth around the rounded
+        // corners: within r of the wall on either side and within r of the
+        // end, (gap + 2 r) x 2 r.
+        let (lo, hi) = (
+            gap * (height - 2.0 * r),
+            gap * height + 2.0 * (gap + 2.0 * r) * (2.0 * r),
+        );
+        assert!(
+            art.thin_face_area_mm2 >= lo && art.thin_face_area_mm2 <= hi,
+            "{mode}: {} not in [{lo}, {hi}]",
+            art.thin_face_area_mm2
+        );
+        // The stroke share is the emboss one; the thin wall comes on top.
+        let thin_pct = 100.0 * art.thin_face_area_mm2 / art.area_before_mm2;
+        assert!(
+            (pct - (emboss_pct + thin_pct)).abs() < 1e-9,
+            "{mode}: {pct}"
+        );
+        assert!(
+            inside(art, [cx, cy]),
+            "{mode}: the wall is red in the preview"
+        );
+        assert!(!inside(art, [cx + 2.0, cy]), "{mode}: the blocks are not");
+        assert!(
+            b.warnings.iter().any(|w| w.contains("between the recesses")
+                && w.contains("FEATURE.MIN")
+                && w.contains("maxRemovedAreaPct")),
+            "{mode}: {:?}",
+            b.warnings
+        );
+        assert_eq!(
+            feature_min(&b),
+            vec![openbrick_print::Severity::Warning],
+            "{mode}"
+        );
+        // The geometry still has the wall: two recesses, not one.
+        assert!(m.is_manifold);
+    }
+
+    // A rim at the body edge: the square fills the face box across, and with
+    // no margin the rim to the long edges is only the 0.3 mm top chamfer (a
+    // knife edge at the face), under minFeature on both sides.
+    let fit = json!({ "margin": "0mm", "align": "center", "keepAspect": true });
+    let doc = logo_tile_with_art_field("fit", fit);
+    let rc = top_chamfer();
+    let s = f.w - 2.0 * rc;
+    let b = eval_doc(
+        &doc,
+        fixture("square.svg"),
+        ParamValues::new().with("relief", json!("deboss")),
+    )
+    .expect("builds");
+    let art = b.artwork.as_ref().expect("report");
+    eprintln!("rim: thin {} mm2", art.thin_face_area_mm2);
+    // The two rims along the square's straight sides at least; at most the
+    // rims over its whole side plus, at each of their four ends, the region
+    // within r of the end and within rc + r of the edge.
+    let (lo, hi) = (
+        2.0 * rc * (s - 2.0 * r),
+        2.0 * rc * s + 4.0 * (rc + r) * (2.0 * r),
+    );
+    assert!(
+        art.thin_face_area_mm2 >= lo && art.thin_face_area_mm2 <= hi,
+        "rim {} not in [{lo}, {hi}]",
+        art.thin_face_area_mm2
+    );
+    assert!(inside(art, [rc / 2.0, cy]), "the rim is red");
+    assert_eq!(feature_min(&b), vec![openbrick_print::Severity::Warning]);
+    // With the tile's own 1 mm margin the rim is 1.3 mm: nothing to report.
+    let b = tile(
+        fixture("square.svg"),
+        ParamValues::new().with("relief", json!("deboss")),
+    )
+    .expect("builds");
+    let art = b.artwork.as_ref().expect("report");
+    assert!(art.thin_face_area_mm2 < 1e-9, "{}", art.thin_face_area_mm2);
+    let emboss = tile(fixture("square.svg"), ParamValues::new()).expect("builds");
+    assert_eq!(
+        b.measurements.removed_area_pct,
+        emboss.measurements.removed_area_pct
+    );
+}
+
+#[test]
+fn the_removed_area_warning_uses_the_rules_threshold() {
+    // The evaluator's warning and rule FEATURE.MIN read the same profile value
+    // with the same comparison: removed more than maxRemovedAreaPct. At exactly
+    // the threshold neither reports; just under it both do; a profile without
+    // the value never makes the removed area a trigger.
+    let assets = MemoryAssets::new().with("art.svg", fixture("square.svg"));
+    let params = ParamValues::new().with("logo", json!("art.svg"));
+    let run_on = |q: &ProcessProfile| {
+        let b = run_with_assets(&logo_tile(), &params, q, None, &assets, false).expect("builds");
+        let warned = b.warnings.iter().any(|w| w.contains("maxRemovedAreaPct"));
+        let rule = openbrick_part::validate(&b, q, None)
+            .findings
+            .iter()
+            .any(|f| f.rule == "FEATURE.MIN");
+        (
+            b.measurements.removed_area_pct.expect("measured"),
+            warned,
+            rule,
+        )
+    };
+    let mut q = fdm();
+    let (pct, _, _) = run_on(&q);
+    assert!(pct > 0.0);
+    q.max_removed_area_pct = Some(pct);
+    assert_eq!(run_on(&q), (pct, false, false), "at the threshold");
+    q.max_removed_area_pct = Some(pct * (1.0 - 1e-6));
+    let (_, warned, rule) = run_on(&q);
+    assert!(warned && rule, "just over the threshold");
+    q.max_removed_area_pct = None;
+    assert_eq!(run_on(&q), (pct, false, false), "no threshold");
 }
 
 #[test]
@@ -711,6 +1106,94 @@ fn the_example_logo_tile_builds_with_its_own_artwork() {
             < 1e-6 * fused.volume_mm3
     );
     assert_eq!(shells(&fused.mesh), 1, "one solid, not two touching shells");
+
+    // Independent checks of the fit and the opening, from the numbers in
+    // parts/assets/mark.svg: a hexagon ring (outer vertices at y = 2 and 98,
+    // vertical sides at x = 8.431 and 91.569; inner hexagon 12 units in), a
+    // hub of radius 14 at (50, 50), two 20 x 8 spokes and a 1.5 unit hairline
+    // from the ring to the hub. keepAspect fits the 83.138 x 96 unit box into
+    // the face box: k mm per unit from the width.
+    let f = face();
+    let accent = &b.objects[1];
+    let h = param_default("reliefHeight");
+    let k = f.box_size()[0] / (91.569 - 8.431);
+    assert!(96.0 * k <= f.box_size()[1], "the width limits the fit");
+    let [cx, cy] = f.centre();
+    let (lo, hi) = bounds(&accent.mesh);
+    // The vertical sides are straight: the opening keeps them.
+    assert!((lo[0] - (cx - 41.569 * k)).abs() < 1e-4, "x min {}", lo[0]);
+    assert!((hi[0] - (cx + 41.569 * k)).abs() < 1e-4, "x max {}", hi[0]);
+    // The 120 degree top and bottom vertices are rounded: the opening's arc
+    // sits r (1 / sin 60 deg - 1) inside the vertex, its chords within the
+    // flattening tolerance of the arc.
+    let r = r0();
+    let tip = r * (1.0 / 60f64.to_radians().sin() - 1.0);
+    for (got, vertex) in [(lo[1], cy - 48.0 * k), (hi[1], cy + 48.0 * k)] {
+        let inside = (got - vertex).abs();
+        assert!(
+            inside >= tip - 1e-4 && inside <= tip + FLATTEN_TOLERANCE_MM + 1e-4,
+            "a vertex at y {vertex} is rounded to {got}"
+        );
+    }
+    assert!((art.area_after_mm2 * h - accent.volume_mm3).abs() < 1e-6 * accent.volume_mm3);
+    // The area before the opening: the two hexagons by the shoelace formula,
+    // the hub, the spokes outside the ring and the hub, and the hairline
+    // between them (closed-form integrals of the hub's circle).
+    let shoelace = |p: &[[f64; 2]]| {
+        (0..p.len())
+            .map(|i| {
+                let (a, b) = (p[i], p[(i + 1) % p.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum::<f64>()
+            .abs()
+            / 2.0
+    };
+    let outer = [
+        [50.0, 2.0],
+        [91.569, 26.0],
+        [91.569, 74.0],
+        [50.0, 98.0],
+        [8.431, 74.0],
+        [8.431, 26.0],
+    ];
+    let inner = [
+        [50.0, 14.0],
+        [81.177, 32.0],
+        [81.177, 68.0],
+        [50.0, 86.0],
+        [18.823, 68.0],
+        [18.823, 32.0],
+    ];
+    let rh = 14.0;
+    // The integral of sqrt(rh^2 - u^2) over [-a, a].
+    let chord = |a: f64| a * (rh * rh - a * a).sqrt() + rh * rh * (a / rh).asin();
+    // A spoke runs from the ring (x = 18.823) to x = 38, 4 units either side
+    // of the hub's centre line; the hub covers sqrt(rh^2 - u^2) - 12 of it.
+    let spoke = (38.0 - 18.823) * 8.0 - (chord(4.0) - 12.0 * 8.0);
+    // The hairline, 0.75 either side of x = 50: from the ring's inner edge
+    // (14 + |u| slope) down to the hub (50 - sqrt(rh^2 - u^2)).
+    let slope = (32.0 - 14.0) / (81.177 - 50.0);
+    let hairline = 36.0 * 1.5 - chord(0.75) - slope * 0.75 * 0.75;
+    let units = shoelace(&outer) - shoelace(&inner) + PI * rh * rh + 2.0 * spoke + hairline;
+    let analytic = units * k * k;
+    // The hub is the only curve: its flattened points lie on usvg's cubics
+    // (within 3e-4 r of the circle), chords at most the tolerance inside.
+    let rk = rh * k;
+    let (a_lo, a_hi) = (
+        analytic - 2.0 * PI * rk * FLATTEN_TOLERANCE_MM,
+        analytic + 2.0 * PI * rk * rk * 3e-4,
+    );
+    eprintln!("mark area {} vs analytic {analytic}", art.area_before_mm2);
+    assert_between("mark area", art.area_before_mm2, (a_lo, a_hi));
+    // The opening removed at least the whole hairline (0.198 mm wide).
+    assert!(1.5 * k < p.min_feature_mm);
+    let removed = art.area_before_mm2 - art.area_after_mm2;
+    assert!(
+        removed >= hairline * k * k - 1.5 * k * FLATTEN_TOLERANCE_MM,
+        "removed {removed} mm2, hairline {} mm2",
+        hairline * k * k
+    );
     check_fingerprint("mark accent", &b.objects[1].mesh, 0x9505_1b0a_e141_ba4d);
 
     // Each relief mode builds the example part.

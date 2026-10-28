@@ -41,7 +41,28 @@
 //!    a separate object of `colorRole` that touches the body without overlapping
 //!    it; `deboss` cuts it `height` deep into the face; `inlay` cuts it the same
 //!    way and splits off the face slab as the `colorRole` object (docs/plan/05
-//!    section 6), printed face down.
+//!    section 6), printed face down. Inlay builds the single-extruder
+//!    filament-swap variant only: the artwork prints as a recess in the body
+//!    colour. The multi-material variant, whose artwork fill is its own object,
+//!    is not built yet.
+//! 7. Thin face material (deboss and inlay): what prints is the face around the
+//!    cuts, so the body footprint minus the opened artwork is opened at the same
+//!    radius too (see [`thin_face`]). Walls between recesses and rims between
+//!    the artwork and the body edge thinner than `minFeature` are not removed,
+//!    but they count in `removed` (red in the preview) and in
+//!    `removed_area_pct`, so rule FEATURE.MIN reports them. Emboss prints the
+//!    artwork itself and is measured in step 5 only.
+//!
+//! Inlay prints face down, so the top edges are its first layer: the top
+//! chamfer is raised to the first-layer chamfer (the larger of the process
+//! `firstLayerChamferMm` and the fit profile `firstLayerChamfer`, capped at the
+//! roof as any top chamfer is), which replaces elephant-foot compensation
+//! (docs/plan/05 section 6). [`Artwork::face_chamfer_mm`] reports it. The
+//! `Measurements` fields `first_layer_chamfer_mm`, `min_body_wall_at_bed_mm` and
+//! `min_tube_wall_at_bed_mm` keep describing the bottom edges at z = 0, also
+//! for an inlay: that is where the first-layer chamfer of the walls and tubes
+//! is built, and the face an inlay puts on the bed is a solid slab with no
+//! side wall or tube in that plane.
 //!
 //! Deboss and inlay thicken the roof by the depth so the roof under the artwork
 //! keeps its thickness (rule `ROOF.MIN`), and clamp the depth so the cavity keeps
@@ -84,13 +105,6 @@ pub const MAX_ARTWORK_POINTS: usize = 50_000;
 /// million (213 ms); 1,000 lines that all cross each other need 39.9 million
 /// and are refused.
 pub const MAX_ARTWORK_SWEEP: u64 = 10_000_000;
-
-/// Share of the artwork area the opening may remove before the evaluator warns,
-/// in percent, for a process profile without `maxRemovedAreaPct` (the profile's
-/// value, which rule FEATURE.MIN also uses, wins). Opening a 13.2 mm square at
-/// 0.8 mm only rounds its corners and removes 0.11 %, which is not worth a
-/// warning; a hairline usually removes more (the sample mark's 1.03 %).
-pub const REMOVED_WARN_PCT: f64 = 1.0;
 
 /// A deboss or inlay depth that has to be clamped is rounded down to this grid
 /// (one micrometre, the evaluator's zero length) and checked again, so
@@ -146,6 +160,13 @@ pub struct Artwork {
     pub face_on_bed: String,
     /// Height of the face the artwork sits on (the body top).
     pub face_z_mm: f64,
+    /// The 45 degree chamfer on the edges of that face (the body's top chamfer,
+    /// `round`). For an inlay the face is on the bed, so this is its first-layer
+    /// chamfer: at least the process and fit profile first-layer chamfer (the
+    /// evaluator raises it with a warning), unless capped at the roof. The
+    /// `Measurements` first-layer fields describe the bottom edges at z = 0.
+    #[serde(default)]
+    pub face_chamfer_mm: f64,
     /// The height (emboss) or depth (deboss, inlay) built.
     pub height_mm: f64,
     /// The height the document asked for; larger than `height_mm` when the
@@ -159,9 +180,18 @@ pub struct Artwork {
     /// Area of the artwork after fitting, before the opening, and after it.
     pub area_before_mm2: f64,
     pub area_after_mm2: f64,
-    /// Regions the opening removed (draw them in red in the preview), at
-    /// `face_z_mm`.
+    /// Regions that do not print as drawn (draw them in red in the preview),
+    /// at `face_z_mm`: artwork the opening removed, and, for deboss and inlay,
+    /// face material thinner than `minFeature` (see `thin_face_area_mm2`).
     pub removed: Vec<Polygon>,
+    /// Area of the face material, among `removed`, that a deboss or inlay
+    /// leaves thinner than `minFeature`: walls between recesses, and rims
+    /// between the artwork and the body edge (measured on the body footprint,
+    /// so a rim counts with the top chamfer under it). It is still built; it
+    /// counts in `removed_area_pct` so rule FEATURE.MIN reports it. Always 0
+    /// for emboss.
+    #[serde(default)]
+    pub thin_face_area_mm2: f64,
     /// Paths whose stroke was ignored (v1 builds fills only).
     pub strokes_ignored: usize,
 }
@@ -175,6 +205,8 @@ pub(crate) struct ReliefPlan {
     pub height: f64,
     /// The opened artwork in design millimetres (before `xyScale`).
     pub art: CrossSection,
+    /// The regions of [`Artwork::removed`] as a share of the artwork area
+    /// before the opening, in percent (`Measurements::removed_area_pct`).
     pub removed_pct: f64,
     /// Thinnest surviving stroke, design millimetres (see [`min_stroke`]).
     pub min_stroke: Option<f64>,
@@ -587,6 +619,76 @@ fn min_stroke_within<K: Kernel>(
     Ok(Some(2.0 * below))
 }
 
+/// The result of [`opening`].
+enum Opened {
+    /// The inset by the radius, and the opening (the inset outset again,
+    /// clipped to the region).
+    Done {
+        eroded: CrossSection,
+        opened: CrossSection,
+    },
+    /// Not run: one of the offsets would need about this much sweep work, more
+    /// than [`MAX_ARTWORK_SWEEP`].
+    TooComplex(u64),
+}
+
+/// The morphological opening of `s` at radius `r`: inset by `r`, then outset by
+/// `r`, clipped to `s` so the polygonal joins never add area. Nothing is
+/// removed when `r` is not positive.
+fn opening<K: Kernel>(k: &K, s: &CrossSection, r: f64) -> Result<Opened, GeomError> {
+    if r <= 0.0 {
+        return Ok(Opened::Done {
+            eroded: s.clone(),
+            opened: s.clone(),
+        });
+    }
+    let eroded = match offset_within(k, s, -r, MAX_ARTWORK_SWEEP)? {
+        Offset::Done(e, _) => e,
+        Offset::TooComplex(work) => return Ok(Opened::TooComplex(work)),
+    };
+    let opened = if eroded.polygons.is_empty() {
+        CrossSection::default()
+    } else {
+        match offset_within(k, &eroded, r, MAX_ARTWORK_SWEEP)? {
+            Offset::Done(d, _) => region::intersection(&d, s),
+            Offset::TooComplex(work) => return Ok(Opened::TooComplex(work)),
+        }
+    };
+    Ok(Opened::Done { eroded, opened })
+}
+
+/// Face material thinner than `2 r` that cutting `art` (already opened) into the
+/// top of a body with footprint `size` leaves (deboss and inlay): the footprint
+/// minus `art`, less its opening at radius `r`. That finds walls between
+/// recesses and rims between the artwork and the body edge. The footprint's own
+/// corners, which any opening rounds, are not counted: only what lies inside the
+/// opening of the bare footprint is.
+///
+/// The footprint is the body outline, not the flat face inside the top chamfer,
+/// because the material around a recess reaches the outline below the chamfer:
+/// a rim is as wide as the margin plus the chamfer under it, and artwork that
+/// reaches the face box with no margin leaves the chamfer as a knife edge, which
+/// this finds. `None` when an offset would need more than [`MAX_ARTWORK_SWEEP`].
+fn thin_face<K: Kernel>(
+    k: &K,
+    size: [f64; 2],
+    art: &CrossSection,
+    r: f64,
+) -> Result<Option<CrossSection>, GeomError> {
+    let footprint = CrossSection::from(vec![Polygon::rect([0.0, 0.0], size)]);
+    let material = region::difference(&footprint, art);
+    let Opened::Done { opened: kept, .. } = opening(k, &material, r)? else {
+        return Ok(None);
+    };
+    let Opened::Done { opened: whole, .. } = opening(k, &footprint, r)? else {
+        return Ok(None);
+    };
+    Ok(Some(region::intersection(
+        &region::difference(&material, &kept),
+        &whole,
+    )))
+}
+
 fn length_field(feat: &Feat, name: &str, v: &FVal) -> Result<f64, EvalError> {
     let x = v.mm().map_err(|m| feat.err(name, m))?;
     if !x.is_finite() {
@@ -607,11 +709,12 @@ fn scaled(s: &CrossSection, xy: f64) -> CrossSection {
 }
 
 /// Plan a `relief.svg` feature on the top face of `body`: read and fit the
-/// artwork, open it, measure it and clamp the depth.
+/// artwork, open it, measure it and clamp the depth. An inlay raises the body's
+/// top chamfer to the first-layer chamfer (see the module comment).
 pub(crate) fn plan_relief<K: Kernel>(
     kernel: &K,
     feat: &Feat,
-    body: &BodyPlan,
+    body: &mut BodyPlan,
     process: &ProcessProfile,
     xy: f64,
     assets: &RecordingAssets,
@@ -652,6 +755,28 @@ pub(crate) fn plan_relief<K: Kernel>(
     };
     if min_feature < 0.0 {
         return Err(feat.err("minFeature", "must not be negative"));
+    }
+
+    // An inlay prints face down: the top edges are its first layer, so they get
+    // the first-layer chamfer that replaces elephant-foot compensation
+    // (docs/plan/05 section 6), capped at the roof as plan_body caps any top
+    // chamfer. Before the face box, which lies inside the top chamfer.
+    if mode == Mode::Inlay && body.geom.top_chamfer < body.geom.first_layer_chamfer {
+        let g = &mut body.geom;
+        let want = g.first_layer_chamfer;
+        let raised = want.min(g.roof);
+        let cap = if raised < want {
+            format!(" (capped at the {} mm roof)", g.roof)
+        } else {
+            String::new()
+        };
+        warnings.push(format!(
+            "feature `{}`: inlay prints face down, so the top edges are its first layer: the top chamfer is raised from {} mm to {raised} mm{cap}, the first-layer chamfer (the larger of firstLayerChamferMm of {} and the fit profile's firstLayerChamfer), which stands in for elephant-foot compensation (docs/plan/05 section 6); give the body a `round` chamfer of at least {want} mm to choose it yourself",
+            feat.id(),
+            g.top_chamfer,
+            process.id
+        ));
+        g.top_chamfer = raised;
     }
 
     // fit: margin, align, keepAspect, box.
@@ -810,23 +935,9 @@ pub(crate) fn plan_relief<K: Kernel>(
     };
     // The inset (erosion) by r0, then the outset of that, clipped to the
     // artwork so the polygonal joins never add area.
-    let eroded = match offset_within(kernel, &art, -r0, MAX_ARTWORK_SWEEP)
-        .map_err(super::kernel_err(&what))?
-    {
-        Offset::Done(e, _) => e,
-        Offset::TooComplex(work) => return Err(too_detailed(work)),
-    };
-    let opened = if r0 <= 0.0 {
-        art.clone()
-    } else if eroded.polygons.is_empty() {
-        CrossSection::default()
-    } else {
-        match offset_within(kernel, &eroded, r0, MAX_ARTWORK_SWEEP)
-            .map_err(super::kernel_err(&what))?
-        {
-            Offset::Done(d, _) => region::intersection(&d, &art),
-            Offset::TooComplex(work) => return Err(too_detailed(work)),
-        }
+    let (eroded, opened) = match opening(kernel, &art, r0).map_err(super::kernel_err(&what))? {
+        Opened::Done { eroded, opened } => (eroded, opened),
+        Opened::TooComplex(work) => return Err(too_detailed(work)),
     };
     let area_after = opened.area();
     if opened.polygons.is_empty() || area_after <= MIN_LENGTH_MM * MIN_LENGTH_MM {
@@ -835,15 +946,52 @@ pub(crate) fn plan_relief<K: Kernel>(
             box_size[0], box_size[1]
         )));
     }
-    let removed_pct = (100.0 * (area_before - area_after) / area_before).max(0.0);
-    if removed_pct >= process.max_removed_area_pct.unwrap_or(REMOVED_WARN_PCT) {
-        warnings.push(format!(
-            "feature `{}`: the {min_feature} mm opening (minFeature) removed {removed_pct:.1} % of the artwork area: strokes thinner than {min_feature} mm cannot print on {}; the removed regions are in the preview",
-            feat.id(),
-            process.id
-        ));
+    let mut removed = region::difference(&art, &opened);
+    // A deboss or inlay prints the face around the cuts: face material thinner
+    // than minFeature is still built, but shown and counted with the removed
+    // strokes (see `thin_face`).
+    let mut thin_area = 0.0;
+    if mode.cuts() && r0 > 0.0 {
+        match thin_face(kernel, g.size, &opened, r0).map_err(super::kernel_err(&what))? {
+            Some(thin) => {
+                // A removed stroke is not cut, so it is face material too:
+                // count each region once.
+                let thin = region::difference(&thin, &removed);
+                thin_area = thin.area().max(0.0);
+                removed = region::union_all(&[removed, thin]);
+            }
+            None => warnings.push(format!(
+                "feature `{}`: the face material the {} leaves around `{name}` was not checked for walls thinner than minFeature {min_feature} mm: the artwork is too detailed for the work limit",
+                feat.id(),
+                mode.name()
+            )),
+        }
     }
-    let removed = region::difference(&art, &opened);
+    let stroke_pct = 100.0 * (area_before - area_after) / area_before;
+    let removed_pct = (stroke_pct + 100.0 * thin_area / area_before).max(0.0);
+    if let Some(max) = process.max_removed_area_pct {
+        // Rule FEATURE.MIN's own comparison, so this warning and the rule agree.
+        if removed_pct > max + 1e-9 {
+            let rule = format!(
+                "more than the {max} % maxRemovedAreaPct of {} (rule FEATURE.MIN, a blocker when the artwork is fit-critical)",
+                process.id
+            );
+            warnings.push(if thin_area > 0.0 {
+                format!(
+                    "feature `{}`: {removed_pct:.2} % of the artwork area does not print as drawn, {rule}: the {min_feature} mm opening (minFeature) removed {:.2} % (strokes thinner than {min_feature} mm), and the {} leaves another {:.2} % as face material thinner than {min_feature} mm between the recesses or at the body edge, which is still built; the regions are red in the preview: make lines, the gaps between them and the margin to the body edge at least {min_feature} mm wide, or the artwork larger",
+                    feat.id(),
+                    stroke_pct.max(0.0),
+                    mode.name(),
+                    100.0 * thin_area / area_before
+                )
+            } else {
+                format!(
+                    "feature `{}`: the {min_feature} mm opening (minFeature) removed {removed_pct:.2} % of the artwork area, {rule}: strokes thinner than {min_feature} mm cannot print; the removed regions are red in the preview: make those lines at least {min_feature} mm wide, or the artwork larger",
+                    feat.id()
+                )
+            });
+        }
+    }
     let min_stroke = min_stroke(kernel, &opened, &eroded, r0).map_err(super::kernel_err(&what))?;
     if min_stroke.is_none() {
         warnings.push(format!(
@@ -888,9 +1036,14 @@ pub(crate) fn plan_relief<K: Kernel>(
         height = depth;
     }
     if mode == Mode::Inlay {
+        // The slicer assigns each layer to an object by where the layer lies,
+        // and a first layer plus whole layers need not add up to the depth (a
+        // 0.2 mm first layer and 0.16 mm layers end at 0.36 and 0.52, never at
+        // 0.4), so the swap goes where the preview starts the body.
         warnings.push(format!(
-            "feature `{}`: inlay prints face down: put the top face on the bed and swap filament after the {height:.3} mm face slab (the `{}` object), so the artwork shows the body colour",
+            "feature `{}`: inlay is built as the single-extruder filament-swap variant: print it face down with the top face on the bed; the `{}` object is the {height:.3} mm face slab minus the artwork, so the artwork prints as a recess in the body colour; add the filament change before the first layer the slicer's preview shows as the body (the slab ends on a layer boundary only if your first layer and layer height add up to {height:.3} mm). A multi-material variant, with the artwork filled as its own object for a multi-material unit or tool changer, is coming; until then a second slot for `{}` gives the same recessed artwork",
             feat.id(),
+            feat.role(),
             feat.role()
         ));
         if feat.role() == body.role {
@@ -907,6 +1060,7 @@ pub(crate) fn plan_relief<K: Kernel>(
         mode: mode.name().to_string(),
         face_on_bed: if mode == Mode::Inlay { "top" } else { "bottom" }.to_string(),
         face_z_mm: g.height,
+        face_chamfer_mm: g.top_chamfer,
         height_mm: height,
         requested_height_mm: requested,
         box_min_mm: box_min.map(|v| v * xy),
@@ -915,6 +1069,7 @@ pub(crate) fn plan_relief<K: Kernel>(
         area_before_mm2: area_before * xy * xy,
         area_after_mm2: area_after * xy * xy,
         removed: scaled(&removed, xy).polygons,
+        thin_face_area_mm2: thin_area * xy * xy,
         strokes_ignored: parsed.strokes,
     };
     Ok(ReliefPlan {

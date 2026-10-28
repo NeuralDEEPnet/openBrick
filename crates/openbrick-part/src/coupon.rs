@@ -67,6 +67,25 @@
 //! recorded offsets reproduces the chosen cells on every process; the tests
 //! check this for the rib on fdm-0.2, where the wall is quantised.
 //!
+//! Each cell holds one offset and leaves the others at zero, so a part that
+//! takes two of them reproduces each chosen size but not the wall between them.
+//! A bore cell's tube has the standard outer diameter (grown only to keep
+//! `minTubeWallMm`) and a pocket cell's tube the standard bore, while a part
+//! applies both offsets to one tube. With the example profile's cells (bore
+//! 4.95, pocket tube OD 6.65 on fdm-0.4) the part's tube wall is
+//! (6.65 - 4.95) / 2 = 0.85 mm, the bore cell's (6.514 - 4.95) / 2 = 0.782 mm
+//! and the pocket cell's (6.65 - 4.80) / 2 = 0.925 mm. The tube wall is the
+//! spring, so the grip of the combined part is checked by the pull test
+//! (docs/plan/05 section 12), and a fine pass that rebuilds bore cells at the
+//! chosen outer diameter and pocket tubes at the chosen bore (passed in as
+//! calibration inputs, never as a fit profile) would close the gap.
+//!
+//! The same holds for the fit profile's `xyScale`: the cells are printed at
+//! scale 1, so the recorded offsets reproduce them in a part built at `xyScale`
+//! 1, which is what `openbrick_print::record` writes. The evaluator applies a
+//! scale other than 1 to every horizontal length, the calibrated diameters
+//! included, so a hand-set `xyScale` moves them away from the chosen cells.
+//!
 //! # Pocket sets
 //!
 //! The plan crosses six tube ODs with seven rib depths: 42 pockets, 84 with the
@@ -340,7 +359,8 @@ pub struct PrintEstimate {
     /// Line width x the thickest layer of the process x the assumed speed, mm3/s.
     pub flow_mm3_s: f64,
     /// Volume over flow, seconds. A model for comparing pocket sets on
-    /// extrusion processes, not a slicer estimate.
+    /// extrusion processes, not a slicer estimate. Always finite: options whose
+    /// rate would make it overflow are refused.
     pub time_s: f64,
 }
 
@@ -630,6 +650,8 @@ struct Plan {
     style: Style,
     base: f64,
     depth: f64,
+    /// The print estimate's extrusion rate, mm3/s (see [`PrintEstimate`]).
+    flow: f64,
     warnings: Vec<String>,
 }
 
@@ -839,6 +861,23 @@ fn plan_coupon(process: &ProcessProfile, opts: &CouponOptions) -> Result<Plan, E
         });
     }
     let tallest = base + rise;
+
+    // The print estimate divides the volume by line width x thickest layer x
+    // the assumed speed. The volume is at most the bounding box, so a finite
+    // box over the rate keeps the time finite: JSON has no infinity, and an
+    // estimate written as null would not read back.
+    let layer = process.layer_height_mm.iter().copied().fold(0.0, f64::max);
+    let flow = process.line_width_mm * layer * opts.estimate_speed_mm_s;
+    let [fw, fd] = footprint.map(ldu_to_mm);
+    if !(flow.is_finite() && flow > 0.0 && (fw * fd * tallest / flow).is_finite()) {
+        return Err(fail(format!(
+            "the print estimate needs a positive extrusion rate: line width {} mm x thickest layer {layer} mm x estimate speed {} mm/s is {flow} mm3/s, too small for a finite time; set estimateSpeedMmS to the printer's mean speed (default {} mm/s)",
+            process.line_width_mm,
+            opts.estimate_speed_mm_s,
+            CouponOptions::default().estimate_speed_mm_s
+        )));
+    }
+
     let summary = CouponSummary {
         coupon_version: spec.version,
         coupon_revision: COUPON_REVISION,
@@ -862,6 +901,7 @@ fn plan_coupon(process: &ProcessProfile, opts: &CouponOptions) -> Result<Plan, E
         style,
         base,
         depth,
+        flow,
         warnings,
     })
 }
@@ -882,14 +922,7 @@ pub fn coupon_layout(
 /// What the measurements report about the cells.
 #[derive(Default)]
 struct CellStats {
-    min_tube_wall: Option<f64>,
     pocket_wall: Option<f64>,
-}
-
-impl CellStats {
-    fn tube_wall(&mut self, w: f64) {
-        self.min_tube_wall = Some(self.min_tube_wall.map_or(w, |m: f64| m.min(w)));
-    }
 }
 
 /// The solids of one cell, standing on the base top at `z`.
@@ -955,7 +988,6 @@ fn build_cell<K: Kernel>(
                     2.0 * line.reserve
                 )));
             }
-            stats.tube_wall(tube.wall_mm());
             let solids = TubeGeom {
                 tubes: vec![centre],
                 tube_outer: tube.outer_mm,
@@ -1003,7 +1035,6 @@ fn build_cell<K: Kernel>(
                     "pocket {label}: a {od} mm tube with {rib:.3} mm ribs does not fit a {side} mm pocket with {wall} mm walls"
                 )));
             }
-            stats.tube_wall((od - id) / 2.0);
             stats.pocket_wall = Some(wall);
             let min = [centre[0] - side / 2.0, centre[1] - side / 2.0];
             let outer = Polygon::rect(min, [side, side]);
@@ -1077,13 +1108,15 @@ fn push_label(
 
 /// SHA-256 (hex) of the canonical JSON of everything that decides the coupon's
 /// geometry: the generator and evaluator revisions, the standard version, the
-/// kernel id, the process profile, the options (without the estimate's speed)
-/// and the coupon data.
-fn content_hash(kernel_id: &str, process: &ProcessProfile, opts: &CouponOptions) -> String {
-    let mut options = serde_json::to_value(opts).unwrap_or(serde_json::Value::Null);
-    if let Some(o) = options.as_object_mut() {
-        o.remove("estimateSpeedMmS");
-    }
+/// kernel id, the process profile, the coupon data, and the layout the options
+/// resolve to (pocket set, copies, arrangement, and the label stroke and relief
+/// after the process limits). The options themselves are not hashed: the bed
+/// size and margin only choose between stacked and side by side (the footprint
+/// follows from the arrangement), a label stroke or relief that the process
+/// limits move builds the same labels as the value it moves to, and the
+/// estimate speed builds nothing. So one coupon has one hash, whichever bed it
+/// was laid out for.
+fn content_hash(kernel_id: &str, process: &ProcessProfile, summary: &CouponSummary) -> String {
     let content = json!({
         "coupon": COUPON_REVISION,
         "evaluator": EVALUATOR_REVISION,
@@ -1091,7 +1124,13 @@ fn content_hash(kernel_id: &str, process: &ProcessProfile, opts: &CouponOptions)
         "kernel": kernel_id,
         "process": process.id,
         "processProfile": serde_json::to_value(process).unwrap_or(serde_json::Value::Null),
-        "options": options,
+        "layout": {
+            "pockets": summary.pockets,
+            "copies": summary.copies,
+            "arrangement": summary.arrangement,
+            "labelStrokeMm": summary.label_stroke_mm,
+            "labelReliefMm": summary.label_relief_mm,
+        },
         "couponData": serde_json::to_value(coupon_v1()).unwrap_or(serde_json::Value::Null),
     });
     sha256_hex(canonical_json(&content).as_bytes())
@@ -1148,7 +1187,11 @@ pub fn build_coupon<K: Kernel>(
 
     // Fields left at their defaults: no fit profile, any process, and no single
     // stud, tube, pin or rib size (the coupon sweeps them; each cell's value is
-    // in the layout), no connectors.
+    // in the layout), no connectors. No tube wall either: rule TUBE.WALL is a
+    // part rule whose fix is a fit-profile offset, while the coupon takes no fit
+    // profile and its bore cells are as thin as a part's tube gets with that
+    // cell's bore offset on purpose (at least minTubeWallMm; tests/coupon.rs
+    // measures every cell's wall on the mesh).
     let measurements = Measurements {
         process: process.id.clone(),
         triangle_count: mesh.triangle_count(),
@@ -1163,29 +1206,25 @@ pub fn build_coupon<K: Kernel>(
         // The pocket walls stand on the base, away from the bed: no chamfer.
         min_body_wall_mm: stats.pocket_wall,
         min_body_wall_at_bed_mm: stats.pocket_wall,
-        min_tube_wall_mm: stats.min_tube_wall,
-        min_tube_wall_at_bed_mm: stats.min_tube_wall,
         first_layer_chamfer_mm: Some(chamfer),
         roof_mm: Some(plan.base),
         cavity_depth_mm: Some(plan.depth),
         // The labels are the coupon's relief: every pixel is one stroke wide.
         min_stroke_mm: Some(plan.style.stroke),
         relief_height_mm: Some(plan.style.relief),
+        // Labels someone reads to calibrate: rule FEATURE.MIN blocks if they
+        // ever print thinner than the process minimum.
+        fit_critical_artwork: true,
         ..Measurements::default()
     };
 
-    let content_hash = content_hash(&kernel.id(), process, opts);
-    let layer = process.layer_height_mm.iter().copied().fold(0.0, f64::max);
-    let flow = process.line_width_mm * layer * opts.estimate_speed_mm_s;
+    let content_hash = content_hash(&kernel.id(), process, summary);
+    // plan_coupon checked that the bounding box over this rate is finite.
     let estimate = PrintEstimate {
         volume_mm3: volume,
         mass_g_pla: volume / 1000.0 * PLA_DENSITY_G_CM3,
-        flow_mm3_s: flow,
-        time_s: if flow > 0.0 {
-            volume / flow
-        } else {
-            f64::INFINITY
-        },
+        flow_mm3_s: plan.flow,
+        time_s: volume / plan.flow,
     };
 
     let Plan {
@@ -1242,20 +1281,64 @@ mod tests {
     #[test]
     fn content_hash_follows_the_geometry_inputs_only() {
         let p = openbrick_print::default_process_profiles();
+        let plan = |p: &ProcessProfile, o: &CouponOptions| plan_coupon(p, o).expect("lays out");
+        let hash = |k: &str, p: &ProcessProfile, o: &CouponOptions| {
+            content_hash(k, p, &plan(p, o).layout.summary)
+        };
         let d = CouponOptions::default();
-        let base = content_hash("k", &p[0], &d);
+        let base = hash("k", &p[0], &d);
         let faster = CouponOptions {
             estimate_speed_mm_s: 2.0 * d.estimate_speed_mm_s,
             ..d.clone()
         };
-        assert_eq!(content_hash("k", &p[0], &faster), base);
-        let full = CouponOptions {
-            pockets: PocketSet::Full,
+        assert_eq!(hash("k", &p[0], &faster), base);
+        // The same stacked coupon laid out for a larger bed or margin is the
+        // same geometry, so it has the same hash.
+        for (bed, margin) in [([256.0, 256.0], 5.0), ([360.0, 360.0], 10.0)] {
+            let o = CouponOptions {
+                bed_mm: bed,
+                bed_margin_mm: margin,
+                ..d.clone()
+            };
+            assert_eq!(
+                plan(&p[0], &o).layout.summary.arrangement,
+                Arrangement::Stacked
+            );
+            assert_eq!(hash("k", &p[0], &o), base, "{bed:?}");
+        }
+        // A label stroke under the process minimum feature is raised to it:
+        // the same labels as asking for the minimum.
+        let thin = CouponOptions {
+            label_stroke_mm: p[0].min_feature_mm / 2.0,
             ..d.clone()
         };
-        assert_ne!(content_hash("k", &p[0], &full), base);
-        assert_ne!(content_hash("k", &p[1], &d), base);
-        assert_ne!(content_hash("other kernel", &p[0], &d), base);
+        let at_min = CouponOptions {
+            label_stroke_mm: p[0].min_feature_mm,
+            ..d.clone()
+        };
+        assert_eq!(hash("k", &p[0], &thin), hash("k", &p[0], &at_min));
+        let full = CouponOptions {
+            pockets: PocketSet::Full,
+            bed_mm: [256.0, 256.0],
+            ..d.clone()
+        };
+        assert_ne!(hash("k", &p[0], &full), base);
+        assert_ne!(hash("k", &p[1], &d), base);
+        assert_ne!(hash("other kernel", &p[0], &d), base);
+        // A bed that changes the arrangement changes the geometry and the hash.
+        let stacked = CouponOptions {
+            bed_mm: [1000.0, 1000.0],
+            ..full.clone()
+        };
+        assert_eq!(
+            plan(&p[0], &full).layout.summary.arrangement,
+            Arrangement::SideBySide
+        );
+        assert_eq!(
+            plan(&p[0], &stacked).layout.summary.arrangement,
+            Arrangement::Stacked
+        );
+        assert_ne!(hash("k", &p[0], &full), hash("k", &p[0], &stacked));
     }
 
     #[test]
