@@ -1,0 +1,201 @@
+part_id,family,expected,derived,verdict,truth,derived_geom,verdict_geom,notes
+3005,brick,stud=1,stud=1,full,rule,stud=1,full,
+3004,brick,stud=2;underpin=1,stud=2;underpin=1,full,rule,stud=2;underpin=1,full,
+3622,brick,stud=3;underpin=2,stud=3;underpin=2,full,rule,stud=3;underpin=2,full,
+3010,brick,stud=4;underpin=3,stud=4;underpin=3,full,rule,stud=4;underpin=3,full,
+3009,brick,stud=6;underpin=5,stud=6;underpin=5,full,rule,stud=6;underpin=5,full,
+3008,brick,stud=8;underpin=7,stud=8;underpin=7,full,rule,stud=8;underpin=7,full,
+6111,brick,stud=10;underpin=9,stud=10;underpin=9,full,rule,stud=10;underpin=9,full,
+6112,brick,stud=12;underpin=11,stud=12;underpin=11,full,rule,stud=12;underpin=11,full,
+2465,brick,stud=16;underpin=15,stud=16;underpin=15,full,rule,stud=16;underpin=15,full,
+3003,brick,stud=4;tube=1,stud=4;tube=1,full,rule,stud=4;tube=1,full,
+3002,brick,stud=6;tube=2,stud=6;tube=2,full,rule,stud=6;tube=2,full,
+3001,brick,stud=8;tube=3,stud=8;tube=3,full,rule,stud=8;tube=3,full,
+2456,brick,stud=12;tube=5,stud=12;tube=5,full,rule,stud=12;tube=5,full,
+3007,brick,stud=16;tube=7,stud=16;tube=7,full,rule,stud=16;tube=7,full,
+3006,brick,stud=20;tube=9,stud=20;tube=9,full,rule,stud=20;tube=9,full,
+2357,brick_modified,unverified,stud=3;underpin=2,unverified,unverified,stud=3;underpin=2,unverified,corner brick: underside features not established independently | no ground truth
+3245c,brick_modified,stud=2,stud=2,full,rule,stud=2,full,
+30145,brick_modified,stud=4;tube=1,stud=4;tube=1,full,rule,stud=4;tube=1,full,
+2877,brick_modified,stud=2;underpin=1,stud=2;underpin=1,full,hand,stud=2;underpin=1,full,"1x2 brick body: 2 studs, 1 underside pin"
+30136,brick_modified,unverified,stud=2,unverified,unverified,stud=2,unverified,log brick: underside pin not established | no ground truth
+3659,brick_modified,stud=4,stud=4,full,hand,stud=4,full,"arch 1x4: 4 studs, open arch underneath, no pins"
+3024,plate,stud=1,stud=1,full,rule,stud=1,full,
+3023b,plate,stud=2;underpin=1,stud=2;underpin=1,full,rule,stud=2;underpin=1,full,
+3623,plate,stud=3;underpin=2,stud=3;underpin=2,full,rule,stud=3;underpin=2,full,
+3710,plate,stud=4;underpin=3,stud=4;underpin=3,full,rule,stud=4;underpin=3,full,
+3666,plate,stud=6;underpin=5,stud=6;underpin=5,full,rule,stud=6;underpin=5,full,
+3460,plate,stud=8;underpin=7,stud=8;underpin=7,full,rule,stud=8;underpin=7,full,
+60479,plate,stud=12;underpin=11,stud=12;underpin=11,full,rule,stud=12;underpin=11,full,
+3022,plate,stud=4;tube=1,stud=4;tube=1,full,rule,stud=4;tube=1,full,
+3021,plate,stud=6;tube=2,stud=6;tube=2,full,rule,stud=6;tube=2,full,
+3020,plate,stud=8;tube=3,stud=8;tube=3,full,rule,stud=8;tube=3,full,
+3795,plate,stud=12;tube=5,stud=12;tube=5,full,rule,stud=12;tube=5,full,
+3034,plate,stud=16;tube=7,stud=16;tube=7,full,rule,stud=16;tube=7,full,
+3832,plate,stud=20;tube=9,stud=20;tube=9,full,rule,stud=20;tube=9,full,
+3031,plate,stud=16;tube=9,stud=16;tube=9,full,rule,stud=16;tube=9,full,
+3032,plate,stud=24;tube=15,stud=24;tube=15,full,rule,stud=24;tube=15,full,
+3035,plate,stud=32;tube=21,stud=32;tube=21,full,rule,stud=32;tube=21,full,
+3029,plate,stud=48;tube=33,stud=48;tube=33,full,rule,stud=48;tube=33,full,
+3958,plate,stud=36;tube=25,stud=36;tube=25,full,rule,stud=36;tube=25,full,
+3036,plate,stud=48;tube=35,stud=48;tube=35,full,rule,stud=48;tube=35,full,
+3028,plate,stud=72;tube=55,stud=72;tube=55,full,rule,stud=72;tube=55,full,
+41539,plate,stud=64;tube=49,stud=64;tube=49,full,rule,stud=64;tube=49,full,
+92438,plate,stud=128;tube=105,stud=128;tube=105,full,rule,stud=128;tube=105,full,
+2420,plate_modified,unverified,stud=3;underpin=2,unverified,unverified,stud=3;underpin=2,unverified,corner plate: underside pins or tube not established | no ground truth
+2450,plate_modified,unverified,stud=6;tube=3,unverified,unverified,stud=6;tube=3,unverified,cut-corner plate: stud and tube layout not established | no ground truth
+3176,plate_modified,unverified,stud=4;tube=1,unverified,unverified,stud=4;tube=1,unverified,plate 3x2 with hole: layout not established | no ground truth
+2817,plate_modified,unverified,stud=4;pinhole=2,unverified,unverified,stud=4;pinhole=2,unverified,plate 2x2 with holes: hole type and count not established | no ground truth
+3070b,tile,stud=0,none,full,rule,none,full,
+3069b,tile,unverified,none,unverified,unverified,none,unverified,tile 1x2: whether the real part has an underside pin is not established; LDraw models none | no ground truth
+63864,tile,stud=0;underpin=2,underpin=2,full,rule,underpin=2,full,
+2431,tile,stud=0;underpin=3,underpin=3,full,rule,underpin=3,full,
+6636,tile,stud=0;underpin=5,underpin=5,full,rule,underpin=5,full,
+4162,tile,stud=0;underpin=7,underpin=7,full,rule,underpin=7,full,
+3068b,tile,stud=0;tube=1,tube=1,full,rule,tube=1,full,
+26603,tile,stud=0;tube=2,tube=2,full,rule,tube=2,full,
+87079,tile,stud=0;tube=3,tube=3,full,rule,tube=3,full,
+14719,tile,unverified,underpin=2,unverified,unverified,underpin=2,unverified,corner tile: underside not established | no ground truth
+2412b,tile,unverified,none,unverified,unverified,none,unverified,grille tile 1x2: underside pin not established; LDraw models none | no ground truth
+3040b,slope,stud=1;underpin=1,stud=1;underpin=1,full,hand,stud=1;underpin=1,full,"2 x 1 slope: 1 stud, 1 underside pin"
+3039,slope,stud=2;tube=1,stud=2;tube=1,full,hand,stud=2;tube=1,full,"2 x 2 slope: 2 studs, 1 tube"
+3037,slope,stud=4;tube=3,stud=4;tube=3,full,hand,stud=4;tube=3,full,"2 x 4 slope: 4 studs, 3 tubes"
+3665b,slope,unverified,stud=2,unverified,unverified,stud=2,unverified,inverted slope: underside hollow pin geometry not established | no ground truth
+3660b,slope,unverified,stud=4,unverified,unverified,stud=4,unverified,inverted slope: underside not established | no ground truth
+3298,slope,unverified,stud=2;tube=2,unverified,unverified,stud=2;tube=2,unverified,3 x 2 slope: number of underside tubes not established | no ground truth
+4286,slope,unverified,stud=1;underpin=1,unverified,unverified,stud=1;underpin=1,unverified,3 x 1 slope: number of underside pins not established | no ground truth
+4460b,slope,unverified,stud=1,unverified,unverified,stud=1,unverified,75 degree slope: underside not established | no ground truth
+3044b,slope,unverified,none,unverified,unverified,none,unverified,double slope 2x1: underside pin not established | no ground truth
+54200,slope,none,none,full,hand,none,full,"1 x 1 cheese slope: no studs, plain 1x1 cavity"
+3043,slope,tube=1,tube=1,full,hand,tube=1,full,"2 x 2 double slope: no studs, 1 tube"
+3747b,slope,unverified,stud=6,unverified,unverified,stud=6,unverified,inverted 33 slope 3x2: stud and underside layout not established | no ground truth
+15068,slope,unverified,underpin=2,unverified,unverified,underpin=2,unverified,curved slope 2x2: underside not established | no ground truth
+11477,slope,unverified,none,unverified,unverified,none,unverified,curved slope 2x1: underside not established | no ground truth
+6541,technic_brick,stud=1;pinhole=1,stud=1;pinhole=1,full,hand,stud=1;pinhole=1,full,1x1 with 1 hole
+3700,technic_brick,stud=2;underpin=1;pinhole=1,stud=2;underpin=1;pinhole=1,full,hand,stud=2;underpin=1;pinhole=1,full,1x2 with 1 hole
+3701,technic_brick,stud=4;underpin=3;pinhole=3,stud=4;underpin=3;pinhole=3,full,hand,stud=4;underpin=3;pinhole=3,full,1x4 with 3 holes
+3894,technic_brick,stud=6;underpin=5;pinhole=5,stud=6;underpin=5;pinhole=5,full,hand,stud=6;underpin=5;pinhole=5,full,1x6 with 5 holes
+3702,technic_brick,stud=8;underpin=7;pinhole=7,stud=8;underpin=7;pinhole=7,full,hand,stud=8;underpin=7;pinhole=7,full,1x8 with 7 holes
+2730,technic_brick,stud=10;underpin=9;pinhole=9,stud=10;underpin=9;pinhole=9,full,hand,stud=10;underpin=9;pinhole=9,full,1x10 with 9 holes
+3703,technic_brick,stud=16;underpin=15;pinhole=15,stud=16;underpin=15;pinhole=15,full,hand,stud=16;underpin=15;pinhole=15,full,1x16 with 15 holes
+32000,technic_brick,stud=2;pinhole=2,stud=2;pinhole=2,full,hand,stud=2;pinhole=2,full,"1x2 with 2 holes, no underside pin"
+32064b,technic_brick,stud=2;underpin=1;axlehole=1,stud=2;underpin=1;axlehole=1,full,hand,stud=2;underpin=1;axlehole=1,full,1x2 with 1 axle hole
+3709b,technic_brick,stud=8;tube=3;pinhole=3,stud=8;tube=3,partial,hand,stud=8;tube=3,partial,"Technic plate 2x4: 8 studs, 3 tubes, 3 vertical pin holes | missing pinhole 0/3"
+3738,technic_brick,stud=16;tube=7;pinhole=7,stud=16;tube=7,partial,hand,stud=16;tube=7,partial,"Technic plate 2x8: 16 studs, 7 tubes, 7 vertical pin holes | missing pinhole 0/7"
+18654,technic_beam,pinhole=1,pinhole=1,full,hand,pinhole=1,full,beam 1
+43857,technic_beam,pinhole=2,pinhole=2,full,hand,pinhole=2,full,beam 2
+32523,technic_beam,pinhole=3,pinhole=3,full,hand,pinhole=3,full,beam 3
+32316,technic_beam,pinhole=5,pinhole=5,full,hand,pinhole=5,full,beam 5
+32524,technic_beam,pinhole=7,pinhole=7,full,hand,pinhole=7,full,beam 7
+40490,technic_beam,pinhole=9,pinhole=9,full,hand,pinhole=9,full,beam 9
+32525,technic_beam,pinhole=11,pinhole=11,full,hand,pinhole=11,full,beam 11
+32278,technic_beam,pinhole=15,pinhole=15,full,hand,pinhole=15,full,beam 15
+32140,technic_beam,pinhole=4;axlehole=1,pinhole=4;axlehole=1,full,hand,pinhole=4;axlehole=1,full,"L 2x4: 4 pin holes, axle hole at the end of the short arm"
+32526,technic_beam,pinhole=7,pinhole=7,full,hand,pinhole=7,full,L 3x5: 7 pin holes
+32348,technic_beam,pinhole=5;axlehole=2,pinhole=5;axlehole=2,full,hand,pinhole=5;axlehole=2,full,bent 4x4 (7 holes): axle holes at both ends
+6629,technic_beam,pinhole=7;axlehole=2,pinhole=7;axlehole=2,full,hand,pinhole=7;axlehole=2,full,bent 4x6 (9 holes): axle holes at both ends
+32271,technic_beam,pinhole=7;axlehole=2,pinhole=7;axlehole=2,full,hand,pinhole=7;axlehole=2,full,bent 3x7 (9 holes): axle holes at both ends
+60483,technic_beam,pinhole=1;axlehole=1,pinhole=1;axlehole=1,full,hand,pinhole=1;axlehole=1,full,"thick 1x2: one pin hole, one axle hole"
+41677,technic_beam,axlehole=2,axlehole=2,full,hand,axlehole=2,full,thin 1x2: two axle holes
+6632,technic_beam,pinhole=1;axlehole=2,pinhole=1;axlehole=2,full,hand,pinhole=1;axlehole=2,full,"thin 1x3: axle holes at the ends, pin hole in the middle"
+32449,technic_beam,pinhole=2;axlehole=2,pinhole=2;axlehole=2,full,hand,pinhole=2;axlehole=2,full,"thin 1x4: axle holes at the ends, 2 pin holes"
+32065,technic_beam,pinhole=7,pinhole=7,full,hand,pinhole=7,full,thin 1x7: 7 pin holes
+2780,technic_pin,pin=2,pin=2,full,hand,pin=2,full,2L friction pin
+3673,technic_pin,pin=2,pin=2,full,hand,pin=2,full,2L pin
+6558,technic_pin,pin=3,pin=3,full,hand,pin=3,full,3L friction pin
+32054,technic_pin,unverified,axlehole=1;pin=2,unverified,unverified,axlehole=1;pin=2,unverified,3L pin with stop bush: whether the bush end has an axle hole is not established | no ground truth
+43093,technic_pin,pin=1;axle=1,pin=1;axle=1,full,hand,pin=1;axle=1,full,"axle pin: 1 pin module, 1 axle module"
+3749,technic_pin,pin=1;axle=1,pin=1;axle=1,full,hand,pin=1;axle=1,full,"axle pin: 1 pin module, 1 axle module"
+4274,technic_pin,stud=1;pin=1,stud=1;pin=1,full,hand,stud=1;pin=1,full,pin 1/2: 1 pin module and a hollow stud-sized end
+6628,technic_pin,pin=1;ball=1,pin=1,partial,hand,pin=1,partial,towball pin | missing ball 0/1
+87082,technic_pin,pinhole=1;pin=2,pinhole=1;pin=2,full,hand,pinhole=1;pin=2,full,3L pin with perpendicular centre pin hole
+15100,technic_pin,pinhole=1;pin=1,pinhole=1;pin=1,full,hand,pinhole=1;pin=1,full,pin with perpendicular pin hole
+3704,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 2
+4519,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 3
+3705,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 4
+32073,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 5
+3706,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 6
+3707,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 8
+3708,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 12
+6587,technic_axle,stud=1;axle=1,stud=1;axle=1,full,hand,stud=1;axle=1,full,axle 3 with stud at one end
+87083,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 4 with end stop
+24316,technic_axle,axle=1,axle=1,full,hand,axle=1,full,axle 3 with end stop
+3713,technic_connector,axlehole=1,axlehole=1,full,hand,axlehole=1,full,bush
+32123a,technic_connector,axlehole=1,axlehole=1,full,hand,axlehole=1,full,half bush
+6536,technic_connector,pinhole=1;axlehole=1,pinhole=1;axlehole=1,full,hand,pinhole=1;axlehole=1,full,cross block 1x2: axle hole and pin hole
+59443,technic_connector,axlehole=2,axlehole=2,full,hand,axlehole=2,full,2L inline axle joiner: through axle hole
+6538b,technic_connector,unverified,axlehole=2,unverified,unverified,axlehole=2,unverified,offset axle joiner: hole layout not established | no ground truth
+32039,technic_connector,unverified,axlehole=2,unverified,unverified,axlehole=2,unverified,axle/bush connector: layout not established | no ground truth
+32184,technic_connector,pinhole=1;axlehole=2,pinhole=1;axlehole=2,full,hand,pinhole=1;axlehole=2,full,cross block 1x3 axle/pin/axle
+42003,technic_connector,pinhole=2;axlehole=1,pinhole=2;axlehole=1,full,hand,pinhole=2;axlehole=1,full,cross block 1x3 axle/pin/pin
+32034,technic_connector,pinhole=1;axlehole=2,pinhole=1;axlehole=2,full,hand,pinhole=1;axlehole=2,full,"angle connector #2: axle hole per arm, centre pin hole"
+32014,technic_connector,pinhole=1;axlehole=2,pinhole=1;axlehole=2,full,hand,pinhole=1;axlehole=2,full,"angle connector #6: axle hole per arm, centre pin hole"
+3647,technic_gear,axlehole=1,axlehole=1,full,hand,axlehole=1,full,gear 8: centre axle hole
+32270,technic_gear,axlehole=1,axlehole=1,full,hand,axlehole=1,full,gear 12 double bevel: centre axle hole
+94925,technic_gear,axlehole=1,axlehole=1,full,hand,axlehole=1,full,gear 16 reinforced: centre axle hole
+3648b,technic_gear,unverified,none,unverified,unverified,none,unverified,gear 24: other holes besides the single axle hole not established | no ground truth
+99781,bracket,stud=4;underpin=1,stud=4;underpin=1,full,hand,stud=4;underpin=1,full,1x2 - 1x2 down
+99780,bracket,stud=4;underpin=1,stud=4;underpin=1,full,hand,stud=4;underpin=1,full,1x2 - 1x2 up
+44728,bracket,stud=6;underpin=1,stud=6;underpin=1,full,hand,stud=6;underpin=1,full,1x2 - 2x2
+99207,bracket,stud=6;underpin=1,stud=6;underpin=1,full,hand,stud=6;underpin=1,full,1x2 - 2x2 up
+3956,bracket,unverified,stud=4;tube=2,unverified,unverified,stud=4;tube=2,unverified,2x2 - 2x2 up: top-face studs disputed (LDraw shows a holed top); not settled | no ground truth
+2436a,bracket,stud=6;underpin=1,stud=6;underpin=1,full,hand,stud=6;underpin=1,full,1x2 - 1x4
+36840,bracket,stud=2,stud=2,full,hand,stud=2,full,1x1 - 1x1 up
+36841,bracket,stud=2,stud=2,full,hand,stud=2,full,1x1 - 1x1 down
+93274,bracket,stud=10;underpin=1,stud=10;underpin=1,full,hand,stud=10;underpin=1,full,1x2 - 2x4
+87087,side_studs,stud=2,stud=2,full,hand,stud=2,full,"1x1, 1 side stud"
+4070,side_studs,stud=2,stud=2,full,hand,stud=2,full,1x1 headlight: recessed side stud
+30414,side_studs,stud=8;underpin=3,stud=8;underpin=3,full,hand,stud=8;underpin=3,full,"1x4, 4 side studs"
+26604,side_studs,stud=3,stud=3,full,hand,stud=3,full,"1x1, 2 adjacent side studs"
+47905,side_studs,stud=3,stud=3,full,hand,stud=3,full,"1x1, 2 opposite side studs"
+4733,side_studs,stud=5,stud=5,full,hand,stud=5,full,"1x1, 4 side studs"
+11211,side_studs,stud=4;underpin=1,stud=4;underpin=1,full,hand,stud=4;underpin=1,full,"1x2, 2 studs on one side"
+32952,side_studs,stud=3,stud=3,full,hand,stud=3,full,"1x1x1.667, 2 side studs"
+44301a,hinge,stud=2;underpin=1;hinge=1,stud=2;underpin=1;hinge=1,full,hand,stud=2;underpin=1;hinge=1,full,"1x2 locking, single finger on end"
+44302a,hinge,stud=2;underpin=1;hinge=1,stud=2;underpin=1;hinge=1,full,hand,stud=2;underpin=1;hinge=1,full,"1x2 locking, dual finger on end"
+60471,hinge,stud=2;underpin=1;hinge=1,stud=2;underpin=1;hinge=1,full,hand,stud=2;underpin=1;hinge=1,full,"1x2 locking, dual finger on side"
+30383,hinge,stud=1;underpin=1;hinge=1,stud=1;underpin=1;hinge=1,full,hand,stud=1;underpin=1;hinge=1,full,"1x2 locking, single finger on top in place of one stud"
+3937,hinge,underpin=?;hinge=1,none,wrong,hand,none,wrong,hinge brick base: no studs; underside not established | missing hinge 0/1
+3938,hinge,stud=2;underpin=?;hinge=1,stud=2,partial,hand,stud=2,partial,hinge brick top: 2 studs; underside not established | missing hinge 0/1
+2429,hinge,stud=2;underpin=?;hinge=1,stud=2;underpin=1,partial,hand,stud=2;underpin=1,partial,hinge plate 1x4 base: 2 studs and the pivot; underside not established | missing hinge 0/1
+2430,hinge,stud=2;underpin=?;hinge=1,stud=2;underpin=1;pin=1,partial,hand,stud=2;underpin=1;pin=1,partial,hinge plate 1x4 top: 2 studs and the pivot; underside not established | extra pin 1/0; missing hinge 0/1
+4275b,hinge,stud=2;underpin=1;hinge=1,stud=2;underpin=1;hinge=1,full,hand,stud=2;underpin=1;hinge=1,full,1x2 with 3 fingers
+4276b,hinge,stud=2;underpin=1;hinge=1,stud=2;underpin=1;hinge=1,full,hand,stud=2;underpin=1;hinge=1,full,1x2 with 2 fingers
+4085c,bar_clip,stud=1;clip=1,stud=1;clip=1,full,hand,stud=1;clip=1,full,1x1 with vertical clip
+60897,bar_clip,stud=1;clip=1,stud=1;clip=1,full,hand,stud=1;clip=1,full,1x1 with vertical clip
+15712,bar_clip,clip=1,none,wrong,hand,none,wrong,tile 1x1 with clip | missing clip 0/1
+61252,bar_clip,stud=1;clip=1,stud=1;clip=1,full,hand,stud=1;clip=1,full,1x1 with horizontal clip
+63868,bar_clip,stud=2;underpin=1;clip=1,stud=2;underpin=1;clip=1,full,hand,stud=2;underpin=1;clip=1,full,1x2 with clip on end
+60470a,bar_clip,stud=2;underpin=1;clip=2,stud=2;underpin=1;clip=2,full,hand,stud=2;underpin=1;clip=2,full,1x2 with 2 clips
+48336,bar_clip,stud=2;underpin=1;bar=1,stud=2;underpin=1;bar=1,full,hand,stud=2;underpin=1;bar=1,full,1x2 with bar handle on side
+2540,bar_clip,stud=2;underpin=1;bar=1,stud=2;underpin=1;bar=1,full,hand,stud=2;underpin=1;bar=1,full,1x2 with bar handle
+87994,bar_clip,bar=1,none,wrong,hand,bar=1,full,bar 3L | missing bar 0/1
+63965a,bar_clip,bar=2,none,wrong,hand,bar=2,full,bar 6L with thick stop: two bar sections either side of the stop | missing bar 0/2
+4081b,bar_clip,unverified,stud=3,unverified,unverified,stud=3,unverified,clip light: ring holder semantics (clip or hollow stud) not settled | no ground truth
+2921,bar_clip,stud=1;bar=1,stud=1,partial,hand,stud=1;bar=1,full,brick 1x1 with handle | missing bar 0/1
+6141,round,stud=1;tube=?,stud=1;tube=1,unverified,hand,stud=1;tube=1,unverified,1x1 round plate; underside form not established | known kinds match; tube not established
+85861,round,stud=1;tube=?,stud=1;tube=1,unverified,hand,stud=1;tube=1,unverified,1x1 round plate open stud; underside form not established | known kinds match; tube not established
+3062b,round,stud=1;tube=?,stud=1;tube=1,unverified,hand,stud=1;tube=1,unverified,1x1 round brick; underside form not established | known kinds match; tube not established
+4032a,round,stud=4;tube=1;axlehole=1,stud=4;tube=1;axlehole=1,full,hand,stud=4;tube=1;axlehole=1,full,"2x2 round plate: 4 studs, centre tube with axle hole"
+3941,round,stud=4;tube=1;axlehole=1,stud=4;tube=1;axlehole=1,full,hand,stud=4;tube=1;axlehole=1,full,"2x2 round brick: 4 studs, centre tube with axle hole"
+98138,round,tube=?,tube=1,unverified,hand,tube=1,unverified,1x1 round tile; underside form not established | known kinds match; tube not established
+14769,round,tube=1,tube=1,full,hand,tube=1,full,2x2 round tile: centre underside stud between 4 studs
+4150,round,tube=1,tube=1,full,hand,tube=1,full,2x2 round tile: cross underside stud between 4 studs
+4589,round,unverified,stud=1;axlehole=1,unverified,unverified,stud=1;axlehole=1,unverified,cone 1x1: whether the top hole is a usable axle hole is not established | no ground truth
+3942b,round,stud=1;tube=?;axlehole=1,stud=1;tube=1;axlehole=1,unverified,hand,stud=1;tube=1;axlehole=1,unverified,cone 2x2x2: hollow stud with axle hole; underside not established | known kinds match; tube not established
+60474,round,unverified,stud=12;tube=5,unverified,unverified,stud=12;tube=5,unverified,round plate 4x4 with hole and snap stud: layout not established | no ground truth
+41769a,wedge,unverified,stud=4;tube=1,unverified,unverified,stud=4;tube=1,unverified,wing 2x4: stud and tube layout not established | no ground truth
+41770a,wedge,unverified,stud=4;tube=1,unverified,unverified,stud=4;tube=1,unverified,wing 2x4: stud and tube layout not established | no ground truth
+43722a,wedge,unverified,stud=3,unverified,unverified,stud=3,unverified,wing 2x3: stud and underside layout not established | no ground truth
+43723a,wedge,unverified,stud=3,unverified,unverified,stud=3,unverified,wing 2x3: stud and underside layout not established | no ground truth
+51739,wedge,unverified,stud=4;tube=1,unverified,unverified,stud=4;tube=1,unverified,wing 2x4: stud and tube layout not established | no ground truth
+41747,wedge,unverified,stud=2;tube=3,unverified,unverified,stud=2;tube=3,unverified,wedge 2x6: stud and tube layout not established | no ground truth
+3794b,jumper,stud=1;underpin=1,stud=1;underpin=1,full,hand,stud=1;underpin=1,full,jumper 1x2
+15573,jumper,stud=1,stud=1,full,hand,stud=1,full,jumper 1x2 without understud
+87580,jumper,stud=1;tube=1,stud=1;tube=1,full,hand,stud=1;tube=1,full,jumper 2x2
+34103,jumper,stud=2;underpin=?,stud=2,unverified,hand,stud=2,unverified,1x3 with 2 offset studs; underside not established | known kinds match; underpin not established
+4590,jumper,unverified,stud=4;tube=2;underpin=1,unverified,unverified,stud=4;tube=2;underpin=1,unverified,1x2 with 2 offset hollow studs: layout not established | no ground truth
+3811,baseplate,stud=1024,stud=1024,full,rule,stud=1024,full,
+3867,baseplate,stud=256,stud=256,full,rule,stud=256,full,
+3857,baseplate,stud=512,stud=512,full,rule,stud=512,full,
+4186,baseplate,stud=2304,stud=2304,full,rule,stud=2304,full,
