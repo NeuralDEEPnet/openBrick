@@ -7,16 +7,26 @@
 //! 25422:2025), with
 //!
 //! - unit millimetre; meshes are written as given (millimetres, Z up, one frame
-//!   shared by all objects), so every build item has the identity transform;
-//! - one `<object type="model">` per [`ExportObject`] and one build `<item>` each;
+//!   shared by all objects), so every build item and every component has the
+//!   identity transform (none is written);
+//! - one mesh `<object type="model">` per [`ExportObject`], laid out by an
+//!   [`ExportLayout`]: [`ExportLayout::SeparateObjects`] (what [`write_3mf`]
+//!   writes) gives each object its own build `<item>`;
+//!   [`ExportLayout::OneObjectWithParts`] adds one `<components>` object that
+//!   references every mesh object in input order and gives only that object a
+//!   build item, so slicers that read components as parts load one object with
+//!   a part per [`ExportObject`], in place (docs/plan/05 section 7,
+//!   docs/spikes/q18-slicer-multimaterial-import.md);
 //! - one `<m:colorgroup>` (Materials and Properties extension 1.2.1) holding one
-//!   sRGB colour per role, referenced by each object's `pid` and `pindex`; objects
-//!   without a colour carry no property;
-//! - `p:UUID` (Production extension 1.1.2) on the build, every item and every
-//!   object, derived by [`package_uuids`] from the metadata and the objects
-//!   instead of drawn at random;
+//!   sRGB colour per role, referenced by each mesh object's `pid` and `pindex`;
+//!   objects without a colour carry no property, and neither does the
+//!   components object (Core 1.4.0 chapter 4: producers must not put `pid` on
+//!   an object with components);
+//! - `p:UUID` (Production extension 1.1.2) on the build, every item, every
+//!   object and every component, derived by [`package_uuids_with_layout`] from
+//!   the metadata, the objects and the layout instead of drawn at random;
 //! - model metadata `Title`, `Application` and `openbrick:*` from [`ExportMeta`],
-//!   and an object metadata group with `openbrick:role`.
+//!   and an object metadata group with `openbrick:role` on every mesh object.
 //!
 //! Neither extension is listed in `requiredextensions`: colours and UUIDs are
 //! optional information, and a consumer that knows only the core still reads the
@@ -79,11 +89,94 @@ fn rels_xml() -> String {
     )
 }
 
-/// Write a 3MF package. See the module documentation for the content; nothing is
-/// written when any object or metadata field fails the checks listed on
-/// [`threemf_model_xml`].
+/// How a package arranges its objects. Both layouts write one mesh object per
+/// [`ExportObject`] in the same shared frame; they differ in what the build
+/// places. Findings from the slicers' import code and issue trackers, with
+/// links and what could not be confirmed, are in
+/// docs/spikes/q18-slicer-multimaterial-import.md.
+///
+/// - The 3MF Core specification 1.4.0 lets consumers rearrange build items
+///   ("consumers MAY rearrange the items", section 3.4.3.1) but requires them
+///   to respect the relative positions of components (section 4.2).
+/// - Bambu Studio (2.x) builds one object per build item, and an object with
+///   components becomes one object with a part per component, each keeping its
+///   transform. Several build items load as separate objects, which users
+///   report being dropped to the bed one by one.
+/// - PrusaSlicer 2.9.x turns each component into an object of its own, as it
+///   does with build items, so both layouts load alike there: objects whose
+///   boxes touch or overlap make it ask "Multi-part object detected"; Yes
+///   merges them into one object with parts in place and assigns extruders
+///   1, 2, ... in object order.
+///
+/// So [`ExportLayout::PART_DESIGNER`], the layout for part-designer exports
+/// with more than one colour role, is [`ExportLayout::OneObjectWithParts`].
+/// `Default` is [`ExportLayout::SeparateObjects`], what [`write_3mf`] has
+/// always written, so existing callers and fixtures keep their bytes.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportLayout {
+    /// One mesh object and one build item per [`ExportObject`].
+    #[default]
+    SeparateObjects,
+    /// One mesh object per [`ExportObject`], one components object (named
+    /// after [`ExportMeta::title`], or the part id when the title is blank)
+    /// that references them all in input order with no transform, and a single
+    /// build item for the components object. With one [`ExportObject`] there is
+    /// nothing to group, and the package is exactly the
+    /// [`ExportLayout::SeparateObjects`] one (same bytes, same UUIDs).
+    OneObjectWithParts,
+}
+
+impl ExportLayout {
+    /// The layout of part-designer exports (docs/plan/05 section 7): one object
+    /// whose parts are the colour roles, so a multi-material printer gets one
+    /// object in place and the user assigns a filament to each part.
+    pub const PART_DESIGNER: ExportLayout = ExportLayout::OneObjectWithParts;
+    /// Every layout, in declaration order.
+    pub const ALL: [ExportLayout; 2] = [
+        ExportLayout::SeparateObjects,
+        ExportLayout::OneObjectWithParts,
+    ];
+
+    /// The camelCase name used in JSON, in the UUID seed and in fixtures.
+    pub fn name(self) -> &'static str {
+        match self {
+            ExportLayout::SeparateObjects => "separateObjects",
+            ExportLayout::OneObjectWithParts => "oneObjectWithParts",
+        }
+    }
+
+    /// The layout named `name` (see [`ExportLayout::name`]).
+    pub fn from_name(name: &str) -> Option<ExportLayout> {
+        ExportLayout::ALL.into_iter().find(|l| l.name() == name)
+    }
+
+    /// Whether this layout writes a components object for `objects` objects:
+    /// only [`ExportLayout::OneObjectWithParts`] with two or more.
+    pub fn groups(self, objects: usize) -> bool {
+        self == ExportLayout::OneObjectWithParts && objects >= 2
+    }
+}
+
+/// Write a 3MF package with one build item per object
+/// ([`ExportLayout::SeparateObjects`]). See the module documentation for the
+/// content; nothing is written when any object or metadata field fails the
+/// checks listed on [`threemf_model_xml`].
 pub fn write_3mf(objects: &[ExportObject<'_>], meta: &ExportMeta) -> Result<Vec<u8>, IoError> {
-    let model = threemf_model_xml(objects, meta)?;
+    write_3mf_with_layout(objects, meta, ExportLayout::SeparateObjects)
+}
+
+/// Write a 3MF package in the given layout; [`write_3mf`] is this with
+/// [`ExportLayout::SeparateObjects`]. Part-designer exports use
+/// [`ExportLayout::PART_DESIGNER`].
+pub fn write_3mf_with_layout(
+    objects: &[ExportObject<'_>],
+    meta: &ExportMeta,
+    layout: ExportLayout,
+) -> Result<Vec<u8>, IoError> {
+    let model = threemf_model_xml_with_layout(objects, meta, layout)?;
     write_zip(&[
         ("[Content_Types].xml", content_types_xml().as_bytes()),
         ("_rels/.rels", rels_xml().as_bytes()),
@@ -95,10 +188,26 @@ pub fn write_3mf(objects: &[ExportObject<'_>], meta: &ExportMeta) -> Result<Vec<
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackageUuids {
     pub build: Uuid,
-    /// One per object, in input order.
+    /// One per mesh object, in input order.
     pub objects: Vec<Uuid>,
-    /// One per build item, in input order.
+    /// One per build item, in build order: one per object, or the single item
+    /// of the components object.
     pub items: Vec<Uuid>,
+    /// The components object, when the layout writes one.
+    pub assembly: Option<Uuid>,
+    /// One per component (so per mesh object, in input order) when the layout
+    /// writes a components object; empty otherwise.
+    pub components: Vec<Uuid>,
+}
+
+/// The name of the components object: the title, or the part id when the
+/// title is blank (`write_3mf` requires a non-blank part id).
+pub fn assembly_name(meta: &ExportMeta) -> &str {
+    if meta.title.trim().is_empty() {
+        &meta.part_id
+    } else {
+        &meta.title
+    }
 }
 
 /// FNV-1a (64 bit) of a mesh as the 3MF stores it: the little-endian `f32` bits
@@ -154,7 +263,31 @@ pub fn stored_fingerprint(mesh: &openbrick_geom::Mesh) -> u64 {
 ///    The length prefixes keep the encoding unambiguous.
 /// 3. build = v5(package, "build"), object i = v5(package, "object/i") and
 ///    item i = v5(package, "item/i").
+///
+/// These are the UUIDs of [`ExportLayout::SeparateObjects`]; see
+/// [`package_uuids_with_layout`] for the components layout.
 pub fn package_uuids(objects: &[ExportObject<'_>], meta: &ExportMeta) -> PackageUuids {
+    package_uuids_with_layout(objects, meta, ExportLayout::SeparateObjects)
+}
+
+/// [`package_uuids`] for any layout. A layout that writes a components object
+/// ([`ExportLayout::groups`]) appends two lines to the seed, after the objects:
+///
+/// - `layout=oneObjectWithParts` ([`ExportLayout::name`]);
+/// - `assembly=<byte length>:<name>`, the components object's name
+///   ([`assembly_name`]),
+///
+/// and derives the components object = v5(package, "assembly"), component i =
+/// v5(package, "component/i") and its single build item = v5(package,
+/// "item/0"). Other packages keep the seed and UUIDs of [`package_uuids`]: a
+/// [`ExportLayout::OneObjectWithParts`] export of one object is the same file
+/// as the separate layout, so it has the same UUIDs, and a grouped export never
+/// shares UUIDs with an ungrouped one.
+pub fn package_uuids_with_layout(
+    objects: &[ExportObject<'_>],
+    meta: &ExportMeta,
+    layout: ExportLayout,
+) -> PackageUuids {
     let root = Uuid::new_v5(&Uuid::NAMESPACE_DNS, UUID_ROOT_NAME.as_bytes());
     let mut seed = String::from("openbrick 3mf package\n");
     for (name, value) in meta.fields() {
@@ -187,12 +320,27 @@ pub fn package_uuids(objects: &[ExportObject<'_>], meta: &ExportMeta) -> Package
             stored_fingerprint(o.mesh)
         );
     }
+    let grouped = layout.groups(objects.len());
+    if grouped {
+        let name = assembly_name(meta);
+        let _ = writeln!(seed, "layout={}", layout.name());
+        let _ = writeln!(seed, "assembly={}:{name}", name.len());
+    }
     let package = Uuid::new_v5(&root, seed.as_bytes());
     let derive = |kind: &str, i: usize| Uuid::new_v5(&package, format!("{kind}/{i}").as_bytes());
+    let n = objects.len();
     PackageUuids {
         build: Uuid::new_v5(&package, b"build"),
-        objects: (0..objects.len()).map(|i| derive("object", i)).collect(),
-        items: (0..objects.len()).map(|i| derive("item", i)).collect(),
+        objects: (0..n).map(|i| derive("object", i)).collect(),
+        items: (0..if grouped { 1 } else { n })
+            .map(|i| derive("item", i))
+            .collect(),
+        assembly: grouped.then(|| Uuid::new_v5(&package, b"assembly")),
+        components: if grouped {
+            (0..n).map(|i| derive("component", i)).collect()
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -262,6 +410,18 @@ pub fn threemf_model_xml(
     objects: &[ExportObject<'_>],
     meta: &ExportMeta,
 ) -> Result<String, IoError> {
+    threemf_model_xml_with_layout(objects, meta, ExportLayout::SeparateObjects)
+}
+
+/// [`threemf_model_xml`] in the given layout: what [`write_3mf_with_layout`]
+/// puts in the zip. The same checks apply. The writers do not test whether
+/// objects overlap; the evaluator builds touching, non-overlapping objects, and
+/// `scripts/validate-3mf.py` samples every package for overlaps.
+pub fn threemf_model_xml_with_layout(
+    objects: &[ExportObject<'_>],
+    meta: &ExportMeta,
+    layout: ExportLayout,
+) -> Result<String, IoError> {
     if objects.is_empty() {
         return Err(IoError::NoObjects);
     }
@@ -288,7 +448,7 @@ pub fn threemf_model_xml(
         .collect();
     let colour_group_id = 1;
     let first_object_id = if colours.is_empty() { 1 } else { 2 };
-    let uuids = package_uuids(objects, meta);
+    let uuids = package_uuids_with_layout(objects, meta, layout);
 
     // Kernel meshes take about 45 bytes per vertex line and 50 per triangle line.
     // Only a hint: saturating (usize is 32 bits on wasm32), and growth takes over
@@ -359,15 +519,35 @@ pub fn threemf_model_xml(
         }
         out.push_str("    </triangles>\n   </mesh>\n  </object>\n");
     }
+    // The components object comes after the mesh objects it references (Core
+    // 1.4.0 section 4.2.1: objects are defined before they are referenced) and
+    // carries no pid (chapter 4: not on objects with components). The
+    // components have no transform: every mesh is already in the shared frame.
+    let assembly = uuids
+        .assembly
+        .map(|uuid| (first_object_id + objects.len(), uuid));
+    if let Some((id, uuid)) = assembly {
+        let _ = write!(out, "  <object id=\"{id}\" type=\"model\" name=\"");
+        escape_into(&mut out, assembly_name(meta));
+        let _ = writeln!(out, "\" p:UUID=\"{uuid}\">");
+        out.push_str("   <components>\n");
+        for (i, component) in uuids.components.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "    <component objectid=\"{}\" p:UUID=\"{component}\"/>",
+                first_object_id + i
+            );
+        }
+        out.push_str("   </components>\n  </object>\n");
+    }
     out.push_str(" </resources>\n");
     let _ = writeln!(out, " <build p:UUID=\"{}\">", uuids.build);
-    for i in 0..objects.len() {
-        let _ = writeln!(
-            out,
-            "  <item objectid=\"{}\" p:UUID=\"{}\"/>",
-            first_object_id + i,
-            uuids.items[i]
-        );
+    let placed: Vec<usize> = match assembly {
+        Some((id, _)) => vec![id],
+        None => (0..objects.len()).map(|i| first_object_id + i).collect(),
+    };
+    for (id, uuid) in placed.iter().zip(&uuids.items) {
+        let _ = writeln!(out, "  <item objectid=\"{id}\" p:UUID=\"{uuid}\"/>");
     }
     out.push_str(" </build>\n</model>\n");
     Ok(out)
@@ -485,6 +665,219 @@ mod tests {
         assert_eq!(xml, expected);
         assert_eq!(stored_fingerprint(&a), 0x94c8_2c30_0515_cbf8);
         assert_eq!(stored_fingerprint(&b), 0x3183_0281_756a_be55);
+    }
+
+    /// The components layout for the same two objects, byte for byte: the mesh
+    /// objects as before (new UUIDs), then the components object named after
+    /// the title, with no pid and no transforms, and a single build item. The
+    /// UUIDs were computed independently in Python as for `model_xml_golden`,
+    /// with the two seed lines `layout=oneObjectWithParts` and
+    /// `assembly=13:Tetra <A & B>` appended, then `uuid5(pkg, "assembly")`,
+    /// `uuid5(pkg, "component/0")`, ... and `uuid5(pkg, "item/0")`.
+    #[test]
+    fn model_xml_golden_one_object_with_parts() {
+        let (a, b) = (tetra(0.0), tetra(2.5));
+        let objects = [
+            ExportObject::new("body", "body", Some([0xC9, 0x1A, 0x09, 0xFF]), &a),
+            ExportObject::new("accent \"x\"", "accent", None, &b),
+        ];
+        let xml =
+            threemf_model_xml_with_layout(&objects, &meta(), ExportLayout::OneObjectWithParts)
+                .unwrap();
+        let expected = r##"<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" xmlns:openbrick="https://openbrick3d.org/3mf/metadata/1.0">
+ <metadata name="Title">Tetra &lt;A &amp; B&gt;</metadata>
+ <metadata name="Application">openbrick-io 0.0.1</metadata>
+ <metadata name="openbrick:partId" preserve="1">test.tetra</metadata>
+ <metadata name="openbrick:version" preserve="1">1.0.0</metadata>
+ <metadata name="openbrick:contentHash" preserve="1">sha256:00ff</metadata>
+ <metadata name="openbrick:fitProfile" preserve="1">example-mk4s-petg-0.4</metadata>
+ <metadata name="openbrick:process" preserve="1">fdm-0.4</metadata>
+ <metadata name="openbrick:generator" preserve="1">openbrick-io 0.0.1</metadata>
+ <metadata name="openbrick:kernel" preserve="1">none (hand-built mesh)</metadata>
+ <metadata name="openbrick:serial" preserve="1">NDN-0001</metadata>
+ <resources>
+  <m:colorgroup id="1">
+   <m:color color="#C91A09FF"/>
+  </m:colorgroup>
+  <object id="2" type="model" name="body" pid="1" pindex="0" p:UUID="282f3785-76aa-5b46-9e09-a8af49fa4fc8">
+   <metadatagroup>
+    <metadata name="openbrick:role" preserve="1">body</metadata>
+   </metadatagroup>
+   <mesh>
+    <vertices>
+     <vertex x="0" y="0" z="0"/>
+     <vertex x="1" y="0" z="0"/>
+     <vertex x="0" y="1" z="0"/>
+     <vertex x="0" y="0" z="1"/>
+    </vertices>
+    <triangles>
+     <triangle v1="0" v2="2" v3="1"/>
+     <triangle v1="0" v2="1" v3="3"/>
+     <triangle v1="1" v2="2" v3="3"/>
+     <triangle v1="0" v2="3" v3="2"/>
+    </triangles>
+   </mesh>
+  </object>
+  <object id="3" type="model" name="accent &quot;x&quot;" p:UUID="ee1f433c-92ac-57c5-9bf6-9f44f8ac7bf6">
+   <metadatagroup>
+    <metadata name="openbrick:role" preserve="1">accent</metadata>
+   </metadatagroup>
+   <mesh>
+    <vertices>
+     <vertex x="2.5" y="0" z="0"/>
+     <vertex x="3.5" y="0" z="0"/>
+     <vertex x="2.5" y="1" z="0"/>
+     <vertex x="2.5" y="0" z="1"/>
+    </vertices>
+    <triangles>
+     <triangle v1="0" v2="2" v3="1"/>
+     <triangle v1="0" v2="1" v3="3"/>
+     <triangle v1="1" v2="2" v3="3"/>
+     <triangle v1="0" v2="3" v3="2"/>
+    </triangles>
+   </mesh>
+  </object>
+  <object id="4" type="model" name="Tetra &lt;A &amp; B&gt;" p:UUID="987b4428-acfa-5183-afdf-648dc5de7634">
+   <components>
+    <component objectid="2" p:UUID="33b23fe3-534e-5646-97d4-0f2cbb9b8166"/>
+    <component objectid="3" p:UUID="236ad737-9648-5e74-85d4-34c1a6782d71"/>
+   </components>
+  </object>
+ </resources>
+ <build p:UUID="ec7e4aa9-88cc-572d-b45f-4a5d2f7c4558">
+  <item objectid="4" p:UUID="6d42a29b-0ff1-5531-8213-53a22a32f4a4"/>
+ </build>
+</model>
+"##;
+        assert_eq!(xml, expected);
+        // The same package through the UUID function.
+        let u = package_uuids_with_layout(&objects, &meta(), ExportLayout::OneObjectWithParts);
+        assert_eq!(u.items.len(), 1);
+        assert_eq!(u.components.len(), 2);
+        assert!(u.assembly.is_some());
+        // The default layout is the one write_3mf has always written.
+        assert_eq!(
+            threemf_model_xml_with_layout(&objects, &meta(), ExportLayout::default()),
+            threemf_model_xml(&objects, &meta())
+        );
+    }
+
+    #[test]
+    fn the_components_object_is_named_after_the_part_without_a_title() {
+        let (a, b) = (tetra(0.0), tetra(2.0));
+        let objects = [
+            ExportObject::new("a", "body", None, &a),
+            ExportObject::new("b", "accent", None, &b),
+        ];
+        let untitled = ExportMeta {
+            title: " ".into(),
+            ..meta()
+        };
+        assert_eq!(assembly_name(&untitled), "test.tetra");
+        assert_eq!(assembly_name(&meta()), "Tetra <A & B>");
+        let xml =
+            threemf_model_xml_with_layout(&objects, &untitled, ExportLayout::OneObjectWithParts)
+                .unwrap();
+        assert!(xml.contains("<object id=\"3\" type=\"model\" name=\"test.tetra\" p:UUID="));
+        // The name is part of the seed: another title, other UUIDs.
+        let grouped = |m: &ExportMeta| {
+            package_uuids_with_layout(&objects, m, ExportLayout::OneObjectWithParts)
+        };
+        assert_ne!(grouped(&untitled).assembly, grouped(&meta()).assembly);
+    }
+
+    #[test]
+    fn layouts_never_share_uuids_and_one_object_is_not_grouped() {
+        let (a, b) = (tetra(0.0), tetra(2.0));
+        let red = Some([255, 0, 0, 255]);
+        let objects = [
+            ExportObject::new("a", "body", red, &a),
+            ExportObject::new("b", "accent", None, &b),
+        ];
+        let separate = package_uuids(&objects, &meta());
+        let grouped =
+            package_uuids_with_layout(&objects, &meta(), ExportLayout::OneObjectWithParts);
+        assert!(separate.assembly.is_none() && separate.components.is_empty());
+        assert_eq!(separate.items.len(), 2);
+        let mut all = vec![separate.build, grouped.build];
+        all.extend(&separate.objects);
+        all.extend(&separate.items);
+        all.extend(&grouped.objects);
+        all.extend(&grouped.items);
+        all.extend(&grouped.components);
+        all.extend(grouped.assembly);
+        let count = all.len();
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), count, "a UUID repeats across the two layouts");
+        assert!(all.iter().all(|x| x.get_version_num() == 5));
+
+        // One object: nothing to group, so the very same file and UUIDs.
+        let one = [ExportObject::new("a", "body", red, &a)];
+        for layout in ExportLayout::ALL {
+            assert!(!layout.groups(1));
+            assert_eq!(
+                write_3mf_with_layout(&one, &meta(), layout).unwrap(),
+                write_3mf(&one, &meta()).unwrap(),
+                "{}",
+                layout.name()
+            );
+        }
+        assert!(ExportLayout::OneObjectWithParts.groups(2));
+        assert!(!ExportLayout::SeparateObjects.groups(2));
+        assert_eq!(
+            ExportLayout::PART_DESIGNER,
+            ExportLayout::OneObjectWithParts
+        );
+        assert_eq!(ExportLayout::default(), ExportLayout::SeparateObjects);
+        for layout in ExportLayout::ALL {
+            assert_eq!(ExportLayout::from_name(layout.name()), Some(layout));
+            let json = serde_json::to_string(&layout).unwrap();
+            assert_eq!(json, format!("\"{}\"", layout.name()));
+        }
+        assert_eq!(ExportLayout::from_name("parts"), None);
+    }
+
+    #[test]
+    fn grouped_packages_are_byte_identical_and_refuse_bad_input_alike() {
+        let (a, b, c) = (tetra(0.0), tetra(2.0), tetra(4.0));
+        let objects = [
+            ExportObject::new("a", "body", Some([9, 9, 9, 255]), &a),
+            ExportObject::new("b", "accent", Some([200, 9, 9, 255]), &b),
+            ExportObject::new("c", "serial", None, &c),
+        ];
+        let layout = ExportLayout::OneObjectWithParts;
+        let first = write_3mf_with_layout(&objects, &meta(), layout).unwrap();
+        assert_eq!(
+            first,
+            write_3mf_with_layout(&objects, &meta(), layout).unwrap()
+        );
+        assert_ne!(first, write_3mf(&objects, &meta()).unwrap());
+        let xml = threemf_model_xml_with_layout(&objects, &meta(), layout).unwrap();
+        assert_eq!(xml.matches("<component ").count(), 3);
+        assert_eq!(xml.matches("<item ").count(), 1);
+        assert!(!xml.contains("transform="));
+        // The components object is the last resource, after its parts, and the
+        // only object without a colour property or a role.
+        let assembly = xml.find("<components>").unwrap();
+        assert!(xml.rfind("<mesh>").unwrap() < assembly);
+        assert_eq!(xml.matches("openbrick:role").count(), 3);
+
+        let mut open = tetra(0.0);
+        open.indices.truncate(9);
+        let broken = [
+            ExportObject::new("open", "body", None, &open),
+            ExportObject::new("b", "accent", None, &b),
+        ];
+        assert!(matches!(
+            write_3mf_with_layout(&broken, &meta(), layout),
+            Err(IoError::NotClosed { ref object, .. }) if object == "open"
+        ));
+        assert_eq!(
+            write_3mf_with_layout(&[], &meta(), layout),
+            Err(IoError::NoObjects)
+        );
     }
 
     #[test]

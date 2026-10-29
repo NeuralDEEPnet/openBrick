@@ -1,6 +1,6 @@
 // Display transforms (src/placement.js) and page helpers (src/ui.js): the brick on
-// the lattice in the three.js frame, camera framing, the grid, URL parameters and
-// the status line.
+// the lattice in the three.js frame, camera framing, the grid, the backend URL
+// parameter, the size steppers and the slow-build seconds.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -8,17 +8,7 @@ import { test } from "node:test";
 import { Object3D, Vector3 } from "three";
 import { KERNEL_TO_THREE_EULER_X } from "@openbrick3d/viewport/frame.js";
 import { brickOffset, framingDistance, gridCells, placedBounds } from "../src/placement.js";
-import {
-  buildingParts,
-  DEFAULT_SIZE,
-  elapsedText,
-  readBackend,
-  readSize,
-  SLOW_BUILD_MS,
-  statusParts,
-  stepStuds,
-  writeQuery,
-} from "../src/ui.js";
+import { elapsedText, readBackend, stepStuds } from "../src/ui.js";
 import { standardSummary } from "../src/protocol.js";
 
 const standard = standardSummary(readFileSync(new URL("../../../standards/dimensions-v1.json", import.meta.url), "utf8"));
@@ -109,17 +99,12 @@ test("the grid has an even cell count and room around the brick", () => {
   }
 });
 
-test("URL parameters: size within the core's limit, backend from a fixed list", () => {
-  assert.deepEqual(readSize("", 16), { ...DEFAULT_SIZE, errors: [] });
-  assert.deepEqual(readSize("?w=3&l=12", 16), { width: 3, length: 12, errors: [] });
-  const bad = readSize("?w=0&l=99", 16);
-  assert.deepEqual([bad.width, bad.length], [DEFAULT_SIZE.width, DEFAULT_SIZE.length]);
-  assert.equal(bad.errors.length, 2);
-  assert.match(bad.errors[1], /^length must be a whole number of studs from 1 to 16/);
+test("the backend URL parameter comes from a fixed list", () => {
   assert.deepEqual(readBackend("?backend=webgl2"), { backend: "webgl2", errors: [] });
   assert.deepEqual(readBackend(""), { backend: "auto", errors: [] });
-  assert.equal(readBackend("?backend=vulkan").backend, "auto");
-  assert.equal(writeQuery("?backend=webgl2&w=1", { width: 2, length: 3 }), "?backend=webgl2&w=2&l=3");
+  const bad = readBackend("?backend=vulkan");
+  assert.equal(bad.backend, "auto");
+  assert.match(bad.errors[0], /backend must be one of auto, webgpu, webgl2, got "vulkan"/);
 });
 
 test("stepper buttons stay within 1 to the limit", () => {
@@ -129,27 +114,7 @@ test("stepper buttons stay within 1 to the limit", () => {
   assert.equal(stepStuds(Number.NaN, 1, 16), 2, "an emptied input steps from 1");
 });
 
-test("the status line names size, triangles, volume, fingerprint, kernel and backend", () => {
-  const parts = statusParts(
-    { width: 2, length: 4, triangles: 3620, volumeMm3: 2073.391092856258, fingerprint: "0xfa969a6c0bf657e7", buildMs: 48.6, kernel: "manifold-rust 0.19.1" },
-    "webgpu",
-  );
-  assert.deepEqual(parts, [
-    "2 × 4 brick",
-    "3,620 triangles",
-    "2,073.391 mm³",
-    "fingerprint 0xfa969a6c0bf657e7",
-    "built in 49 ms by manifold-rust 0.19.1",
-    "WebGPU",
-  ]);
-  assert.equal(statusParts({ width: 1, length: 1, triangles: 1, volumeMm3: 1, fingerprint: "0x0", buildMs: 1, kernel: "k" }, "webgl2").at(-1), "WebGL 2");
-});
-
-test("a slow build gets a note on cancelling, and its seconds", () => {
-  const size = { width: 16, length: 16 };
-  assert.deepEqual(buildingParts(size, 0), ["Building 16 × 16…"]);
-  assert.deepEqual(buildingParts(size, SLOW_BUILD_MS - 1), ["Building 16 × 16…"]);
-  assert.deepEqual(buildingParts(size, SLOW_BUILD_MS), ["Building 16 × 16…", "Large bricks take a while. Change the size to cancel."]);
+test("a slow build shows its whole seconds", () => {
   assert.equal(elapsedText(999), "0 s");
   assert.equal(elapsedText(12_345), "12 s");
   assert.equal(elapsedText(-5), "0 s");

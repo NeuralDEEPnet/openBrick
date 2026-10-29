@@ -12,9 +12,15 @@
 //! - `three-roles`: hand-built solids, one per role (a cube as `body`, two
 //!   tetrahedra as `accent` and `serial`, the last without a colour), with a
 //!   serial number in the metadata.
-//! - `fixtures.json`: what every file must contain (objects, counts, colours,
-//!   volumes, bounds, stored mesh fingerprints, Production UUIDs and metadata),
-//!   which the validator compares with what lib3mf reads.
+//! - `stacked-parts`: a hand-built `body` block with an `accent` block standing
+//!   on its top face (touching in that plane, not overlapping), written as one
+//!   object with two parts ([`ExportLayout::OneObjectWithParts`], the
+//!   part-designer layout for multi-material printers): one components object
+//!   with one build item, referencing both mesh objects with no transform.
+//! - `fixtures.json`: what every file must contain (layout, objects, counts,
+//!   colours, volumes, bounds, stored mesh fingerprints, Production UUIDs of
+//!   the build, items, objects and components, and metadata), which the
+//!   validator compares with what lib3mf reads.
 //!
 //! Every brick dimension comes from `standards/dimensions-v1.json` through
 //! `openbrick-units`. Run from the repository root:
@@ -33,9 +39,12 @@ use std::process::ExitCode;
 
 use openbrick_geom::manifold_rust::{ManifoldRust, MrSolid};
 use openbrick_geom::{CrossSection, Kernel, Mesh, Polygon, Solid};
-use openbrick_io::threemf::{package_uuids, stored_fingerprint, OPENBRICK_NAMESPACE};
+use openbrick_io::threemf::{
+    assembly_name, package_uuids_with_layout, stored_fingerprint, OPENBRICK_NAMESPACE,
+};
 use openbrick_io::{
-    write_3mf, write_stl_binary, write_stl_binary_per_role, ExportMeta, ExportObject, GENERATOR,
+    write_3mf_with_layout, write_stl_binary, write_stl_binary_per_role, ExportLayout, ExportMeta,
+    ExportObject, GENERATOR,
 };
 use openbrick_units::STANDARD;
 use serde_json::json;
@@ -58,11 +67,12 @@ pub struct Part {
     pub mesh: Mesh,
 }
 
-/// One fixture: the objects of one export and its metadata.
+/// One fixture: the objects of one export, its metadata and its 3MF layout.
 pub struct Fixture {
     pub name: &'static str,
     pub parts: Vec<Part>,
     pub meta: ExportMeta,
+    pub layout: ExportLayout,
 }
 
 impl Fixture {
@@ -182,6 +192,17 @@ fn cube_mesh(origin: [f32; 3], side: f32) -> Mesh {
     }
 }
 
+/// Axis-aligned box from `origin` with sides `size`, outward triangles.
+fn box_mesh(origin: [f32; 3], size: [f32; 3]) -> Mesh {
+    let mut m = cube_mesh([0.0; 3], 1.0);
+    for p in &mut m.positions {
+        for k in 0..3 {
+            p[k] = origin[k] + p[k] * size[k];
+        }
+    }
+    m
+}
+
 /// Right-angled tetrahedron with outward, counter-clockwise triangles.
 fn tetra_mesh(origin: [f32; 3], side: f32) -> Mesh {
     let [x, y, z] = origin;
@@ -254,6 +275,7 @@ pub fn fixtures() -> Vec<Fixture> {
             title: "2x4 brick with an accent cube (fixture)".into(),
             serial: None,
         },
+        layout: ExportLayout::SeparateObjects,
     };
     let three_roles = Fixture {
         name: "three-roles",
@@ -288,8 +310,44 @@ pub fn fixtures() -> Vec<Fixture> {
             title: "Cube, tetrahedron & serial tag <fixture>".into(),
             serial: Some("NDN-0001".into()),
         },
+        layout: ExportLayout::SeparateObjects,
     };
-    vec![brick_fixture, three_roles]
+    // A block a quarter as tall standing on the centre of the cube's top face:
+    // the two touch in the plane z = UNIT and share no volume, like an embossed
+    // relief on its body.
+    let stacked = Fixture {
+        name: "stacked-parts",
+        parts: vec![
+            Part {
+                name: "stacked-parts body".into(),
+                role: "body".into(),
+                colour: Some(BODY_COLOUR),
+                mesh: cube_mesh([0.0; 3], UNIT),
+            },
+            Part {
+                name: "stacked-parts accent".into(),
+                role: "accent".into(),
+                colour: Some(ACCENT_COLOUR),
+                mesh: box_mesh(
+                    [UNIT / 4.0, UNIT / 4.0, UNIT],
+                    [UNIT / 2.0, UNIT / 2.0, UNIT / 4.0],
+                ),
+            },
+        ],
+        meta: ExportMeta {
+            part_id: "fixture.stacked-parts".into(),
+            version: "0.1.0".into(),
+            content_hash: "fixture:hand-built-solids-v1".into(),
+            fit_profile_id: "nominal".into(),
+            process_id: "fdm-0.4".into(),
+            generator: GENERATOR.into(),
+            kernel_id: "none (hand-built meshes)".into(),
+            title: "Stacked parts (fixture)".into(),
+            serial: None,
+        },
+        layout: ExportLayout::OneObjectWithParts,
+    };
+    vec![brick_fixture, three_roles, stacked]
 }
 
 fn hex(c: [u8; 4]) -> String {
@@ -322,10 +380,14 @@ pub fn generate() -> Vec<(String, Vec<u8>)> {
     let mut entries = Vec::new();
     for f in fixtures() {
         let objects = f.objects();
-        let uuids = package_uuids(&objects, &f.meta);
+        let uuids = package_uuids_with_layout(&objects, &f.meta, f.layout);
+        let grouped = f.layout.groups(objects.len());
         let threemf = format!("{}.3mf", f.name);
         let stl = format!("{}.stl", f.name);
-        files.push((threemf.clone(), write_3mf(&objects, &f.meta).expect("3MF")));
+        files.push((
+            threemf.clone(),
+            write_3mf_with_layout(&objects, &f.meta, f.layout).expect("3MF"),
+        ));
         files.push((stl.clone(), write_stl_binary(&objects).expect("STL")));
         let mut per_role = serde_json::Map::new();
         for (role, bytes) in write_stl_binary_per_role(&objects).expect("STL per role") {
@@ -355,12 +417,31 @@ pub fn generate() -> Vec<(String, Vec<u8>)> {
                     "boundsMm": { "min": lo, "max": hi },
                     "storedFingerprint": format!("{:016x}", stored_fingerprint(&p.mesh)),
                     "uuid": uuids.objects[i].to_string(),
-                    "itemUuid": uuids.items[i].to_string(),
+                    // A part of the components object has a component UUID
+                    // instead of a build item of its own.
+                    "itemUuid": (!grouped).then(|| uuids.items[i].to_string()),
+                    "componentUuid": uuids.components.get(i).map(|u| u.to_string()),
                 })
             })
             .collect();
+        // The components object: its name, UUIDs, and one identity component
+        // per part in object order (row-major 3MF matrix, 4 rows of 3).
+        let assembly = uuids.assembly.map(|uuid| {
+            json!({
+                "name": assembly_name(&f.meta),
+                "uuid": uuid.to_string(),
+                "itemUuid": uuids.items[0].to_string(),
+                "components": f.parts.iter().zip(&uuids.components).map(|(p, u)| json!({
+                    "object": p.name,
+                    "uuid": u.to_string(),
+                    "transform": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+                })).collect::<Vec<_>>(),
+            })
+        });
         entries.push(json!({
             "name": f.name,
+            "layout": f.layout.name(),
+            "assembly": assembly,
             "threemf": threemf,
             "stl": stl,
             "stlTriangles": f.parts.iter().map(|p| p.mesh.triangle_count()).sum::<usize>(),

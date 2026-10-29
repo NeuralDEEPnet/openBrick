@@ -175,6 +175,43 @@ impl Mesh {
     }
 }
 
+/// Turn meshes over together, face down: a half turn about the x axis inside
+/// the box they share, (x, y, z) to (x, y0 + y1 - y, z0 + z1 - z), so the top
+/// face lands on the bed plane and the box stays where it was. A proper rotation
+/// (determinant +1), not a mirror: triangle winding, closedness and indices are
+/// unchanged, artwork reads the right way round once the print is turned back
+/// over, and meshes that touched still touch.
+///
+/// This is the one layout for parts whose artwork prints face down (an inlay,
+/// `Artwork::face_on_bed` = `top` in openbrick-part): every export of such a
+/// part is meant to call it, so the CLI and the browser write the same bytes
+/// (openbrick-wasm's `export_part` does). The sums of
+/// the bounds are formed in f64, where the sum of two f32 values is exact, so a
+/// vertex on a bounding plane lands exactly on the opposite one. Empty meshes
+/// are left as they are.
+pub fn turn_face_down(meshes: &mut [&mut Mesh]) {
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for m in meshes.iter() {
+        let (a, b) = m.bounds();
+        for k in 0..3 {
+            lo[k] = lo[k].min(a[k]);
+            hi[k] = hi[k].max(b[k]);
+        }
+    }
+    if !(lo[1].is_finite() && lo[2].is_finite() && hi[1].is_finite() && hi[2].is_finite()) {
+        return;
+    }
+    let sy = f64::from(lo[1]) + f64::from(hi[1]);
+    let sz = f64::from(lo[2]) + f64::from(hi[2]);
+    for m in meshes.iter_mut() {
+        for p in &mut m.positions {
+            p[1] = (sy - f64::from(p[1])) as f32;
+            p[2] = (sz - f64::from(p[2])) as f32;
+        }
+    }
+}
+
 /// Tessellation settings applied per export profile.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Tessellation {
@@ -272,7 +309,81 @@ pub fn round_segments(radius_mm: f64, tolerance_mm: f64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{round_segments, Mesh};
+    use super::{round_segments, turn_face_down, Mesh};
+
+    /// A tetrahedron with outward winding (abstract numbers, not a brick
+    /// dimension): legs 1, 2 and 3 along x, y and z.
+    fn tetra() -> Mesh {
+        Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [0.0, 0.0, 3.0],
+            ],
+            indices: vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+        }
+    }
+
+    fn signed_volume(m: &Mesh) -> f64 {
+        m.indices
+            .chunks(3)
+            .map(|t| {
+                let p = |i: u32| m.positions[i as usize].map(f64::from);
+                let [a, b, c] = [p(t[0]), p(t[1]), p(t[2])];
+                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0
+            })
+            .sum()
+    }
+
+    #[test]
+    fn face_down_is_a_half_turn_inside_the_shared_box() {
+        let t = tetra();
+        // Volume 1 * 2 * 3 / 6 = 1, positive: the winding faces outward.
+        assert!((signed_volume(&t) - 1.0).abs() < 1e-12);
+        let mut m = t.clone();
+        turn_face_down(&mut [&mut m]);
+        assert_eq!(m.indices, t.indices);
+        // (x, y, z) -> (x, 2 - y, 3 - z): the apex at z = 3 now touches the bed.
+        assert_eq!(m.positions[3], [0.0, 2.0, 0.0]);
+        assert_eq!(m.positions[0], [0.0, 2.0, 3.0]);
+        assert_eq!(m.bounds(), t.bounds(), "the box is unchanged");
+        // A proper rotation keeps the volume positive (winding still outward).
+        assert!((signed_volume(&m) - 1.0).abs() < 1e-12);
+        // Twice is the identity.
+        turn_face_down(&mut [&mut m]);
+        assert_eq!(m, t);
+    }
+
+    #[test]
+    fn meshes_turn_together_in_the_box_they_share() {
+        // A second tetrahedron sitting on top of the first (z 3 to 6): turned
+        // together, it lands on the bed and the first goes on top of it, still
+        // touching at z = 3.
+        let low = tetra();
+        let mut high = tetra();
+        for p in &mut high.positions {
+            p[2] += 3.0;
+        }
+        let (mut a, mut b) = (low.clone(), high.clone());
+        turn_face_down(&mut [&mut a, &mut b]);
+        assert_eq!(a.bounds().0[2], 3.0);
+        assert_eq!(a.bounds().1[2], 6.0);
+        assert_eq!(b.bounds().0[2], 0.0);
+        assert_eq!(b.bounds().1[2], 3.0);
+        // Alone, each would have turned inside its own box instead.
+        let mut alone = high.clone();
+        turn_face_down(&mut [&mut alone]);
+        assert_eq!(alone.bounds(), high.bounds());
+        assert_ne!(alone, b);
+        // Nothing to turn: unchanged, no NaN.
+        let mut empty = Mesh::default();
+        turn_face_down(&mut [&mut empty]);
+        assert_eq!(empty, Mesh::default());
+        turn_face_down(&mut []);
+    }
 
     #[test]
     fn round_segments_meet_the_tolerance() {

@@ -33,7 +33,7 @@ We decided not to build an OpenSCAD-like language (D04). The brick vocabulary is
 {
   "openbrick": "1.0",
   "id": "ndn.logo-tile",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "name": "Logo tile",
   "license": "CC0-1.0",
   "credit": { "author": "Neural Deep Network", "url": "https://openbrick3d.org" },
@@ -87,7 +87,7 @@ All layout positions are integer LDU internally; `stud` and `plate` units conver
 | `bar` / `clip` | Ø3.18 bar / clip for a bar | `length`; `open` direction | male R 4 / CLP |
 | `hinge.finger` | click-hinge fingers | `count`, `side` | FGR |
 | `ball` / `socket` | 5.9 or 10.2 mm | `size` | GEN |
-| `relief.svg` | emboss, deboss or inlay of an SVG on a face | `src`, `mode`, `height`, `fit`, `minFeature`, `colorRole` | none |
+| `relief.svg` | emboss, deboss or inlay of an SVG on a face | `src`, `mode`, `height`, `fit`, `minFeature`, `inlayStyle`, `colorRole` | none |
 | `relief.text` | shaped text on a face | `text`, `font`, `mode`, `height`, `fit`, `minStroke`, `colorRole` | none |
 | `relief.image` | traced raster (vtracer) | `src`, `threshold`, `posterize` | none |
 | `mosaic` | n x m 1x1 tiles coloured from an image, or a single plate with coloured studs | `size`, `palette`, `dither` | studs/tubes as per base |
@@ -110,7 +110,7 @@ In M1 the evaluator reads the asset through usvg 0.49 without default features (
 
 **Process minimums (FDM 0.4):** stroke at least 0.8 mm (two lines), relief 0.4 to 1.0 mm (1.2 to 1.5 mm for standalone legibility), bold sans-serif, text on top or bottom faces, never on walls.
 
-**Three relief modes:** emboss (face-up print), deboss (face-up; depth clamped so the cavity keeps 1.8 mm, which means 0.4 mm on plate-height parts), inlay (face-down print; for a single-extruder swap the `accent` object is the face slab minus the logo so the logo shows the body colour; for multi-material units the logo fill is its own object (a follow-up; M1 builds the single-extruder variant); see [05](05-3d-printing-pipeline.md#6-orientation-supports-hollow-roofs)).
+**Three relief modes:** emboss (face-up print), deboss (face-up; depth clamped so the cavity keeps 1.8 mm, which means 0.4 mm on plate-height parts), inlay (face-down print; for a single-extruder swap the `accent` object is the face slab minus the logo so the logo shows the body colour; for multi-material units (`inlayStyle: parts`) the logo fill is its own object, with the body recessed by exactly that region; see [05](05-3d-printing-pipeline.md#6-orientation-supports-hollow-roofs)).
 
 **Trademark guard (M5, after the Q16 spike):** uploaded artwork is checked against a blocklist (LEGO marks, minifigure silhouette) and rejected with an explanation ([12](12-legal-and-naming.md)); until the spike proves a false-positive rate under 1 percent the guard is a warning.
 
@@ -126,20 +126,21 @@ In M1 the evaluator reads the asset through usvg 0.49 without default features (
 ```json
 {
   "openbrick": "1.0",
-  "id": "ndn.logo-tile", "version": "1.2.0", "name": "Logo tile", "license": "CC0-1.0",
+  "id": "ndn.logo-tile", "version": "1.3.0", "name": "Logo tile", "license": "CC0-1.0",
   "credit": { "author": "Neural Deep Network" },
   "params": {
     "size":   { "type": "grid2", "unit": "stud", "default": [2,4], "min": [1,1], "max": [16,32], "group": "Size", "manipulator": "corner" },
     "height": { "type": "enum", "default": "plate", "options": [ {"value":"plate","label":"Plate (1/3)"}, {"value":"brick","label":"Brick"} ], "group": "Size" },
     "logo":   { "type": "svg", "default": "assets/mark.svg", "group": "Artwork", "help": "Single-colour SVG; lines under 0.8 mm are removed" },
     "relief": { "type": "enum", "default": "emboss", "options": ["emboss","deboss","inlay"], "group": "Artwork" },
+    "inlayStyle": { "type": "enum", "default": "swap", "options": ["swap","parts"], "visibleWhen": "relief == 'inlay'", "group": "Artwork" },
     "reliefHeight": { "type": "length", "unit": "mm", "default": 0.6, "min": 0.2, "max": 1.5, "step": 0.1, "visibleWhen": "relief != 'inlay'" },
     "margin": { "type": "length", "unit": "mm", "default": 1.0, "min": 0.4, "max": 4 }
   },
   "features": [
     { "id": "body",   "op": "body.tile",  "size": "$size", "height": "$height", "round": { "tier": "chamfer", "radius": "0.3mm" } },
     { "id": "bottom", "op": "tube.field", "on": "body.bottom", "grid": "auto", "fitCritical": true },
-    { "id": "art",    "op": "relief.svg", "on": "body.top", "src": "$logo", "mode": "$relief", "height": "$reliefHeight",
+    { "id": "art",    "op": "relief.svg", "on": "body.top", "src": "$logo", "mode": "$relief", "height": "$reliefHeight", "inlayStyle": "$inlayStyle",
       "fit": { "margin": "$margin", "align": "center", "keepAspect": true }, "minFeature": "profile.minFeature", "colorRole": "accent" }
   ],
   "snap": "derived",
@@ -208,6 +209,8 @@ Derived snap: `tube.field` gives a female grid `C 2 C 8 20 20`; `stud.field` (if
 | Rounding tier 3 (Minkowski) | background job | not offered |
 | Export | 3MF, STL, LDraw, batch | 3MF and STL via share sheet; batch via desktop or CLI |
 | Calibration wizard | full | full (tap the coupon cells) |
+
+Status 2026-10-28: the browser playground (`apps/web`) implements the typed param panel from `params` (groups, limits, `visibleWhen`; the inlay style shows only for an inlay), SVG import by file dialog and drag-drop, the debounced live preview (a reply for controls that changed meanwhile is dropped), and the validation panel, which draws removed artwork in red, always with its percentage in text, and takes the units of values and thresholds from the core. Blockers disable 3MF and STL export. The 3MF is the part-designer layout (05 section 7). Download names add the inlay style, so the two inlay styles never share a name. Manipulators, presets and the share sheet follow.
 
 ## 12. Batch merchandise runs
 

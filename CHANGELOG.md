@@ -14,6 +14,73 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 - DCO workflow skips merge commits, as the DCO app does; it failed on the merge commit in the M0 scaffold pull request.
 
 ### Added
+- `openbrick` CLI (backlog items 11 and 14):
+  - `build` validates a part document and writes a 3MF or a single-colour STL.
+    - The 3MF is one object whose parts are the colour roles (the part-designer layout), with traceability metadata.
+    - `--fuse` writes one fused 3MF object.
+    - `--no-colour` (or `--no-color`) leaves out the display colours, so Bambu Studio's import colour dialog has nothing to read (Q18). Colours stay the default.
+  - `validate` prints the report.
+  - `calibrate coupon` writes the calibration coupon, with a table and a JSON map of its cells. The table says whether the copies lie one behind the other or side by side.
+  - `calibrate record` writes a fit profile: offset = chosen cell minus nominal, plus one pocket from the printed pocket set.
+  - Parameters come from the command line (`--param size=2x4 --param logo=./my-logo.svg`).
+  - Assets:
+    - Asset files are regular files of at most 4 MiB.
+    - The evaluator gets each under its file name, so the content hash does not depend on how the path was typed.
+    - A part document's assets must stay in its folder, symbolic links included.
+  - `--fit` takes a file or `example`.
+  - `--json` prints one object on stdout: the report per `schemas/report.schema.json`, the measurements, the content hash, timings, and for each output its layout, components object, objects, UUIDs and metadata.
+  - Exit codes: 0 ok, 1 blockers (nothing written), 2 usage or input error (also arguments that are not UTF-8), 3 internal error.
+  - Inlays are written face down.
+  - Colour hints:
+    - Two-colour FDM builds name the layer for a single-extruder filament change. A layer whose middle lies on an inlay's boundary already prints the body colour.
+    - A `parts` inlay needs one filament per part and gets no change layer.
+    - Resin builds show resin volumes instead of filament advice.
+  - Release timings: the logo tile builds in about 0.06 to 0.1 s and the default coupon in about 0.7 s.
+  - New: the first print-test guide, `docs/guides/print-test.md`, for the Prusa MINI+, the Prusa XL and the Bambu Lab A1 with AMS lite.
+    - Its slicer steps for the part-designer layout come from the Q18 reading and are marked for confirmation by a print.
+    - It includes a colourless build for the Bambu colour dialog.
+    - Also new: a print-test report issue form that asks how the 3MF loaded.
+- `apps/web`: the M1 browser playground.
+  - Design a brick-compatible logo tile from your SVG or the sample mark, and see it in live 3D. You choose:
+    - the size and the height;
+    - the relief: emboss, deboss or inlay;
+    - the inlay style: filament swap, or the logo as its own part for an AMS or tool changer (shown only for an inlay);
+    - the relief height and the margin.
+  - Artwork that will not print is drawn in red with its percentage.
+  - The validation report gives the rule id, the measured value and threshold with the unit from the core (`openbrick_print::finding_unit`), and a fix hint, blockers first.
+  - The 3MF and STL downloads stay off while a blocker or an invalid field stands.
+  - Downloads:
+    - The 3MF is one object whose parts are the colour roles.
+    - Files are named `{id}-{w}x{h}-{relief}[-{inlayStyle}]`, so the two inlay styles never share a name.
+    - An inlay downloads face down through `openbrick_geom::turn_face_down`.
+  - You can also build and download the calibration coupon, with its cell table and the `openbrick calibrate record` line.
+  - `openbrick-wasm` gains `evaluate_part`, `export_part`, `build_coupon`, `export_coupon`, `coupon_layout_json`, `resolve_params_json`, the bundled profiles, part and sample, and `export_solids` (Rust only: the solids `export_part` writes).
+  - The module is 3.01 MB raw and 990 KB gzipped (budget 2.5 MB).
+  - The smoke test:
+    - checks every case, the parts inlay included, against `native_eval`;
+    - requires the downloaded files to be byte-identical to the native exports, and every part 3MF to have one build item and one components object;
+    - validates the 3MF files with lib3mf.
+  - The app builds under `OPENBRICK_BASE` for GitHub Pages (`/openBrick/`).
+  - The non-affiliation disclaimer has one source, `crates/openbrick-units/disclaimer.txt`, read by the CLI, the core and the page footer.
+- Multi-material output (Q18, `docs/spikes/q18-slicer-multimaterial-import.md`):
+  - `openbrick_io::write_3mf_with_layout` adds `ExportLayout::OneObjectWithParts` (`ExportLayout::PART_DESIGNER`): one mesh object per colour role, then one components object (no pid, no transforms) and one build item.
+    - Bambu Studio loads it as one object with its parts in place.
+    - PrusaSlicer offers to merge the parts into one multi-part object.
+    - Production UUIDs are on every component.
+    - `write_3mf` is unchanged.
+  - `openbrick build` and the playground's 3MF download both write it, and both turn an inlay face down with the one shared transform, `openbrick_geom::turn_face_down`. `crates/openbrick/tests/export_parity.rs` checks that they write the same meshes, with and without colours.
+  - `relief.svg` gains `inlayStyle`: `swap`, the default, or `parts`.
+    - In `parts`, the logo fill is its own accent part, and the body is recessed by exactly that region, so together they are the plain tile.
+    - The parts-inlay warning says the fused single-colour export shows no artwork.
+    - An unused `parts` style from a hidden parameter is not warned about.
+  - A colour-role warning names each role and the face that goes on the bed.
+  - `EVALUATOR_REVISION` is now 3, and the logo tile (1.3.0) gains the `inlayStyle` parameter.
+  - `ManifoldRust::solid_from_mesh` is new.
+  - `scripts/validate-3mf.py` now:
+    - checks components (each part placed once, identity transforms, UUIDs);
+    - samples every package for overlapping objects, counting only lines through both objects, and fails a pair whose lines through both could mostly not be sampled;
+    - compares each file with its description (fixture manifest or CLI JSON, layout and components object included). Descriptions written before the layout read as the separate layout;
+    - in its self-test, breaks files (8 generic and 6 component mutations) and descriptions (6 mutations), and checks that an old-style description still passes.
 - `openbrick-part`: `relief.svg` (backlog item 9), so the example logo tile builds with its new CC0 artwork `parts/assets/mark.svg` (24 ms in release). SVG input is read with usvg 0.49 (no fonts, no image decoding) as untrusted input: images are never resolved, entities and markers are refused, and fills only are built (strokes, text, images, clip paths, masks, filters and invisible shapes are ignored with a warning). Limits on size, XML nodes, attributes, CSS work, `<use>` expansion and chains of nesting and references (64 levels, cycles refused, so hostile files cannot overflow a 1 MiB wasm stack), and on the sweep work of every polygon operation, estimated by the new `openbrick_geom::region::sweep_cost` before Clipper2 runs. The artwork is fitted into the flat top face box, flattened at 0.05 mm, resolved under evenodd and nonzero fill rules and opened at `minFeature` with round joins (`Kernel::offset2d_round`); `Built.artwork` carries the removed regions and `Measurements` gains `removed_area_pct`, `min_stroke_mm` and `relief_height_mm`. Emboss is its own colour-role object; deboss and inlay lower the cavity ceiling by the depth, clamped so the cavity keeps `minCavityDepthMm`; inlay splits off the face slab minus the logo, printed face down. `Built.fused` is the kernel union for single-colour STL. New dependencies: `usvg` 0.49.0 and `simplecss` 0.2.2 (both Apache-2.0 OR MIT).
 - `openbrick-print`: validator `validate(&Measurements, &ProcessProfile, Option<&FitProfile>) -> Report` with 12 rules from docs/plan/05 section 5 (MESH.MANIFOLD, MESH.VOLUME, WALL.MIN, TUBE.WALL, CAVITY.DEPTH, WALL.QUANTISED, ROOF.MIN, FEATURE.MIN, RELIEF.HEIGHT, FIT.PROCESS, FIT.MISSING, CLUTCH.RISK), each finding with rule id, value, threshold and fix hint, blockers first, and 41 data fixtures with at least one passing and one failing case per rule. FIT.PROCESS also blocks a part validated with a different fit profile from the one it was built with; FEATURE.MIN blocks on fit-critical artwork and warns otherwise. `openbrick_part::validate(&Built, ...)` has the plan's signature. The coupon sweep is data (`standards/coupon-v1.json`, `schemas/coupon.schema.json`, `coupon_v1()`), shared by the coupon generator, `record` and CLUTCH.RISK. `record` turns chosen coupon cells into a `FitProfile` (offset = chosen minus nominal) and refuses off-grid values. `schemas/report.schema.json` is the contract for `--json` reports. Process profiles are now schema 1.1 with optional `recommendedTubeWallMm` (0.8 on fdm-0.4) and `maxRemovedAreaPct` (1.0).
 - `openbrick-part`: calibration coupon generator `build_coupon` (backlog item 11): stud (OD 4.60 to 4.95), tube bore (ID 4.80 to 5.05) and 2x2 pocket rows (tube OD 6.40 to 6.65 crossed with rib depth 0.20 to 0.50), twice, each cell with an embossed label in an original pixel font. Every cell opens upward, so the coupon prints flat without supports, and each cell is built as a part is built with the offset the wizard records, so recorded offsets reproduce the chosen cell on every process. The default pocket set is the nominal row and column of the cross (13 pockets per copy): 118.4 x 160.8 x 3.2 mm on fdm-0.4, which fits a Prusa MINI+ bed, about 32 g of PLA. `crossAndDiagonal` and `full` are options for larger beds. The `coupon` example writes 3MF, STL and a JSON cell manifest; a `part-exports` CI job validates the coupons and the logo tile exports with lib3mf.

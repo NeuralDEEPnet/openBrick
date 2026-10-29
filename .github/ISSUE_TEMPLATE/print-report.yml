@@ -1,0 +1,44 @@
+name: Print test report
+description: Share a coupon, logo tile and pull test result (docs/guides/print-test.md)
+labels: [print-test]
+body:
+  - type: markdown
+    attributes:
+      value: "Thank you for printing! Passed or not, every report helps. The steps are in docs/guides/print-test.md."
+  - type: input
+    attributes: { label: openbrick version, description: "openbrick --version" }
+    validations: { required: true }
+  - type: input
+    attributes: { label: Printer and nozzle, description: "for example Prusa MINI+, 0.4 mm" }
+    validations: { required: true }
+  - type: input
+    attributes: { label: Material and brand, description: "for example PLA, the brand and colour" }
+    validations: { required: true }
+  - type: input
+    attributes: { label: Slicer and settings, description: "slicer and version, layer height, first layer, perimeters" }
+    validations: { required: true }
+  - type: input
+    attributes: { label: Process profile and pocket set, description: "for example fdm-0.4, cross" }
+  - type: input
+    attributes: { label: Chosen coupon cells, description: "stud, tube and pocket OD/rib, for example 4.80, 4.95, 6.65/0.30" }
+  - type: dropdown
+    attributes:
+      label: Tile relief mode
+      options: [emboss, deboss, inlay (filament swap), inlay (parts), several]
+  - type: textarea
+    attributes:
+      label: How the 3MF loaded
+      description: "Did it load as one object with two parts, with the logo on or in the face? Which dialogs appeared (PrusaSlicer's Multi-part object detected, Bambu Studio's Standard 3MF Import color) and what did you choose? Which filament or tool did each part get? (docs/guides/print-test.md section 6)"
+  - type: input
+    attributes: { label: Control pulls (N), description: "genuine 2x4 on genuine 2x4, three values" }
+  - type: input
+    attributes: { label: Tile pulls (N), description: "printed 2x4 tile on genuine 2x4, three values" }
+  - type: dropdown
+    attributes:
+      label: Pull test result
+      description: "pass when the tile median is 0.7 to 1.5 times the control median"
+      options: [pass, too loose, too tight, not measured]
+  - type: textarea
+    attributes: { label: Anything odd, description: "warnings, slicer messages, how the colours came out; photos welcome" }
+  - type: textarea
+    attributes: { label: Fit profile JSON, description: "the file openbrick calibrate record wrote (optional)", render: json }

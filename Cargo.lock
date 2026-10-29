@@ -759,10 +759,13 @@ name = "openbrick"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "jsonschema",
+ "openbrick-geom",
  "openbrick-io",
  "openbrick-part",
  "openbrick-print",
  "openbrick-units",
+ "openbrick-wasm",
  "serde_json",
 ]
 
@@ -856,11 +859,13 @@ name = "openbrick-wasm"
 version = "0.0.1"
 dependencies = [
  "openbrick-geom",
+ "openbrick-io",
  "openbrick-part",
  "openbrick-print",
  "openbrick-units",
  "serde",
  "serde_json",
+ "sha2",
  "wasm-bindgen",
 ]
 

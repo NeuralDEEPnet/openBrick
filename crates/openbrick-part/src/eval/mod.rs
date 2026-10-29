@@ -5,9 +5,10 @@
 //!
 //! Implemented ops: `body.tile`, `body.plate`, `body.brick`, `stud.field`,
 //! `tube.field` and `relief.svg` (module `relief`: SVG artwork embossed, debossed
-//! or inlaid on the top face). Every other op is reported as
-//! [`EvalError::Unsupported`], or skipped with a warning when
-//! [`EvalInput::skip_unsupported`] is set.
+//! or inlaid on the top face; an inlay for a single extruder with a filament
+//! swap, or with the artwork fill as its own part for multi-material printers).
+//! Every other op is reported as [`EvalError::Unsupported`], or skipped with a
+//! warning when [`EvalInput::skip_unsupported`] is set.
 //!
 //! Where the numbers come from:
 //!
@@ -59,7 +60,9 @@ use crate::{Feature, PartDoc, PartError};
 /// Bump when the evaluator builds different geometry or connectors for the same
 /// inputs, so content hashes made by older builds no longer match. 2: an inlay
 /// raises the top chamfer to the first-layer chamfer (the face is on the bed).
-pub const EVALUATOR_REVISION: u32 = 2;
+/// 3: `relief.svg` reads `inlayStyle`, and `parts` builds the multi-material
+/// inlay (revision 2 ignored the field and built the swap variant).
+pub const EVALUATOR_REVISION: u32 = 3;
 
 /// The ops [`evaluate`] builds.
 pub const SUPPORTED_OPS: &[&str] = &[
@@ -310,6 +313,15 @@ impl Feat<'_> {
             None => Ok(None),
             Some(v) => self.scope.field(v).map(Some).map_err(|m| self.err(name, m)),
         }
+    }
+
+    /// Whether the field is a plain `$name` reference to a parameter hidden by
+    /// its `visibleWhen` (see [`Scope::names_hidden_param`]).
+    fn names_hidden_param(&self, name: &str) -> bool {
+        self.f
+            .fields
+            .get(name)
+            .is_some_and(|v| self.scope.names_hidden_param(v))
     }
 
     fn err(&self, field: &str, message: impl Into<String>) -> EvalError {
@@ -915,6 +927,53 @@ fn role_rank(role: &str) -> (usize, &str) {
     (rank, role)
 }
 
+/// For a part with more than one colour role: which roles there are, what each
+/// holds, and which face goes on the bed, so the CLI and the playground can say
+/// which filament goes where. Every role is one object of the export, a part of
+/// one object in the part-designer 3MF layout (`openbrick_io::ExportLayout::
+/// PART_DESIGNER`); the wording holds for either layout, since the evaluator
+/// does not know which one the exporter writes.
+fn colour_roles_warning(
+    objects: &[RoleMesh],
+    body_role: &str,
+    relief: Option<&ReliefPlan>,
+) -> Option<String> {
+    if objects.len() < 2 {
+        return None;
+    }
+    let roles: Vec<String> = objects
+        .iter()
+        .map(|o| {
+            let what = if o.role == body_role {
+                Some("the body".to_string())
+            } else {
+                relief
+                    .filter(|r| r.role == o.role)
+                    .map(ReliefPlan::describe)
+            };
+            match what {
+                Some(what) => format!("`{}` ({what})", o.role),
+                None => format!("`{}`", o.role),
+            }
+        })
+        .collect();
+    let list = match roles.as_slice() {
+        [a, b] => format!("{a} and {b}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+        [] => String::new(),
+    };
+    let face = match relief.map(|r| r.mode) {
+        Some(relief::Mode::Inlay) => {
+            "print it with the top face (the artwork) on the bed: `openbrick build` and the playground export it turned that way (openbrick_geom::turn_face_down); turn a file in the design orientation over in the slicer"
+        }
+        _ => "print it with the bottom face on the bed, as designed",
+    };
+    Some(format!(
+        "{} colour roles, each its own object in the export (the parts of one object in the part-designer 3MF layout): {list}; assign each its filament (an AMS slot or a toolhead); {face}",
+        objects.len()
+    ))
+}
+
 /// Evaluate a part document into meshes, connectors and measurements.
 pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalError> {
     let doc = input.doc;
@@ -1075,7 +1134,7 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
     // the body already fills: rule MESH.VOLUME compares the union with the sum
     // of the solids, so this overlap is taken off that sum once.
     let mut roof_overlap_mm3 = 0.0;
-    if let Some(r) = relief.as_ref().filter(|r| r.mode.cuts()) {
+    if let Some(r) = relief.as_ref().filter(|r| r.thickens_roof()) {
         let roof = body.geom.roof;
         roof_under_artwork = Some(roof);
         body.geom.roof += r.height;
@@ -1114,8 +1173,13 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
     if let Some(r) = &relief {
         let what = format!("the relief of `{}`", r.id);
         // How far a relief's bonding copy reaches into the body: inside the
-        // roof under the face (half of it, as thick as before any deboss).
-        let roof = roof_under_artwork.unwrap_or(body.geom.roof);
+        // roof under the face (half of it, as thick as before any deboss), or,
+        // under the fill of a parts inlay, inside what the body keeps of it.
+        let roof = if r.is_parts_inlay() {
+            body.geom.roof - r.height
+        } else {
+            roof_under_artwork.unwrap_or(body.geom.roof)
+        };
         let sink = (roof / 2.0).min(geometry::OVERSHOOT_MM / 2.0);
         let (cut, solids) = r
             .build(&g, body_solid, body.geom.size, body.geom.height, sink)
@@ -1210,6 +1274,9 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         None
     };
     let solids: Vec<K::Solid> = solids.into_iter().map(|(_, s)| s).collect();
+    if let Some(w) = colour_roles_warning(&objects, &body.role, relief.as_ref()) {
+        warnings.push(w);
+    }
 
     let xy = offsets.xy_scale;
     let mut lo = [f64::INFINITY; 3];
@@ -1261,8 +1328,10 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         min_tube_wall_at_bed_mm: tube_plan
             .and_then(|p| p.tube_wall.map(|w| (w - 2.0 * p.geom.tube_chamfer) * xy)),
         first_layer_chamfer_mm: Some(flc),
-        // Under a deboss or inlay: the thinnest roof (under the artwork, as thick
-        // as before the cut) and the cavity under the thickened roof.
+        // Under a deboss or swap inlay: the thinnest roof (under the artwork,
+        // as thick as before the cut) and the cavity under the thickened roof.
+        // A parts inlay keeps both: its fill prints with the body and makes
+        // up the roof under the artwork.
         roof_mm: Some(roof_under_artwork.unwrap_or(body.geom.roof)),
         cavity_depth_mm: Some(body.geom.cavity_depth()),
         stud_diameter_mm: studs.as_ref().map(|(_, p)| p.geom.diameter * xy),

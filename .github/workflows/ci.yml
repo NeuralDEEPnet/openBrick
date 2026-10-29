@@ -161,16 +161,29 @@ jobs:
           retention-days: 14
 
   web:
-    # Browser pipeline (apps/web): the core as WebAssembly in a Web Worker and the
-    # three.js viewer. Builds the core with the wasm-bindgen CLI pinned in
+    # Browser playground (apps/web): the core as WebAssembly in a Web Worker and
+    # the three.js viewer. Builds the core with the wasm-bindgen CLI pinned in
     # Cargo.lock (size budget, docs/plan/10 section 5) and runs every pnpm unit
-    # test, including the real core in Node. Then the headless smoke test checks
-    # that the browser's 2x4 and 2x2 equal the native kernel_timing values on
-    # WebGL2 and WebGPU, that a slow 16x16 build is cancelled, and that the view
-    # orbits under the brick; plus a phone-sized touch run. Smoke timings are
-    # software rendering, never device results.
+    # test, including the real core in Node. The headless smoke test then checks
+    # that the logo tile (emboss, deboss, the filament-swap and the parts inlay,
+    # no fit profile) and the coupon equal `cargo run --release -p
+    # openbrick-wasm --example native_eval` (the same Rust functions natively),
+    # and that every downloaded file (emboss 3MF and STL, the face-down swap and
+    # parts inlay 3MFs, coupon 3MF) is byte-identical to the native export, each
+    # part 3MF in the part-designer layout (one build item, one components
+    # object with a part per colour role). It also checks that the inlay style
+    # shows only for an inlay and that the two inlays download under different
+    # names, that FIT.MISSING disables the downloads, that a reply for controls
+    # that changed meanwhile is dropped, that a refused build empties the view,
+    # that a slow 16x16 evaluation is cancelled, that the view orbits under the
+    # part, a phone-sized touch run, and the GitHub Pages build under
+    # /openBrick/. lib3mf 2.5.0 then reads every downloaded 3MF in strict mode,
+    # with the component self-test on the first part 3MF. Smoke timings are
+    # software rendering, never device results. lib3mf ships Linux wheels for
+    # x86-64 only, so this job stays on ubuntu-24.04. test/core.test.js still
+    # compares the core's nominal 2x4 brick with the harness meshes in Node.
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -193,6 +206,11 @@ jobs:
         run: cargo install wasm-bindgen-cli --version "=${{ steps.wbg.outputs.version }}" --locked
       - name: Clippy on wasm32 (the bindings exist only there)
         run: cargo clippy -p openbrick-wasm --target wasm32-unknown-unknown -- -D warnings
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install lib3mf 2.5.0 (hash-pinned)
+        run: python -m pip install --require-hashes -r scripts/requirements-validate-3mf.txt
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.0
@@ -209,23 +227,37 @@ jobs:
         run: pnpm --dir apps/web exec playwright install --with-deps chromium
       - name: Smoke test (software rendering, not a device result)
         run: pnpm --dir apps/web smoke --screenshots smoke-screenshots
-      - name: Keep what the smoke runs saw
+      - name: Validate the downloaded 3MF files with lib3mf (strict)
+        run: python -I scripts/validate-3mf.py --self-test apps/web/smoke-downloads/*.3mf
+      - name: Keep what the smoke runs saw and downloaded
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: web-smoke-screenshots
-          path: apps/web/smoke-screenshots
+          name: web-smoke
+          path: |
+            apps/web/smoke-screenshots
+            apps/web/smoke-downloads
           if-no-files-found: ignore
+          retention-days: 14
 
   part-exports:
     # Printable exports of the part crate, read back by lib3mf 2.5.0 in strict
-    # mode (manifold and oriented meshes, traceability metadata, re-derived
-    # Production UUIDs). relief.svg (backlog item 9): the 2x4 logo tile's body
-    # and embossed relief (two touching objects) and its fused single-colour
-    # object. Calibration coupon (backlog item 11, docs/plan/05 section 4): the
-    # default fdm-0.4 coupon, the fdm-0.2 coupon (quantised 1.1 mm wall, deeper
-    # pocket ribs) and the full pocket cross on a 256 x 256 mm bed. The
-    # hostile-SVG tests (1 MiB stack, timed refusals) run with the workspace
+    # mode: manifold, consistently oriented meshes, traceability metadata,
+    # re-derived Production UUIDs, sampled overlaps.
+    # - relief.svg (backlog item 9): the 2x4 logo tile's body and embossed relief
+    #   (two touching objects), and its fused single-colour object.
+    # - The multi-material layout (Q18): emboss, the parts inlay of the square
+    #   and of the example mark, each as one components object with two parts.
+    #   Colourless copies of the first two are for the slicer import check of
+    #   Bambu's colour dialog (docs/spikes/q18-slicer-multimaterial-import.md):
+    #   square test artwork, no fit profile, design orientation, so never for
+    #   the pull test; a printable colourless tile comes from
+    #   `openbrick build --no-colour` (docs/guides/print-test.md section 6).
+    #   The CLI's and the playground's inlays are turned face down; these are not.
+    # - Calibration coupon (backlog item 11, docs/plan/05 section 4): the default
+    #   fdm-0.4 coupon, the fdm-0.2 coupon, and the full pocket cross on a
+    #   256 x 256 mm bed.
+    # The hostile-SVG tests (1 MiB stack, timed refusals) run with the workspace
     # tests. lib3mf ships Linux wheels for x86-64 only.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -244,7 +276,7 @@ jobs:
       - name: Write the logo tile exports
         run: |
           mkdir -p target/relief-exports
-          OPENBRICK_RELIEF_EXPORT_DIR="$PWD/target/relief-exports" cargo test -q -p openbrick-part --test eval_relief relief_objects_export_as_closed_meshes
+          OPENBRICK_RELIEF_EXPORT_DIR="$PWD/target/relief-exports" cargo test -q -p openbrick-part --test eval_relief -- relief_objects_export_as_closed_meshes multi_material_exports_are_one_object_with_parts
       - name: Build the coupons
         run: |
           cargo run -q --release -p openbrick-part --example coupon -- target/coupon
@@ -252,13 +284,16 @@ jobs:
           cargo run -q --release -p openbrick-part --example coupon -- --pockets full --bed 256x256 target/coupon
       - name: Validate every export with lib3mf
         run: >-
-          python -I scripts/validate-3mf.py
+          python -I scripts/validate-3mf.py --self-test
           target/relief-exports/logo-tile-two-colour.3mf target/relief-exports/logo-tile-fused.3mf
+          target/relief-exports/logo-tile-emboss-parts.3mf target/relief-exports/logo-tile-inlay-parts.3mf
+          target/relief-exports/logo-tile-mark-inlay-parts.3mf
+          target/relief-exports/logo-tile-emboss-parts-no-colour.3mf target/relief-exports/logo-tile-inlay-parts-no-colour.3mf
           target/coupon/coupon-fdm-0.4-cross.3mf target/coupon/coupon-fdm-0.2-cross.3mf target/coupon/coupon-fdm-0.4-full.3mf
       - name: The evaluator and the coupon build for WebAssembly
         run: cargo build --release --target wasm32-unknown-unknown -p openbrick-part
       - name: Release timing of the logo tile
-        run: cargo run -q --release -p openbrick-part --example eval_timing -- 2x4:tile logo logo:deboss logo:inlay
+        run: cargo run -q --release -p openbrick-part --example eval_timing -- 2x4:tile logo logo:deboss logo:inlay logo:inlay-parts
       - name: Keep the exports for printing and slicer checks
         if: always()
         uses: actions/upload-artifact@v4
@@ -267,6 +302,101 @@ jobs:
           path: |
             target/relief-exports/
             target/coupon/
+          retention-days: 14
+
+  cli:
+    # The openbrick CLI end to end (backlog items 11 and 14, docs/plan/05
+    # sections 4, 7 and 9, docs/guides/print-test.md). Installs the CLI from the
+    # clone as the guide does and builds the 2x4 logo tile from its sample SVG:
+    # emboss, deboss, the filament-swap inlay, the multi-material inlay
+    # (inlayStyle=parts) with and without display colours (--no-colour, for
+    # Bambu Studio's import colour dialog, Q18) and a brick-height inlay as 3MF
+    # in the part-designer layout (one object whose parts are the colour roles,
+    # Q18), the fused tile as STL and as 3MF, the default fdm-0.4 coupon with
+    # its manifest; records a fit profile and builds with it; and checks that a
+    # blocked build exits 1 and writes nothing. lib3mf 2.5.0 reads every file in
+    # strict mode and the script compares each one with what the CLI's --json
+    # says it wrote (layout, components object, objects, colours, UUIDs,
+    # metadata); --self-test also breaks copies of the files and of their
+    # descriptions. That the CLI and the playground write the same meshes, with
+    # and without colours, is checked by cargo test in the check job
+    # (crates/openbrick/tests/export_parity.rs). lib3mf ships Linux wheels for
+    # x86-64 only, so this job stays on ubuntu-24.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install lib3mf 2.5.0 (hash-pinned)
+        run: python -m pip install --require-hashes -r scripts/requirements-validate-3mf.txt
+      - name: Install the CLI from the clone, as the print-test guide does
+        run: cargo install --path crates/openbrick --locked --root target/cli-install
+      - name: Build the logo tile and the coupon with the CLI
+        run: |
+          set -euo pipefail
+          ob=target/cli-install/bin/openbrick
+          out=target/cli-exports
+          mkdir -p "$out"
+          for relief in emboss deboss inlay; do
+            $ob build parts/ndn.logo-tile.obpart.json --fit example --param relief=$relief \
+              --out "$out/logo-tile-$relief.3mf" --json > "$out/logo-tile-$relief.json"
+          done
+          $ob build parts/ndn.logo-tile.obpart.json --fit example --params relief=inlay inlayStyle=parts \
+            --out "$out/logo-tile-inlay-parts.3mf" --json > "$out/logo-tile-inlay-parts.json"
+          $ob build parts/ndn.logo-tile.obpart.json --fit example --params relief=inlay inlayStyle=parts \
+            --no-colour --out "$out/logo-tile-inlay-parts-no-colour.3mf" --json > "$out/logo-tile-inlay-parts-no-colour.json"
+          $ob build parts/ndn.logo-tile.obpart.json --fit example --params height=brick relief=inlay \
+            --out "$out/logo-tile-inlay-brick.3mf" --json > "$out/logo-tile-inlay-brick.json"
+          $ob build parts/ndn.logo-tile.obpart.json --fit example \
+            --out "$out/logo-tile-fused.stl" --json > "$out/logo-tile-fused.json"
+          $ob build parts/ndn.logo-tile.obpart.json --fit example --fuse \
+            --out "$out/logo-tile-fused.3mf" --json > "$out/logo-tile-fused-3mf.json"
+          $ob calibrate coupon --process fdm-0.4 \
+            --out "$out/coupon-fdm-0.4-cross.3mf" --manifest "$out/coupon-fdm-0.4-cross.json"
+          $ob calibrate record --process fdm-0.4 --printer "CI" --material PLA \
+            --stud 4.80 --tube 4.95 --pocket 6.65/0.30 --date 2026-10-28 --out "$out/ci-fit.json"
+          $ob build parts/ndn.logo-tile.obpart.json --fit "$out/ci-fit.json" \
+            --out "$out/logo-tile-recorded-fit.3mf" --json > "$out/logo-tile-recorded-fit.json"
+      - name: A fit-critical part without a fit profile is blocked (exit 1, nothing written)
+        run: |
+          set +e
+          target/cli-install/bin/openbrick build parts/ndn.logo-tile.obpart.json \
+            --out target/cli-exports/blocked.3mf 2> target/cli-exports/blocked.txt
+          code=$?
+          set -e
+          cat target/cli-exports/blocked.txt
+          test "$code" -eq 1
+          test ! -e target/cli-exports/blocked.3mf
+          grep -q "blocker FIT.MISSING" target/cli-exports/blocked.txt
+      - name: Validate every CLI export with lib3mf
+        run: >-
+          python -I scripts/validate-3mf.py --self-test
+          target/cli-exports/logo-tile-emboss.json target/cli-exports/logo-tile-deboss.json
+          target/cli-exports/logo-tile-inlay.json target/cli-exports/logo-tile-inlay-parts.json
+          target/cli-exports/logo-tile-inlay-parts-no-colour.json
+          target/cli-exports/logo-tile-inlay-brick.json target/cli-exports/logo-tile-fused.json
+          target/cli-exports/logo-tile-fused-3mf.json target/cli-exports/logo-tile-recorded-fit.json
+          target/cli-exports/coupon-fdm-0.4-cross.json
+      - name: Release wall time of the CLI
+        run: |
+          ob=target/cli-install/bin/openbrick
+          mkdir -p target/cli-timing
+          time $ob build parts/ndn.logo-tile.obpart.json --fit example --out target/cli-timing/tile.3mf > /dev/null
+          time $ob build parts/ndn.logo-tile.obpart.json --fit example --params relief=inlay inlayStyle=parts \
+            --out target/cli-timing/tile-inlay-parts.3mf > /dev/null
+          time $ob calibrate coupon --out target/cli-timing/coupon.3mf > /dev/null
+      - name: Keep the exports for printing and slicer checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-exports
+          path: target/cli-exports/
           retention-days: 14
 
   docs:

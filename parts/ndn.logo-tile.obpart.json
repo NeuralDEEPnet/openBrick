@@ -1,7 +1,7 @@
 {
   "openbrick": "1.0",
   "id": "ndn.logo-tile",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "name": "Logo tile",
   "license": "CC0-1.0",
   "credit": { "author": "Neural Deep Network", "url": "https://neuraldeep.net" },
@@ -11,6 +11,7 @@
     "height": { "type": "enum", "default": "plate", "options": [ { "value": "plate", "label": "Plate (1/3)" }, { "value": "brick", "label": "Brick" } ], "group": "Size" },
     "logo":   { "type": "svg", "default": "assets/mark.svg", "group": "Artwork", "help": "Single-colour SVG; lines under 0.8 mm are removed" },
     "relief": { "type": "enum", "default": "emboss", "options": ["emboss", "deboss", "inlay"], "group": "Artwork" },
+    "inlayStyle": { "type": "enum", "default": "swap", "options": [ { "value": "swap", "label": "Filament swap (one extruder)" }, { "value": "parts", "label": "Logo as its own part (AMS, tool changer)" } ], "visibleWhen": "relief == 'inlay'", "group": "Artwork", "help": "Swap: the face slab is one part and you change filament after it. Parts: the logo fill is its own part, so each part gets its own filament" },
     "reliefHeight": { "type": "length", "unit": "mm", "default": 0.6, "min": 0.2, "max": 1.5, "step": 0.1, "visibleWhen": "relief != 'inlay'", "help": "Deboss is clamped so 1.8 mm of cavity remains (0.4 mm on plates)" },
     "margin": { "type": "length", "unit": "mm", "default": 1.0, "min": 0.4, "max": 4 }
   },
@@ -18,6 +19,7 @@
     { "id": "body",   "op": "body.tile",  "size": "$size", "height": "$height", "round": { "tier": "chamfer", "radius": "0.3mm" } },
     { "id": "bottom", "op": "tube.field", "on": "body.bottom", "grid": "auto", "fitCritical": true },
     { "id": "art",    "op": "relief.svg", "on": "body.top", "src": "$logo", "mode": "$relief", "height": "$reliefHeight",
+      "inlayStyle": "$inlayStyle",
       "fit": { "margin": "$margin", "align": "center", "keepAspect": true }, "minFeature": "profile.minFeature", "colorRole": "accent" }
   ],
   "snap": "derived",

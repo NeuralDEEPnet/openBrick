@@ -24,8 +24,12 @@ use std::f64::consts::PI;
 use std::path::Path;
 
 use common::*;
-use openbrick_geom::{round_segments, Mesh};
-use openbrick_io::{write_3mf, write_stl_binary, ExportMeta, ExportObject, GENERATOR};
+use openbrick_geom::manifold_rust::ManifoldRust;
+use openbrick_geom::{round_segments, Kernel, Mesh, Solid};
+use openbrick_io::{
+    threemf_model_xml_with_layout, write_3mf, write_3mf_with_layout, write_stl_binary,
+    ExportLayout, ExportMeta, ExportObject, GENERATOR,
+};
 use openbrick_part::eval::{
     EVALUATOR_REVISION, FLATTEN_TOLERANCE_MM, MAX_ARTWORK_POINTS, MAX_ARTWORK_SWEEP,
     MAX_SVG_ATTRIBUTES, MAX_SVG_BYTES, MAX_SVG_DEPTH,
@@ -532,25 +536,26 @@ fn inlay_splits_off_the_face_slab_minus_the_logo() {
         (art.mode.as_str(), art.face_on_bed.as_str()),
         ("inlay", "top")
     );
-    // The warning says which variant this is: the single-extruder swap, with
-    // the artwork a recess in the body colour; the multi-material variant
-    // (the artwork fill as its own object) is still to come; and where the
-    // swap goes when the layers do not add up to the slab depth.
+    // The warning says which variant this is: the single-extruder swap (the
+    // default inlayStyle), with the artwork a recess in the body colour; how
+    // to get the multi-material variant (the artwork fill as its own part);
+    // and where the swap goes when the layers do not add up to the slab depth.
     let inlay = b
         .warnings
         .iter()
         .find(|w| w.contains("face down"))
         .unwrap_or_else(|| panic!("{:?}", b.warnings));
     for words in [
-        "single-extruder filament-swap variant",
+        "single-extruder filament-swap variant (inlayStyle swap)",
         "recess in the body colour",
-        "multi-material variant",
-        "is coming",
+        "set inlayStyle to `parts`",
+        "artwork fill becomes its own `accent` part",
         "first layer the slicer's preview shows as the body",
         &format!("{t:.3} mm face slab"),
     ] {
         assert!(inlay.contains(words), "`{words}` in: {inlay}");
     }
+    assert_eq!(art.inlay_style.as_deref(), Some("swap"));
 
     // The slab is the top t of the tile (its 0.3 mm top chamfer lies inside it)
     // minus the square; the body is the thickened tile below it.
@@ -725,6 +730,472 @@ fn inlay_without_round_puts_the_first_layer_chamfer_on_the_bed() {
     // slab, so the body below the split is the rounded inlay's body exactly.
     check_fingerprint("inlay sharp body", &body.mesh, 0x2300_1b60_c274_3581);
     check_fingerprint("inlay sharp slab", &slab.mesh, 0x12c4_6d6b_269c_a77f);
+}
+
+/// The logo tile without its `art` feature: the plain tile the reliefs are cut
+/// from or stand on.
+fn plain_logo_tile() -> PartDoc {
+    let mut doc: Value = serde_json::from_str(LOGO_TILE).expect("JSON");
+    doc["features"]
+        .as_array_mut()
+        .expect("features")
+        .retain(|f| f["id"] != "art");
+    PartDoc::parse(&doc.to_string()).expect("parses")
+}
+
+/// The multi-material inlay of the square.
+fn parts_inlay(svg: Vec<u8>, params: ParamValues) -> Result<Built, EvalError> {
+    tile(
+        svg,
+        params
+            .with("relief", json!("inlay"))
+            .with("inlayStyle", json!("parts")),
+    )
+}
+
+/// The thinnest layer of a process: the parts inlay keeps one under its fill.
+fn thinnest_layer(p: &ProcessProfile) -> f64 {
+    p.layer_height_mm
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The volume two meshes share, through the kernel: each mesh back into a
+/// solid, then their intersection.
+fn shared_volume(a: &Mesh, b: &Mesh) -> f64 {
+    let k = ManifoldRust;
+    let a = k.solid_from_mesh(a).expect("a closed mesh");
+    let b = k.solid_from_mesh(b).expect("a closed mesh");
+    k.intersection(&a, &b).expect("intersection").volume_mm3()
+}
+
+/// The opened square's exact area: the 12-sided polygon of the emboss test
+/// (each corner keeps the fan of its round-join chords).
+fn opened_square_exact(s: f64) -> f64 {
+    let r = r0();
+    let n = round_segments(r, FLATTEN_TOLERANCE_MM);
+    let chords = f64::from(n / 4);
+    let fan = chords * r * r * (std::f64::consts::FRAC_PI_2 / chords).sin() / 2.0;
+    s * s - 4.0 * (r * r - fan)
+}
+
+#[test]
+fn inlay_parts_fill_and_body_make_the_plain_tile() {
+    // The multi-material inlay (inlayStyle parts): the artwork fill is the
+    // accent object, the opened square reliefHeight deep into the face, and the
+    // body is the plain tile recessed by exactly that region. Nothing is
+    // thickened or clamped: on fdm-0.4 the roof keeps more than the thinnest
+    // layer under the fill (1.0 - 0.6 = 0.4 mm against 0.16 mm today).
+    let p = fdm();
+    let f = face();
+    let h = param_default("reliefHeight");
+    let roof = mm("roof").max(p.min_roof_mm);
+    let layer = thinnest_layer(&p);
+    let b = parts_inlay(fixture("square.svg"), ParamValues::new()).expect("builds");
+    eprintln!("warnings: {:?}", b.warnings);
+    let roles: Vec<&str> = b.objects.iter().map(|o| o.role.as_str()).collect();
+    assert_eq!(roles, ["body", "accent"]);
+    let (body, fill) = (&b.objects[0], &b.objects[1]);
+    let m = &b.measurements;
+    assert_eq!(m.relief_height_mm, Some(h), "not clamped");
+    assert!(
+        roof - h >= layer - 1e-12,
+        "{roof} - {h} keeps a {layer} mm layer"
+    );
+    assert_eq!(m.roof_mm, Some(roof), "the roof is not thickened");
+    assert_eq!(
+        m.cavity_depth_mm,
+        Some(f.h - roof),
+        "nor the cavity lowered"
+    );
+    let art = b.artwork.as_ref().expect("report");
+    assert_eq!(
+        (
+            art.mode.as_str(),
+            art.inlay_style.as_deref(),
+            art.face_on_bed.as_str()
+        ),
+        ("inlay", Some("parts"), "top")
+    );
+    assert_eq!(art.face_chamfer_mm, top_chamfer(), "0.3 mm is above 0.2");
+    assert!(art.thin_face_area_mm2 < 1e-9);
+
+    // Exact volumes. The fill is the opened square (the exact 12-gon of the
+    // emboss test) times the depth; the body is the plain tile minus it; the
+    // two add up to the plain tile, analytically and as the kernel builds it
+    // without the relief.
+    let s = f.box_size()[0].min(f.box_size()[1]);
+    let fill_v = opened_square_exact(s) * h;
+    assert!(
+        (fill.volume_mm3 - fill_v).abs() < 1e-6,
+        "{} vs {fill_v}",
+        fill.volume_mm3
+    );
+    let plain = analytic_volume(tile_shape(), &p, &Offsets::default());
+    assert!(
+        ((body.volume_mm3 + fill.volume_mm3 - plain) / plain).abs() < 1e-6,
+        "{} + {} vs {plain}",
+        body.volume_mm3,
+        fill.volume_mm3
+    );
+    let kernel_plain = run_with_assets(
+        &plain_logo_tile(),
+        &ParamValues::new(),
+        &p,
+        None,
+        &MemoryAssets::new(),
+        false,
+    )
+    .expect("the plain tile builds");
+    let plain_k = kernel_plain.objects[0].volume_mm3;
+    assert!(
+        ((body.volume_mm3 + fill.volume_mm3 - plain_k) / plain_k).abs() < 1e-9,
+        "{} + {} vs {plain_k}",
+        body.volume_mm3,
+        fill.volume_mm3
+    );
+    assert!(((body.volume_mm3 - (plain_k - fill_v)) / plain_k).abs() < 1e-9);
+
+    // In place: the fill spans the square in plan and the top h of the face;
+    // the body keeps the whole tile's outline and height.
+    let [cx, cy] = f.centre();
+    assert_bounds(
+        "fill",
+        &fill.mesh,
+        [cx - s / 2.0, cy - s / 2.0, f.h - h],
+        [cx + s / 2.0, cy + s / 2.0, f.h],
+    );
+    assert_bounds("body", &body.mesh, [0.0, 0.0, 0.0], [f.w, f.d, f.h]);
+    // Halfway down the fill, a slice of the body misses exactly the fill (the
+    // slices read the f32 mesh, about 1e-7 relative).
+    let z = f.h - h / 2.0;
+    let outer = f.w * f.d;
+    let body_slice = section_area(&body.mesh, z, |_| true);
+    let fill_slice = section_area(&fill.mesh, z, |_| true);
+    let square = opened_square_exact(s);
+    assert!(
+        ((fill_slice - square) / square).abs() < 1e-6,
+        "{fill_slice} vs {square}"
+    );
+    assert!(
+        ((body_slice + fill_slice - outer) / outer).abs() < 1e-6,
+        "{body_slice} + {fill_slice} vs {outer}"
+    );
+
+    // Touching, not overlapping: the kernel finds no shared volume, while the
+    // same fill pushed 0.1 mm down shares 0.1 mm of the recess's floor.
+    assert!(shared_volume(&body.mesh, &fill.mesh) < 1e-9);
+    let mut sunk = fill.mesh.clone();
+    for v in &mut sunk.positions {
+        v[2] -= 0.1;
+    }
+    let pushed = shared_volume(&body.mesh, &sunk);
+    assert!(
+        (pushed - opened_square_exact(s) * 0.1).abs() < 1e-3,
+        "the check sees an overlap: {pushed}"
+    );
+
+    // The fused single-colour object is the plain tile, one solid.
+    let fused = b.fused.as_ref().expect("two objects");
+    assert_eq!(shells(&fused.mesh), 1, "one solid, not two touching shells");
+    assert!(((fused.volume_mm3 - plain_k) / plain_k).abs() < 1e-9);
+    assert!(m.is_manifold);
+    assert_eq!(m.components, 2);
+    assert_eq!(m.genus, 0, "a recess and a plug, no handle");
+    // The feature volume sum differs from the union exactly as the plain
+    // tile's does (where the ribs meet the wall-to-roof chamfer): the fill and
+    // the recess add nothing to it.
+    let pm = &kernel_plain.measurements;
+    eprintln!(
+        "feature sum - volume: parts inlay {}, plain tile {}",
+        m.feature_volume_sum_mm3 - m.volume_mm3,
+        pm.feature_volume_sum_mm3 - pm.volume_mm3
+    );
+    assert!(
+        ((m.feature_volume_sum_mm3 - m.volume_mm3) - (pm.feature_volume_sum_mm3 - pm.volume_mm3))
+            .abs()
+            < 1e-7 * m.volume_mm3
+    );
+
+    // The warnings say which variant, which face goes on the bed and which
+    // filament goes where; nothing is clamped or raised.
+    let variant = b
+        .warnings
+        .iter()
+        .find(|w| w.contains("inlayStyle parts"))
+        .unwrap_or_else(|| panic!("{:?}", b.warnings));
+    for words in [
+        "multi-material variant",
+        "top face on the bed",
+        &format!("the `accent` object is the artwork fill, {h:.3} mm deep"),
+        "own filament",
+        // The fused object above is the plain tile: the warning says so.
+        "single-colour (fused) export",
+        "plain body without visible artwork",
+        "inlayStyle `swap` or mode `deboss`",
+    ] {
+        assert!(variant.contains(words), "`{words}` in: {variant}");
+    }
+    let roles = b
+        .warnings
+        .iter()
+        .find(|w| w.contains("colour roles"))
+        .unwrap_or_else(|| panic!("{:?}", b.warnings));
+    for words in [
+        "2 colour roles, each its own object in the export",
+        "the parts of one object in the part-designer 3MF layout",
+        "`body` (the body) and `accent` (the artwork fill of `art`)",
+        "top face (the artwork) on the bed",
+        "`openbrick build` and the playground export it turned that way",
+        "turn a file in the design orientation over in the slicer",
+    ] {
+        assert!(roles.contains(words), "`{words}` in: {roles}");
+    }
+    assert!(
+        b.warnings
+            .iter()
+            .all(|w| !w.contains("clamped") && !w.contains("top chamfer is raised")),
+        "{:?}",
+        b.warnings
+    );
+    // The validator finds nothing but the missing fit profile of the
+    // fit-critical tubes.
+    let report = openbrick_part::validate(&b, &p, None);
+    assert!(!report.findings.is_empty());
+    assert!(
+        report.findings.iter().all(|f| f.rule == "FIT.MISSING"),
+        "{:?}",
+        report.findings
+    );
+
+    check_fingerprint("inlay parts body", &body.mesh, 0x0426_099d_077a_5bf5);
+    check_fingerprint("inlay parts fill", &fill.mesh, 0x182e_f9fa_d3d2_7a4d);
+    // The fused object has the plain tile's volume (above) but not its mesh:
+    // the union through the bonding copy triangulates the face around the
+    // square differently (2,680 against 2,656 triangles). The plain tile is
+    // the emboss body of `emboss_square_golden`.
+    check_fingerprint("inlay parts fused", &fused.mesh, 0x52c1_190c_110b_7449);
+    check_fingerprint(
+        "plain tile",
+        &kernel_plain.objects[0].mesh,
+        0x0cd4_561e_4989_fbd0,
+    );
+    assert_eq!(kernel_plain.objects[0].mesh.triangle_count(), 2656);
+    assert_eq!(fused.mesh.triangle_count(), 2680);
+}
+
+#[test]
+fn inlay_parts_keep_a_layer_of_roof_under_the_fill() {
+    // 1.5 mm asked on a 1.0 mm roof: clamped so the body keeps one layer (the
+    // thinnest of fdm-0.4, 0.16 mm today, so 0.840 mm) under the fill, with a
+    // warning; the fill never reaches the cavity. A brick has the same roof.
+    let p = fdm();
+    let roof = mm("roof").max(p.min_roof_mm);
+    let layer = thinnest_layer(&p);
+    let asked = 1.5;
+    assert!(asked > roof - layer, "the request is deeper than the clamp");
+    let b = parts_inlay(
+        fixture("square.svg"),
+        ParamValues::new().with("reliefHeight", json!(asked)),
+    )
+    .expect("builds");
+    let depth = b.measurements.relief_height_mm.expect("measured");
+    assert!(
+        depth <= roof - layer + 1e-12 && roof - layer - depth < 1e-3,
+        "{depth}"
+    );
+    assert!(
+        b.warnings.iter().any(
+            |w| w.contains(&format!("clamped to {:.3} mm", roof - layer))
+                && w.contains(&format!("one {layer} mm layer"))
+        ),
+        "{:?}",
+        b.warnings
+    );
+    let (body, fill) = (&b.objects[0], &b.objects[1]);
+    assert!(shared_volume(&body.mesh, &fill.mesh) < 1e-9);
+    let (lo, _) = bounds(&fill.mesh);
+    let ceiling = mm("plate_height") - roof;
+    assert!(lo[2] > ceiling, "{} above the ceiling {ceiling}", lo[2]);
+    assert!(b.measurements.is_manifold && b.measurements.components == 2);
+
+    // The style is checked, and only inlay reads it.
+    let e = tile(
+        fixture("square.svg"),
+        ParamValues::new()
+            .with("relief", json!("inlay"))
+            .with("inlayStyle", json!("paint")),
+    )
+    .expect_err("not a style");
+    assert!(
+        matches!(&e, EvalError::Param { name, .. } if name == "inlayStyle"),
+        "{e}"
+    );
+    let doc = logo_tile_with_art_field("inlayStyle", json!("paint"));
+    let e = eval_doc(
+        &doc,
+        fixture("square.svg"),
+        ParamValues::new().with("relief", json!("inlay")),
+    )
+    .expect_err("not a style");
+    assert!(
+        matches!(&e, EvalError::Field { field, .. } if field == "inlayStyle"),
+        "{e}"
+    );
+    assert!(e.to_string().contains("swap"), "{e}");
+    // The logo tile shows inlayStyle only for inlay (`visibleWhen`), so a
+    // `parts` left over from an inlay the user switched away from is ignored
+    // without a word: the user can no longer see it.
+    let ignored = |w: &String| w.contains("applies to inlay only");
+    for relief in ["emboss", "deboss"] {
+        let b = tile(
+            fixture("square.svg"),
+            ParamValues::new()
+                .with("relief", json!(relief))
+                .with("inlayStyle", json!("parts")),
+        )
+        .expect("builds");
+        assert!(
+            !b.warnings.iter().any(ignored),
+            "{relief}: {:?}",
+            b.warnings
+        );
+        assert_eq!(b.artwork.as_ref().expect("report").inlay_style, None);
+    }
+    // Written into the document, or through a parameter that is shown, it is
+    // worth a warning.
+    let literal = logo_tile_with_art_field("inlayStyle", json!("parts"));
+    let mut shown: Value = serde_json::from_str(LOGO_TILE).expect("JSON");
+    shown["params"]["inlayStyle"]
+        .as_object_mut()
+        .expect("the inlayStyle parameter")
+        .remove("visibleWhen")
+        .expect("hidden unless inlay");
+    let shown = PartDoc::parse(&shown.to_string()).expect("parses");
+    for (doc, params) in [
+        (&literal, ParamValues::new()),
+        (
+            &shown,
+            ParamValues::new().with("inlayStyle", json!("parts")),
+        ),
+    ] {
+        let emboss = eval_doc(doc, fixture("square.svg"), params).expect("builds");
+        assert!(
+            emboss
+                .warnings
+                .iter()
+                .any(|w| ignored(w) && w.contains("its own part already")),
+            "{:?}",
+            emboss.warnings
+        );
+        assert_eq!(emboss.artwork.as_ref().expect("report").inlay_style, None);
+    }
+    let deboss = eval_doc(
+        &literal,
+        fixture("square.svg"),
+        ParamValues::new().with("relief", json!("deboss")),
+    )
+    .expect("builds");
+    assert!(
+        deboss
+            .warnings
+            .iter()
+            .any(|w| ignored(w) && w.contains("ignored for deboss")),
+        "{:?}",
+        deboss.warnings
+    );
+    // In the body's own colour the parts inlay is the plain tile.
+    let doc = logo_tile_with_art_field("colorRole", json!("body"));
+    let one = eval_doc(
+        &doc,
+        fixture("square.svg"),
+        ParamValues::new()
+            .with("relief", json!("inlay"))
+            .with("inlayStyle", json!("parts")),
+    )
+    .expect("builds");
+    assert_eq!(one.objects.len(), 1);
+    assert_eq!(shells(&one.objects[0].mesh), 1);
+    assert!(
+        one.warnings
+            .iter()
+            .any(|w| w.contains("without visible artwork")),
+        "{:?}",
+        one.warnings
+    );
+}
+
+#[test]
+fn emboss_stands_on_the_face_without_overlapping_the_body() {
+    // The embossed artwork is its own object standing on the top face: its
+    // bottom is the face plane, its footprint inside the face box, and the
+    // kernel finds no volume it shares with the body. The same holds for the
+    // swap inlay's slab, which touches the body in the split plane.
+    let f = face();
+    let h = param_default("reliefHeight");
+    let b = tile(fixture("square.svg"), ParamValues::new()).expect("builds");
+    let (body, accent) = (&b.objects[0], &b.objects[1]);
+    // The same f32 height: the artwork starts where the body ends.
+    let (lo, hi) = bounds(&accent.mesh);
+    let (_, body_hi) = bounds(&body.mesh);
+    assert_eq!(lo[2], body_hi[2], "the artwork starts on the face");
+    assert!((lo[2] - f.h).abs() < 1e-6, "the face is the body top");
+    assert!((hi[2] - (f.h + h)).abs() < 1e-6);
+    for k in 0..2 {
+        assert!(lo[k] >= f.box_min[k] - 1e-6 && hi[k] <= f.box_max[k] + 1e-6);
+    }
+    assert!(shared_volume(&body.mesh, &accent.mesh) < 1e-9);
+    // Sunk 0.1 mm into the face it would share that layer: the check is live.
+    let mut sunk = accent.mesh.clone();
+    for v in &mut sunk.positions {
+        v[2] -= 0.1;
+    }
+    let s = f.box_size()[0].min(f.box_size()[1]);
+    let pushed = shared_volume(&body.mesh, &sunk);
+    assert!(
+        (pushed - opened_square_exact(s) * 0.1).abs() < 1e-3,
+        "{pushed}"
+    );
+    // Halfway up the accent is the whole opened square.
+    let slice = section_area(&accent.mesh, f.h + h / 2.0, |_| true);
+    let square = opened_square_exact(s);
+    assert!(
+        ((slice - square) / square).abs() < 1e-6,
+        "{slice} vs {square}"
+    );
+    // The colour-role warning says which is which and that it prints face up.
+    let roles = b
+        .warnings
+        .iter()
+        .find(|w| w.contains("colour roles"))
+        .unwrap_or_else(|| panic!("{:?}", b.warnings));
+    assert!(
+        roles.contains("`body` (the body) and `accent` (the raised artwork of `art`)")
+            && roles.contains("bottom face on the bed"),
+        "{roles}"
+    );
+
+    let swap = tile(
+        fixture("square.svg"),
+        ParamValues::new().with("relief", json!("inlay")),
+    )
+    .expect("builds");
+    assert!(shared_volume(&swap.objects[0].mesh, &swap.objects[1].mesh) < 1e-9);
+    let roles = swap
+        .warnings
+        .iter()
+        .find(|w| w.contains("colour roles"))
+        .unwrap_or_else(|| panic!("{:?}", swap.warnings));
+    assert!(
+        roles.contains("`accent` (the face slab around the artwork of `art`)")
+            && roles.contains("top face (the artwork) on the bed"),
+        "{roles}"
+    );
+    // A single-colour part has no colour-role warning.
+    let doc = logo_tile_with_art_field("colorRole", json!("body"));
+    let one = eval_doc(&doc, fixture("square.svg"), ParamValues::new()).expect("builds");
+    assert!(one.warnings.iter().all(|w| !w.contains("colour roles")));
 }
 
 #[test]
@@ -1397,12 +1868,20 @@ fn the_example_logo_tile_builds_with_its_own_artwork() {
     );
     check_fingerprint("mark accent", &b.objects[1].mesh, 0x9505_1b0a_e141_ba4d);
 
-    // Each relief mode builds the example part.
-    for mode in ["deboss", "inlay"] {
-        let params = ParamValues::new().with("relief", json!(mode));
+    // Each relief mode, and both inlay styles, build the example part.
+    for (mode, style) in [("deboss", "swap"), ("inlay", "swap"), ("inlay", "parts")] {
+        let params = ParamValues::new()
+            .with("relief", json!(mode))
+            .with("inlayStyle", json!(style));
         let b = run_with_assets(&logo_tile(), &params, &p, None, &assets, false)
-            .unwrap_or_else(|e| panic!("{mode}: {e}"));
-        assert!(b.measurements.is_manifold, "{mode}");
+            .unwrap_or_else(|e| panic!("{mode} {style}: {e}"));
+        assert!(b.measurements.is_manifold, "{mode} {style}");
+        assert_eq!(b.objects.len(), if mode == "deboss" { 1 } else { 2 });
+        if style == "parts" {
+            // The mark's fill and the recessed body touch, never overlap.
+            let (body, fill) = (&b.objects[0].mesh, &b.objects[1].mesh);
+            assert!(shared_volume(body, fill) < 1e-9, "{mode} {style}");
+        }
     }
     // relief.text is still not built.
     let keychain = PartDoc::parse(include_str!(
@@ -1639,6 +2118,137 @@ fn relief_objects_export_as_closed_meshes() {
         std::fs::write(dir.join("logo-tile-two-colour.3mf"), &two).expect("write");
         std::fs::write(dir.join("logo-tile-fused.3mf"), &single).expect("write");
         std::fs::write(dir.join("logo-tile-fused.stl"), &stl).expect("write");
+    }
+}
+
+/// Display colours for the exports, one per role (any distinct pair works).
+const BODY_COLOUR: [u8; 4] = [0xD0, 0x30, 0x20, 0xFF];
+const ACCENT_COLOUR: [u8; 4] = [0xF2, 0xCD, 0x37, 0xFF];
+
+#[test]
+fn multi_material_exports_are_one_object_with_parts() {
+    // The two-colour logo tiles in the part-designer 3MF layout: one mesh
+    // object per colour role, one components object referencing both with no
+    // transform, one build item. So a slicer that reads components as parts
+    // (Bambu Studio) loads one object with a body part and a logo part in
+    // place, and PrusaSlicer, which splits components, offers to merge them
+    // into one multi-part object (docs/spikes/q18-slicer-multimaterial-import.md).
+    // scripts/validate-3mf.py reads the written files with lib3mf: the parts
+    // keep their place and do not overlap.
+    let layout = ExportLayout::PART_DESIGNER;
+    assert_eq!(layout, ExportLayout::OneObjectWithParts);
+    let p = fdm();
+    let builds = [
+        (
+            "logo-tile-emboss-parts",
+            tile(fixture("square.svg"), ParamValues::new()),
+        ),
+        (
+            "logo-tile-inlay-parts",
+            parts_inlay(fixture("square.svg"), ParamValues::new()),
+        ),
+        (
+            "logo-tile-mark-inlay-parts",
+            run_with_assets(
+                &logo_tile(),
+                &ParamValues::new()
+                    .with("relief", json!("inlay"))
+                    .with("inlayStyle", json!("parts")),
+                &p,
+                None,
+                &example_assets(),
+                false,
+            ),
+        ),
+    ];
+    for (name, b) in builds {
+        let b = b.unwrap_or_else(|e| panic!("{name}: {e}"));
+        let meta = ExportMeta {
+            part_id: "ndn.logo-tile".into(),
+            version: logo_tile().version.clone(),
+            content_hash: b.content_hash.clone(),
+            fit_profile_id: "nominal".into(),
+            process_id: p.id.clone(),
+            generator: GENERATOR.into(),
+            kernel_id: b.kernel_id.clone(),
+            title: format!("Logo tile ({name})"),
+            serial: None,
+        };
+        let colour = |role: &str| {
+            Some(if role == "body" {
+                BODY_COLOUR
+            } else {
+                ACCENT_COLOUR
+            })
+        };
+        let objects: Vec<ExportObject> = b
+            .objects
+            .iter()
+            .map(|o| {
+                ExportObject::new(
+                    format!("logo tile {}", o.role),
+                    o.role.clone(),
+                    colour(&o.role),
+                    &o.mesh,
+                )
+            })
+            .collect();
+        assert_eq!(objects.len(), 2, "{name}");
+        let bytes = write_3mf_with_layout(&objects, &meta, layout)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        // Deterministic: the same build writes the same bytes, and the other
+        // layout writes another file.
+        assert_eq!(
+            bytes,
+            write_3mf_with_layout(&objects, &meta, layout).unwrap()
+        );
+        assert_ne!(bytes, write_3mf(&objects, &meta).unwrap());
+        let xml = threemf_model_xml_with_layout(&objects, &meta, layout).expect("model");
+        assert_eq!(xml.matches("<item ").count(), 1, "{name}");
+        assert_eq!(xml.matches("<component ").count(), 2, "{name}");
+        assert_eq!(xml.matches("<components>").count(), 1, "{name}");
+        assert!(
+            !xml.contains("transform="),
+            "{name}: the parts stay in place"
+        );
+        // The parts touch and do not overlap.
+        assert!(
+            shared_volume(&b.objects[0].mesh, &b.objects[1].mesh) < 1e-9,
+            "{name}"
+        );
+        let mut files = vec![(format!("{name}.3mf"), bytes)];
+        // A colourless copy of the square tiles for the slicer import check:
+        // Bambu Studio turns colour groups into surface painting through its
+        // colour dialog, so the A1 check compares that path with plain
+        // per-part filaments (docs/spikes/q18-slicer-multimaterial-import.md).
+        // These carry test artwork and no fit profile, so they are not for the
+        // pull test; `openbrick build --no-colour` writes a printable
+        // colourless tile (docs/guides/print-test.md section 6).
+        if !name.contains("mark") {
+            let plain: Vec<ExportObject> = objects
+                .iter()
+                .map(|o| ExportObject {
+                    color_srgb: None,
+                    ..o.clone()
+                })
+                .collect();
+            let xml = threemf_model_xml_with_layout(&plain, &meta, layout).expect("model");
+            assert!(
+                !xml.contains("colorgroup") && !xml.contains("pid="),
+                "{name}: no colour"
+            );
+            assert_eq!(xml.matches("<component ").count(), 2, "{name}");
+            let bytes = write_3mf_with_layout(&plain, &meta, layout).expect("writes");
+            assert_eq!(bytes, write_3mf_with_layout(&plain, &meta, layout).unwrap());
+            assert_ne!(bytes, files[0].1, "{name}: another file");
+            files.push((format!("{name}-no-colour.3mf"), bytes));
+        }
+        if let Ok(dir) = std::env::var("OPENBRICK_RELIEF_EXPORT_DIR") {
+            let dir = Path::new(&dir);
+            for (file, bytes) in &files {
+                std::fs::write(dir.join(file), bytes).expect("write");
+            }
+        }
     }
 }
 

@@ -101,7 +101,9 @@ rustfmt; clippy with `-D warnings`; biome for TypeScript; prettier and markdownl
 |-----|--------|------|
 | check | ubuntu-24.04 | fmt, clippy, cargo test, schema validation, biome, markdownlint |
 | test-cross | ubuntu-24.04, ubuntu-24.04-arm, windows-2025, windows-11-arm, macos-26 | cargo test per target; CLI smoke |
-| wasm, web | ubuntu-24.04 | wasm build, size budget (core under 2.5 MB gzip, `cargo xtask wasm`), Playwright smoke of `apps/web` on Chromium (WebGL2 and WebGPU); WebKit to follow |
+| wasm, web | ubuntu-24.04 | wasm build, size budget (core under 2.5 MB gzip, `cargo xtask wasm`), Playwright smoke of the `apps/web` playground on Chromium (WebGL2 and WebGPU, phone layout, the `/openBrick/` Pages build) against the native values of the same Rust functions (downloads byte-identical to the native exports, every part 3MF in the part-designer layout), lib3mf strict validation of the downloaded 3MF files; WebKit to follow |
+| cli, part-exports, io-3mf | ubuntu-24.04 | the `openbrick` CLI end to end (installed from the clone; logo tile in every relief and inlay style, a parts inlay without colours, coupon, recorded fit, a blocked build) and the part crate's and writer's exports, every 3MF read by lib3mf 2.5.0 in strict mode against its description (`scripts/validate-3mf.py --self-test`) |
+| pages | ubuntu-24.04 (push to main, manual) | builds the core and `apps/web` with base `/openBrick/` and deploys the playground to GitHub Pages (`.github/workflows/pages.yml`) |
 | corpus | ubuntu-24.04 | golden meshes, LDraw round-trip, 3MF conformance (lib3mf, OrcaSlicer CLI) |
 | bench | ubuntu-24.04 (scheduled) | criterion and web harness; regression gate |
 | fuzz | ubuntu-24.04 (nightly) | cargo-fuzz on readers |

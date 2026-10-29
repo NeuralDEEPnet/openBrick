@@ -2,7 +2,7 @@
   "name": "@openbrick3d/web",
   "private": true,
   "version": "0.0.1",
-  "description": "Browser app: the Rust core as WebAssembly in a Web Worker, meshes shown with the three.js WebGPURenderer (docs/plan/02 sections 1 to 3, decisions D10 and D14)",
+  "description": "Browser playground: logo tile designer and calibration coupon; the Rust core as WebAssembly in a Web Worker, meshes shown with the three.js WebGPURenderer (docs/plan/02 sections 1 to 3, docs/plan/06 section 11)",
   "license": "MIT",
   "type": "module",
   "scripts": {

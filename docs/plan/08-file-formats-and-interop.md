@@ -71,12 +71,12 @@ Instances are keyed by ULID; `part` is an LDraw id or a content hash of a custom
 ## 4. 3MF
 
 - Core 1.4.0 (3MF is ISO/IEC 25422:2025), Materials and Properties 1.2.1 (`basematerials` and `colorgroup`, per-triangle `p1 p2 p3`), Production 1.1.2 (text v1.2; UUIDs, optional `path` split). Units millimetres, Z-up.
-- Part designer: one object per colour role. Assembler: one object per part under a component object by default; `--fuse` unions same-colour groups.
+- Part designer: one object per colour role, written as the parts of one components object under a single build item (`ExportLayout::PART_DESIGNER`, [Q18](../spikes/q18-slicer-multimaterial-import.md)). The CLI and the playground both write this layout, and `openbrick build --no-colour` leaves out the display colours. Assembler: one object per part under a component object by default; `--fuse` unions same-colour groups.
 - Metadata namespace `openbrick:` (`https://openbrick3d.org/3mf/metadata/1.0`):
   - Required: part id, version, content hash, fit profile id, process id, generator and kernel id.
   - The serial when the part has one.
   - Each object names its colour role in `openbrick:role`.
-- Writer: our own zip+XML writer, `openbrick_io::write_3mf(&[ExportObject], &ExportMeta) -> Result<Vec<u8>, IoError>`. This is the fallback named here, chosen for byte-identical output and wasm32 with two small pure-Rust dependencies. Every CI fixture is validated with `lib3mf` 2.5.0 (`scripts/validate-3mf.py`); the OrcaSlicer CLI smoke test is backlog item 18.
+- Writer: our own zip+XML writer, `openbrick_io::write_3mf(&[ExportObject], &ExportMeta) -> Result<Vec<u8>, IoError>`, and `write_3mf_with_layout(.., ExportLayout)`. `ExportLayout::OneObjectWithParts` (the part-designer layout, `ExportLayout::PART_DESIGNER`) writes one components object whose parts are the colour roles, under a single build item ([Q18](../spikes/q18-slicer-multimaterial-import.md)). An object without a colour (`color_srgb = None`) gets no `pid`; with no colours at all there is no colour group. Vendor configuration files (PrusaSlicer's Slic3r_PE_model.config, Bambu's model_settings.config) are not written; see Q18 "Not pursued". This is the fallback named here, chosen for byte-identical output and wasm32 with two small pure-Rust dependencies. Every CI fixture is validated with `lib3mf` 2.5.0 (`scripts/validate-3mf.py`); the OrcaSlicer CLI smoke test is backlog item 18.
 - Reader: 3MF import of meshes for custom parts (core and materials only).
 - Vendor project flavours (Bambu, Orca) are plugins, off by default, version-pinned.
 

@@ -579,6 +579,19 @@ impl<'a> Scope<'a> {
         }
     }
 
+    /// Whether a field value is a plain reference (`"$name"`) to a parameter
+    /// that its `visibleWhen` hides. A hidden parameter keeps whatever value it
+    /// had before it was hidden, and the user cannot see it, so ops use this to
+    /// skip warnings about such values.
+    pub(crate) fn names_hidden_param(&self, v: &Value) -> bool {
+        match v {
+            Value::String(s) if is_reference(s) => {
+                self.params.visible.get(&s[1..]).copied() == Some(false)
+            }
+            _ => false,
+        }
+    }
+
     /// Evaluate an `if` or `visibleWhen` expression.
     pub(crate) fn condition(&self, src: &str) -> Result<bool, String> {
         expr::eval_bool(src, &|n| self.lookup(n))

@@ -14,23 +14,52 @@
 //! Build for the browser with `cargo xtask wasm`, which runs the pinned
 //! wasm-bindgen CLI and writes the module and its glue into `apps/web/src/wasm/`.
 //!
-//! # Adding an export
+//! # Exports
 //!
 //! Small inputs and outputs cross as JSON text and numbers; meshes cross as
 //! [`MeshOut`]. Its arrays are moved out of Rust ([`MeshOut::take_positions`],
 //! [`MeshOut::take_indices`]), so each is copied exactly once, from WebAssembly
 //! memory into a JavaScript `Float32Array` or `Uint32Array` (that memory cannot be
 //! handed over itself), and the worker then transfers those to the page without
-//! another copy (docs/plan/02 section 3).
-//! `evaluate_part(doc, params, process, fit, assets)` arrives with the part
-//! evaluator (docs/plan/06): it takes the part document, params, process profile
-//! and fit profile as JSON text and the assets as bytes, and returns one
-//! [`MeshOut`] per colour role (built with [`MeshOut::from_solid`], as
-//! [`build_nominal_brick`] does) plus the validation report as JSON.
+//! another copy (docs/plan/02 section 3). File bytes cross the same way, as one
+//! `Uint8Array` copied once out of WebAssembly memory.
+//!
+//! - Part designer ([`part`], docs/plan/06): [`evaluate_part`] takes the part
+//!   document, the parameter values, a bundled process profile id and a fit
+//!   profile (JSON text, empty for none) plus the assets in an [`AssetSet`], and
+//!   returns a [`PartOut`]: one [`MeshOut`] per colour role with its role and
+//!   colour, the validation report of `openbrick_part::validate`, the
+//!   measurements, warnings, content hash and the removed artwork region as a
+//!   red display overlay. [`export_part`] evaluates the same inputs again and
+//!   returns a 3MF (one object whose parts are the colour roles, the
+//!   part-designer layout [`part::PART_EXPORT_LAYOUT`]) or a single-colour STL
+//!   (the kernel's fused union), laid out for printing; it refuses while the
+//!   report has a blocker. [`export_solids`] (Rust only) gives the solids it
+//!   writes, so the CLI's tests can compare meshes with the playground's.
+//! - Calibration coupon ([`coupon`], docs/plan/05 section 4): [`build_coupon`],
+//!   [`coupon_layout_json`] and [`export_coupon`].
+//! - Bundled data ([`data`]): the process profiles, the example fit profile, the
+//!   logo tile part document and its sample artwork, the disclaimer, the display
+//!   colours of the colour roles and the asset size limit.
+
+pub mod coupon;
+pub mod data;
+mod layout;
+pub mod part;
+
+pub use coupon::{build_coupon, coupon_layout_json, export_coupon, CouponOut};
+pub use data::{
+    coupon_choices_json, disclaimer, example_fit_profile_json, logo_tile_part_json,
+    max_asset_bytes, process_profiles_json, role_colors_json, sample_logo_svg,
+};
+pub use part::{
+    evaluate_part, export_part, export_solids, resolve_params_json, AssetSet, ExportSolid,
+    PartExport, PartOut,
+};
 
 use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_geom::nominal::{nominal_brick, Detail, NominalDims};
-use openbrick_geom::{Kernel, Solid};
+use openbrick_geom::{Kernel, Mesh, Solid};
 use openbrick_units::STANDARD;
 
 #[cfg(target_arch = "wasm32")]
@@ -108,6 +137,11 @@ pub struct MeshOut {
     canonical_fingerprint: u64,
     bounds: [f32; 6],
     kernel: String,
+    /// Colour role: `body`, `accent`, `serial`, or `removed` for the display
+    /// overlay of artwork that does not print as drawn.
+    role: String,
+    /// Display colour as `#rrggbb` ([`data::role_color`]).
+    color: String,
 }
 
 /// `0x` and 16 lower-case hex digits, as `kernel_timing` and the harness manifest
@@ -164,11 +198,22 @@ impl MeshOut {
     pub fn kernel(&self) -> String {
         self.kernel.clone()
     }
+
+    /// The colour role (`body`, `accent`, `serial`, or `removed` for the red
+    /// overlay of artwork that does not print as drawn).
+    pub fn role(&self) -> String {
+        self.role.clone()
+    }
+
+    /// The role's display colour, `#rrggbb` ([`role_colors_json`]).
+    pub fn color(&self) -> String {
+        self.color.clone()
+    }
 }
 
 impl MeshOut {
-    /// Convert a kernel solid. Refuses a solid the kernel does not report as
-    /// manifold, so nothing broken reaches the display or an export.
+    /// Convert a kernel solid of the `body` role. Refuses a solid the kernel does
+    /// not report as manifold, so nothing broken reaches the display or an export.
     pub fn from_solid<K: Kernel>(k: &K, solid: &K::Solid) -> Result<MeshOut, CoreError> {
         if !solid.is_manifold() {
             return Err(CoreError(format!(
@@ -176,7 +221,20 @@ impl MeshOut {
                 k.id()
             )));
         }
-        let mesh = solid.to_mesh();
+        MeshOut::from_mesh(k.id(), solid.to_mesh(), solid.volume_mm3(), "body")
+    }
+
+    /// Wrap a mesh the core built (an evaluated object or a display overlay) with
+    /// its volume, kernel id and colour role; the colour is the role's display
+    /// colour ([`data::role_color`]). It does not test the mesh: the validation
+    /// report of an evaluated part says whether it is manifold (rule
+    /// `MESH.MANIFOLD`).
+    pub fn from_mesh(
+        kernel: String,
+        mesh: Mesh,
+        volume_mm3: f64,
+        role: &str,
+    ) -> Result<MeshOut, CoreError> {
         let (lo, hi) = mesh.bounds();
         let count = |n: usize, what: &str| {
             u32::try_from(n).map_err(|_| CoreError(format!("the mesh has too many {what} ({n})")))
@@ -184,11 +242,13 @@ impl MeshOut {
         Ok(MeshOut {
             vertex_count: count(mesh.positions.len(), "vertices")?,
             triangle_count: count(mesh.triangle_count(), "triangles")?,
-            volume_mm3: solid.volume_mm3(),
+            volume_mm3,
             fingerprint: mesh.fingerprint(),
             canonical_fingerprint: mesh.canonical_fingerprint(),
             bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]],
-            kernel: k.id(),
+            kernel,
+            role: role.to_string(),
+            color: data::role_color(role).to_string(),
             // Both arrays are moved, not copied: `into_flattened` reuses the
             // allocation of the `[f32; 3]` vector.
             positions: mesh.positions.into_flattened(),

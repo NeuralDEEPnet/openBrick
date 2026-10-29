@@ -15,8 +15,8 @@
 use std::path::{Path, PathBuf};
 
 use openbrick_print::{
-    default_process_profiles, validate, FitProfile, Measurements, Report, Severity,
-    IMPLEMENTED_RULES,
+    default_process_profiles, finding_unit, validate, FitProfile, Measurements, ProcessProfile,
+    Report, Severity, IMPLEMENTED_RULES,
 };
 use serde_json::Value;
 
@@ -88,6 +88,8 @@ struct Case {
     path: PathBuf,
     doc: Value,
     report: Report,
+    m: Measurements,
+    process: ProcessProfile,
 }
 
 fn run(path: &Path) -> Case {
@@ -137,6 +139,8 @@ fn run(path: &Path) -> Case {
         path: path.to_path_buf(),
         doc,
         report,
+        m,
+        process,
     }
 }
 
@@ -197,6 +201,13 @@ fn as_pct_above(x: f64, max: f64) -> Option<String> {
 /// not found there. `0.8` is found in "is 0.8 mm" but not in "is 0.85 mm",
 /// "10.8" or `fdm-0.8`.
 fn shows_number(message: &str, x: f64, above: Option<f64>) -> bool {
+    shows_number_in(message, x, above, "")
+}
+
+/// [`shows_number`], with the number followed by `unit` as the message writes
+/// it (` mm`, ` %`, ` mm3`; empty for no unit). The percentage form counts
+/// only for ` %` or no unit.
+fn shows_number_in(message: &str, x: f64, above: Option<f64>, unit: &str) -> bool {
     let bytes = message.as_bytes();
     // Digits inside a word or an id such as `fdm-0.4` are not a number of their own.
     let joined = |i: usize| {
@@ -217,10 +228,22 @@ fn shows_number(message: &str, x: f64, above: Option<f64>) -> bool {
             before && after && message[end..].starts_with(suffix)
         })
     };
-    found(&as_mm(x), "")
-        || above
-            .and_then(|max| as_pct_above(x, max))
-            .is_some_and(|s| found(&s, " %"))
+    found(&as_mm(x), unit)
+        || ((unit.is_empty() || unit == " %")
+            && above
+                .and_then(|max| as_pct_above(x, max))
+                .is_some_and(|s| found(&s, " %")))
+}
+
+/// How a message writes the unit [`finding_unit`] gives: `mm3` for mm³ (the
+/// messages are plain ASCII), nothing for a count or no unit.
+fn unit_in_message(unit: &str) -> &'static str {
+    match unit {
+        "mm" => " mm",
+        "%" => " %",
+        "mm³" => " mm3",
+        _ => "",
+    }
 }
 
 #[test]
@@ -269,6 +292,23 @@ fn numbers_are_found_only_on_their_own_and_as_the_validator_writes_them() {
         1.0324211814310704,
         Some(1.0)
     ));
+    // With a unit: the number must be followed by it.
+    assert!(shows_number_in("the wall is 0.8 mm", 0.8, None, " mm"));
+    assert!(!shows_number_in("removed 0.8 % of it", 0.8, None, " mm"));
+    assert!(shows_number_in(
+        "removed 1.03 % of it",
+        1.0324211814310704,
+        Some(1.0),
+        " %"
+    ));
+    assert!(!shows_number_in(
+        "removed 1.03 % of it",
+        1.0324211814310704,
+        Some(1.0),
+        " mm"
+    ));
+    assert!(shows_number_in("the volume is -5 mm3", -5.0, None, " mm3"));
+    assert!(!shows_number_in("the volume is -5 mm3", -5.0, None, " %"));
 }
 
 fn json_files(dir: &Path) -> Vec<PathBuf> {
@@ -337,18 +377,27 @@ fn every_rule_passes_and_fails_its_fixtures() {
                 }
                 for f in findings {
                     // A finding's message shows the value and the threshold it
-                    // carries (CLAUDE.md), as numbers of their own.
+                    // carries (CLAUDE.md), as numbers of their own, each followed
+                    // by the unit finding_unit() gives for them (what the
+                    // playground's validation panel shows after the numbers).
+                    let unit = finding_unit(f, &case.m, &case.process);
                     let forms = [
                         ("value", f.value, f.threshold),
                         ("threshold", f.threshold, None),
                     ];
+                    let suffix = unit_in_message(unit);
                     for (what, x, above) in forms {
                         let Some(x) = x else { continue };
+                        // A threshold may open a range: "outside the 6.4 to 6.65 mm".
+                        let in_unit = shows_number_in(&f.message, x, above, suffix)
+                            || (what == "threshold"
+                                && shows_number_in(&f.message, x, None, " to ")
+                                && f.message.contains(suffix));
                         if !x.is_finite() {
                             problems.push(format!("{shown}: {what} {x} is not finite"));
-                        } else if !shows_number(&f.message, x, above) {
+                        } else if !in_unit {
                             problems.push(format!(
-                                "{shown}: message does not show its {what} {x}: {}",
+                                "{shown}: message does not show its {what} {x} in {unit:?}: {}",
                                 f.message
                             ));
                         }

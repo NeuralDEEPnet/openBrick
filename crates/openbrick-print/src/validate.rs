@@ -212,6 +212,41 @@ impl Report {
     }
 }
 
+/// The unit of a finding's `value` and `threshold`, as a symbol to show after
+/// the numbers: `mm`, `%`, `mm³`, or empty when the numbers count something (the
+/// components of an empty mesh) or there are none. `m` and `process` are the
+/// measurements and process profile the report was made from.
+///
+/// This is the unit table of the module documentation, decided from where the
+/// numbers come from, never from the wording of the message: `MESH.VOLUME`
+/// compares a percentage with [`MESH_VOLUME_TOLERANCE_PCT`], or a volume that
+/// is not positive with 0 mm³; `FEATURE.MIN` on the removed area carries
+/// [`Measurements::removed_area_pct`] against the process's
+/// `maxRemovedAreaPct` unchanged, while its stroke triggers carry lengths
+/// against `minFeatureMm`. (Only a stroke of exactly the removed percentage in
+/// millimetres on a process whose two thresholds are equal could be mistaken for
+/// the area; no bundled process has equal thresholds.) The validator fixture
+/// test checks every fixture's message shows its numbers in this unit.
+pub fn finding_unit(f: &Finding, m: &Measurements, process: &ProcessProfile) -> &'static str {
+    if f.value.is_none() && f.threshold.is_none() {
+        return "";
+    }
+    match f.rule.as_str() {
+        // The empty-mesh finding: 0 components against at least 1.
+        "MESH.MANIFOLD" => "",
+        "MESH.VOLUME" if f.threshold == Some(MESH_VOLUME_TOLERANCE_PCT) => "%",
+        "MESH.VOLUME" => "mm³",
+        "FEATURE.MIN"
+            if f.value.is_some()
+                && f.value == m.removed_area_pct
+                && f.threshold == process.max_removed_area_pct =>
+        {
+            "%"
+        }
+        _ => "mm",
+    }
+}
+
 /// A length for messages: at most three decimals, trailing zeros dropped
 /// (0.8, 0.857, 4.95).
 fn mm(x: f64) -> String {
@@ -1103,6 +1138,110 @@ mod tests {
             "{}",
             f.message
         );
+    }
+
+    #[test]
+    fn units_come_from_where_the_numbers_come_from() {
+        let fit = example_fit_profile();
+        let p = fdm04();
+        let part = Measurements {
+            process: "fdm-0.4".into(),
+            fit_profile: Some(fit.id.clone()),
+            components: 1,
+            is_manifold: true,
+            volume_mm3: 100.0,
+            feature_volume_sum_mm3: 100.0,
+            ..Measurements::default()
+        };
+        let units = |m: &Measurements, fit: Option<&FitProfile>| -> Vec<(String, &'static str)> {
+            validate(m, &p, fit)
+                .findings
+                .iter()
+                .map(|f| (f.rule.clone(), finding_unit(f, m, &p)))
+                .collect()
+        };
+        let pair = |rule: &str, unit: &'static str| (rule.to_string(), unit);
+        // Both FEATURE.MIN triggers on one part: a stroke below the minimum (a
+        // length) and too much area removed (a percentage), sorted by message.
+        let art = Measurements {
+            min_stroke_mm: Some(0.5),
+            removed_area_pct: Some(3.0),
+            relief_height_mm: Some(0.6),
+            ..part.clone()
+        };
+        assert_eq!(
+            units(&art, Some(&fit)),
+            vec![pair("FEATURE.MIN", "%"), pair("FEATURE.MIN", "mm")]
+        );
+        // A stroke of 0.5 mm with 0.5 % removed (under the limit): the stroke
+        // finding carries the same number as the removed area, and its
+        // threshold tells it apart.
+        let same_number = Measurements {
+            removed_area_pct: Some(0.5),
+            ..art.clone()
+        };
+        assert_eq!(
+            units(&same_number, Some(&fit)),
+            vec![pair("FEATURE.MIN", "mm")]
+        );
+        // A stroke that was not measured keeps its threshold, a length.
+        let unmeasured = Measurements {
+            min_stroke_mm: None,
+            removed_area_pct: Some(0.5),
+            ..art.clone()
+        };
+        assert_eq!(
+            units(&unmeasured, Some(&fit)),
+            vec![pair("FEATURE.MIN", "mm")]
+        );
+        // MESH.VOLUME: a deviation in percent, a volume that is not positive in
+        // mm³, one that is not a number without numbers.
+        let off = Measurements {
+            volume_mm3: 120.0,
+            ..part.clone()
+        };
+        assert_eq!(units(&off, Some(&fit)), vec![pair("MESH.VOLUME", "%")]);
+        let negative = Measurements {
+            volume_mm3: -5.0,
+            ..part.clone()
+        };
+        assert_eq!(
+            units(&negative, Some(&fit)),
+            vec![pair("MESH.VOLUME", "mm³")]
+        );
+        let nan = Measurements {
+            volume_mm3: f64::NAN,
+            ..part.clone()
+        };
+        assert_eq!(units(&nan, Some(&fit)), vec![pair("MESH.VOLUME", "")]);
+        // MESH.MANIFOLD on an empty mesh counts components; lengths are mm; FIT
+        // rules have no numbers.
+        let empty = Measurements {
+            components: 0,
+            ..part.clone()
+        };
+        assert_eq!(units(&empty, Some(&fit)), vec![pair("MESH.MANIFOLD", "")]);
+        let wall = Measurements {
+            min_body_wall_mm: Some(0.5),
+            ..part.clone()
+        };
+        // 0.5 mm is also not a whole number of 0.4 mm lines.
+        assert_eq!(
+            units(&wall, Some(&fit)),
+            vec![pair("WALL.MIN", "mm"), pair("WALL.QUANTISED", "mm")]
+        );
+        let other = Measurements {
+            process: "fdm-0.2".into(),
+            ..part.clone()
+        };
+        assert!(units(&other, Some(&fit))
+            .iter()
+            .all(|(rule, unit)| rule == "FIT.PROCESS" && unit.is_empty()));
+        // The bundled processes keep the two FEATURE.MIN thresholds apart, so
+        // the threshold alone tells the triggers apart.
+        for p in default_process_profiles() {
+            assert_ne!(Some(p.min_feature_mm), p.max_removed_area_pct, "{}", p.id);
+        }
     }
 
     #[test]

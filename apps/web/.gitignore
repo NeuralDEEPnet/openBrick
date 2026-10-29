@@ -2,3 +2,5 @@
 /src/wasm/
 # Written by `node smoke.mjs --screenshots smoke-screenshots` (the CI job keeps them as an artifact).
 /smoke-screenshots/
+# Written by `node smoke.mjs` (the 3MF, STL and coupon downloads; CI validates them with scripts/validate-3mf.py).
+/smoke-downloads/

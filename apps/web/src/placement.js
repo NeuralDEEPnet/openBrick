@@ -20,6 +20,14 @@ export function brickOffset({ width, length }, { pitchMm, undersizeMm }) {
 }
 
 /**
+ * Kernel-frame translation that centres a part off the stud lattice (the
+ * calibration coupon) on the origin, standing on the ground.
+ */
+export function centredOffset(bounds) {
+  return [-(bounds[0] + bounds[3]) / 2, -(bounds[1] + bounds[4]) / 2, -bounds[2]];
+}
+
+/**
  * Axis-aligned box and bounding sphere, in three.js coordinates, of kernel-frame
  * bounds [min x, y, z, max x, y, z] moved by a kernel-frame `offset`.
  */

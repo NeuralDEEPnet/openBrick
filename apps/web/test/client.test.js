@@ -283,3 +283,118 @@ test("dispose rejects what is waiting", async () => {
   env.client.dispose();
   await assert.rejects(build, /disposed/);
 });
+
+// ------------------------------------------------------------ part designer and coupon
+
+const builds = (worker) => worker.sent.filter((m) => ["brick", "evaluatePart", "buildCoupon"].includes(m.type));
+const PART = { doc: "{}", params: { relief: "emboss" }, process: "fdm-0.4", fit: "", assets: [] };
+
+test("evaluations and coupon builds share the latest-wins lane", async () => {
+  const env = await started();
+  const a = env.client.evaluatePart(PART);
+  const b = env.client.evaluatePart({ ...PART, params: { relief: "deboss" } });
+  const c = env.client.buildCoupon({ process: "fdm-0.4", layout: {} });
+  assert.equal(await b, null, "b was replaced before it was sent");
+  assert.deepEqual(builds(env.worker).map((m) => m.type), ["evaluatePart"]);
+  env.worker.reply("evaluatePart", { contentHash: "a" });
+  assert.equal(await a, null, "a finished but the coupon superseded it");
+  await settle();
+  assert.deepEqual(builds(env.worker).map((m) => m.type), ["evaluatePart", "buildCoupon"]);
+  env.worker.reply("buildCoupon", { fileStem: "coupon-fdm-0.4-cross" });
+  assert.deepEqual(await c, { fileStem: "coupon-fdm-0.4-cross" });
+  assert.equal(env.client.restarts, 0);
+});
+
+test("an export is never superseded: evaluations queue behind it and do not restart the worker", async () => {
+  const env = await started({ restartAfterMs: 250 });
+  const slow = env.client.evaluatePart(PART);
+  const file = env.client.exportPart({ ...PART, format: "3mf", colors: {} });
+  assert.ok(env.client.exporting);
+  env.advance(1000);
+  // A newer evaluation supersedes the old one, which has run for a second; but
+  // an export is owed, so the worker is kept.
+  const next = env.client.evaluatePart({ ...PART, params: { relief: "inlay" } });
+  assert.equal(env.client.restarts, 0, "no restart while an export is owed");
+  env.advance(1000);
+  assert.equal(env.client.restarts, 0, "nor later");
+  env.worker.reply("evaluatePart", { contentHash: "old" });
+  assert.equal(await slow, null, "the superseded evaluation still resolves null");
+  const bytes = new Uint8Array([0x50, 0x4b]);
+  env.worker.reply("exportPart", { format: "3mf", bytes });
+  assert.deepEqual(await file, { format: "3mf", bytes }, "the export gets its own reply");
+  assert.equal(env.client.exporting, false);
+  await settle();
+  env.worker.reply("evaluatePart", { contentHash: "new" });
+  assert.deepEqual(await next, { contentHash: "new" });
+  assert.equal(env.workers.length, 1);
+});
+
+test("a superseded build waiting behind an export is cancelled once the export answers", async () => {
+  const env = await started({ restartAfterMs: 250 });
+  const file = env.client.exportCoupon({ format: "3mf", process: "fdm-0.4", layout: {} });
+  const big = env.client.evaluatePart({ ...PART, params: { size: [16, 16] } });
+  env.advance(500);
+  const small = env.client.evaluatePart(PART);
+  assert.equal(env.client.restarts, 0);
+  const old = env.worker;
+  old.reply("exportCoupon", { format: "3mf", bytes: new Uint8Array([1]) });
+  await file;
+  await settle();
+  // The export is done and the 16x16 is still running: now the worker goes.
+  assert.equal(env.client.restarts, 1);
+  assert.ok(old.terminated);
+  assert.equal(await big, null);
+  const fresh = env.worker;
+  assert.deepEqual(fresh.sent.map((m) => m.type), ["init", "evaluatePart"], "only the newest build is sent again");
+  fresh.reply("init", INFO);
+  fresh.reply("evaluatePart", { contentHash: "2x4" });
+  assert.deepEqual(await small, { contentHash: "2x4" });
+});
+
+test("after a trap an owed export goes to the fresh worker with its original id", async () => {
+  const env = await started();
+  const build = env.client.evaluatePart(PART);
+  const file = env.client.exportPart({ ...PART, format: "stl" });
+  const old = env.worker;
+  const exportId = old.sent.find((m) => m.type === "exportPart").id;
+  old.trap("evaluatePart");
+  await assert.rejects(build, /WebAssembly trap/);
+  const fresh = env.worker;
+  assert.deepEqual(
+    fresh.sent.map((m) => [m.type, m.type === "exportPart" ? m.id : undefined]),
+    [
+      ["init", undefined],
+      ["exportPart", exportId],
+    ],
+  );
+  fresh.reply("init", INFO);
+  fresh.reply(exportId, { format: "stl", bytes: new Uint8Array([7]) });
+  assert.equal((await file).format, "stl");
+  assert.deepEqual([env.client.restarts, env.client.traps], [1, 1]);
+});
+
+test("a refused export rejects with the core's message and leaves the lane alone", async () => {
+  const env = await started();
+  const file = env.client.exportPart({ ...PART, format: "3mf" });
+  env.worker.fail(env.worker.sent.at(-1).id, "export is disabled while the validation report has 1 blocker: FIT.MISSING");
+  await assert.rejects(file, (err) => err instanceof CoreError && /FIT\.MISSING/.test(err.message));
+  assert.equal(env.client.busy, false);
+  const p = env.client.evaluatePart(PART);
+  env.worker.reply("evaluatePart", { ok: 1 });
+  assert.deepEqual(await p, { ok: 1 });
+});
+
+test("bundled, resolveParams and couponLayout are plain requests", async () => {
+  const env = await started();
+  const b = env.client.bundled();
+  const r = env.client.resolveParams({ doc: "{}", params: {}, process: "fdm-0.4" });
+  const l = env.client.couponLayout({ process: "fdm-0.4", layout: {} });
+  assert.deepEqual(env.worker.sent.slice(1).map((m) => m.type), ["bundled", "resolveParams", "couponLayout"]);
+  env.worker.reply("bundled", { disclaimer: "x" });
+  env.worker.reply("resolveParams", { visible: {} });
+  env.worker.reply("couponLayout", { cells: [] });
+  assert.deepEqual(await b, { disclaimer: "x" });
+  assert.deepEqual(await r, { visible: {} });
+  assert.deepEqual(await l, { cells: [] });
+  assert.equal(env.client.busy, false, "they are not builds");
+});
