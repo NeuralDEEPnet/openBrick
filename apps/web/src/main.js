@@ -38,6 +38,7 @@ import {
   stepStuds,
   writeMode,
 } from "./ui.js";
+import { sampleFile, sampleLabel, sizeForSample, sizeNote } from "./samples.js";
 import { createViewer } from "./viewer.js";
 
 const $ = (id) => document.getElementById(id);
@@ -87,6 +88,8 @@ const page = {
   warnings: [],
   error: null,
   downloads: [],
+  /** The artwork in use: { sample (its id, null for the user's SVG), asset, notice (shown) }. */
+  artwork: null,
   /** The core's artwork size limit (max_asset_bytes()), once loaded. */
   maxAssetBytes: null,
   stats: () => null,
@@ -198,15 +201,28 @@ async function main() {
   const doc = JSON.parse(data.logoTilePart);
   const spec = controlsFor(doc, { maxStuds: info.maxStuds });
   const fileControl = spec.controls.find((c) => c.kind === "file");
+  /** The stud grid a sample's tile shape applies to (the logo tile's size). */
+  const gridControl = spec.controls.find((c) => c.kind === "grid2");
   const exampleFit = JSON.parse(data.exampleFitProfile);
-  const sample = () => ({
-    name: fileControl?.default ?? "logo.svg",
-    bytes: new TextEncoder().encode(data.sampleLogoSvg),
-    label: "the sample mark (CC0)",
-  });
+  /**
+   * The artwork samples, the Neuraldeep.net mark first: the playground is
+   * Neural Deep Network's public demo, so it is the default. A sample's
+   * drawing is sent under its asset name in parts/ (src/samples.js picks the
+   * drawing for the tile), so the native tools give the same content hash.
+   */
+  const samples = data.samples;
+  const encoder = new TextEncoder();
+  /** The artwork of `sample` for a tile of `size`. */
+  const sampleArtwork = (sample, size) => {
+    const file = sampleFile(sample, size);
+    return { name: file.asset, bytes: encoder.encode(file.svg), label: sampleLabel(sample, file), sample };
+  };
+  const defaults = defaultValues(spec);
   const state = {
-    values: defaultValues(spec),
-    artwork: sample(),
+    values: defaults,
+    artwork: sampleArtwork(samples[0], gridControl ? defaults[gridControl.name] : null),
+    /** A note for the status line after the next build (a sample changed the size). */
+    statusNote: null,
     process: data.processProfiles.some((p) => p.id === exampleFit.process) ? exampleFit.process : data.processProfiles[0].id,
     fit: "example",
     fits: { example: data.exampleFitProfile, mine: null },
@@ -214,6 +230,7 @@ async function main() {
     /** The request and result on screen, and whether the controls changed since. */
     request: null,
     result: null,
+    resultArtwork: null,
     dirty: true,
     error: null,
     exporting: false,
@@ -241,6 +258,18 @@ async function main() {
 
   const artNote = el("p", { className: "note", id: "art-note", "aria-live": "polite" });
   const fileInput = el("input", { type: "file", id: "art-file", accept: fileControl?.accept ?? ".svg", hidden: true });
+  /** The sample chooser; "own" (never chosen, only shown) stands for the user's SVG. */
+  const sampleSelect = el(
+    "select",
+    { id: "sample", "aria-describedby": "art-note" },
+    samples.map((s) => el("option", { value: s.id, text: s.label })),
+    el("option", { value: "own", disabled: true, text: "Your SVG (drop or choose it above)" }),
+  );
+  sampleSelect.addEventListener("change", () => useSample(sampleSelect.value));
+  /** The notice of a Neuraldeep.net mark, under the drop zone while one is in use. */
+  const artNotice = el("p", { className: "help", id: "art-notice", hidden: true });
+  /** The number inputs of each stud grid, by parameter name, so a sample can set the size. */
+  const gridInputs = new Map();
 
   function describe(c, id) {
     return c.help ? el("p", { className: "help", id: `${id}-help`, text: c.help }) : null;
@@ -258,6 +287,8 @@ async function main() {
       value: state.values[c.name][i],
       "aria-describedby": `${c.name}-limits`,
     });
+    if (!gridInputs.has(c.name)) gridInputs.set(c.name, []);
+    gridInputs.get(c.name)[i] = input;
     const set = (n) => {
       input.value = String(n);
       readGrid();
@@ -427,12 +458,9 @@ async function main() {
           { className: "field" },
           el("span", { className: "label", text: c.label }),
           drop,
+          artNotice,
           fileInput,
-          el(
-            "div",
-            { className: "artwork-row" },
-            el("button", { type: "button", id: "use-sample", onclick: useSample }, "Use sample logo"),
-          ),
+          el("div", { className: "artwork-row" }, el("label", { for: "sample", text: "Sample artwork" }), sampleSelect),
           artNote,
         );
       }
@@ -456,7 +484,69 @@ async function main() {
     artNote.textContent = text;
     artNote.className = bad ? "note bad" : "note";
   }
+
+  /** The chooser, the notice line and the page summary follow the artwork in use. */
+  function renderArtwork() {
+    const sample = state.artwork.sample ?? null;
+    sampleSelect.value = sample?.id ?? "own";
+    if (sample?.notice) {
+      artNotice.replaceChildren(`${sample.notice} `, el("a", { href: sample.noticeUrl, target: "_blank", rel: "noopener" }, "Read the notice"));
+      artNotice.hidden = false;
+    } else {
+      artNotice.replaceChildren();
+      artNotice.hidden = true;
+    }
+    page.artwork = { sample: sample?.id ?? null, asset: state.artwork.name, notice: !artNotice.hidden };
+  }
+  renderArtwork();
   showArtNote(`Using ${state.artwork.label}.`);
+
+  /** Put `size` in the stud grid's fields, as if typed, and clear their messages. */
+  function setGrid(size) {
+    if (!gridControl) return;
+    gridInputs.get(gridControl.name)?.forEach((input, i) => {
+      input.value = String(size[i]);
+      input.removeAttribute("aria-invalid");
+      invalid.delete(input.id);
+    });
+    state.values[gridControl.name] = [...size];
+  }
+
+  /**
+   * Use a bundled sample. Choosing the badge on a tile that is not square sets
+   * the tile to 4x4, and the portrait mark on a tile that is not longer than
+   * wide sets 2x4; the art note and the next status line say so. Later size
+   * changes are the user's own; only the drawing follows them (sampleFile).
+   */
+  function useSample(id) {
+    const sample = samples.find((s) => s.id === id);
+    if (!sample) return;
+    const size = sizeForSample(sample, gridControl ? state.values[gridControl.name] : null);
+    let note = "";
+    if (size) {
+      setGrid(size);
+      note = sizeNote(sample, size);
+      state.statusNote = note;
+    }
+    state.artwork = sampleArtwork(sample, gridControl ? state.values[gridControl.name] : null);
+    renderArtwork();
+    showArtNote(`Using ${state.artwork.label}.${note ? ` ${note}` : ""}`);
+    changed();
+  }
+
+  /**
+   * While a sample is in use, send the drawing made for the current tile (the
+   * Neuraldeep.net mark has one for 2x4 and one for 4x6). Called on every change.
+   */
+  function followSample() {
+    const sample = state.artwork.sample;
+    if (!sample || !gridControl) return;
+    const next = sampleArtwork(sample, state.values[gridControl.name]);
+    if (next.name === state.artwork.name) return;
+    state.artwork = next;
+    renderArtwork();
+    showArtNote(`Using ${state.artwork.label}.`);
+  }
 
   async function useFile(file) {
     if (!file) return;
@@ -472,6 +562,7 @@ async function main() {
       return;
     }
     state.artwork = { name: file.name, bytes, label: `“${file.name}” (${kb(bytes.length)})` };
+    renderArtwork();
     showArtNote(`Using ${state.artwork.label}.`);
     changed();
   }
@@ -480,11 +571,6 @@ async function main() {
     fileInput.value = "";
     useFile(file);
   });
-  function useSample() {
-    state.artwork = sample();
-    showArtNote(`Using ${state.artwork.label}.`);
-    changed();
-  }
   // Dropping a file anywhere on the 3D view works too.
   const stage = $("stage");
   stage.addEventListener("dragover", (e) => {
@@ -616,6 +702,7 @@ async function main() {
     edits++;
     state.dirty = true;
     renderDownloads();
+    followSample();
     if (invalid.size > 0) {
       clearTimeout(timer);
       timer = null;
@@ -650,6 +737,7 @@ async function main() {
     timer = null;
     if (invalid.size > 0) return; // changed() shows why; nothing to build
     const request = currentRequest();
+    const artwork = state.artwork;
     const started = edits;
     setState("evaluating");
     showBuilding("Building the logo tile", performance.now());
@@ -679,6 +767,8 @@ async function main() {
     }
     state.request = request;
     state.result = result;
+    /** The artwork the result was built from: its sample names the downloads. */
+    state.resultArtwork = artwork;
     state.dirty = false;
     state.error = null;
     // The core's reading of visibleWhen is the one that counts.
@@ -718,7 +808,11 @@ async function main() {
     showTile({ keepView });
     setState("ready");
     const v = result.params.values;
+    // Once: a sample set the size (its note also stays in the art note).
+    const note = state.statusNote;
+    state.statusNote = null;
     showStatus([
+      ...(note ? [note] : []),
       `Logo tile ${v.size?.join(" × ") ?? ""}${v.relief ? `, ${v.relief}` : ""}`,
       `${result.triangles.toLocaleString("en-US")} triangles`,
       `content hash ${result.contentHash.slice(0, 12)}…`,
@@ -880,7 +974,8 @@ async function main() {
 
   async function downloadPart(format) {
     if (!state.result?.exportAllowed || state.dirty || state.exporting) return;
-    const name = downloadName(doc, state.result.params.values, format, state.result.params.visible);
+    const suffix = state.resultArtwork?.sample?.suffix ?? null;
+    const name = downloadName(doc, state.result.params.values, format, state.result.params.visible, suffix);
     state.exporting = true;
     renderDownloads();
     try {

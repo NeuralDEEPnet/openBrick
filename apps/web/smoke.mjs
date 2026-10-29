@@ -5,14 +5,19 @@
 // 1. Builds the core (`cargo xtask wasm`) and the app (vite build), unless --no-build.
 // 2. Gets the native values from `cargo run --release -p openbrick-wasm --example
 //    native_eval`, which calls the same Rust functions the worker calls: the logo
-//    tile with its sample artwork (emboss, deboss, the swap and the parts inlay
-//    with the example fit profile, emboss without one) and the default coupon.
+//    tile with the playground's default artwork, the Neuraldeep.net mark (emboss,
+//    deboss, the swap and the parts inlay with the example fit profile, emboss
+//    without one), the Neuraldeep.net badge on 4x4, the CC0 sample mark, and the
+//    default coupon.
 // 3. Serves dist/ on 127.0.0.1 and opens it in headless Chromium with Playwright.
-//    The WebGL2 run: the first part (the sample logo, emboss, example fit) has the
-//    native content hash, triangle count and per-object fingerprints and is drawn;
-//    the legend says how much artwork the red overlay marks; the validation panel
-//    shows the FEATURE.MIN warning with rule id, values and fix; "Use sample logo"
-//    after an uploaded SVG gives the native part back; a file over the core's
+//    The WebGL2 run: the first part (the Neuraldeep.net mark, emboss, example
+//    fit) has the native content hash, triangle count and per-object
+//    fingerprints and is drawn, with the mark's notice under the drop zone and
+//    nothing to report; the legend says how much artwork the red overlay marks;
+//    choosing the sample mark (CC0) in the sample chooser gives its native part,
+//    hides the notice, and the validation panel shows the FEATURE.MIN warning
+//    with rule id, values and fix; choosing the Neuraldeep.net mark after an
+//    uploaded SVG gives the native part back; a file over the core's
 //    limit is refused before it is sent; deboss and inlay change the meshes and
 //    equal native; the inlay style control is shown only for an inlay, labelled
 //    in words; the multi-material (parts) inlay equals native, and its 3MF
@@ -24,7 +29,10 @@
 //    a link to the calibration coupon; with the example fit the 3MF and STL
 //    download (saved for scripts/validate-3mf.py) and every downloaded file is
 //    byte-identical to the one native_eval writes with the same functions (so
-//    the STL is the closed solid the openbrick-wasm tests check); a size that
+//    the STL is the closed solid the openbrick-wasm tests check); choosing the
+//    Neuraldeep.net badge on the 2x4 tile sets 4x4 and says so, equals native
+//    and downloads byte-identical to native under its own name, and the mark
+//    chosen again on that square tile sets 2x4; a size that
 //    turns invalid while a tile is being built keeps the downloads off and its
 //    message up when that build answers; a fit profile the core refuses empties
 //    the 3D view and the stats and says why; a 16x16 tile shows the elapsed
@@ -48,7 +56,7 @@
 //
 // Downloads go to apps/web/smoke-downloads/ unless --downloads names another
 // directory; the CI web job then reads every downloaded 3MF (emboss, swap and
-// parts inlay, coupon) with lib3mf: python -I scripts/validate-3mf.py
+// parts inlay, badge, coupon) with lib3mf: python -I scripts/validate-3mf.py
 // --self-test apps/web/smoke-downloads/*.3mf. Chromium renders with
 // SwiftShader here, so this proves the page works; it says nothing about speed
 // on a device.
@@ -101,8 +109,8 @@ function run(command, commandArgs, options = {}) {
 function nativeValues() {
   const out = run("cargo", ["run", "-q", "--release", "-p", "openbrick-wasm", "--example", "native_eval"]);
   const native = JSON.parse(out);
-  for (const c of ["emboss", "deboss", "inlay", "inlay-parts", "emboss-no-fit"]) if (!native.part[c]) throw new Error(`native_eval printed no ${c} case:\n${out}`);
-  for (const f of ["emboss3mf", "embossStl", "inlay3mf", "inlayParts3mf", "coupon3mf"]) if (!native.exports?.[f]) throw new Error(`native_eval printed no ${f} export:\n${out}`);
+  for (const c of ["emboss", "deboss", "inlay", "inlay-parts", "emboss-no-fit", "badge-emboss", "sample-emboss"]) if (!native.part[c]) throw new Error(`native_eval printed no ${c} case:\n${out}`);
+  for (const f of ["emboss3mf", "embossStl", "inlay3mf", "inlayParts3mf", "badge3mf", "coupon3mf"]) if (!native.exports?.[f]) throw new Error(`native_eval printed no ${f} export:\n${out}`);
   return native;
 }
 
@@ -170,6 +178,7 @@ function checkPart(part, native, label) {
   check(JSON.stringify(got) === JSON.stringify(want), `${label}: meshes ${got.join(", ")}, native ${want.join(", ")}`);
   check(part.exportAllowed === native.exportAllowed, `${label}: exportAllowed ${part.exportAllowed}, native ${native.exportAllowed}`);
   check(JSON.stringify([...part.blockers].sort()) === JSON.stringify([...native.blockers].sort()), `${label}: blockers ${part.blockers}, native ${native.blockers}`);
+  check(JSON.stringify([...part.warnings].sort()) === JSON.stringify([...native.warnings].sort()), `${label}: warnings ${part.warnings}, native ${native.warnings}`);
   check(Boolean(part.overlay) === native.removedOverlay, `${label}: red overlay ${Boolean(part.overlay)}, native ${native.removedOverlay}`);
 }
 
@@ -326,14 +335,22 @@ async function fullRun(browser, origin, native) {
   check(statusText.includes(`${native.part.emboss.triangles.toLocaleString("en-US")} triangles`), `${label}: status line "${statusText}"`);
   const legend = await page.textContent("#legend");
   check(/Red: [\d.]+ % of the artwork does not print as drawn/.test(legend), `${label}: the legend lacks the removed-area entry: "${legend}"`);
-  // The validation panel: FEATURE.MIN is a warning with every part of a message.
-  const feature = await page.textContent('#findings li[data-rule="FEATURE.MIN"]').catch(() => "");
+  // The default artwork is the Neuraldeep.net mark drawn for 2x4, with its
+  // notice under the drop zone, and it has nothing to report.
   check(
-    feature.includes("Warning") && feature.includes("FEATURE.MIN") && /Measured [\d.]+ %/.test(feature) && /threshold [\d.]+ %/.test(feature) && feature.includes("Fix:"),
-    `${label}: the FEATURE.MIN entry is "${feature}"`,
+    w.artwork?.sample === "neuraldeep-mark" && w.part.params.logo === "assets/brand/neuraldeep-mark-2x4.svg" && w.artwork.notice,
+    `${label}: the default artwork is ${JSON.stringify(w.artwork)}, logo ${w.part.params.logo}`,
   );
-  // The unit is the core's (openbrick_print::finding_unit), not read from the message.
-  check(JSON.stringify(w.part.units) === JSON.stringify(["FEATURE.MIN %"]), `${label}: finding units ${JSON.stringify(w.part.units)}`);
+  check((await page.inputValue("#sample")) === "neuraldeep-mark", `${label}: the sample chooser shows ${await page.inputValue("#sample")}`);
+  const notice = await page.textContent("#art-notice");
+  check(
+    (await page.isVisible("#art-notice")) && notice.startsWith("Copyright Neural Deep Network Ltd. All rights reserved."),
+    `${label}: the notice under the drop zone is "${notice}"`,
+  );
+  const noticeLink = await page.getAttribute("#art-notice a", "href");
+  check(noticeLink?.endsWith("/parts/assets/brand/NOTICE.md"), `${label}: the notice links ${noticeLink}`);
+  check(JSON.stringify(w.part.units) === "[]", `${label}: the Neuraldeep.net mark has findings ${JSON.stringify(w.part.units)}`);
+  check((await page.locator('#findings li[data-rule="FEATURE.MIN"]').count()) === 0, `${label}: FEATURE.MIN on the Neuraldeep.net mark`);
   check(!(await page.isDisabled("#download-3mf")) && !(await page.isDisabled("#download-stl")), `${label}: downloads are disabled for the default tile`);
   const disclaimer = await page.textContent("footer");
   check(disclaimer.includes("not affiliated with") && disclaimer.includes("Source code on GitHub"), `${label}: footer "${disclaimer}"`);
@@ -342,8 +359,22 @@ async function fullRun(browser, origin, native) {
     await page.screenshot({ path: join(shots, "desktop-light-emboss.png") });
   }
 
-  // An uploaded SVG, then "Use sample logo": the native part again.
+  // The sample mark (CC0) from the chooser: its native part, no notice, and
+  // its hairline gives the FEATURE.MIN warning with every part of a message.
   let n = w.evaluations;
+  await page.selectOption("#sample", "sample");
+  w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/mark.svg" }, 60_000, `${label} CC0 sample`);
+  checkPart(w.part, native.part["sample-emboss"], `${label} CC0 sample`);
+  check(w.artwork?.sample === "sample" && !w.artwork.notice && (await page.isHidden("#art-notice")), `${label}: the CC0 sample shows the notice (${JSON.stringify(w.artwork)})`);
+  const feature = await page.textContent('#findings li[data-rule="FEATURE.MIN"]').catch(() => "");
+  check(
+    feature.includes("Warning") && feature.includes("FEATURE.MIN") && /Measured [\d.]+ %/.test(feature) && /threshold [\d.]+ %/.test(feature) && feature.includes("Fix:"),
+    `${label}: the FEATURE.MIN entry is "${feature}"`,
+  );
+  // The unit is the core's (openbrick_print::finding_unit), not read from the message.
+  check(JSON.stringify(w.part.units) === JSON.stringify(["FEATURE.MIN %"]), `${label}: finding units ${JSON.stringify(w.part.units)}`);
+  // An uploaded SVG, then the Neuraldeep.net mark from the chooser: the native part again.
+  n = w.evaluations;
   await page.setInputFiles("#art-file", {
     name: "square.svg",
     mimeType: "image/svg+xml",
@@ -351,10 +382,11 @@ async function fullRun(browser, origin, native) {
   });
   w = await waitFor(page, { after: n, want: (p) => p.params.logo === "square.svg" }, 60_000, `${label} upload`);
   check(w.part.contentHash !== native.part.emboss.contentHash, `${label}: the uploaded square has the sample's content hash`);
+  check(w.artwork?.sample === null && (await page.inputValue("#sample")) === "own" && (await page.isHidden("#art-notice")), `${label}: after an upload the chooser shows ${await page.inputValue("#sample")}`);
   n = w.evaluations;
-  await page.click("#use-sample");
-  w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/mark.svg" }, 60_000, `${label} sample`);
-  checkPart(w.part, native.part.emboss, `${label} sample again`);
+  await page.selectOption("#sample", "neuraldeep-mark");
+  w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-mark-2x4.svg" }, 60_000, `${label} sample`);
+  checkPart(w.part, native.part.emboss, `${label} Neuraldeep.net mark again`);
   // Over the core's limit: refused in the page, nothing is evaluated.
   const before = w.evaluations;
   check(Number.isInteger(w.maxAssetBytes) && w.maxAssetBytes > 0, `${label}: the page has no asset limit (${w.maxAssetBytes})`);
@@ -364,7 +396,7 @@ async function fullRun(browser, origin, native) {
   w = await web(page);
   const limit = w.maxAssetBytes.toLocaleString("en-US");
   check(
-    note.includes(`“huge.svg” is`) && note.includes(`artwork can be at most`) && note.includes(`(${limit} bytes)`) && note.includes("The tile keeps the sample mark"),
+    note.includes(`“huge.svg” is`) && note.includes(`artwork can be at most`) && note.includes(`(${limit} bytes)`) && note.includes("The tile keeps the Neuraldeep.net mark"),
     `${label}: the art note for a big file is "${note}"`,
   );
   check(w.evaluations === before && w.state === "ready", `${label}: a file over the limit was evaluated (${w.evaluations} vs ${before}, ${w.state})`);
@@ -462,6 +494,38 @@ async function fullRun(browser, origin, native) {
   const count = stl.bytes.readUInt32LE(80);
   check(stl.bytes.length === 84 + 50 * count && count === native.exports.embossStl.triangles, `${label}: the STL is ${stl.bytes.length} bytes for ${count} triangles, native ${native.exports.embossStl.triangles}`);
   checkFile(stl, native.exports.embossStl, `${label} STL`);
+
+  // The Neuraldeep.net badge is drawn for square tiles: chosen on the 2x4 it
+  // sets 4x4 and says so, equals native and downloads byte-identical to native
+  // under its own name. The portrait mark chosen on that square sets 2x4 again.
+  let badge;
+  {
+    n = w.evaluations;
+    await page.selectOption("#sample", "neuraldeep-badge");
+    w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-badge-4x4.svg" }, 60_000, `${label} badge`);
+    checkPart(w.part, native.part["badge-emboss"], `${label} badge 4x4`);
+    check(w.part.params.size.join("x") === "4x4", `${label}: the badge is built at ${w.part.params.size.join("x")}`);
+    check((await page.inputValue("#p-size-0")) === "4" && (await page.inputValue("#p-size-1")) === "4", `${label}: the size fields do not show 4 x 4`);
+    const said = "The Neuraldeep.net badge is drawn for square tiles, so the size is now 4 × 4.";
+    check((await page.textContent("#art-note")).includes(said), `${label}: the art note is "${await page.textContent("#art-note")}"`);
+    check((await page.textContent("#status")).includes(said), `${label}: the status line is "${await page.textContent("#status")}"`);
+    check(w.artwork?.notice && (await page.isVisible("#art-notice")), `${label}: the badge has no notice`);
+    await drawnStats(page, `${label} badge`);
+    if (shots) {
+      await settle(page);
+      await page.screenshot({ path: join(shots, "desktop-light-badge.png") });
+    }
+    badge = await download(page, "#download-3mf", `${label} badge 3MF`);
+    checkFile(badge, native.exports.badge3mf, `${label} badge 3MF`);
+    checkLayout(badge, native.exports.badge3mf, native.part["badge-emboss"].meshes.length, `${label} badge 3MF`);
+    check(![threemf.name, inlay.name, inlayParts.name].includes(badge.name), `${label}: the badge downloads as ${badge.name}, like another file`);
+    n = w.evaluations;
+    await page.selectOption("#sample", "neuraldeep-mark");
+    w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-mark-2x4.svg" }, 60_000, `${label} mark after the badge`);
+    check(w.part.params.size.join("x") === "2x4", `${label}: the mark after the badge is built at ${w.part.params.size.join("x")}`);
+    check((await page.textContent("#art-note")).includes("so the size is now 2 × 4."), `${label}: the art note is "${await page.textContent("#art-note")}"`);
+    checkPart(w.part, native.part.emboss, `${label} mark after the badge`);
+  }
 
   // A size that turns invalid while a tile is being built: when that build
   // answers, the field's message stays up and the downloads stay off.
@@ -646,12 +710,13 @@ async function fullRun(browser, origin, native) {
     `# ${label}: first part after ${(firstMs / 1000).toFixed(1)} s (evaluated in ${Math.round(w.part.buildMs)} ms), ` +
       `emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash.slice(0, 12)}…, deboss and both inlays equal native, ` +
       `the parts inlay downloads as ${inlayParts.name} (one object with two parts), ` +
+      `the badge sets 4x4 and downloads as ${badge.name}, the CC0 sample shows FEATURE.MIN, ` +
       `FIT.MISSING blocks downloads, 3MF ${threemf.bytes.length} bytes, STL ${count} triangles (both byte-identical to native), ${raceNote}, ` +
       `a refused fit profile and a refused coupon layout empty the view, ${cancelNote}, ` +
       `camera below the ground (y ${under.camera[1].toFixed(1)} mm), coupon ${nc.triangles} triangles in ${Math.round(w.coupon?.buildMs ?? 0)} ms, coupon 3MF ${coupon.bytes.length} bytes`,
   );
   await context.close();
-  return [threemf.path, inlay.path, inlayParts.path, coupon.path];
+  return [threemf.path, inlay.path, inlayParts.path, badge.path, coupon.path];
 }
 
 async function webgpuRun(browser, origin, native) {
@@ -801,7 +866,8 @@ async function main() {
   const native = nativeValues();
   console.log(
     `native (${native.kernel}): emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash}, ` +
-      `deboss ${native.part.deboss.triangles}, inlay ${native.part.inlay.triangles}, coupon ${native.coupon.triangles} triangles ${native.coupon.contentHash}`,
+      `deboss ${native.part.deboss.triangles}, inlay ${native.part.inlay.triangles}, badge ${native.part["badge-emboss"].triangles}, ` +
+      `coupon ${native.coupon.triangles} triangles ${native.coupon.contentHash}`,
   );
   const { server, origin } = await serve(dist);
   const browser = await chromium.launch({ headless: true, args: browserArgs });

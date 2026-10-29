@@ -135,16 +135,18 @@ export function brick(core, width, length, now = () => performance.now()) {
 
 /**
  * The data the page builds its controls from, read once: { processProfiles,
- * exampleFitProfile (JSON text), logoTilePart (JSON text), sampleLogoSvg (text),
- * disclaimer, roleColors (role -> "#rrggbb"), maxAssetBytes, couponChoices
- * ({ pocketSets, defaultPocketSet, defaults }) }.
+ * exampleFitProfile (JSON text), logoTilePart (JSON text), samples (the
+ * artwork samples, the default first: [{ id, label, title, suffix, shape,
+ * size, notice, noticeUrl, files: [{ asset, tile, svg }] }], see
+ * src/samples.js), disclaimer, roleColors (role -> "#rrggbb"), maxAssetBytes,
+ * couponChoices ({ pocketSets, defaultPocketSet, defaults }) }.
  */
 export function bundled(core) {
   return {
     processProfiles: JSON.parse(core.process_profiles_json()),
     exampleFitProfile: core.example_fit_profile_json(),
     logoTilePart: core.logo_tile_part_json(),
-    sampleLogoSvg: core.sample_logo_svg(),
+    samples: JSON.parse(core.artwork_samples_json()),
     disclaimer: core.disclaimer(),
     roleColors: JSON.parse(core.role_colors_json()),
     maxAssetBytes: core.max_asset_bytes(),

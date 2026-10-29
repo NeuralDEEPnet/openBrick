@@ -269,21 +269,25 @@ function shown(name, p, values, visible) {
 }
 
 /**
- * The download name: {id}-{w}x{h}-{relief}[-{inlayStyle}].{ext}, from the
- * document id, the first two-axis grid parameter, the `relief` parameter and,
- * while it is shown, the `inlayStyle` parameter (each left out when the
- * document has none), for example ndn.logo-tile-2x4-emboss.3mf and
- * ndn.logo-tile-2x4-inlay-parts.3mf, so the filament-swap and the
- * multi-material inlay never share a name. `visible` is the core's
- * `params.visible`; without it the page reads `visibleWhen` itself.
+ * The download name: {id}-{w}x{h}-{relief}[-{inlayStyle}][-{sample}].{ext},
+ * from the document id, the first two-axis grid parameter, the `relief`
+ * parameter, while it is shown the `inlayStyle` parameter (each left out when
+ * the document has none) and the artwork sample's `suffix` when the artwork is
+ * a bundled sample (none for the user's own SVG). For example
+ * ndn.logo-tile-2x4-emboss-neuraldeep.3mf and
+ * ndn.logo-tile-2x4-inlay-parts-neuraldeep.3mf, so the filament-swap and the
+ * multi-material inlay never share a name, and neither do two samples.
+ * `visible` is the core's `params.visible`; without it the page reads
+ * `visibleWhen` itself.
  */
-export function downloadName(doc, values, ext, visible = null) {
+export function downloadName(doc, values, ext, visible = null, sample = null) {
   const parts = [safe(doc?.id ?? "part")];
   const grid = Object.entries(doc?.params ?? {}).find(([, p]) => p.type === "grid2");
   if (grid && Array.isArray(values?.[grid[0]])) parts.push(values[grid[0]].map((n) => safe(n)).join("x"));
   if (doc?.params?.relief && values?.relief !== undefined) parts.push(safe(values.relief));
   const style = doc?.params?.inlayStyle;
   if (style && values?.inlayStyle !== undefined && shown("inlayStyle", style, values, visible)) parts.push(safe(values.inlayStyle));
+  if (typeof sample === "string" && sample !== "") parts.push(safe(sample));
   return `${parts.join("-")}.${safe(ext)}`;
 }
 

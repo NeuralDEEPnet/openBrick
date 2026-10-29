@@ -631,6 +631,70 @@ fn a_parts_inlay_is_one_object_with_two_parts_and_no_filament_change() {
 }
 
 #[test]
+fn builds_the_neuraldeep_demo_tiles() {
+    // The Neuraldeep.net tile as a parts inlay (the CI cli job validates the
+    // same command's 3MF with lib3mf) and the badge as shipped. Their default
+    // artwork is in parts/assets/brand/, a folder below the part file's, which
+    // the CLI reads relative to the part file. Neither has anything to report:
+    // the opening removes at most maxRemovedAreaPct and the thinnest stroke
+    // is at least minFeatureMm (crates/openbrick-part/tests/brand.rs builds
+    // every relief).
+    let dir = Scratch::new("brand");
+    let profiles = openbrick_print::default_process_profiles();
+    for (part, params, logo) in [
+        (
+            "parts/ndn.brand-tile.obpart.json",
+            &["--params", "relief=inlay", "inlayStyle=parts"][..],
+            "assets/brand/neuraldeep-mark-2x4.svg",
+        ),
+        (
+            "parts/ndn.brand-badge.obpart.json",
+            &[][..],
+            "assets/brand/neuraldeep-badge-4x4.svg",
+        ),
+    ] {
+        let out = dir.arg("brand.3mf");
+        let mut args = vec!["build", part, "--fit", "example"];
+        args.extend_from_slice(params);
+        args.extend_from_slice(&["--out", &out, "--json"]);
+        let o = openbrick(&args);
+        assert_eq!(code(&o), 0, "{part}: {}", stderr(&o));
+        let j = json_of(&o);
+        assert_valid(&schema("report.schema.json"), &j["report"], "the report");
+        assert_eq!(j["exportAllowed"], true, "{part}");
+        assert_eq!(j["report"]["findings"], serde_json::json!([]), "{part}");
+        assert_eq!(j["params"]["logo"], logo, "{part}: the default artwork");
+        let doc: Value =
+            serde_json::from_str(&std::fs::read_to_string(repo().join(part)).expect("the part"))
+                .expect("JSON");
+        assert_eq!(j["part"]["id"], doc["id"]);
+        let process = profiles
+            .iter()
+            .find(|p| j["process"] == p.id.as_str())
+            .expect("a bundled process");
+        let m = &j["measurements"];
+        let removed = m["removedAreaPct"].as_f64().expect("measured");
+        let max = process.max_removed_area_pct.expect("a limit");
+        assert!(removed <= max, "{part}: {removed} % > {max} %");
+        let stroke = m["minStrokeMm"].as_f64().expect("measured");
+        assert!(stroke >= process.min_feature_mm, "{part}: {stroke} mm");
+        let out = &j["outputs"][0];
+        assert_eq!(out["layout"], "oneObjectWithParts");
+        assert_eq!(out["assembly"]["name"], doc["name"]);
+        assert_eq!(out["metadata"]["Title"], doc["name"]);
+        let id = doc["id"].as_str().expect("an id");
+        let parts: Vec<&str> = out["assembly"]["components"]
+            .as_array()
+            .expect("components")
+            .iter()
+            .filter_map(|c| c["object"].as_str())
+            .collect();
+        assert_eq!(parts, [format!("{id} body"), format!("{id} accent")]);
+        assert!(Path::new(out["path"].as_str().expect("path")).is_file());
+    }
+}
+
+#[test]
 fn no_colour_writes_the_parts_without_display_colours() {
     // --no-colour (alias --no-color) for Bambu Studio's import colour dialog
     // (docs/spikes/q18-slicer-multimaterial-import.md, recommendation 2): the

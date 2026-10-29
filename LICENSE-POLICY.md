@@ -5,7 +5,8 @@ OpenBrick3D uses a three-tier licence layout so that code, data and documentatio
 | Tree | Licence | Notes |
 |------|---------|-------|
 | `crates/`, `packages/`, `apps/`, build scripts | MIT ([LICENSE](LICENSE)) | contributions under DCO 1.1, inbound = outbound |
-| `parts/`, `profiles/`, `standards/`, `schemas/` | CC0 1.0 Universal (public domain dedication) | every part and profile file carries a `credit` field; keeping it is a community norm, not a legal condition. A contributor may instead mark an individual file CC BY 4.0 in its `license` field. |
+| `parts/`, `profiles/`, `standards/`, `schemas/` | CC0 1.0 Universal (public domain dedication) | every part and profile file carries a `credit` field; keeping it is a community norm, not a legal condition. A contributor may instead mark an individual file CC BY 4.0 in its `license` field. The one exception is `parts/assets/brand/` (next row). |
+| `parts/assets/brand/` (the Neuraldeep.net marks) | All rights reserved, Neural Deep Network Ltd; trademarks, not under any licence of this repository | may be used to build, print and show the OpenBrick3D demo tiles; any other use needs written permission ([NOTICE](parts/assets/brand/NOTICE.md)). The part documents that name them (`ndn.brand-tile`, `ndn.brand-badge`) stay CC0; their default artwork does not. |
 | `docs/` | CC BY 4.0 | credit "OpenBrick3D contributors" with a link to the repository |
 | LDraw Parts Library (downloaded at first run into the user's cache; never vendored here) | CC BY 2.0 or CC BY 4.0 per file | headers and `!LICENSE` lines are preserved; derived caches carry the same attribution; the app shows "This software uses the LDraw Parts Library" |
 | `fonts/` | SIL Open Font License 1.1 | complete, unmodified font files with their licence text; never subset |
