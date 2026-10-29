@@ -4,11 +4,16 @@
 //! file at build time) all read that file, so the text has one source and stays
 //! verbatim.
 
-/// The file without its final newline.
+/// The file without its final line ending, `\n` or `\r\n`: Git checks text
+/// files out with `\r\n` on Windows when `core.autocrlf` is on, as it is on the
+/// Windows CI runners.
 const fn without_final_newline(s: &'static str) -> &'static str {
     let bytes = s.as_bytes();
-    if !bytes.is_empty() && bytes[bytes.len() - 1] == b'\n' {
-        s.split_at(s.len() - 1).0
+    let n = bytes.len();
+    if n >= 2 && bytes[n - 2] == b'\r' && bytes[n - 1] == b'\n' {
+        s.split_at(n - 2).0
+    } else if n >= 1 && bytes[n - 1] == b'\n' {
+        s.split_at(n - 1).0
     } else {
         s
     }
@@ -44,5 +49,10 @@ mod tests {
         assert_eq!(without_final_newline("a"), "a");
         assert_eq!(without_final_newline(""), "");
         assert_eq!(without_final_newline("a\n\n"), "a\n");
+        // A Windows checkout with core.autocrlf.
+        assert_eq!(without_final_newline("a\r\n"), "a");
+        assert_eq!(without_final_newline("a\r\n\r\n"), "a\r\n");
+        assert_eq!(without_final_newline("\r\n"), "");
+        assert_eq!(without_final_newline("a\r"), "a\r");
     }
 }
