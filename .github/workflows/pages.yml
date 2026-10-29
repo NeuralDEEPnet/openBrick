@@ -1,0 +1,76 @@
+name: pages
+
+# Builds the browser playground (apps/web) for GitHub Pages and deploys it to
+# https://neuraldeepnet.github.io/openBrick/. Pages must use "GitHub Actions" as
+# its source (Settings > Pages > Source). The core is built as in the ci
+# workflow's web job: the wasm-bindgen CLI pinned in Cargo.lock and the gzip
+# size budget of `cargo xtask wasm`. The app is built with the base path
+# /openBrick/, under which the page, the worker, the WebAssembly module and every
+# asset resolve (the web job's smoke test checks such a build). No secrets.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: wasm-bindgen version pinned in Cargo.lock
+        id: wbg
+        run: echo "version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print }' Cargo.lock)" >> "$GITHUB_OUTPUT"
+      - name: Cache the wasm-bindgen CLI
+        id: wbg-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-cli-${{ steps.wbg.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Install the wasm-bindgen CLI
+        if: steps.wbg-cache.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version "=${{ steps.wbg.outputs.version }}" --locked
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the core (wasm-bindgen --target web, gzip size budget)
+        run: cargo xtask wasm
+      - name: Build the app for /openBrick/
+        run: pnpm --dir apps/web build
+        env:
+          OPENBRICK_BASE: /openBrick/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -165,7 +165,7 @@ The validator runs on the compensated mesh and on the 2D cross-sections (cheaper
 
 - Default: studs up, flat bottom on the bed, **no supports**. Tubes and pins print as vertical cylinders; the roof bridges between tube tops and walls. On brick-height bodies a 2 mm fillet (or 45° chamfer when fillets are off) at the wall-to-roof joint anchors bridges (Strathclyde tested a 9.6 mm brick); on plate-height bodies the cavity is only about 2.2 mm deep and the stud top sits 0.5 mm below the roof, so the fillet is capped at 0.3 mm or omitted.
 - Deboss and serials on thin bodies: the body thickens the roof under a deboss or serial region by the relief depth (the evaluator lowers the whole cavity ceiling: a pad in the shape of the artwork would be an unsupported island when the part prints face up, while a lowered ceiling stays one flat bridge between walls and tubes), and `CAVITY.DEPTH` requires at least 1.8 mm of cavity to remain (stud 1.7 mm plus 0.1 mm). On plate-height parts that caps deboss and underside serials at 0.4 mm; the designer clamps `reliefHeight` accordingly when `relief` is `deboss`.
-- Inlay mode (two-colour logo): face **down** on the bed. For a single-extruder filament swap the exported `accent` object is the face slab (thickness = relief depth) **minus** the logo, and the logo is a recess that shows the body colour, so a swap after the slab layers colours the face and leaves the logo in the body colour (if both the slab and the logo lay on the bed in the same layers, a swap would colour them identically). For multi-material units the logo fill is exported as its own object instead, so each gets a slot (not built yet: M1 builds the single-extruder variant, the inlay warning says so, and a follow-up item adds the fill object). The filament change goes before the first layer the slicer shows as the body: with a 0.2 mm first layer and 0.16 mm layers, layers end at 0.36 and 0.52 mm, never at a 0.4 mm slab. The validator requires the face to be flat and stud-free.
+- Inlay mode (two-colour logo): face **down** on the bed. For a single-extruder filament swap the exported `accent` object is the face slab (thickness = relief depth) **minus** the logo, and the logo is a recess that shows the body colour, so a swap after the slab layers colours the face and leaves the logo in the body colour (if both the slab and the logo lay on the bed in the same layers, a swap would colour them identically). For multi-material units the logo fill is exported as its own object instead, so each gets a slot (`relief.svg` field `inlayStyle`: `swap`, the default, or `parts`, done 2026-10-28). In `parts` the body is recessed by exactly the fill, and the two add up to the plain body; the roof is not thickened, because the fill completes it, and the depth keeps one process layer of the body under the fill. The fused single-colour export of a `parts` inlay is therefore the plain body, and the inlay warning says so. The CLI and the playground export every inlay already turned face down, with one shared transform (`openbrick_geom::turn_face_down`). A `parts` inlay gets no filament-change layer, because the fill and the face around it share every layer. The filament change goes before the first layer the slicer shows as the body: with a 0.2 mm first layer and 0.16 mm layers, layers end at 0.36 and 0.52 mm, never at a 0.4 mm slab. The validator requires the face to be flat and stud-free.
 - Keychain loops and off-grid decorations are generated with a 45° chamfer underneath so they print without supports.
 - Horizontal Technic holes: `polyhole` (polygon with corrected circumradius), `ellipse` (0.2 mm taller) or `teardrop` (pointed ceiling, no overhang); chosen by the ProcessProfile. Polyhole corrects diameter, not overhang; the hole ceiling is a bridge of at most 4.8 mm and is reported by `OVERHANG.BRIDGED`, never blocked.
 - First layer: a 0.2 mm 45° chamfer on the edges that sit on the bed replaces slicer elephant-foot compensation. Those are the bottom edges, and for an inlay (printed face down) also the top edges: the evaluator raises the top chamfer to the first-layer chamfer with a warning. The `Measurements` at-bed fields describe the bottom edges at z = 0. `Built.artwork.faceChamferMm` is the chamfer of the face an inlay puts on the bed.
@@ -173,7 +173,7 @@ The validator runs on the compensated mesh and on the 2D cross-sections (cheaper
 ## 7. Colour and multi-material in 3MF
 
 - Writer targets 3MF Core 1.4.0 (3MF is standardised as ISO/IEC 25422:2025), Materials and Properties 1.2.1 (colour groups, per-object and per-triangle colour), Production 1.1.2 (whose text calls itself v1.2; UUIDs). Units millimetres; Z-up.
-- One object per colour role (`body`, `accent`, `serial`) in the part designer; per-part objects under one component object in whole-model export, with an explicit **fuse** option that unions same-colour groups for single-material printing. The spec says producers should not emit overlapping objects, so fuse is a boolean union, not an overlap.
+- One object per colour role (`body`, `accent`, `serial`) in the part designer, written as the parts of one components object with a single build item (`openbrick_io::ExportLayout::PART_DESIGNER`). `openbrick build` and the playground's 3MF download both write this layout (done 2026-10-28), and a single object is written exactly as before. The components object carries no `pid`, and components and items carry no transform. Bambu Studio loads this as one object with its parts in place; PrusaSlicer offers to merge them into one multi-part object ([Q18](../spikes/q18-slicer-multimaterial-import.md)). Display colours are written by default; `openbrick build --no-colour` leaves them out (no colour group), for Bambu Studio's import colour dialog (Q18). Per-part objects under one component object in whole-model export, with an explicit **fuse** option that unions same-colour groups for single-material printing. The spec says producers should not emit overlapping objects, so fuse is a boolean union, not an overlap.
 - Metadata (namespace `https://openbrick3d.org/3mf/metadata/1.0`):
   - Required: `openbrick:partId`, `openbrick:version`, `openbrick:contentHash`, `openbrick:fitProfile`, `openbrick:process`, `openbrick:generator` and `openbrick:kernel`. The writer refuses blank values.
   - `openbrick:serial` when the part has one, plus `Title` and `Application`.
@@ -181,7 +181,7 @@ The validator runs on the compensated mesh and on the 2D cross-sections (cheaper
   - UUIDs are name-based (v5). They are derived from this metadata and from every object's name, role, colour and stored mesh fingerprint, so a re-export is byte-identical and two different exports never share UUIDs.
   - Neither extension is listed in `requiredextensions`.
 - Vendor flavours (Bambu/Orca project 3MF with painted colours) are a plugin, version-pinned to the slicer release they were reverse-engineered from, off by default.
-- CI validates every exporter fixture with lib3mf 2.5.0 (BSD-2) in strict mode (`scripts/validate-3mf.py`, job `io-3mf`), which also re-derives every UUID from what lib3mf read. Opening each fixture in OrcaSlicer CLI as a smoke test is backlog item 18.
+- CI validates every exporter fixture with lib3mf 2.5.0 (BSD-2) in strict mode (`scripts/validate-3mf.py`, job `io-3mf`), which also re-derives every UUID from what lib3mf read, checks the components layout (each mesh placed once, identity transforms) and samples every package for overlapping objects, counting only lines through both objects; a pair whose lines through both could mostly not be sampled fails. The script also compares each file with its description: the fixture manifest, or the CLI's `--json` (layout, components object, objects, UUIDs, metadata). Jobs `cli`, `web` and `part-exports` validate the CLI's files, the playground's downloads and the part crate's exports the same way. Opening each fixture in OrcaSlicer CLI as a smoke test is backlog item 18.
 
 ## 8. Batch print plates
 
@@ -191,7 +191,7 @@ A **run document** (`.obrun.json`) names a part, a parameter table (inline or CS
 {
   "openbrick": "1.0",
   "kind": "run",
-  "part": "ndn.logo-tile@1.2.0",
+  "part": "ndn.logo-tile@1.3.0",
   "rowsFrom": "csv:customers.csv",
   "map": { "logo": "logo_path", "text": "name" },
   "fitProfile": "ndn-mk4s-petg-0.4",
@@ -210,10 +210,10 @@ QR codes need 0.9 to 1.2 mm modules (about 40 to 60 mm overall) and so only fit 
 ## 9. CLI
 
 ```
-openbrick build part.obpart.json --params size=2x4 logo=./mark.svg --fit ndn-mk4s-petg-0.4 --out tile.3mf
+openbrick build part.obpart.json --params size=2x4 logo=./mark.svg --fit ndn-mk4s-petg-0.4.json --out tile.3mf
 openbrick validate tile.obpart.json --process fdm-0.4 --json
 openbrick calibrate coupon --process fdm-0.4 --out coupon.3mf
-openbrick calibrate record --process fdm-0.4 --printer "Prusa MK4S" --material PETG --stud 4.80 --tube 4.95 --technic-h 5.00
+openbrick calibrate record --process fdm-0.4 --printer "Prusa MK4S" --material PETG --stud 4.80 --tube 4.95 --pocket 6.65/0.30 --technic-h 5.00 --out ndn-mk4s-petg-0.4.json
 openbrick run customers.obrun.json --out plates/
 openbrick convert model.obrick --to mpd
 openbrick convert model.obrick --to 3mf --fuse
@@ -221,7 +221,15 @@ openbrick catalog fetch            # downloads and verifies the LDraw library in
 openbrick serve --qr               # serves the PWA on the LAN and prints a QR code
 ```
 
-All commands are scriptable (`--json` output, non-zero exit on blockers) so print farms can run them from cron.
+All commands are scriptable (`--json` output, non-zero exit on blockers) so print farms can run them from cron. Done 2026-10-28 (backlog items 11 and 14): `build`, `validate`, `calibrate coupon` and `calibrate record`.
+
+- Exit codes: 0 success; 1 blockers, with nothing written; 2 usage or input error; 3 internal error.
+- `--json` prints one JSON object on stdout, also on errors, and human text goes to stderr. The object holds the report per `schemas/report.schema.json`, the measurements, the content hash and timings, and for each output the layout, components object, objects, UUIDs and metadata, which `scripts/validate-3mf.py` compares with what lib3mf reads.
+- `--fit` takes a fit profile file or `example`; `--process` defaults to the fit profile's process, else the first of `print.profiles`.
+- Asset parameters on the command line are paths relative to the current directory; the evaluator sees them under their file name, so the content hash does not depend on the path typed. Asset names in a part document are relative to its folder and may not leave it, symbolic links included.
+- A 3MF uses the part-designer layout (section 7). An inlay is written face down with `openbrick_geom::turn_face_down`, the transform the playground uses, so both write the same meshes (`crates/openbrick/tests/export_parity.rs`). `--no-colour` writes it without display colours; `--fuse` and `--no-colour` are for 3MF output only.
+- Filament-change hints are given for FDM only, never for a `parts` inlay; a layer whose middle lies on an inlay's boundary prints the body colour.
+- The first print-test guide is [`docs/guides/print-test.md`](../guides/print-test.md).
 
 ## 10. Slicer guidance
 
