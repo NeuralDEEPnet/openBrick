@@ -28,7 +28,8 @@
 //    turns invalid while a tile is being built keeps the downloads off and its
 //    message up when that build answers; a fit profile the core refuses empties
 //    the 3D view and the stats and says why; a 16x16 tile shows the elapsed
-//    seconds and is cancelled by going back to 2x4; dragging up shows the
+//    seconds and going back to 2x4 cancels it (or, if it finished during the
+//    debounce, drops its reply as stale); dragging up shows the
 //    underside; the coupon mode builds the native coupon, lists its cells and
 //    downloads its 3MF, a pocket layout the bed cannot take empties the view,
 //    the stats and the cell table, and an invalid bed size turns the coupon
@@ -541,12 +542,24 @@ async function fullRun(browser, origin, native) {
     cancelNote = "16x16 finished before the slow-build note; the cancel was not exercised";
   } else {
     check(/Building the logo tile…\s*\d+ s/.test(slow) && slow.includes("Any change cancels this one."), `${label}: the 16x16 status line says "${slow}"`);
+    const staleBefore = (await web(page)).staleReplies;
     await page.fill("#p-size-0", "2");
     await page.fill("#p-size-1", "4");
     w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x4" }, 60_000, `${label} cancel`);
-    check(w.restarts > restartsBefore, `${label}: the 16x16 evaluation was not cancelled (restarts ${w.restarts})`);
-    checkPart(w.part, native.part.emboss, `${label} 2x4 from a fresh worker`);
-    cancelNote = `16x16 cancelled with ${w.restarts - restartsBefore} worker restart(s)`;
+    // Two outcomes are right. Usually the 2x4 request supersedes the running
+    // 16x16 build, which is old enough to be cancelled by replacing the worker.
+    // On a fast machine the 16x16 build can finish inside the debounce between
+    // the edit and the 2x4 request; its reply is then dropped as stale (the
+    // controls changed while it was built), and there is nothing to cancel.
+    // Anything else (no restart and no stale drop) means the 16x16 result was
+    // neither cancelled nor dropped.
+    const cancelled = w.restarts > restartsBefore;
+    const dropped = w.staleReplies > staleBefore;
+    check(cancelled || dropped, `${label}: the 16x16 evaluation was neither cancelled nor dropped as stale (restarts ${w.restarts}, stale replies ${w.staleReplies})`);
+    checkPart(w.part, native.part.emboss, `${label} 2x4 after the 16x16`);
+    cancelNote = cancelled
+      ? `16x16 cancelled with ${w.restarts - restartsBefore} worker restart(s)`
+      : "16x16 finished during the debounce and its reply was dropped as stale; the cancel was not exercised";
   }
   w = await web(page);
   if (w.part.params.size.join("x") !== "2x4") {
