@@ -68,6 +68,7 @@ Checks run on 2026-10-27:
 |------|---------|-------|
 | code (`crates/`, `packages/`, `apps/`) | MIT | existing LICENSE |
 | `parts/`, `profiles/`, `standards/` | CC0 1.0 with a mandatory `credit` field as a social norm; CC BY 4.0 opt-in per file | contributors who want enforceable credit choose CC BY |
+| `parts/assets/brand/` (the Neuraldeep.net marks) | all rights reserved, Neural Deep Network Ltd (trademarks); not under MIT or CC0 | may be used to build, print and show the OpenBrick3D demo tiles; any other use needs written permission. Bundled in `openbrick-wasm` and the playground; a fork or package that may not ship them removes them from `artwork_samples_json` ([NOTICE](../../parts/assets/brand/NOTICE.md), LICENSE-POLICY.md, PACKAGING.md, TRADEMARK.md) |
 | `docs/` | CC BY 4.0 | |
 | imported LDraw tree (catalog cache) | CC BY 2.0 / 4.0 per file, headers intact, separate from the repo | downloaded at first run; complete.zip is 140 MiB; crates.io caps crates at 10 MB |
 | `fonts/` | SIL OFL 1.1, complete unmodified files with licence text | never subset bundled fonts |

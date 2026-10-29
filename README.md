@@ -4,7 +4,7 @@
 
 > **Disclaimer.** OpenBrick3D is an independent, community-driven open-source project published by Neural Deep Network Ltd (Malta). It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group. LEGO®, the LEGO® logo and the Minifigure are trademarks of the LEGO Group of companies, which does not sponsor, authorize or endorse this project. Works with LEGO®-compatible bricks. LDraw™ is a trademark of the Estate of James Jessiman. This software uses the LDraw Parts Library (https://www.ldraw.org).
 
-**Status:** milestone M0. The geometry kernel works (pure Rust, bit-identical on native and WebAssembly), data documents have JSON Schemas, and the M0 spikes are reported in [`docs/spikes/`](docs/spikes/). Nothing is installable yet, but the browser playground runs at https://neuraldeepnet.github.io/openBrick/ once GitHub Pages is switched on. There you design a logo tile from your SVG, check it and download a 3MF or STL, or print the calibration coupon; see [apps/web/README.md](apps/web/README.md). The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
+**Status:** milestone M0. The geometry kernel works (pure Rust, bit-identical on native and WebAssembly), data documents have JSON Schemas, and the M0 spikes are reported in [`docs/spikes/`](docs/spikes/). Nothing is installable yet, but the browser playground runs at https://neuraldeepnet.github.io/openBrick/ once GitHub Pages is switched on. There you design a logo tile, starting from the Neuraldeep.net demo tile (the playground's default artwork; its sample chooser also has a square badge and a CC0 sample mark) or from your own SVG, check it and download a 3MF or STL, or print the calibration coupon; see [apps/web/README.md](apps/web/README.md). The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
 
 ## Three pillars, one core
 
@@ -31,7 +31,7 @@ packages/      TypeScript packages: viewport (kernel-to-three.js frame so far); 
 apps/          web (the browser playground: logo tile designer and calibration coupon; Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (Tauri 2, from M2)
 standards/     Dimensional Standard v1 (CC0) and measurement data
 profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla) and example fit profiles
-parts/         openBrick-native part documents (CC0)
+parts/         openBrick-native part documents (CC0; the Neuraldeep.net marks in parts/assets/brand/ are all rights reserved, see its NOTICE.md)
 schemas/       JSON Schemas for every document kind
 bench/         device render harness (bench/harness) and device results (bench/devices)
 docs/plan/     the full planning record
@@ -71,4 +71,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) (DCO sign-off, conventions, review cultu
 
 ## Licences
 
-Code is MIT ([LICENSE](LICENSE)). Part definitions, profiles and the Dimensional Standard are CC0 1.0 with a credit norm; documentation is CC BY 4.0; imported LDraw parts keep their own CC BY headers. See [LICENSE-POLICY.md](LICENSE-POLICY.md) and [TRADEMARK.md](TRADEMARK.md).
+Code is MIT ([LICENSE](LICENSE)). Part definitions, profiles and the Dimensional Standard are CC0 1.0 with a credit norm; documentation is CC BY 4.0; imported LDraw parts keep their own CC BY headers. The one exception is the Neuraldeep.net marks in `parts/assets/brand/`, the demo tiles' artwork, which the WebAssembly core and the playground also bundle. They are Neural Deep Network Ltd's trademarks, all rights reserved, and not under these licences ([NOTICE](parts/assets/brand/NOTICE.md)). See [LICENSE-POLICY.md](LICENSE-POLICY.md) and [TRADEMARK.md](TRADEMARK.md).
