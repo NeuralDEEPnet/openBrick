@@ -24,6 +24,10 @@ const SAMPLE_LOGO: &str = include_str!("../../../parts/assets/mark.svg");
 /// and show the OpenBrick3D demo tiles (`parts/assets/brand/NOTICE.md`). The
 /// playground is Neural Deep Network's public demo, so the portrait mark is its
 /// default artwork. Each is named as a part document in `parts/` names it.
+/// Because they are bundled here, this module and the playground built from it
+/// carry artwork that is not MIT (LICENSE-POLICY.md): a fork or package that
+/// may not ship the marks removes these four and their two entries in
+/// [`artwork_samples_json`], which leaves the CC0 sample as the default.
 const BRAND_MARK_2X4: (&str, &str) = (
     "assets/brand/neuraldeep-mark-2x4.svg",
     include_str!("../../../parts/assets/brand/neuraldeep-mark-2x4.svg"),
@@ -41,11 +45,11 @@ const BRAND_BADGE_4X4: (&str, &str) = (
     include_str!("../../../parts/assets/brand/neuraldeep-badge-4x4.svg"),
 );
 
-/// The short form of `parts/assets/brand/NOTICE.md`, which carries the same
-/// line: the page shows it under the drop zone while a Neuraldeep.net mark is
-/// in use.
-pub const BRAND_NOTICE: &str = "Copyright Neural Deep Network Ltd. All rights reserved. \
-The Neuraldeep.net marks are not covered by the licences of this repository.";
+/// The first sentence of the owner's notice in `parts/assets/brand/NOTICE.md`,
+/// word for word (the copyright line): the page shows it under the drop zone,
+/// with a link to the whole notice ([`BRAND_NOTICE_URL`]), while a
+/// Neuraldeep.net mark is in use.
+pub const BRAND_NOTICE: &str = "Copyright Neural Deep Network Ltd. All rights reserved.";
 
 /// Where the page links the notice.
 pub const BRAND_NOTICE_URL: &str =
@@ -235,9 +239,12 @@ mod tests {
         // The Neuraldeep.net mark is the playground's default.
         assert_eq!(ids, ["neuraldeep-mark", "neuraldeep-badge", "sample"]);
         let notice = include_str!("../../../parts/assets/brand/NOTICE.md");
+        // The line shown is where the owner's notice starts, word for word.
         assert!(
-            notice.contains(BRAND_NOTICE),
-            "NOTICE.md carries the short form"
+            notice.contains(&format!(
+                "\n\n{BRAND_NOTICE} The Neuraldeep.net marks are trademarks of Neural Deep Network Ltd"
+            )),
+            "NOTICE.md starts its notice with the line the page shows"
         );
         assert!(BRAND_NOTICE_URL.ends_with("/parts/assets/brand/NOTICE.md"));
         let mut suffixes = Vec::new();

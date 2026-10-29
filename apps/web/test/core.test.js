@@ -125,7 +125,8 @@ test("the Neuraldeep.net samples are the default and print on their tiles with n
   const values = defaultValues(spec);
   let id = 2;
   for (const sample of b.samples.filter((s) => s.notice)) {
-    assert.match(sample.notice, /^Copyright Neural Deep Network Ltd\. All rights reserved\./);
+    // The first sentence of parts/assets/brand/NOTICE.md, word for word.
+    assert.equal(sample.notice, "Copyright Neural Deep Network Ltd. All rights reserved.");
     assert.match(sample.noticeUrl, /\/parts\/assets\/brand\/NOTICE\.md$/);
     // The tile the page builds when the sample is chosen on the default tile.
     const size = sizeForSample(sample, values.size) ?? values.size;

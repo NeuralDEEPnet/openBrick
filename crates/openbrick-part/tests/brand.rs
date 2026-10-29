@@ -14,9 +14,12 @@
 //! most maxRemovedAreaPct of the artwork and the thinnest stroke is at least
 //! minFeatureMm.
 //!
-//! Goldens: the content hash of every build (the same on every target: it
-//! covers the document, the parameters, the profiles, the kernel id and the
-//! artwork bytes, so any change to a drawing or its header changes it), and
+//! Goldens: the content hash of every build (it covers the document, the
+//! parameters, the profiles, the kernel id and the artwork bytes, so any change
+//! to a drawing or its header changes it; it is the same on every target
+//! because `.gitattributes` turns off line-ending conversion for the artwork,
+//! so a Windows checkout with `core.autocrlf` reads the same LF bytes, which
+//! `every_checkout_reads_the_same_artwork_bytes` checks), and
 //! for the emboss build the body volume against the analytic tile model, the
 //! relief's volume, place and height, the number of separate pieces, and the
 //! canonical fingerprint of the accent mesh (asserted on x86-64 Linux only,
@@ -35,6 +38,8 @@ const BRAND_TILE: &str = include_str!("../../../parts/ndn.brand-tile.obpart.json
 const BRAND_BADGE: &str = include_str!("../../../parts/ndn.brand-badge.obpart.json");
 const LOGO_TILE: &str = include_str!("../../../parts/ndn.logo-tile.obpart.json");
 const NOTICE: &str = include_str!("../../../parts/assets/brand/NOTICE.md");
+const SAMPLE_MARK: &str = include_str!("../../../parts/assets/mark.svg");
+const GITATTRIBUTES: &str = include_str!("../../../.gitattributes");
 
 /// The notice the owner wrote, word for word (parts/assets/brand/NOTICE.md).
 const OWNER_NOTICE: &str = "Copyright Neural Deep Network Ltd. All rights reserved. \
@@ -413,6 +418,27 @@ fn the_brand_badge_builds_its_default_badge_at_4x4() {
 #[test]
 fn the_badge_for_2x2_builds_at_2x2() {
     check_mark(&BADGE_2X2);
+}
+
+#[test]
+fn every_checkout_reads_the_same_artwork_bytes() {
+    // The content hash covers the artwork's bytes, so a CRLF checkout (Git for
+    // Windows with core.autocrlf, as on the Windows CI runners) would change
+    // every golden hash above. `.gitattributes` turns off line-ending
+    // conversion for SVGs and everything under parts/assets/.
+    let attributes: Vec<&str> = GITATTRIBUTES.lines().map(str::trim).collect();
+    for rule in ["*.svg -text", "parts/assets/** -text"] {
+        assert!(attributes.contains(&rule), ".gitattributes lacks `{rule}`");
+    }
+    for (name, text) in MARKS.iter().map(|m| (m.asset, m.svg)).chain([
+        ("assets/mark.svg", SAMPLE_MARK),
+        ("assets/brand/NOTICE.md", NOTICE),
+    ]) {
+        assert!(
+            !text.contains('\r'),
+            "{name} has CR line endings: the checkout converted it; see .gitattributes"
+        );
+    }
 }
 
 #[test]

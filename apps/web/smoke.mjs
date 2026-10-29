@@ -335,8 +335,10 @@ async function fullRun(browser, origin, native) {
   check(statusText.includes(`${native.part.emboss.triangles.toLocaleString("en-US")} triangles`), `${label}: status line "${statusText}"`);
   const legend = await page.textContent("#legend");
   check(/Red: [\d.]+ % of the artwork does not print as drawn/.test(legend), `${label}: the legend lacks the removed-area entry: "${legend}"`);
-  // The default artwork is the Neuraldeep.net mark drawn for 2x4, with its
-  // notice under the drop zone, and it has nothing to report.
+  // The default artwork is the Neuraldeep.net mark drawn for 2x4, with the
+  // first sentence of its notice (the owner's copyright line, word for word)
+  // and a link to the whole notice under the drop zone, and it has nothing to
+  // report.
   check(
     w.artwork?.sample === "neuraldeep-mark" && w.part.params.logo === "assets/brand/neuraldeep-mark-2x4.svg" && w.artwork.notice,
     `${label}: the default artwork is ${JSON.stringify(w.artwork)}, logo ${w.part.params.logo}`,
@@ -344,7 +346,7 @@ async function fullRun(browser, origin, native) {
   check((await page.inputValue("#sample")) === "neuraldeep-mark", `${label}: the sample chooser shows ${await page.inputValue("#sample")}`);
   const notice = await page.textContent("#art-notice");
   check(
-    (await page.isVisible("#art-notice")) && notice.startsWith("Copyright Neural Deep Network Ltd. All rights reserved."),
+    (await page.isVisible("#art-notice")) && notice === "Copyright Neural Deep Network Ltd. All rights reserved. Read the notice",
     `${label}: the notice under the drop zone is "${notice}"`,
   );
   const noticeLink = await page.getAttribute("#art-notice a", "href");
