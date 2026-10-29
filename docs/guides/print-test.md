@@ -167,11 +167,14 @@ note the differences in your report (section 8).
    each part a filament
    ([bambulab/BambuStudio#9666](https://github.com/bambulab/BambuStudio/issues/9666),
    still open). Not yet confirmed: whether the dialog opens for this file, and
-   whether Cancel leaves the per-part filaments working.
+   whether Cancel leaves the per-part filaments working. If it does not, see
+   "Without colours" below.
 3. Check the Objects list: one object, `Logo tile`, with two parts. Bambu
    Studio names the parts after the object, so the first part, `Logo tile`, is
    the body and the second, `Logo tile_2`, is the logo; tell them apart by
-   shape if in doubt.
+   shape if in doubt. An inlay downloaded from the browser playground is titled
+   `Logo tile (face down, as it prints)`, so there the object and its parts
+   carry that name (`Logo tile (face down, as it prints)_2` for the second).
 4. Set the filament of each part to the AMS slot with its colour (the filament
    column of the Objects list, or right-click the part > Change filament).
 
@@ -244,11 +247,26 @@ Let the print cool before you take it off the bed.
 - which filament or tool each part got, and whether you had to change it;
 - whether the sliced preview shows the logo colour only in the logo.
 
-If the Bambu colour dialog gets in the way, the CI artifact `part-exports`
-holds the same tiles without colours (`logo-tile-emboss-parts-no-colour.3mf`
-and `logo-tile-inlay-parts-no-colour.3mf`), which should load without it.
-Those files keep the design orientation, so turn the inlay over in the slicer;
-please say which file worked.
+**Without colours.** If the Bambu colour dialog gets in the way, build the
+same tile again with `--no-colour` added to your `openbrick build` command,
+for example:
+
+```sh
+openbrick build parts/ndn.logo-tile.obpart.json --param logo=./my-logo.svg \
+  --param relief=inlay --param inlayStyle=parts --fit my-fit.json \
+  --no-colour --out tile-inlay-parts-no-colour.3mf
+```
+
+The file has the same parts, meshes and orientation, built with your fit
+profile and logo, so it is still the tile for the pull test (section 7); only
+the display colours are left out. Without them the dialog has nothing to read
+and should not open (Q18, from Bambu Studio's source; not yet confirmed by a
+print). Give each part its filament as in step 4 for the A1. The browser playground
+always writes colours, so use the CLI for this. Please say in your report which
+file worked. The `-no-colour.3mf` files in the CI artifact `part-exports` are
+only a slicer import check: they carry square test artwork, are built without
+a fit profile and keep the design orientation, so do not print them for the
+pull test.
 
 ## 7. Pull test
 

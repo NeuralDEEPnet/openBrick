@@ -321,11 +321,7 @@ pub fn coupon(args: &CouponArgs, ui: Ui) -> Result<Outcome, Fail> {
         .ok_or_else(|| {
             Fail::Internal("the coupon has no mesh; this is a bug, please report it".into())
         })?;
-    let solids = [Solid {
-        name: "calibration coupon".into(),
-        role: "body".into(),
-        mesh,
-    }];
+    let solids = [Solid::new("calibration coupon".into(), "body".into(), mesh)];
     let meta = ExportMeta {
         part_id: "openbrick.calibration-coupon".into(),
         version: format!("{}.{}.0", s.coupon_version, s.coupon_revision),

@@ -67,17 +67,45 @@ impl Format {
 pub struct Solid {
     pub name: String,
     pub role: String,
+    /// The display colour written for it, `role_colour` of its role unless
+    /// `build --no-colour` left the colours out ([`leave_out_colours`]).
+    pub colour: Option<[u8; 4]>,
     pub mesh: Mesh,
 }
 
 impl Solid {
+    /// A solid with its role's display colour.
+    pub fn new(name: String, role: String, mesh: Mesh) -> Solid {
+        Solid {
+            colour: role_colour(&role),
+            name,
+            role,
+            mesh,
+        }
+    }
+
     fn object(&self) -> ExportObject<'_> {
         ExportObject::new(
             self.name.clone(),
             self.role.clone(),
-            role_colour(&self.role),
+            self.colour,
             &self.mesh,
         )
+    }
+}
+
+/// Write the solids without display colours (`openbrick build --no-colour`):
+/// the 3MF then has no colour group and no `pid`. Bambu Studio 2.5 and later
+/// read a 3MF's colours into its "Standard 3MF Import color" dialog, which
+/// users report paints them onto the surface instead of giving each part a
+/// filament (bambulab/BambuStudio#9666); without colours that dialog cannot
+/// open (docs/spikes/q18-slicer-multimaterial-import.md, recommendation 2).
+/// The slicer assigns a filament per part either way. Colours stay the
+/// default, because whether to leave them out for everyone is a decision for a
+/// human (Q18) and PrusaSlicer ignores them.
+pub fn leave_out_colours(solids: &mut [Solid]) {
+    for s in solids {
+        s.colour = None;
     }
 }
 
@@ -189,7 +217,7 @@ pub fn encode(
                     json!({
                         "name": s.name,
                         "role": s.role,
-                        "color": role_colour(&s.role).map(hex),
+                        "color": s.colour.map(hex),
                         "vertices": s.mesh.positions.len(),
                         "triangles": s.mesh.triangle_count(),
                         "volumeMm3": mesh_volume(&s.mesh),
@@ -300,16 +328,16 @@ mod tests {
         // A slab with a thin plate on top: after the half turn the plate is on
         // the bed and the slab above it, in the same bounding box.
         let mut solids = vec![
-            Solid {
-                name: "body".into(),
-                role: "body".into(),
-                mesh: cuboid([0.0, 0.0, 0.0], [4.0, 8.0, 3.0]),
-            },
-            Solid {
-                name: "accent".into(),
-                role: "accent".into(),
-                mesh: cuboid([1.0, 1.0, 3.0], [3.0, 2.0, 3.5]),
-            },
+            Solid::new(
+                "body".into(),
+                "body".into(),
+                cuboid([0.0, 0.0, 0.0], [4.0, 8.0, 3.0]),
+            ),
+            Solid::new(
+                "accent".into(),
+                "accent".into(),
+                cuboid([1.0, 1.0, 3.0], [3.0, 2.0, 3.5]),
+            ),
         ];
         let before: Vec<f64> = solids.iter().map(|s| mesh_volume(&s.mesh)).collect();
         assert_eq!(before, vec![96.0, 1.0]);
@@ -384,11 +412,11 @@ mod tests {
     fn a_single_solid_is_written_as_the_separate_layout() {
         // One solid (a fused build, the coupon) has nothing to group: the same
         // bytes as write_3mf, an item of its own and no components object.
-        let solids = [Solid {
-            name: "tile".into(),
-            role: "body".into(),
-            mesh: cuboid([0.0, 0.0, 0.0], [4.0, 8.0, 3.0]),
-        }];
+        let solids = [Solid::new(
+            "tile".into(),
+            "body".into(),
+            cuboid([0.0, 0.0, 0.0], [4.0, 8.0, 3.0]),
+        )];
         let meta = ExportMeta {
             part_id: "test.box".into(),
             version: "0.0.1".into(),
@@ -415,6 +443,82 @@ mod tests {
             json!(uuids.items[0].to_string())
         );
         assert_eq!(entry["objects"][0]["componentUuid"], Value::Null);
+    }
+
+    #[test]
+    fn no_colour_writes_the_same_parts_without_a_colour_group() {
+        // build --no-colour: the same layout and meshes, no colour group and no
+        // pid, so Bambu Studio's import colour dialog has nothing to read
+        // (Q18 recommendation 2). The description says so with a null colour.
+        let mut solids = vec![
+            Solid::new(
+                "body".into(),
+                "body".into(),
+                cuboid([0.0, 0.0, 0.0], [4.0, 8.0, 3.0]),
+            ),
+            Solid::new(
+                "accent".into(),
+                "accent".into(),
+                cuboid([1.0, 1.0, 3.0], [3.0, 2.0, 3.5]),
+            ),
+        ];
+        let meta = ExportMeta {
+            part_id: "test.box".into(),
+            version: "0.0.1".into(),
+            content_hash: "test".into(),
+            fit_profile_id: "none".into(),
+            process_id: "fdm-0.4".into(),
+            generator: crate::ui::GENERATOR.into(),
+            kernel_id: "none".into(),
+            title: "Box".into(),
+            serial: None,
+        };
+        let (coloured, with) = encode(&solids, &meta, Format::ThreeMf).expect("3MF");
+        assert_eq!(with["objects"][1]["color"], "#1E5AA8FF");
+        let xml = openbrick_io::threemf_model_xml_with_layout(
+            &solids.iter().map(Solid::object).collect::<Vec<_>>(),
+            &meta,
+            LAYOUT,
+        )
+        .expect("model");
+        assert!(xml.contains("colorgroup"), "colours are the default");
+
+        leave_out_colours(&mut solids);
+        let (bytes, entry) = encode(&solids, &meta, Format::ThreeMf).expect("3MF");
+        assert_ne!(bytes, coloured);
+        let objects: Vec<ExportObject> = solids.iter().map(Solid::object).collect();
+        let xml =
+            openbrick_io::threemf_model_xml_with_layout(&objects, &meta, LAYOUT).expect("model");
+        assert!(
+            !xml.contains("colorgroup") && !xml.contains("pid="),
+            "{xml}"
+        );
+        assert_eq!(xml.matches("<component ").count(), 2, "still two parts");
+        assert_eq!(entry["layout"], "oneObjectWithParts");
+        for (i, o) in entry["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(o["color"], Value::Null, "object {i}");
+            // The same parts and meshes. The colour is part of the UUID seed,
+            // so another file gets other UUIDs.
+            for key in ["name", "role", "storedFingerprint", "boundsMm"] {
+                assert_eq!(o[key], with["objects"][i][key], "object {i} {key}");
+            }
+            assert_ne!(o["uuid"], with["objects"][i]["uuid"], "object {i}");
+        }
+        assert_eq!(entry["assembly"]["name"], with["assembly"]["name"]);
+        let names = |e: &Value| -> Vec<Value> {
+            e["assembly"]["components"]
+                .as_array()
+                .expect("components")
+                .iter()
+                .map(|c| c["object"].clone())
+                .collect()
+        };
+        assert_eq!(names(&entry), names(&with));
     }
 
     #[test]

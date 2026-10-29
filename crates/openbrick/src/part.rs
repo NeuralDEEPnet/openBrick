@@ -72,6 +72,14 @@ pub struct BuildArgs {
     /// colour role.
     #[arg(long)]
     pub fuse: bool,
+    /// 3MF only: leave out the display colours. The parts stay as they are,
+    /// and you give each part its filament in the slicer as usual. For Bambu
+    /// Studio 2.5 and later, whose "Standard 3MF Import color" dialog is
+    /// reported to paint a 3MF's colours onto the surface instead of giving
+    /// each part a filament (bambulab/BambuStudio#9666); without colours it
+    /// has nothing to read (docs/spikes/q18-slicer-multimaterial-import.md).
+    #[arg(long = "no-colour", visible_alias = "no-color")]
+    pub no_colour: bool,
 }
 
 /// Where the fit profile came from.
@@ -553,6 +561,11 @@ pub fn build(args: &BuildArgs, ui: Ui) -> Result<Outcome, Fail> {
             "--fuse is for 3MF output; an STL is always one fused single-colour solid".into(),
         ));
     }
+    if args.no_colour && format == Format::Stl {
+        return Err(Fail::Input(
+            "--no-colour is for 3MF output; an STL never has colours".into(),
+        ));
+    }
     let ev = evaluate_part(&args.part)?;
     let blockers = ev.report.blockers().count();
     if blockers > 0 {
@@ -581,6 +594,9 @@ pub fn build(args: &BuildArgs, ui: Ui) -> Result<Outcome, Fail> {
     let turned = face_down(&ev.built);
     if turned {
         export::turn_face_down(&mut solids);
+    }
+    if args.no_colour {
+        export::leave_out_colours(&mut solids);
     }
     let meta = ExportMeta {
         part_id: ev.doc.id.clone(),
@@ -695,6 +711,9 @@ pub fn build(args: &BuildArgs, ui: Ui) -> Result<Outcome, Fail> {
         entry["bytes"],
         format.name().to_uppercase()
     ));
+    if args.no_colour {
+        ui.say("  note: written without display colours (--no-colour); give each part its filament in the slicer.");
+    }
     if format == Format::Stl && ev.built.objects.len() > 1 {
         ui.say("  note: an STL has no colours, so every colour role is one solid here; write a .3mf for two colours.");
     }
@@ -731,11 +750,11 @@ fn solids_for(ev: &Evaluated, format: Format, fuse: bool) -> Result<Vec<Solid>, 
                 ))
             }
         };
-        return Ok(vec![Solid {
-            name: ev.doc.id.clone(),
-            role: "body".into(),
-            mesh: mesh.clone(),
-        }]);
+        return Ok(vec![Solid::new(
+            ev.doc.id.clone(),
+            "body".into(),
+            mesh.clone(),
+        )]);
     }
     if ev.built.objects.is_empty() {
         return Err(Fail::Internal(
@@ -746,10 +765,12 @@ fn solids_for(ev: &Evaluated, format: Format, fuse: bool) -> Result<Vec<Solid>, 
         .built
         .objects
         .iter()
-        .map(|o| Solid {
-            name: format!("{} {}", ev.doc.id, o.role),
-            role: o.role.clone(),
-            mesh: o.mesh.clone(),
+        .map(|o| {
+            Solid::new(
+                format!("{} {}", ev.doc.id, o.role),
+                o.role.clone(),
+                o.mesh.clone(),
+            )
         })
         .collect())
 }

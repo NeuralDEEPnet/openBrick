@@ -22,7 +22,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use openbrick_io::threemf::stored_fingerprint;
-use openbrick_io::{write_3mf_with_layout, ExportLayout, ExportMeta, ExportObject};
+use openbrick_io::{
+    threemf_model_xml_with_layout, write_3mf_with_layout, ExportLayout, ExportMeta, ExportObject,
+};
 use openbrick_wasm::{example_fit_profile_json, export_part, export_solids, AssetSet, PartExport};
 use serde_json::Value;
 
@@ -89,9 +91,9 @@ const CASES: [Case; 3] = [
     },
 ];
 
-/// `openbrick build` of the logo tile with the example fit profile into
-/// `out`; returns the `--json` object.
-fn cli_build(case: &Case, out: &Path) -> Value {
+/// `openbrick build` of the logo tile with the example fit profile and the
+/// `flags` into `out`; returns the `--json` object.
+fn cli_build(case: &Case, flags: &[&str], out: &Path) -> Value {
     let mut args: Vec<String> = vec![
         "build".into(),
         LOGO_TILE.into(),
@@ -102,6 +104,7 @@ fn cli_build(case: &Case, out: &Path) -> Value {
         args.push("--param".into());
         args.push((*p).into());
     }
+    args.extend(flags.iter().map(|f| f.to_string()));
     args.push("--out".into());
     args.push(out.to_string_lossy().into_owned());
     args.push("--json".into());
@@ -203,7 +206,7 @@ fn cli_3mf_meshes_equal_the_playground_export() {
     for case in &CASES {
         let label = case.label;
         let out = dir.path(&format!("{label}.3mf"));
-        let j = cli_build(case, &out);
+        let j = cli_build(case, &[], &out);
         let ours = web.solids("3mf", case);
         assert_eq!(j["process"], "fdm-0.4", "{label}");
         assert_eq!(
@@ -289,7 +292,7 @@ fn cli_stl_equals_the_playground_stl() {
     let web = Playground::new();
     for case in &CASES {
         let out = dir.path(&format!("{}.stl", case.label));
-        let j = cli_build(case, &out);
+        let j = cli_build(case, &[], &out);
         let written = std::fs::read(&out).expect("the CLI wrote the STL");
         assert_eq!(j["outputs"][0]["format"], "stl");
         let ours = web.file("stl", case);
@@ -302,5 +305,49 @@ fn cli_stl_equals_the_playground_stl() {
         );
         let solids = web.solids("stl", case);
         assert_eq!(solids.solids.len(), 1, "{}: one fused solid", case.label);
+    }
+}
+
+#[test]
+fn cli_no_colour_3mf_is_the_playground_meshes_without_colours() {
+    // `openbrick build --no-colour` (for Bambu Studio's import colour dialog,
+    // Q18 recommendation 2) changes only the colours: the playground's meshes
+    // in the part-designer layout with no colour at all are its file exactly,
+    // and that file has no colour group and no pid.
+    let dir = Scratch::new("no-colour");
+    let web = Playground::new();
+    for case in &CASES {
+        let label = case.label;
+        let out = dir.path(&format!("{label}.3mf"));
+        let j = cli_build(case, &["--no-colour"], &out);
+        let entry = &j["outputs"][0];
+        assert_eq!(entry["layout"], "oneObjectWithParts", "{label}");
+        let ours = web.solids("3mf", case);
+        let objects = entry["objects"].as_array().expect("objects");
+        assert_eq!(objects.len(), ours.solids.len(), "{label}");
+        for o in objects {
+            assert_eq!(o["color"], Value::Null, "{label}");
+        }
+        let plain: Vec<ExportObject> = ours
+            .solids
+            .iter()
+            .map(|s| ExportObject::new(s.name.clone(), s.role.clone(), None, &s.mesh))
+            .collect();
+        let meta = cli_meta(entry);
+        let xml = threemf_model_xml_with_layout(&plain, &meta, ExportLayout::PART_DESIGNER)
+            .expect("model");
+        assert!(
+            !xml.contains("colorgroup") && !xml.contains("pid="),
+            "{label}: no colour"
+        );
+        let expected =
+            write_3mf_with_layout(&plain, &meta, ExportLayout::PART_DESIGNER).expect("3MF");
+        let written = std::fs::read(&out).expect("the CLI wrote the 3MF");
+        assert!(
+            written == expected,
+            "{label}: the CLI's colourless 3MF ({} bytes) is not the playground's meshes without colours ({} bytes)",
+            written.len(),
+            expected.len()
+        );
     }
 }

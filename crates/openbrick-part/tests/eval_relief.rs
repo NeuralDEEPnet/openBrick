@@ -2217,10 +2217,13 @@ fn multi_material_exports_are_one_object_with_parts() {
             "{name}"
         );
         let mut files = vec![(format!("{name}.3mf"), bytes)];
-        // A colourless copy of the square tiles for the print test: Bambu
-        // Studio turns colour groups into surface painting through its colour
-        // dialog, so the A1 test compares that path with plain per-part
-        // filaments (docs/spikes/q18-slicer-multimaterial-import.md).
+        // A colourless copy of the square tiles for the slicer import check:
+        // Bambu Studio turns colour groups into surface painting through its
+        // colour dialog, so the A1 check compares that path with plain
+        // per-part filaments (docs/spikes/q18-slicer-multimaterial-import.md).
+        // These carry test artwork and no fit profile, so they are not for the
+        // pull test; `openbrick build --no-colour` writes a printable
+        // colourless tile (docs/guides/print-test.md section 6).
         if !name.contains("mark") {
             let plain: Vec<ExportObject> = objects
                 .iter()

@@ -261,6 +261,7 @@ fn blockers_write_nothing_and_exit_1() {
 fn input_errors_exit_2_and_write_nothing() {
     let dir = Scratch::new("input");
     let out = dir.arg("tile.3mf");
+    let stl = dir.arg("tile.stl");
     std::fs::write(dir.path("not-a-fit.json"), "{\"hello\": 1}").expect("write");
     let not_a_fit = dir.arg("not-a-fit.json");
     let folder_as_logo = format!("logo={}", dir.0.to_string_lossy());
@@ -406,6 +407,26 @@ fn input_errors_exit_2_and_write_nothing() {
             "does not build yet",
         ),
         (
+            "--fuse for an STL",
+            vec![
+                "build", LOGO_TILE, "--fit", "example", "--fuse", "--out", &stl,
+            ],
+            "--fuse is for 3MF output",
+        ),
+        (
+            "--no-colour for an STL",
+            vec![
+                "build",
+                LOGO_TILE,
+                "--fit",
+                "example",
+                "--no-colour",
+                "--out",
+                &stl,
+            ],
+            "--no-colour is for 3MF output",
+        ),
+        (
             "validate of a missing file",
             vec!["validate", "parts/no-such-part.obpart.json"],
             "cannot read part document",
@@ -420,6 +441,7 @@ fn input_errors_exit_2_and_write_nothing() {
             "{what}: expected `{says}` in\n{err}"
         );
         assert!(!dir.path("tile.3mf").exists(), "{what}: nothing is written");
+        assert!(!dir.path("tile.stl").exists(), "{what}: nothing is written");
         // With --json, stdout still carries one object that says so.
         let mut args = args.clone();
         args.push("--json");
@@ -606,6 +628,57 @@ fn a_parts_inlay_is_one_object_with_two_parts_and_no_filament_change() {
     assert_eq!(swap["artwork"]["inlayStyle"], "swap");
     assert!(!swap["colourChanges"].as_array().expect("hints").is_empty());
     assert_ne!(swap["contentHash"], j["contentHash"]);
+}
+
+#[test]
+fn no_colour_writes_the_parts_without_display_colours() {
+    // --no-colour (alias --no-color) for Bambu Studio's import colour dialog
+    // (docs/spikes/q18-slicer-multimaterial-import.md, recommendation 2): the
+    // same tile, layout and parts, with the user's own fit profile and
+    // artwork, and no colour in the file. The default keeps the colours.
+    let dir = Scratch::new("no-colour");
+    let build = |flag: Option<&str>, name: &str| {
+        let out = dir.arg(name);
+        let mut args = vec![
+            "build",
+            LOGO_TILE,
+            "--fit",
+            "example",
+            "--params",
+            "relief=inlay",
+            "inlayStyle=parts",
+            "--out",
+            &out,
+            "--json",
+        ];
+        args.extend(flag);
+        let o = openbrick(&args);
+        assert_eq!(code(&o), 0, "{name}: {}", stderr(&o));
+        (json_of(&o), stderr(&o))
+    };
+    let (coloured, human) = build(None, "coloured.3mf");
+    assert!(!human.contains("--no-colour"), "{human}");
+    for flag in ["--no-colour", "--no-color"] {
+        let (j, human) = build(Some(flag), &format!("{flag}.3mf"));
+        assert!(
+            human.contains("written without display colours"),
+            "{flag}: {human}"
+        );
+        assert_eq!(j["contentHash"], coloured["contentHash"], "{flag}");
+        let (out, with) = (&j["outputs"][0], &coloured["outputs"][0]);
+        assert_eq!(out["layout"], "oneObjectWithParts", "{flag}");
+        let objects = out["objects"].as_array().expect("objects");
+        assert_eq!(objects.len(), 2, "{flag}");
+        for (o, w) in objects
+            .iter()
+            .zip(with["objects"].as_array().expect("objects"))
+        {
+            assert_eq!(o["color"], Value::Null, "{flag}");
+            assert!(w["color"].is_string(), "colours are the default");
+            assert_eq!(o["name"], w["name"], "{flag}");
+            assert_eq!(o["storedFingerprint"], w["storedFingerprint"], "{flag}");
+        }
+    }
 }
 
 /// Every single-extruder hint of an inlay names the first layer whose middle

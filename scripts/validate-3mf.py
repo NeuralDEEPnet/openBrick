@@ -160,7 +160,10 @@ OVERLAP_TOLERANCE_MM = 1e-4
 # vertex, or crossed a mesh an odd number of times (an open mesh), and say
 # nothing. Below it the pair fails as not checked, so an overlap cannot hide
 # behind lines that were all skipped, nor behind the empty parts of a sparse
-# logo's box.
+# logo's box. Compared with counting every line over the box, this moves the
+# verdict both ways: a pair whose skipped lines missed the other object (where
+# no overlap is possible) now passes, and a pair whose skipped lines were
+# outvoted by lines through only one object now fails as not checked.
 # (The nudged lines miss every edge of the exports in CI: none is skipped.)
 OVERLAP_MIN_SAMPLED = 0.5
 # A line closer than this (in barycentric terms) to a triangle edge is skipped:
