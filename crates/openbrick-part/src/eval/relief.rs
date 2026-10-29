@@ -208,8 +208,11 @@ pub struct Artwork {
     pub inlay_style: Option<String>,
     /// The face the part prints on: `bottom` (face up) for emboss and deboss,
     /// `top` (face down) for inlay, so the exporter and the UI can lay it out.
-    /// Exports keep the design orientation, so an inlay is turned over in the
-    /// slicer (the evaluator's warning says so).
+    /// The evaluator builds every part in the design orientation; the CLI and
+    /// the playground turn an inlay's objects face down together with
+    /// `openbrick_geom::turn_face_down` when they export it, and a file kept in
+    /// the design orientation is turned over in the slicer (the evaluator's
+    /// colour-role warning says both).
     pub face_on_bed: String,
     /// Height of the face the artwork sits on (the body top).
     pub face_z_mm: f64,

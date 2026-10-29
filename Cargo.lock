@@ -765,6 +765,7 @@ dependencies = [
  "openbrick-part",
  "openbrick-print",
  "openbrick-units",
+ "openbrick-wasm",
  "serde_json",
 ]
 

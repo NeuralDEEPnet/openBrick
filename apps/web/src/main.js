@@ -770,11 +770,19 @@ async function main() {
       return;
     }
     const relief = r.params.values.relief;
+    // What the accent part holds: the face slab of a filament-swap inlay, the
+    // logo fill of a multi-material (parts) inlay, the logo otherwise.
+    const accent =
+      relief !== "inlay"
+        ? "Logo"
+        : r.params.values.inlayStyle === "parts"
+          ? "Logo fill (its own part, face down)"
+          : "Face slab (printed first, face down)";
     const items = r.meshes.map((m) =>
       m.role === "body"
         ? swatch(state.colors.body, "Body")
         : m.role === "accent"
-          ? swatch(state.colors.accent, relief === "inlay" ? "Face slab (printed first, face down)" : "Logo")
+          ? swatch(state.colors.accent, accent)
           : swatch(m.color, m.role),
     );
     const removed = removedText(r);
@@ -872,7 +880,7 @@ async function main() {
 
   async function downloadPart(format) {
     if (!state.result?.exportAllowed || state.dirty || state.exporting) return;
-    const name = downloadName(doc, state.result.params.values, format);
+    const name = downloadName(doc, state.result.params.values, format, state.result.params.visible);
     state.exporting = true;
     renderDownloads();
     try {

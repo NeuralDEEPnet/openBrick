@@ -11,8 +11,10 @@
 //! shows and what it saves.
 
 use openbrick_geom::manifold_rust::ManifoldRust;
-use openbrick_geom::{CrossSection, Kernel, Solid};
-use openbrick_io::{write_3mf, write_stl_binary, ExportMeta, ExportObject};
+use openbrick_geom::{CrossSection, Kernel, Mesh, Solid};
+use openbrick_io::{
+    write_3mf_with_layout, write_stl_binary, ExportLayout, ExportMeta, ExportObject,
+};
 use openbrick_part::coupon::PLA_DENSITY_G_CM3;
 use openbrick_part::eval::resolve_params;
 use openbrick_part::{evaluate, validate, Artwork, Built, EvalInput, MemoryAssets, ParamValues};
@@ -462,14 +464,48 @@ fn blocked(report: &Report) -> CoreError {
     ))
 }
 
-/// Evaluate, validate and write a printable file: `format` is `3mf` (one object
-/// per colour role, in the colours of `colors_json`, a JSON object of role to
-/// `#rrggbb`, empty for the role colours) or `stl` (one solid: the kernel's
-/// fused union of every object, for a single colour). An inlay is turned face
-/// down, as it prints; everything else is written as built. Refuses while the
-/// validation report has a blocker, naming each one.
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-pub fn export_part(
+/// The 3MF layout of a part export, the part-designer layout (docs/plan/05
+/// section 7, docs/spikes/q18-slicer-multimaterial-import.md): the colour roles
+/// are the parts of one components object under a single build item, so Bambu
+/// Studio loads one object with its parts in place and PrusaSlicer offers to
+/// merge them into one multi-part object. The CLI writes the same layout.
+pub const PART_EXPORT_LAYOUT: ExportLayout = ExportLayout::PART_DESIGNER;
+
+/// One solid of an export as it goes on the bed: what [`export_part`] encodes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExportSolid {
+    /// `<part id> <role>`, the object name slicers show.
+    pub name: String,
+    pub role: String,
+    /// sRGB plus alpha, recorded in a 3MF (never in an STL).
+    pub color: [u8; 4],
+    pub mesh: Mesh,
+}
+
+/// Everything [`export_part`] writes, before it is encoded: the traceability
+/// metadata and the solids, laid out as they print (an inlay turned face down
+/// by [`openbrick_geom::turn_face_down`]). Rust only (not a JavaScript
+/// export), so other front ends and tests can compare their meshes with the
+/// playground's.
+#[derive(Clone, Debug)]
+pub struct PartExport {
+    pub meta: ExportMeta,
+    pub solids: Vec<ExportSolid>,
+}
+
+impl PartExport {
+    fn objects(&self) -> Vec<ExportObject<'_>> {
+        self.solids
+            .iter()
+            .map(|s| ExportObject::new(s.name.clone(), s.role.clone(), Some(s.color), &s.mesh))
+            .collect()
+    }
+}
+
+/// What [`export_part`] would write for the same arguments, before encoding:
+/// for `3mf` one solid per colour role (body first), for `stl` the kernel's
+/// fused union as one solid. The same checks and errors as [`export_part`].
+pub fn export_solids(
     format: &str,
     doc_json: &str,
     params_json: &str,
@@ -477,7 +513,7 @@ pub fn export_part(
     fit_json: &str,
     assets: &AssetSet,
     colors_json: &str,
-) -> Result<Vec<u8>, CoreError> {
+) -> Result<PartExport, CoreError> {
     if format != "3mf" && format != "stl" {
         return Err(CoreError(format!(
             "unknown export format {format:?}; use \"3mf\" or \"stl\""
@@ -513,37 +549,61 @@ pub fn export_part(
         },
         serial: None,
     };
-    let write = |objects: &[&RoleMesh]| -> Result<Vec<u8>, CoreError> {
-        let meshes: Vec<_> = objects.iter().map(|o| &o.mesh).collect();
-        let laid = on_bed(&meshes, face_down);
-        let out: Vec<ExportObject> = objects
-            .iter()
-            .zip(&laid)
-            .map(|(o, mesh)| {
-                ExportObject::new(
-                    format!("{} {}", doc.id, o.role),
-                    o.role.clone(),
-                    Some(color_of(&colors, &o.role)),
-                    mesh,
-                )
-            })
-            .collect();
-        let bytes = if format == "3mf" {
-            write_3mf(&out, &meta)
-        } else {
-            write_stl_binary(&out)
-        };
-        bytes.map_err(|e| CoreError(format!("the {format} writer refused the part: {e}")))
-    };
-    if format == "3mf" {
-        write(&built.objects.iter().collect::<Vec<_>>())
+    let objects: Vec<&RoleMesh> = if format == "3mf" {
+        built.objects.iter().collect()
     } else {
         // One solid for a single colour: merging the role meshes instead would
         // leave two shells touching where a relief meets the body.
         let one = built.fused.as_ref().or(built.objects.first());
-        let one = one.ok_or_else(|| CoreError("the part has no objects".into()))?;
-        write(&[one])
-    }
+        vec![one.ok_or_else(|| CoreError("the part has no objects".into()))?]
+    };
+    let meshes: Vec<&Mesh> = objects.iter().map(|o| &o.mesh).collect();
+    let solids = objects
+        .iter()
+        .zip(on_bed(&meshes, face_down))
+        .map(|(o, mesh)| ExportSolid {
+            name: format!("{} {}", doc.id, o.role),
+            role: o.role.clone(),
+            color: color_of(&colors, &o.role),
+            mesh,
+        })
+        .collect();
+    Ok(PartExport { meta, solids })
+}
+
+/// Evaluate, validate and write a printable file: `format` is `3mf` (one
+/// object whose parts are the colour roles, [`PART_EXPORT_LAYOUT`], in the
+/// colours of `colors_json`, a JSON object of role to `#rrggbb`, empty for the
+/// role colours) or `stl` (one solid: the kernel's fused union of every object,
+/// for a single colour). An inlay is turned face down, as it prints;
+/// everything else is written as built. Refuses while the validation report
+/// has a blocker, naming each one. [`export_solids`] gives the meshes.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn export_part(
+    format: &str,
+    doc_json: &str,
+    params_json: &str,
+    process_id: &str,
+    fit_json: &str,
+    assets: &AssetSet,
+    colors_json: &str,
+) -> Result<Vec<u8>, CoreError> {
+    let export = export_solids(
+        format,
+        doc_json,
+        params_json,
+        process_id,
+        fit_json,
+        assets,
+        colors_json,
+    )?;
+    let objects = export.objects();
+    let bytes = if format == "3mf" {
+        write_3mf_with_layout(&objects, &export.meta, PART_EXPORT_LAYOUT)
+    } else {
+        write_stl_binary(&objects)
+    };
+    bytes.map_err(|e| CoreError(format!("the {format} writer refused the part: {e}")))
 }
 
 #[cfg(test)]
@@ -726,6 +786,28 @@ mod tests {
         let b = native("", Some(openbrick_print::example_fit_profile()));
         let threemf = export_part("3mf", &doc, "", "fdm-0.4", &fit, &sample(), "").unwrap();
         assert_eq!(&threemf[..4], b"PK\x03\x04", "a zip container");
+        // The part-designer layout: the evaluator's objects (emboss prints as
+        // built) as the parts of one components object with one build item.
+        let export = export_solids("3mf", &doc, "", "fdm-0.4", &fit, &sample(), "").unwrap();
+        let objects = export.objects();
+        assert_eq!(
+            threemf,
+            write_3mf_with_layout(&objects, &export.meta, ExportLayout::PART_DESIGNER).unwrap()
+        );
+        let xml =
+            openbrick_io::threemf_model_xml_with_layout(&objects, &export.meta, PART_EXPORT_LAYOUT)
+                .unwrap();
+        assert_eq!(xml.matches("<components>").count(), 1, "{xml:.400}");
+        assert_eq!(xml.matches("<item ").count(), 1, "one build item");
+        assert_eq!(xml.matches("<component ").count(), 2, "body and accent");
+        let roles: Vec<&str> = export.solids.iter().map(|s| s.role.as_str()).collect();
+        assert_eq!(roles, ["body", "accent"]);
+        for (s, o) in export.solids.iter().zip(&b.objects) {
+            assert_eq!(s.mesh, o.mesh, "{} is written as built", s.role);
+            assert_eq!(s.name, format!("ndn.logo-tile {}", s.role));
+        }
+        assert_eq!(export.meta.title, "Logo tile");
+        assert_eq!(export.meta.content_hash, b.content_hash);
         let stl = export_part("stl", &doc, "", "fdm-0.4", &fit, &sample(), "").unwrap();
         let fused = b.fused.as_ref().unwrap();
         assert_eq!(stl.len(), 84 + 50 * fused.mesh.triangle_count());
@@ -896,6 +978,16 @@ mod tests {
             (on_bed_area - face).abs() < 1e-3 * face,
             "{on_bed_area} vs {face}"
         );
+        // The 3MF turns both parts over together with the shared transform,
+        // and names the components object so the slicer shows it face down.
+        let export = export_solids("3mf", &doc, params, "fdm-0.4", &fit, &sample(), "").unwrap();
+        let built: Vec<&Mesh> = b.objects.iter().map(|o| &o.mesh).collect();
+        let mut turned: Vec<Mesh> = built.iter().map(|m| (*m).clone()).collect();
+        openbrick_geom::turn_face_down(&mut turned.iter_mut().collect::<Vec<_>>());
+        let meshes: Vec<Mesh> = export.solids.iter().map(|s| s.mesh.clone()).collect();
+        assert_eq!(meshes, turned);
+        assert_eq!(export.meta.title, "Logo tile (face down, as it prints)");
+
         // The emboss default stays face up: its bed face is the bottom ring.
         let up = export_part("stl", &doc, "", "fdm-0.4", &fit, &sample(), "").unwrap();
         let up_corners = stl_corners(&up);
@@ -908,6 +1000,47 @@ mod tests {
             up_corners[0],
             fused_up.positions[fused_up.indices[0] as usize]
         );
+    }
+
+    #[test]
+    fn a_parts_inlay_exports_the_fill_as_its_own_part_face_down() {
+        let fit = example_fit_profile_json();
+        let doc = logo_tile_part_json();
+        let params = r#"{"relief":"inlay","inlayStyle":"parts"}"#;
+        let b = native(params, Some(openbrick_print::example_fit_profile()));
+        let art = b.artwork.as_ref().expect("artwork");
+        assert_eq!(art.inlay_style.as_deref(), Some("parts"));
+        let export = export_solids("3mf", &doc, params, "fdm-0.4", &fit, &sample(), "").unwrap();
+        let roles: Vec<&str> = export.solids.iter().map(|s| s.role.as_str()).collect();
+        assert_eq!(roles, ["body", "accent"]);
+        // Face down: the fill lies on the bed, as deep as the inlay, and the
+        // face around it (the body) is on the bed too.
+        let (lo, hi) = export.solids[1].mesh.bounds();
+        assert_eq!(lo[2], 0.0, "the fill is on the bed");
+        assert!((f64::from(hi[2]) - art.height_mm).abs() < 1e-5, "{hi:?}");
+        assert_eq!(export.solids[0].mesh.bounds().0[2], 0.0);
+        // One components object with two parts, and a different file from
+        // the swap inlay, so the two downloads can never be confused.
+        let parts = export_part("3mf", &doc, params, "fdm-0.4", &fit, &sample(), "").unwrap();
+        let xml = openbrick_io::threemf_model_xml_with_layout(
+            &export.objects(),
+            &export.meta,
+            PART_EXPORT_LAYOUT,
+        )
+        .unwrap();
+        assert_eq!(xml.matches("<component ").count(), 2);
+        assert_eq!(xml.matches("<item ").count(), 1);
+        let swap = export_part(
+            "3mf",
+            &doc,
+            r#"{"relief":"inlay"}"#,
+            "fdm-0.4",
+            &fit,
+            &sample(),
+            "",
+        )
+        .unwrap();
+        assert_ne!(parts, swap);
     }
 
     /// Golden values of the geometry this crate adds on top of the evaluator: the

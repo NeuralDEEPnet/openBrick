@@ -80,6 +80,7 @@ const EXIT_CODES: &str = "Exit codes: 0 success; 1 the validator found blockers 
 const BUILD_EXAMPLES: &str = "Examples:
   openbrick build parts/ndn.logo-tile.obpart.json --fit example --out tile.3mf
   openbrick build parts/ndn.logo-tile.obpart.json --param logo=./my-logo.svg --param relief=inlay --fit my-fit.json --out inlay.3mf
+  openbrick build parts/ndn.logo-tile.obpart.json --params relief=inlay inlayStyle=parts --fit my-fit.json --out inlay-parts.3mf
   openbrick build parts/ndn.logo-tile.obpart.json --params size=2x2 height=brick --fit my-fit.json --out tile.stl --json
 
 Exit codes: 0 written; 1 blockers (nothing written; each blocker is printed with its rule, measured value, threshold and fix); 2 usage or input error; 3 internal error.";

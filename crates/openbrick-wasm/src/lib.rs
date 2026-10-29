@@ -31,9 +31,11 @@
 //!   colour, the validation report of `openbrick_part::validate`, the
 //!   measurements, warnings, content hash and the removed artwork region as a
 //!   red display overlay. [`export_part`] evaluates the same inputs again and
-//!   returns a 3MF (one object per colour role) or a single-colour STL (the
-//!   kernel's fused union), laid out for printing; it refuses while the report
-//!   has a blocker.
+//!   returns a 3MF (one object whose parts are the colour roles, the
+//!   part-designer layout [`part::PART_EXPORT_LAYOUT`]) or a single-colour STL
+//!   (the kernel's fused union), laid out for printing; it refuses while the
+//!   report has a blocker. [`export_solids`] (Rust only) gives the solids it
+//!   writes, so the CLI's tests can compare meshes with the playground's.
 //! - Calibration coupon ([`coupon`], docs/plan/05 section 4): [`build_coupon`],
 //!   [`coupon_layout_json`] and [`export_coupon`].
 //! - Bundled data ([`data`]): the process profiles, the example fit profile, the
@@ -50,7 +52,10 @@ pub use data::{
     coupon_choices_json, disclaimer, example_fit_profile_json, logo_tile_part_json,
     max_asset_bytes, process_profiles_json, role_colors_json, sample_logo_svg,
 };
-pub use part::{evaluate_part, export_part, resolve_params_json, AssetSet, PartOut};
+pub use part::{
+    evaluate_part, export_part, export_solids, resolve_params_json, AssetSet, ExportSolid,
+    PartExport, PartOut,
+};
 
 use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_geom::nominal::{nominal_brick, Detail, NominalDims};

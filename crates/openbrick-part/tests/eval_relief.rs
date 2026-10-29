@@ -947,7 +947,8 @@ fn inlay_parts_fill_and_body_make_the_plain_tile() {
         "the parts of one object in the part-designer 3MF layout",
         "`body` (the body) and `accent` (the artwork fill of `art`)",
         "top face (the artwork) on the bed",
-        "turn it over in the slicer",
+        "`openbrick build` and the playground export it turned that way",
+        "turn a file in the design orientation over in the slicer",
     ] {
         assert!(roles.contains(words), "`{words}` in: {roles}");
     }

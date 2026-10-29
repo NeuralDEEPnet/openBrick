@@ -62,13 +62,14 @@ pub struct PartArgs {
 pub struct BuildArgs {
     #[command(flatten)]
     pub part: PartArgs,
-    /// Output file. .3mf: one object per colour role (body, accent), each with
-    /// its own filament in the slicer, plus traceability metadata. .stl: one
-    /// single-colour solid. Missing folders are created.
+    /// Output file. .3mf: one object whose parts are the colour roles (body,
+    /// accent), each part with its own filament in the slicer, plus
+    /// traceability metadata. .stl: one single-colour solid. Missing folders
+    /// are created.
     #[arg(short = 'o', long, value_name = "FILE")]
     pub out: PathBuf,
-    /// 3MF only: write one fused single-colour object instead of one object
-    /// per colour role.
+    /// 3MF only: write one fused single-colour object instead of one part per
+    /// colour role.
     #[arg(long)]
     pub fuse: bool,
 }
@@ -280,6 +281,15 @@ fn face_down(built: &Built) -> bool {
         .is_some_and(|a| a.face_on_bed == "top")
 }
 
+/// Whether the part is a multi-material inlay (`inlayStyle` `parts`): the
+/// logo fill is its own part inside the face, for an AMS or a tool changer.
+fn parts_inlay(built: &Built) -> bool {
+    built
+        .artwork
+        .as_ref()
+        .is_some_and(|a| a.inlay_style.as_deref() == Some("parts"))
+}
+
 /// Whether `process` is an FDM process: the bundled profiles name their
 /// technology in the id (`fdm-0.4`, `fdm-0.2`, `resin-msla`). Filament
 /// changes, PLA mass and the FDM slicer settings are only shown for these.
@@ -335,7 +345,10 @@ fn colour_changes(built: &Built, process: &ProcessProfile) -> Vec<Value> {
     let Some(a) = &built.artwork else {
         return Vec::new();
     };
-    if built.objects.len() < 2 || !is_fdm(process) {
+    // A parts inlay has no layer to change at: the logo fill and the face
+    // around it share every layer of the face, so only a multi-material
+    // printer prints it (the evaluator's warning says so).
+    if built.objects.len() < 2 || !is_fdm(process) || parts_inlay(built) {
         return Vec::new();
     }
     // Emboss: the artwork starts at the body top. Inlay (face down): the body
@@ -642,8 +655,12 @@ pub fn build(args: &BuildArgs, ui: Ui) -> Result<Outcome, Fail> {
             num(a.height_mm)
         ));
     }
-    if !changes.is_empty() && format == Format::ThreeMf && !args.fuse {
-        ui.say("  colours     multi-material (tool changer, AMS): give each object its own filament in the slicer.");
+    let parts = ev.built.objects.len() > 1 && format == Format::ThreeMf && !args.fuse;
+    if parts && is_fdm(&ev.process) && parts_inlay(&ev.built) {
+        ui.say("  colours     multi-material (AMS, tool changer): one object with a part per colour role; give each part its own filament in the slicer. No filament change is needed.");
+        ui.say("              one extruder: not for this part, as the logo and the face around it share every layer; build with --param inlayStyle=swap for a filament change.");
+    } else if !changes.is_empty() && parts {
+        ui.say("  colours     multi-material (AMS, tool changer): one object with a part per colour role; give each part its own filament in the slicer.");
         for c in &changes {
             let mm = |key: &str| format!("{:.2}", c[key].as_f64().unwrap_or(0.0));
             let boundary = match (c["boundaryLayer"].as_u64(), turned) {
@@ -667,7 +684,7 @@ pub fn build(args: &BuildArgs, ui: Ui) -> Result<Outcome, Fail> {
         && !args.fuse
     {
         ui.say(format!(
-            "  colours     {} prints one material at a time: the accent is its own object, so print it separately or paint it.",
+            "  colours     {} prints one material at a time: the accent is its own part, so print it separately or paint it.",
             ev.process.id
         ));
     }

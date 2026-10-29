@@ -52,6 +52,7 @@ openbrick-print = { path = "crates/openbrick-print" }
 openbrick-engine = { path = "crates/openbrick-engine" }
 openbrick-catalog = { path = "crates/openbrick-catalog" }
 openbrick-io = { path = "crates/openbrick-io" }
+openbrick-wasm = { path = "crates/openbrick-wasm" }
 
 [workspace.lints.clippy]
 all = "warn"

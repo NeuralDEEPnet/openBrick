@@ -206,6 +206,26 @@ fn json_output_follows_the_report_schema() {
     assert_eq!(meta["openbrick:contentHash"], hash);
     assert_eq!(meta["openbrick:fitProfile"], j["fitProfile"]["id"]);
     assert_eq!(meta["openbrick:process"], "fdm-0.4");
+    // The part-designer layout (docs/spikes/q18-slicer-multimaterial-import.md):
+    // one components object, named after the part, whose parts are the role
+    // objects; only it has a build item.
+    assert_eq!(out["layout"], "oneObjectWithParts");
+    let doc: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo().join(LOGO_TILE)).expect("the logo tile"),
+    )
+    .expect("JSON");
+    let assembly = &out["assembly"];
+    assert_eq!(assembly["name"], doc["name"]);
+    assert_eq!(meta["Title"], doc["name"]);
+    assert!(assembly["uuid"].is_string() && assembly["itemUuid"].is_string());
+    let components = assembly["components"].as_array().expect("components");
+    let objects = out["objects"].as_array().expect("objects");
+    assert_eq!(components.len(), objects.len());
+    for (c, o) in components.iter().zip(objects) {
+        assert_eq!(c["object"], o["name"]);
+        assert_eq!(c["uuid"], o["componentUuid"]);
+        assert!(o["itemUuid"].is_null(), "a part has no build item: {o}");
+    }
     // Human text went to stderr, so stdout held only the object.
     assert!(stderr(&o).contains("Built ndn.logo-tile"));
 }
@@ -516,6 +536,76 @@ fn reliefs_are_laid_out_the_way_they_print() {
     // The filament change goes at the first layer whose middle reaches the
     // top of the slab.
     assert_changes_at_the_slab_top(&j, slab);
+}
+
+#[test]
+fn a_parts_inlay_is_one_object_with_two_parts_and_no_filament_change() {
+    // inlayStyle parts: the logo fill is its own part inside the face, for an
+    // AMS or a tool changer. The fill and the face around it share every
+    // layer, so there is no single-extruder filament change to give.
+    let dir = Scratch::new("parts");
+    let o = openbrick(&[
+        "build",
+        LOGO_TILE,
+        "--fit",
+        "example",
+        "--param",
+        "relief=inlay",
+        "--param",
+        "inlayStyle=parts",
+        "--out",
+        &dir.arg("parts.3mf"),
+        "--json",
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let j = json_of(&o);
+    assert_eq!(j["artwork"]["inlayStyle"], "parts");
+    assert_eq!(j["orientation"]["turnedFaceDown"], true);
+    assert_eq!(j["colourChanges"], serde_json::json!([]));
+    let human = stderr(&o);
+    for part in [
+        "give each part its own filament",
+        "No filament change is needed",
+        "inlayStyle=swap",
+    ] {
+        assert!(human.contains(part), "summary lacks `{part}`:\n{human}");
+    }
+    assert!(!human.contains("filament change before layer"), "{human}");
+    let out = &j["outputs"][0];
+    assert_eq!(out["layout"], "oneObjectWithParts");
+    let parts: Vec<&str> = out["assembly"]["components"]
+        .as_array()
+        .expect("components")
+        .iter()
+        .filter_map(|c| c["object"].as_str())
+        .collect();
+    assert_eq!(parts, ["ndn.logo-tile body", "ndn.logo-tile accent"]);
+    // Face down: the fill lies on the bed, as deep as the inlay.
+    let accent = &out["objects"][1];
+    assert_eq!(accent["role"], "accent");
+    let depth = j["artwork"]["heightMm"].as_f64().expect("depth");
+    assert_eq!(accent["boundsMm"]["min"][2].as_f64(), Some(0.0));
+    let top = accent["boundsMm"]["max"][2].as_f64().expect("top");
+    assert!((top - depth).abs() < 1e-5, "{top} vs {depth}");
+
+    // The swap inlay (the default style) keeps its filament change, and its
+    // file differs: the face slab is the accent part there.
+    let o = openbrick(&[
+        "build",
+        LOGO_TILE,
+        "--fit",
+        "example",
+        "--param",
+        "relief=inlay",
+        "--out",
+        &dir.arg("swap.3mf"),
+        "--json",
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let swap = json_of(&o);
+    assert_eq!(swap["artwork"]["inlayStyle"], "swap");
+    assert!(!swap["colourChanges"].as_array().expect("hints").is_empty());
+    assert_ne!(swap["contentHash"], j["contentHash"]);
 }
 
 /// Every single-extruder hint of an inlay names the first layer whose middle

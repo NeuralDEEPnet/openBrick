@@ -2,12 +2,20 @@
 //! docs/plan/08 section 5) through `openbrick-io`, laid out the way they print,
 //! and describing every written file in the `--json` object so
 //! `scripts/validate-3mf.py` can compare it with what lib3mf reads.
+//!
+//! The CLI and the browser playground (`openbrick-wasm`'s `export_part`) share
+//! the two decisions that shape a printable file: the 3MF layout, [`LAYOUT`]
+//! (one object whose parts are the colour roles), and the face-down transform,
+//! [`openbrick_geom::turn_face_down`]. `crates/openbrick/tests/export_parity.rs`
+//! checks that both write the same meshes for the same inputs.
 
 use std::path::Path;
 
 use openbrick_geom::Mesh;
-use openbrick_io::threemf::{package_uuids, stored_fingerprint};
-use openbrick_io::{write_3mf, write_stl_binary, ExportMeta, ExportObject};
+use openbrick_io::threemf::{assembly_name, package_uuids_with_layout, stored_fingerprint};
+use openbrick_io::{
+    write_3mf_with_layout, write_stl_binary, ExportLayout, ExportMeta, ExportObject,
+};
 use serde_json::{json, Value};
 
 use crate::files::{absolute, write_file};
@@ -41,7 +49,7 @@ impl Format {
             Some("3mf") => Ok(Format::ThreeMf),
             Some("stl") => Ok(Format::Stl),
             _ => Err(Fail::Input(format!(
-                "{}: the output format follows the file extension; use .3mf (one object per colour role, with traceability metadata) or .stl (one single-colour solid)",
+                "{}: the output format follows the file extension; use .3mf (one object with a part per colour role, with traceability metadata) or .stl (one single-colour solid)",
                 path.display()
             ))),
         }
@@ -73,35 +81,26 @@ impl Solid {
     }
 }
 
-/// Turn the solids over together, face down: a half turn about the x axis
-/// through the centre of their common bounding box, so the top face lands on
-/// the bed (z = 0) and the box stays where it was. A rotation, not a mirror:
-/// triangle winding and closedness are unchanged, and artwork reads the right
-/// way round when the print is turned back over. Used for parts whose artwork
-/// prints face down (inlay, `Artwork::face_on_bed` = `top`).
+/// Turn the solids over together, face down, with the transform every export
+/// shares, [`openbrick_geom::turn_face_down`]: a half turn about the x axis
+/// inside their common bounding box, so the top face lands on the bed (z = 0)
+/// and the box stays where it was. A rotation, not a mirror: triangle winding
+/// and closedness are unchanged, and artwork reads the right way round when the
+/// print is turned back over. Used for parts whose artwork prints face down
+/// (inlay, `Artwork::face_on_bed` = `top`).
 pub fn turn_face_down(solids: &mut [Solid]) {
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for s in solids.iter() {
-        for p in &s.mesh.positions {
-            for k in 0..3 {
-                lo[k] = lo[k].min(f64::from(p[k]));
-                hi[k] = hi[k].max(f64::from(p[k]));
-            }
-        }
-    }
-    if !lo[1].is_finite() || !lo[2].is_finite() {
-        return;
-    }
-    // y -> (lo + hi) - y and z -> (lo + hi) - z: the box maps onto itself.
-    let (sy, sz) = (lo[1] + hi[1], lo[2] + hi[2]);
-    for s in solids.iter_mut() {
-        for p in &mut s.mesh.positions {
-            p[1] = (sy - f64::from(p[1])) as f32;
-            p[2] = (sz - f64::from(p[2])) as f32;
-        }
-    }
+    let mut meshes: Vec<&mut Mesh> = solids.iter_mut().map(|s| &mut s.mesh).collect();
+    openbrick_geom::turn_face_down(&mut meshes);
 }
+
+/// The 3MF layout of every file the CLI writes, the part-designer layout
+/// (docs/plan/05 section 7, docs/spikes/q18-slicer-multimaterial-import.md):
+/// several colour roles become the parts of one components object under a
+/// single build item, so Bambu Studio loads one object with its parts in place
+/// and PrusaSlicer offers to merge them into one multi-part object. A single
+/// solid (a fused build, the coupon) has nothing to group, and its file is
+/// exactly the separate-objects one.
+pub const LAYOUT: ExportLayout = ExportLayout::PART_DESIGNER;
 
 /// Volume of a closed mesh (divergence theorem in f64 over the stored f32
 /// coordinates, as `scripts/validate-3mf.py` computes it from lib3mf).
@@ -171,8 +170,17 @@ pub fn encode(
     };
     match format {
         Format::ThreeMf => {
-            let bytes = write_3mf(&objects, meta).map_err(|e| internal("3MF", e))?;
-            let uuids = package_uuids(&objects, meta);
+            let bytes =
+                write_3mf_with_layout(&objects, meta, LAYOUT).map_err(|e| internal("3MF", e))?;
+            let uuids = package_uuids_with_layout(&objects, meta, LAYOUT);
+            // The layout the file holds: a single solid is written as the
+            // separate layout, so it is reported as one.
+            let grouped = LAYOUT.groups(objects.len());
+            let layout = if grouped {
+                LAYOUT
+            } else {
+                ExportLayout::SeparateObjects
+            };
             let described: Vec<Value> = solids
                 .iter()
                 .enumerate()
@@ -189,13 +197,46 @@ pub fn encode(
                         "boundsMm": { "min": lo.map(f64::from), "max": hi.map(f64::from) },
                         "storedFingerprint": format!("{:016x}", stored_fingerprint(&s.mesh)),
                         "uuid": uuids.objects.get(i).map(|u| u.to_string()),
-                        "itemUuid": uuids.items.get(i).map(|u| u.to_string()),
+                        // A part of the components object has a component UUID
+                        // instead of a build item of its own.
+                        "itemUuid": if grouped {
+                            None
+                        } else {
+                            uuids.items.get(i).map(|u| u.to_string())
+                        },
+                        "componentUuid": uuids.components.get(i).map(|u| u.to_string()),
                     })
                 })
                 .collect();
+            // The components object, or null: its name, UUID and build item,
+            // and one identity component per part in object order (the 3MF
+            // matrix as 4 rows of 3), as the write_fixtures manifest has it.
+            let identity = [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0],
+            ];
+            let assembly = uuids.assembly.map(|uuid| {
+                let components: Vec<Value> = solids
+                    .iter()
+                    .zip(&uuids.components)
+                    .map(|(s, u)| {
+                        json!({ "object": s.name, "uuid": u.to_string(), "transform": identity })
+                    })
+                    .collect();
+                json!({
+                    "name": assembly_name(meta),
+                    "uuid": uuid.to_string(),
+                    "itemUuid": uuids.items.first().map(|u| u.to_string()),
+                    "components": components,
+                })
+            });
             let entry = json!({
                 "format": "3mf",
                 "bytes": bytes.len(),
+                "layout": layout.name(),
+                "assembly": assembly,
                 "buildUuid": uuids.build.to_string(),
                 "metadata": expected_metadata(meta),
                 "objects": described,
@@ -286,7 +327,10 @@ mod tests {
         );
         assert_eq!(solids[0].mesh.bounds(), ([0.0, 0.0, 0.5], [4.0, 8.0, 3.5]));
         // Golden fingerprints of the turned meshes (indices unchanged, only
-        // positions move), so a change to the turn shows up here.
+        // positions move), so a change to the turn shows up here. They were
+        // recorded with the CLI's own copy of the turn, before it became a call
+        // to openbrick_geom::turn_face_down: the shared transform gives the same
+        // bits.
         let prints: Vec<String> = solids
             .iter()
             .map(|s| format!("{:016x}", s.mesh.fingerprint()))
@@ -308,6 +352,69 @@ mod tests {
         assert!(bytes.starts_with(b"PK"));
         assert_eq!(entry["objects"][1]["boundsMm"]["min"][2], 0.0);
         assert_eq!(entry["metadata"]["openbrick:partId"], "test.box");
+        // Two roles: the part-designer layout, one components object (named
+        // after the part id, as the title is blank) whose parts are the solids.
+        let objects: Vec<ExportObject> = solids.iter().map(Solid::object).collect();
+        assert_eq!(
+            bytes,
+            write_3mf_with_layout(&objects, &meta, ExportLayout::PART_DESIGNER).expect("3MF")
+        );
+        assert_eq!(entry["layout"], "oneObjectWithParts");
+        let uuids = package_uuids_with_layout(&objects, &meta, ExportLayout::PART_DESIGNER);
+        let assembly = &entry["assembly"];
+        assert_eq!(assembly["name"], "test.box");
+        assert_eq!(
+            assembly["uuid"],
+            json!(uuids.assembly.map(|u| u.to_string()))
+        );
+        assert_eq!(assembly["itemUuid"], json!(uuids.items[0].to_string()));
+        assert_eq!(uuids.items.len(), 1, "one build item");
+        for (i, s) in solids.iter().enumerate() {
+            let o = &entry["objects"][i];
+            assert_eq!(o["itemUuid"], Value::Null, "a part has no build item");
+            assert_eq!(o["componentUuid"], json!(uuids.components[i].to_string()));
+            let c = &assembly["components"][i];
+            assert_eq!(c["object"], json!(s.name));
+            assert_eq!(c["uuid"], o["componentUuid"]);
+            assert_eq!(c["transform"][3], json!([0.0, 0.0, 0.0]));
+        }
+    }
+
+    #[test]
+    fn a_single_solid_is_written_as_the_separate_layout() {
+        // One solid (a fused build, the coupon) has nothing to group: the same
+        // bytes as write_3mf, an item of its own and no components object.
+        let solids = [Solid {
+            name: "tile".into(),
+            role: "body".into(),
+            mesh: cuboid([0.0, 0.0, 0.0], [4.0, 8.0, 3.0]),
+        }];
+        let meta = ExportMeta {
+            part_id: "test.box".into(),
+            version: "0.0.1".into(),
+            content_hash: "test".into(),
+            fit_profile_id: "none".into(),
+            process_id: "fdm-0.4".into(),
+            generator: crate::ui::GENERATOR.into(),
+            kernel_id: "none".into(),
+            title: "Box".into(),
+            serial: None,
+        };
+        let (bytes, entry) = encode(&solids, &meta, Format::ThreeMf).expect("a closed mesh");
+        let objects: Vec<ExportObject> = solids.iter().map(Solid::object).collect();
+        assert_eq!(
+            bytes,
+            openbrick_io::write_3mf(&objects, &meta).expect("3MF")
+        );
+        assert_eq!(entry["layout"], "separateObjects");
+        assert_eq!(entry["assembly"], Value::Null);
+        let uuids = openbrick_io::threemf::package_uuids(&objects, &meta);
+        assert_eq!(entry["buildUuid"], json!(uuids.build.to_string()));
+        assert_eq!(
+            entry["objects"][0]["itemUuid"],
+            json!(uuids.items[0].to_string())
+        );
+        assert_eq!(entry["objects"][0]["componentUuid"], Value::Null);
     }
 
     #[test]

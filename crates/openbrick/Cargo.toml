@@ -25,6 +25,10 @@ openbrick-io = { workspace = true }
 # the recorded fit profile against schemas/fit-profile.schema.json. MIT, already
 # in the tree through xtask, with the same features (no remote $ref fetching).
 jsonschema = { version = "0.60.2", default-features = false }
+# tests/export_parity.rs: the playground's export path (export_solids,
+# export_part), natively, to check that the CLI writes the same meshes. A
+# workspace crate; its wasm-bindgen dependency is for wasm32 only.
+openbrick-wasm = { workspace = true }
 
 [lints]
 workspace = true

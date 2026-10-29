@@ -37,7 +37,7 @@ test("every logo tile parameter gets a control with the document's limits", () =
     spec.groups.map((g) => [g.name, g.controls.map((c) => c.name)]),
     [
       ["Size", ["size", "height"]],
-      ["Artwork", ["logo", "relief"]],
+      ["Artwork", ["logo", "relief", "inlayStyle"]],
       // reliefHeight and margin name no group in the document.
       ["Details", ["reliefHeight", "margin"]],
     ],
@@ -62,6 +62,20 @@ test("every logo tile parameter gets a control with the document's limits", () =
     { value: "deboss", label: "Deboss" },
     { value: "inlay", label: "Inlay" },
   ]);
+  // The inlay style: a choice labelled in words, its options as the document
+  // labels them (one extruder or AMS / tool changer), shown only for an inlay.
+  const style = byName.inlayStyle;
+  assert.equal(style.kind, "choice");
+  assert.equal(style.label, "Inlay style");
+  assert.deepEqual(style.options, P.inlayStyle.options);
+  assert.deepEqual(
+    style.options.map((o) => o.value),
+    ["swap", "parts"],
+  );
+  for (const o of style.options) assert.ok(o.label.length > o.value.length, `option ${o.value} has a label in words`);
+  assert.equal(style.visibleWhen, P.inlayStyle.visibleWhen);
+  assert.equal(style.help, P.inlayStyle.help);
+  assert.equal(style.group, "Artwork");
 
   const rh = byName.reliefHeight;
   assert.deepEqual([rh.kind, rh.min, rh.max, rh.step, rh.unit], ["range", P.reliefHeight.min, P.reliefHeight.max, P.reliefHeight.step, "mm"]);
@@ -80,9 +94,22 @@ test("every logo tile parameter gets a control with the document's limits", () =
     height: P.height.default,
     logo: P.logo.default,
     relief: P.relief.default,
+    inlayStyle: P.inlayStyle.default,
     reliefHeight: P.reliefHeight.default,
     margin: P.margin.default,
   });
+});
+
+test("the inlay style is shown and sent only for an inlay", () => {
+  const spec = controlsFor(LOGO_TILE, { maxStuds: 16 });
+  for (const relief of ["emboss", "deboss", "inlay"]) {
+    const values = { ...defaultValues(spec), relief, inlayStyle: "parts" };
+    const { visible, errors } = visibility(spec, values);
+    assert.deepEqual(errors, []);
+    assert.equal(visible.inlayStyle, relief === "inlay", relief);
+    const sent = paramOverrides(spec, values, visible);
+    assert.equal(sent.inlayStyle, relief === "inlay" ? "parts" : undefined, relief);
+  }
 });
 
 test("other parameter types map to plain controls", () => {
@@ -138,9 +165,29 @@ test("hidden parameters are left out of the overrides, so they take the document
   assert.match(r.errors[0], /^a: visibleWhen/);
 });
 
-test("download names follow {id}-{w}x{h}-{relief}.{ext}", () => {
+test("download names follow {id}-{w}x{h}-{relief}[-{inlayStyle}].{ext}", () => {
   assert.equal(downloadName(LOGO_TILE, { size: [2, 4], relief: "emboss" }, "3mf"), "ndn.logo-tile-2x4-emboss.3mf");
   assert.equal(downloadName(LOGO_TILE, { size: [16, 1], relief: "inlay" }, "stl"), "ndn.logo-tile-16x1-inlay.stl");
+  // The core's resolved values carry every parameter, hidden ones too: the
+  // inlay style is named only while it is shown, so an emboss keeps its name
+  // and the two inlays never share one.
+  const core = (relief, inlayStyle) => ({ size: [2, 4], relief, inlayStyle, height: "plate" });
+  const names = [
+    ["emboss", "swap"],
+    ["deboss", "parts"],
+    ["inlay", "swap"],
+    ["inlay", "parts"],
+  ].map(([relief, style]) => downloadName(LOGO_TILE, core(relief, style), "3mf", { inlayStyle: relief === "inlay" }));
+  assert.deepEqual(names, [
+    "ndn.logo-tile-2x4-emboss.3mf",
+    "ndn.logo-tile-2x4-deboss.3mf",
+    "ndn.logo-tile-2x4-inlay-swap.3mf",
+    "ndn.logo-tile-2x4-inlay-parts.3mf",
+  ]);
+  assert.equal(new Set(names).size, names.length, "unique");
+  // Without the core's answer the page reads visibleWhen itself.
+  assert.equal(downloadName(LOGO_TILE, core("inlay", "parts"), "stl"), "ndn.logo-tile-2x4-inlay-parts.stl");
+  assert.equal(downloadName(LOGO_TILE, core("emboss", "parts"), "stl"), "ndn.logo-tile-2x4-emboss.stl");
   assert.equal(downloadName({ id: "my part/1", params: {} }, {}, "3mf"), "my-part-1.3mf", "unsafe characters become -");
   assert.equal(downloadName(null, {}, "stl"), "part.stl");
   assert.equal(couponDownloadName("coupon-fdm-0.4-cross", "3mf"), "coupon-fdm-0.4-cross.3mf");

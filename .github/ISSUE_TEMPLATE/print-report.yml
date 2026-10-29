@@ -24,7 +24,11 @@ body:
   - type: dropdown
     attributes:
       label: Tile relief mode
-      options: [emboss, deboss, inlay, several]
+      options: [emboss, deboss, inlay (filament swap), inlay (parts), several]
+  - type: textarea
+    attributes:
+      label: How the 3MF loaded
+      description: "Did it load as one object with two parts, with the logo on or in the face? Which dialogs appeared (PrusaSlicer's Multi-part object detected, Bambu Studio's Standard 3MF Import color) and what did you choose? Which filament or tool did each part get? (docs/guides/print-test.md section 6)"
   - type: input
     attributes: { label: Control pulls (N), description: "genuine 2x4 on genuine 2x4, three values" }
   - type: input

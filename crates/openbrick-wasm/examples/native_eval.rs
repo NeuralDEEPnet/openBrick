@@ -7,23 +7,29 @@
 //! ```
 //!
 //! Prints one JSON object: the kernel, then for each case of the logo tile with
-//! its sample artwork on fdm-0.4 (emboss, deboss and inlay with the example fit
-//! profile, emboss without a fit profile) the parameter overrides, the content
-//! hash, the triangle count, each object's role, triangles and fingerprint, and
-//! the blocking rules; then the default coupon's content hash, triangles and
-//! fingerprint. Under `exports`: the files `export_part` and `export_coupon`
-//! write for the downloads the smoke test makes (the emboss 3MF and STL and the
-//! face-down inlay 3MF with the example fit, the default coupon 3MF), each with
-//! its download name, byte count and SHA-256, so the downloaded files must be
-//! byte-identical; the STL also with its triangle count. Content hashes are the
-//! same on every target; triangle counts, fingerprints and file hashes are
-//! bit-exact on x86-64 Linux, where CI runs the smoke test.
+//! its sample artwork on fdm-0.4 (emboss, deboss, the filament-swap inlay and
+//! the multi-material parts inlay with the example fit profile, emboss without
+//! a fit profile) the parameter overrides, the content hash, the triangle
+//! count, each object's role, triangles and fingerprint, and the blocking
+//! rules; then the default coupon's content hash, triangles and fingerprint.
+//! Under `exports`: the files `export_part` and `export_coupon` write for the
+//! downloads the smoke test makes (the emboss 3MF and STL, the face-down swap
+//! and parts inlay 3MFs with the example fit, the default coupon 3MF), each
+//! with its download name, byte count and SHA-256, so the downloaded files must
+//! be byte-identical; the STL also with its triangle count, and each 3MF with
+//! its number of build items and components (the part-designer layout: one
+//! item, a component per colour role). Content hashes are the same on every
+//! target; triangle counts, fingerprints and file hashes are bit-exact on
+//! x86-64 Linux, where CI runs the smoke test.
 
 use std::time::Instant;
 
+use openbrick_io::threemf_model_xml_with_layout;
+use openbrick_io::ExportObject;
+use openbrick_wasm::part::PART_EXPORT_LAYOUT;
 use openbrick_wasm::{
     build_coupon, evaluate_part, example_fit_profile_json, export_coupon, export_part,
-    logo_tile_part_json, sample_logo_svg, AssetSet,
+    export_solids, logo_tile_part_json, sample_logo_svg, AssetSet,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -37,6 +43,24 @@ fn file(name: &str, bytes: &[u8]) -> Value {
     json!({ "name": name, "bytes": bytes.len(), "sha256": hash })
 }
 
+/// Build items and components of the model part `export_part` writes for a
+/// 3MF of the logo tile with `params` (example fit), from the same solids.
+fn layout_counts(doc: &str, params: &str, fit: &str, assets: &AssetSet) -> Value {
+    let export = export_solids("3mf", doc, params, "fdm-0.4", fit, assets, "")
+        .unwrap_or_else(|e| panic!("3mf {params}: {e}"));
+    let objects: Vec<ExportObject> = export
+        .solids
+        .iter()
+        .map(|s| ExportObject::new(s.name.clone(), s.role.clone(), Some(s.color), &s.mesh))
+        .collect();
+    let xml = threemf_model_xml_with_layout(&objects, &export.meta, PART_EXPORT_LAYOUT)
+        .expect("the model part");
+    json!({
+        "items": xml.matches("<item ").count(),
+        "components": xml.matches("<component ").count(),
+    })
+}
+
 fn main() {
     let doc = logo_tile_part_json();
     let fit = example_fit_profile_json();
@@ -48,6 +72,11 @@ fn main() {
         ("emboss", json!({}), true),
         ("deboss", json!({ "relief": "deboss" }), true),
         ("inlay", json!({ "relief": "inlay" }), true),
+        (
+            "inlay-parts",
+            json!({ "relief": "inlay", "inlayStyle": "parts" }),
+            true,
+        ),
         ("emboss-no-fit", json!({}), false),
     ];
     let mut out = serde_json::Map::new();
@@ -101,6 +130,14 @@ fn main() {
         export_part(format, &doc, params, "fdm-0.4", &fit, &assets, "")
             .unwrap_or_else(|e| panic!("{format} {params}: {e}"))
     };
+    // A 3MF download with its layout counts.
+    let threemf = |name: &str, params: &str| {
+        let mut f = file(name, &export("3mf", params));
+        f["layout"] = layout_counts(&doc, params, &fit, &assets);
+        f
+    };
+    let swap = r#"{"relief":"inlay"}"#;
+    let parts = r#"{"relief":"inlay","inlayStyle":"parts"}"#;
     let stl = export("stl", "{}");
     let stl_triangles = u32::from_le_bytes(stl[80..84].try_into().expect("an STL header"));
     let mut stl_file = file("ndn.logo-tile-2x4-emboss.stl", &stl);
@@ -123,12 +160,10 @@ fn main() {
             "ms": (ms * 10.0).round() / 10.0,
         },
         "exports": {
-            "emboss3mf": file("ndn.logo-tile-2x4-emboss.3mf", &export("3mf", "{}")),
+            "emboss3mf": threemf("ndn.logo-tile-2x4-emboss.3mf", "{}"),
             "embossStl": stl_file,
-            "inlay3mf": file(
-                "ndn.logo-tile-2x4-inlay.3mf",
-                &export("3mf", r#"{"relief":"inlay"}"#)
-            ),
+            "inlay3mf": threemf("ndn.logo-tile-2x4-inlay-swap.3mf", swap),
+            "inlayParts3mf": threemf("ndn.logo-tile-2x4-inlay-parts.3mf", parts),
             "coupon3mf": file(&format!("{}.3mf", coupon.file_stem()), &coupon_3mf),
         },
     });

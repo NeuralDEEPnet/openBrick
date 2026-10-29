@@ -964,7 +964,7 @@ fn colour_roles_warning(
     };
     let face = match relief.map(|r| r.mode) {
         Some(relief::Mode::Inlay) => {
-            "print it with the top face (the artwork) on the bed: the export keeps the design orientation, so turn it over in the slicer"
+            "print it with the top face (the artwork) on the bed: `openbrick build` and the playground export it turned that way (openbrick_geom::turn_face_down); turn a file in the design orientation over in the slicer"
         }
         _ => "print it with the bottom face on the bed, as designed",
     };

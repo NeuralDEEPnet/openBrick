@@ -5,8 +5,8 @@
 // 1. Builds the core (`cargo xtask wasm`) and the app (vite build), unless --no-build.
 // 2. Gets the native values from `cargo run --release -p openbrick-wasm --example
 //    native_eval`, which calls the same Rust functions the worker calls: the logo
-//    tile with its sample artwork (emboss, deboss and inlay with the example fit
-//    profile, emboss without one) and the default coupon.
+//    tile with its sample artwork (emboss, deboss, the swap and the parts inlay
+//    with the example fit profile, emboss without one) and the default coupon.
 // 3. Serves dist/ on 127.0.0.1 and opens it in headless Chromium with Playwright.
 //    The WebGL2 run: the first part (the sample logo, emboss, example fit) has the
 //    native content hash, triangle count and per-object fingerprints and is drawn;
@@ -14,7 +14,13 @@
 //    shows the FEATURE.MIN warning with rule id, values and fix; "Use sample logo"
 //    after an uploaded SVG gives the native part back; a file over the core's
 //    limit is refused before it is sent; deboss and inlay change the meshes and
-//    equal native; "None" fit disables both downloads with FIT.MISSING shown and
+//    equal native; the inlay style control is shown only for an inlay, labelled
+//    in words; the multi-material (parts) inlay equals native, and its 3MF
+//    downloads under its own name, byte-identical to native; every part 3MF
+//    downloaded (emboss, swap and parts inlay) is in the part-designer layout,
+//    one build item and one components object with a component per colour role
+//    (docs/spikes/q18-slicer-multimaterial-import.md), as native_eval counted;
+//    "None" fit disables both downloads with FIT.MISSING shown and
 //    a link to the calibration coupon; with the example fit the 3MF and STL
 //    download (saved for scripts/validate-3mf.py) and every downloaded file is
 //    byte-identical to the one native_eval writes with the same functions (so
@@ -40,8 +46,11 @@
 //                       [--screenshots <dir>] [--downloads <dir>]
 //
 // Downloads go to apps/web/smoke-downloads/ unless --downloads names another
-// directory. Chromium renders with SwiftShader here, so this proves the page
-// works; it says nothing about speed on a device.
+// directory; the CI web job then reads every downloaded 3MF (emboss, swap and
+// parts inlay, coupon) with lib3mf: python -I scripts/validate-3mf.py
+// --self-test apps/web/smoke-downloads/*.3mf. Chromium renders with
+// SwiftShader here, so this proves the page works; it says nothing about speed
+// on a device.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -52,6 +61,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inflateRawSync } from "node:zlib";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = resolve(here, "../..");
@@ -90,8 +100,8 @@ function run(command, commandArgs, options = {}) {
 function nativeValues() {
   const out = run("cargo", ["run", "-q", "--release", "-p", "openbrick-wasm", "--example", "native_eval"]);
   const native = JSON.parse(out);
-  for (const c of ["emboss", "deboss", "inlay", "emboss-no-fit"]) if (!native.part[c]) throw new Error(`native_eval printed no ${c} case:\n${out}`);
-  for (const f of ["emboss3mf", "embossStl", "inlay3mf", "coupon3mf"]) if (!native.exports?.[f]) throw new Error(`native_eval printed no ${f} export:\n${out}`);
+  for (const c of ["emboss", "deboss", "inlay", "inlay-parts", "emboss-no-fit"]) if (!native.part[c]) throw new Error(`native_eval printed no ${c} case:\n${out}`);
+  for (const f of ["emboss3mf", "embossStl", "inlay3mf", "inlayParts3mf", "coupon3mf"]) if (!native.exports?.[f]) throw new Error(`native_eval printed no ${f} export:\n${out}`);
   return native;
 }
 
@@ -227,6 +237,48 @@ function checkFile(file, native, label) {
   );
 }
 
+/**
+ * The model part (3D/3dmodel.model) of a 3MF the core wrote, as text: walks the
+ * zip's local headers (the writer records sizes up front and uses stored or
+ * deflate entries only, crates/openbrick-io/src/zip_writer.rs).
+ */
+function modelXml(bytes) {
+  let at = 0;
+  while (at + 30 <= bytes.length && bytes.readUInt32LE(at) === 0x04034b50) {
+    const method = bytes.readUInt16LE(at + 8);
+    const packed = bytes.readUInt32LE(at + 18);
+    const nameLength = bytes.readUInt16LE(at + 26);
+    const extraLength = bytes.readUInt16LE(at + 28);
+    const name = bytes.toString("latin1", at + 30, at + 30 + nameLength);
+    const start = at + 30 + nameLength + extraLength;
+    const data = bytes.subarray(start, start + packed);
+    if (name === "3D/3dmodel.model") return (method === 8 ? inflateRawSync(data) : data).toString("utf8");
+    at = start + packed;
+  }
+  throw new Error("no 3D/3dmodel.model in the package");
+}
+
+/**
+ * The part-designer layout (docs/spikes/q18-slicer-multimaterial-import.md):
+ * one build item, one components object with one component per colour role,
+ * as native_eval counted them.
+ */
+function checkLayout(file, native, roles, label) {
+  const xml = modelXml(file.bytes);
+  const items = (xml.match(/<item /g) ?? []).length;
+  const components = (xml.match(/<component /g) ?? []).length;
+  const groups = (xml.match(/<components>/g) ?? []).length;
+  check(
+    items === 1 && groups === 1 && components === roles,
+    `${label}: ${items} build items, ${groups} components objects, ${components} components; the part-designer layout has 1, 1 and ${roles}`,
+  );
+  check(
+    items === native.layout?.items && components === native.layout?.components,
+    `${label}: ${items} items and ${components} components, native ${JSON.stringify(native.layout)}`,
+  );
+  return { items, components };
+}
+
 /** Wait until the page's state is `want` (or throw with the last state). */
 async function waitState(page, want, timeoutMs, label) {
   try {
@@ -331,17 +383,52 @@ async function fullRun(browser, origin, native) {
   // The inlay is exported turned face down; lib3mf checks that file too.
   const inlay = await download(page, "#download-3mf", `${label} inlay 3MF`);
   checkFile(inlay, native.exports.inlay3mf, `${label} inlay 3MF`);
+  checkLayout(inlay, native.exports.inlay3mf, native.part.inlay.meshes.length, `${label} inlay 3MF`);
   check(await page.isHidden('[data-param="reliefHeight"]'), `${label}: reliefHeight is shown for an inlay`);
   const inlayNotes = await page.textContent("#notes");
   check(/filament change/.test(inlayNotes), `${label}: the inlay note on the filament change is missing: "${inlayNotes}"`);
+  // The inlay style: shown only for an inlay, labelled in words, swap first.
+  const styleControl = '[data-param="inlayStyle"]';
+  check(await page.isVisible(styleControl), `${label}: the inlay style is hidden for an inlay`);
+  const styleText = await page.textContent(styleControl);
+  for (const words of ["Inlay style", "Filament swap (one extruder)", "Logo as its own part (AMS, tool changer)"]) {
+    check(styleText.includes(words), `${label}: the inlay style control lacks "${words}": "${styleText}"`);
+  }
+  check(await page.isChecked('input[name="p-inlayStyle"][value="swap"]'), `${label}: the inlay style does not start at swap`);
   if (shots) {
     await settle(page);
     await page.screenshot({ path: join(shots, "desktop-light-inlay.png") });
   }
+  // The multi-material inlay: the logo fill is its own part. It equals native,
+  // downloads under its own name as one object with two parts, face down, and
+  // the CI step after the smoke reads it with lib3mf like every download.
+  n = w.evaluations;
+  await page.check('input[name="p-inlayStyle"][value="parts"]');
+  w = await waitFor(page, { after: n, want: (p) => p.params.relief === "inlay" && p.params.inlayStyle === "parts" }, 60_000, `${label} inlay parts`);
+  checkPart(w.part, native.part["inlay-parts"], `${label} inlay parts`);
+  check(w.part.contentHash !== relief.inlay.contentHash, `${label}: the parts inlay has the swap inlay's content hash`);
+  check(w.part.faceOnBed === "top", `${label}: the parts inlay is not exported face down (${w.part.faceOnBed})`);
+  await drawnStats(page, `${label} inlay parts`);
+  const partsNotes = await page.textContent("#notes");
+  check(/no filament change is needed/.test(partsNotes), `${label}: the parts inlay note does not say no filament change is needed: "${partsNotes}"`);
+  check((await page.textContent("#legend")).includes("Logo fill"), `${label}: the legend does not name the logo fill`);
+  const inlayParts = await download(page, "#download-3mf", `${label} parts inlay 3MF`);
+  checkFile(inlayParts, native.exports.inlayParts3mf, `${label} parts inlay 3MF`);
+  checkLayout(inlayParts, native.exports.inlayParts3mf, native.part["inlay-parts"].meshes.length, `${label} parts inlay 3MF`);
+  check(inlayParts.name !== inlay.name, `${label}: both inlays download as ${inlay.name}`);
+  if (shots) {
+    await settle(page);
+    await page.screenshot({ path: join(shots, "desktop-light-inlay-parts.png") });
+  }
+  n = w.evaluations;
+  await page.check('input[name="p-inlayStyle"][value="swap"]');
+  w = await waitFor(page, { after: n, want: (p) => p.params.inlayStyle === "swap" }, 60_000, `${label} inlay swap again`);
+  checkPart(w.part, native.part.inlay, `${label} inlay swap again`);
   n = w.evaluations;
   await page.check('input[name="p-relief"][value="emboss"]');
   w = await waitFor(page, { after: n, want: (p) => p.params.relief === "emboss" }, 60_000, `${label} emboss again`);
   check(await page.isVisible('[data-param="reliefHeight"]'), `${label}: reliefHeight is hidden for an emboss`);
+  check(await page.isHidden(styleControl), `${label}: the inlay style is shown for an emboss`);
 
   // No fit profile: FIT.MISSING blocks both downloads, with the reason and the way out.
   n = w.evaluations;
@@ -367,6 +454,7 @@ async function fullRun(browser, origin, native) {
   const threemf = await download(page, "#download-3mf", `${label} 3MF`);
   check(threemf.bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 3, 4])), `${label}: the 3MF is not a zip container`);
   checkFile(threemf, native.exports.emboss3mf, `${label} 3MF`);
+  checkLayout(threemf, native.exports.emboss3mf, native.part.emboss.meshes.length, `${label} 3MF`);
   // The STL: byte-identical to the native export, which the openbrick-wasm
   // tests check is closed and has the kernel's volume.
   const stl = await download(page, "#download-stl", `${label} STL`);
@@ -543,13 +631,14 @@ async function fullRun(browser, origin, native) {
   check(w.warnings.length === 0, `${label}: page warnings: ${w.warnings.join(" | ")}`);
   console.log(
     `# ${label}: first part after ${(firstMs / 1000).toFixed(1)} s (evaluated in ${Math.round(w.part.buildMs)} ms), ` +
-      `emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash.slice(0, 12)}…, deboss and inlay equal native, ` +
+      `emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash.slice(0, 12)}…, deboss and both inlays equal native, ` +
+      `the parts inlay downloads as ${inlayParts.name} (one object with two parts), ` +
       `FIT.MISSING blocks downloads, 3MF ${threemf.bytes.length} bytes, STL ${count} triangles (both byte-identical to native), ${raceNote}, ` +
       `a refused fit profile and a refused coupon layout empty the view, ${cancelNote}, ` +
       `camera below the ground (y ${under.camera[1].toFixed(1)} mm), coupon ${nc.triangles} triangles in ${Math.round(w.coupon?.buildMs ?? 0)} ms, coupon 3MF ${coupon.bytes.length} bytes`,
   );
   await context.close();
-  return [threemf.path, inlay.path, coupon.path];
+  return [threemf.path, inlay.path, inlayParts.path, coupon.path];
 }
 
 async function webgpuRun(browser, origin, native) {

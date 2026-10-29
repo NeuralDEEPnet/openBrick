@@ -39,9 +39,10 @@ Generic rules for every 3MF, read in lib3mf strict mode:
       not to emit overlapping objects; touching is fine): sampled with a grid of
       vertical lines over the region where their boxes overlap, each line's
       inside intervals computed from its crossings with each mesh. A line
-      through an edge or a vertex, or with an odd number of crossings, is
-      skipped, and a pair with more than half its lines skipped fails as not
-      checked. The sample can miss an overlap narrower than the grid spacing;
+      that misses either mesh cannot show an overlap and is not counted; a
+      line through an edge or a vertex, or with an odd number of crossings, is
+      skipped, and a pair with more than half of its lines through both
+      skipped fails as not checked. The sample can miss an overlap narrower than the grid spacing;
       the Rust tests prove non-overlap of the evaluator's objects with kernel
       intersections;
     - the traceability metadata of docs/plan/05 section 3 is present and not
@@ -62,13 +63,19 @@ lib3mf's vertices) and bounding box, the build, object, item and component
 UUIDs, the components object's name and each component's object and
 transform, and the model metadata value by value; per STL (read with lib3mf's
 STL reader): triangle count and volume, for the merged file and each per-role
-file. Manifests written before the layout existed are read as the separate
-layout. A CLI JSON gets the same 3MF checks
-against the "objects", "buildUuid" and "metadata" of each output; its STL must
-hold exactly the reported triangles (header and size), and lib3mf must read a
-closed, oriented solid of the reported volume (its reader drops triangles that
-become degenerate when it welds vertices, so it may count fewer). A CLI JSON
-whose command failed ("ok": false) fails.
+file. A layout name other than "separateObjects" and "oneObjectWithParts"
+fails. A CLI JSON gets the same 3MF checks against each output's "layout",
+"assembly" (the components object: name, UUID, build item UUID, and per
+component its object, UUID and transform), "objects" (with "itemUuid" null and
+a "componentUuid" for a part of the components object), "buildUuid" and
+"metadata": `openbrick build` writes several colour roles in the part-designer
+layout (openbrick_io::ExportLayout::PART_DESIGNER) and one solid as the
+separate layout. Manifests and CLI JSON written before the layout existed (no
+"layout") are read as the separate layout, which is what they described. A
+CLI JSON's STL must hold exactly the reported triangles (header and size), and
+lib3mf must read a closed, oriented solid of the reported volume (its reader
+drops triangles that become degenerate when it welds vertices, so it may count
+fewer). A CLI JSON whose command failed ("ok": false) fails.
 
 --self-test first writes broken copies of the first 3MF (a flipped triangle, a
 malformed UUID, a missing build item, another unit, a missing and a blank
@@ -79,12 +86,19 @@ components object, the first such 3MF gets broken copies too (overlapping
 parts, a component with a transform, a component without a UUID, a part placed
 twice, a part left out, overlapping parts that cannot be sampled). lib3mf
 itself refuses the malformed and the missing UUID; the self-test requires its
-message.
+message. When a manifest or CLI JSON describes a components object, its
+description is broken too, against the unchanged file (the separate layout
+claimed, an assembly without its layout, an unknown layout, another
+components object name, a part with a build item of its own, the parts in
+another order), and each must fail; and the first description of a
+separate-layout file must still pass with the keys the layout added removed,
+as a description written before them.
 
 Exit status: 0 when everything passes, 1 on any failure, 2 on bad usage.
 Requires: pip install -r scripts/requirements-validate-3mf.txt (lib3mf 2.5.0).
 """
 
+import copy
 import json
 import math
 import os
@@ -141,9 +155,12 @@ SEPARATE_LAYOUT = "separateObjects"
 OVERLAP_LINES = 64
 OVERLAP_TOLERANCE_MM = 1e-4
 # A pair of objects whose boxes overlap must be sampled by at least this share
-# of the lines; the rest ran through an edge or a vertex, or crossed a mesh an
-# odd number of times (an open mesh), and say nothing. Below it the pair fails
-# as not checked, so an overlap cannot hide behind lines that were all skipped.
+# of the lines that pass through both (a line that misses either one cannot
+# show an overlap and is not counted); the rest ran through an edge or a
+# vertex, or crossed a mesh an odd number of times (an open mesh), and say
+# nothing. Below it the pair fails as not checked, so an overlap cannot hide
+# behind lines that were all skipped, nor behind the empty parts of a sparse
+# logo's box.
 # (The nudged lines miss every edge of the exports in CI: none is skipped.)
 OVERLAP_MIN_SAMPLED = 0.5
 # A line closer than this (in barycentric terms) to a triangle edge is skipped:
@@ -379,7 +396,11 @@ def shared_length(a, b):
 def overlap(tris_a, tris_b):
     """Sampled overlap of two closed meshes: (longest shared stretch of a
     vertical line, its (x, y), estimated shared volume, lines used, lines
-    skipped). None when their boxes share no volume, so they cannot overlap."""
+    skipped). None when their boxes share no volume, so they cannot overlap.
+    A line that misses either mesh (no crossing at all) cannot show an overlap
+    and counts as neither used nor skipped: only lines through both decide
+    whether the pair was sampled well enough, so the empty parts of a sparse
+    logo's box cannot outvote the lines that had to be skipped through it."""
     (alo, ahi), (blo, bhi) = box_of(tris_a), box_of(tris_b)
     lo = [max(alo[k], blo[k]) for k in range(3)]
     hi = [min(ahi[k], bhi[k]) for k in range(3)]
@@ -409,6 +430,8 @@ def overlap(tris_a, tris_b):
         for x in xs:
             ia = inside_intervals(rows_a[j], x, y)
             ib = inside_intervals(rows_b[j], x, y)
+            if ia == [] or ib == []:
+                continue  # the line misses a mesh: no overlap possible on it
             if ia is None or ib is None:
                 skipped += 1
                 continue
@@ -442,9 +465,10 @@ def check_overlaps(meshes, parts):
             if used < OVERLAP_MIN_SAMPLED * lines:
                 problems.append(
                     f"{kind} {a.GetName()!r} and {b.GetName()!r} were not checked for overlap: "
-                    f"{skipped} of the {lines} vertical lines over the region where their boxes "
-                    "overlap ran through an edge or a vertex or crossed a mesh an odd number of "
-                    f"times, more than {1 - OVERLAP_MIN_SAMPLED:.0%}; an overlap could hide there"
+                    f"{skipped} of the {lines} vertical lines through both of them (over the "
+                    "region where their boxes overlap) ran through an edge or a vertex or "
+                    f"crossed a mesh an odd number of times, more than {1 - OVERLAP_MIN_SAMPLED:.0%}; "
+                    "an overlap could hide there"
                 )
             if worst > OVERLAP_TOLERANCE_MM:
                 problems.append(
@@ -643,10 +667,16 @@ def check_3mf_expected(model, fixture):
     while items.MoveNext():
         item = items.GetCurrent()
         item_uuids[item.GetObjectResourceID()] = item.GetUUID()[1]
-    # The layout: manifests written before it existed are the separate layout.
+    # The layout: manifests and CLI JSON written before it existed are the
+    # separate layout.
     layout = fixture.get("layout", SEPARATE_LAYOUT)
     assemblies = components_objects(model)
     expected_assembly = fixture.get("assembly")
+    if layout not in (SEPARATE_LAYOUT, GROUPED_LAYOUT):
+        problems.append(
+            f"unknown layout {layout!r}; expected {SEPARATE_LAYOUT!r} or {GROUPED_LAYOUT!r} "
+            "(openbrick_io::ExportLayout::name)"
+        )
     if (layout == GROUPED_LAYOUT) != bool(expected_assembly):
         problems.append(f"manifest layout {layout!r} and its assembly entry disagree")
     if expected_assembly is None:
@@ -780,15 +810,18 @@ class Report:
             print(f"ok   {label}" + (f": {summary}" if summary else ""))
 
 
-def validate_manifest(path, report):
+def validate_manifest(path, report, described=None):
     """A write_fixtures manifest or an openbrick CLI JSON object; returns the
-    3MF paths it checked."""
+    3MF paths it checked, and appends (3MF path, its description) to
+    `described` for the self-test."""
     with open(path, encoding="utf-8") as f:
         manifest = json.load(f)
+    if described is None:
+        described = []
     if isinstance(manifest, dict) and "fixtures" in manifest:
-        return validate_fixtures(path, manifest, report)
+        return validate_fixtures(path, manifest, report, described)
     if isinstance(manifest, dict) and "outputs" in manifest:
-        return validate_cli_outputs(path, manifest, report)
+        return validate_cli_outputs(path, manifest, report, described)
     report.result(
         path,
         [
@@ -799,10 +832,10 @@ def validate_manifest(path, report):
     return []
 
 
-def validate_cli_outputs(path, manifest, report):
+def validate_cli_outputs(path, manifest, report, described):
     """The 3MF and STL files an `openbrick ... --json` object (or a coupon
-    --manifest) lists, each against the objects, UUIDs and metadata the CLI
-    reports for it."""
+    --manifest) lists, each against the layout, components object, objects,
+    UUIDs and metadata the CLI reports for it."""
     if manifest.get("ok") is False:
         report.result(
             path,
@@ -826,7 +859,12 @@ def validate_cli_outputs(path, manifest, report):
             model, problems, summary = check_3mf_generic(file)
             if model is not None:
                 problems += check_3mf_expected(model, o)
-            report.result(label, problems, summary + f", matches {os.path.basename(path)}")
+                if not problems:
+                    described.append((file, o))
+            layout = o.get("layout", SEPARATE_LAYOUT)
+            report.result(
+                label, problems, summary + f", {layout}, matches {os.path.basename(path)}"
+            )
         else:
             problems, merged = check_cli_stl(file, o)
             report.result(
@@ -874,7 +912,7 @@ def check_cli_stl(path, entry):
     return problems, count - got
 
 
-def validate_fixtures(path, manifest, report):
+def validate_fixtures(path, manifest, report, described):
     if manifest.get("openbrickNamespace") != OPENBRICK_NS:
         report.result(path, [f"manifest namespace {manifest.get('openbrickNamespace')!r}"])
         return []
@@ -886,6 +924,8 @@ def validate_fixtures(path, manifest, report):
         model, problems, summary = check_3mf_generic(threemf)
         if model is not None:
             problems += check_3mf_expected(model, fx)
+            if not problems:
+                described.append((threemf, fx))
         report.result(fx["threemf"], problems, summary + ", matches the manifest")
         total_volume = sum(o["volumeMm3"] for o in fx["objects"])
         stl = os.path.join(base, fx["stl"])
@@ -1057,16 +1097,108 @@ def has_components(path):
         return "<components>" in z.read("3D/3dmodel.model").decode("utf-8")
 
 
-def self_test(paths, report):
+def claim_separate_layout(entry):
+    entry["layout"] = SEPARATE_LAYOUT
+    entry["assembly"] = None
+
+
+def drop_layout_keep_assembly(entry):
+    entry["layout"] = SEPARATE_LAYOUT
+
+
+def unknown_layout(entry):
+    entry["layout"] = "sideBySide"
+
+
+def rename_assembly(entry):
+    entry["assembly"]["name"] += " (renamed)"
+
+
+def give_part_an_item(entry):
+    entry["objects"][0]["itemUuid"] = str(
+        uuid.uuid5(UUID_ROOT, "validate-3mf self-test: a part's own build item")
+    )
+
+
+def reorder_components(entry):
+    components = entry["assembly"]["components"]
+    components[0], components[-1] = components[-1], components[0]
+
+
+# Broken descriptions (manifest entries or CLI JSON outputs) of a valid file
+# with a components object: (label, edit of a copy, a fragment of the problem).
+DESCRIPTION_MUTATIONS = [
+    ("the separate layout claimed for a components object", claim_separate_layout, "expected none"),
+    ("an assembly without its layout", drop_layout_keep_assembly, "disagree"),
+    ("an unknown layout", unknown_layout, "unknown layout"),
+    ("another components object name", rename_assembly, "read name"),
+    ("a part described with a build item of its own", give_part_an_item, "build item p:UUID None"),
+    ("the parts in another order", reorder_components, "component 0 is object"),
+]
+# The keys the layout added to descriptions; one written before it has none.
+LAYOUT_KEYS = ("layout", "assembly")
+LAYOUT_OBJECT_KEYS = ("componentUuid",)
+
+
+def without_layout_keys(entry):
+    old = {k: v for k, v in entry.items() if k not in LAYOUT_KEYS}
+    old["objects"] = [
+        {k: v for k, v in o.items() if k not in LAYOUT_OBJECT_KEYS} for o in entry["objects"]
+    ]
+    return old
+
+
+def self_test(paths, report, described=()):
     """Every broken copy of a valid file must fail the generic rules, with the
     problem it was built to show: the generic mutations on the first 3MF, and
-    the component mutations on the first 3MF with a components object."""
+    the component mutations on the first 3MF with a components object. Every
+    broken description of the first described file with a components object
+    must fail against that file, and the first description of a separate-layout
+    file must still pass without the keys the layout added."""
     runs = [(paths[0], MUTATIONS)]
     grouped = next((p for p in paths if has_components(p)), None)
     if grouped is not None:
         runs.append((grouped, COMPONENT_MUTATIONS))
     for path, mutations in runs:
         self_test_one(path, mutations, report)
+    grouped = next(((f, e) for f, e in described if e.get("assembly")), None)
+    if grouped is not None:
+        self_test_descriptions(*grouped, report)
+    separate = next(((f, e) for f, e in described if not e.get("assembly")), None)
+    if separate is not None:
+        path, entry = separate
+        model, problems = read(path, "3mf")
+        if model is not None:
+            problems += check_3mf_expected(model, without_layout_keys(entry))
+        report.result(
+            f"self-test: {os.path.basename(path)} described without the layout keys still passes",
+            problems,
+            "read as the separate layout",
+        )
+
+
+def self_test_descriptions(path, entry, report):
+    model, problems = read(path, "3mf")
+    if model is None:
+        report.result(f"self-test: descriptions of {os.path.basename(path)}", problems)
+        return
+    for label, edit, fragment in DESCRIPTION_MUTATIONS:
+        broken = copy.deepcopy(entry)
+        edit(broken)
+        if broken == entry:
+            raise RuntimeError("self-test description mutation changed nothing")
+        problems = check_3mf_expected(model, broken)
+        hits = [p for p in problems if fragment in p]
+        if hits:
+            report.result(f"self-test: {label} is rejected", [], hits[0])
+        else:
+            report.result(
+                f"self-test: {label} is rejected",
+                [
+                    f"no problem mentions {fragment!r}; the description check is too lenient",
+                    *(f"(reported instead: {p})" for p in problems),
+                ],
+            )
 
 
 def self_test_one(path, mutations, report):
@@ -1099,9 +1231,10 @@ def main(argv):
     print(f"lib3mf {lib3mf_version()}, strict mode")
     report = Report()
     threemfs = []
+    described = []
     for target in targets:
         if target.endswith(".json"):
-            threemfs += validate_manifest(target, report)
+            threemfs += validate_manifest(target, report, described)
         elif target.endswith(".3mf"):
             _, problems, summary = check_3mf_generic(target)
             report.result(target, problems, summary)
@@ -1116,7 +1249,7 @@ def main(argv):
         if not threemfs:
             print("--self-test needs at least one 3MF", file=sys.stderr)
             return 2
-        self_test(threemfs, report)
+        self_test(threemfs, report, described)
     if report.failures:
         print(f"{report.failures} check(s) failed")
         return 1
