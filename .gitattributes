@@ -1,0 +1,10 @@
+# Artwork is read byte for byte. The evaluator's content hash includes the
+# SHA-256 of every asset a part document reads (RecordingAssets in
+# crates/openbrick-part/src/eval/mod.rs), so every checkout must hold the same
+# bytes, or the CLI, the playground and the golden tests disagree. Git for
+# Windows with core.autocrlf on (as on the Windows CI runners) would otherwise
+# check these files out with CRLF line endings. -text turns off every line-ending
+# conversion for them, on checkout and on commit; diffs still show as text.
+# crates/openbrick-part/tests/brand.rs checks that the brand artwork has no CR.
+*.svg -text
+parts/assets/** -text

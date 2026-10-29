@@ -1,0 +1,34 @@
+{
+  "openbrick": "1.0",
+  "id": "ndn.brand-tile",
+  "version": "1.0.0",
+  "name": "Neuraldeep.net tile",
+  "license": "CC0-1.0",
+  "credit": { "author": "Neural Deep Network Ltd; default artwork: the Neuraldeep.net mark, all rights reserved (parts/assets/brand/NOTICE.md)", "url": "https://neuraldeep.net" },
+  "provenance": {
+    "source": "parts/ndn.logo-tile.obpart.json 1.3.0",
+    "modified": true,
+    "history": [
+      "1.0.0: the logo tile with the Neuraldeep.net mark (assets/brand/neuraldeep-mark-2x4.svg) as its default logo. This document is CC0-1.0; the mark is not: it is Copyright Neural Deep Network Ltd, all rights reserved, and its use is limited to the OpenBrick3D demo tiles (parts/assets/brand/NOTICE.md)."
+    ]
+  },
+  "params": {
+    "size":   { "type": "grid2", "unit": "stud", "default": [2, 4], "min": [1, 1], "max": [16, 32], "group": "Size", "manipulator": "corner" },
+    "height": { "type": "enum", "default": "plate", "options": [ { "value": "plate", "label": "Plate (1/3)" }, { "value": "brick", "label": "Brick" } ], "group": "Size" },
+    "logo":   { "type": "svg", "default": "assets/brand/neuraldeep-mark-2x4.svg", "group": "Artwork", "help": "Single-colour SVG; lines under 0.8 mm are removed. The default is the Neuraldeep.net mark drawn for 2x4 (assets/brand/neuraldeep-mark-4x6.svg is drawn for 4x6), Copyright Neural Deep Network Ltd, all rights reserved: see assets/brand/NOTICE.md" },
+    "relief": { "type": "enum", "default": "emboss", "options": ["emboss", "deboss", "inlay"], "group": "Artwork" },
+    "inlayStyle": { "type": "enum", "default": "swap", "options": [ { "value": "swap", "label": "Filament swap (one extruder)" }, { "value": "parts", "label": "Logo as its own part (AMS, tool changer)" } ], "visibleWhen": "relief == 'inlay'", "group": "Artwork", "help": "Swap: the face slab is one part and you change filament after it. Parts: the logo fill is its own part, so each part gets its own filament" },
+    "reliefHeight": { "type": "length", "unit": "mm", "default": 0.6, "min": 0.2, "max": 1.5, "step": 0.1, "visibleWhen": "relief != 'inlay'", "help": "Deboss is clamped so 1.8 mm of cavity remains (0.4 mm on plates)" },
+    "margin": { "type": "length", "unit": "mm", "default": 1.0, "min": 0.4, "max": 4 }
+  },
+  "features": [
+    { "id": "body",   "op": "body.tile",  "size": "$size", "height": "$height", "round": { "tier": "chamfer", "radius": "0.3mm" } },
+    { "id": "bottom", "op": "tube.field", "on": "body.bottom", "grid": "auto", "fitCritical": true },
+    { "id": "art",    "op": "relief.svg", "on": "body.top", "src": "$logo", "mode": "$relief", "height": "$reliefHeight",
+      "inlayStyle": "$inlayStyle",
+      "fit": { "margin": "$margin", "align": "center", "keepAspect": true }, "minFeature": "profile.minFeature", "colorRole": "accent" }
+  ],
+  "snap": "derived",
+  "print": { "up": { "emboss": "top", "deboss": "top", "inlay": "bottom" }, "profiles": ["fdm-0.4", "fdm-0.2", "resin-msla"], "fitCritical": ["bottom"] },
+  "export": { "formats": ["3mf", "stl", "ldr"], "batch": { "filename": "{id}-{size[0]}x{size[1]}-{serial:04}", "serial": { "mode": "deboss", "on": "body.bottom", "height": "0.4mm" } } }
+}

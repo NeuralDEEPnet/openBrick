@@ -39,8 +39,10 @@
 //! - Calibration coupon ([`coupon`], docs/plan/05 section 4): [`build_coupon`],
 //!   [`coupon_layout_json`] and [`export_coupon`].
 //! - Bundled data ([`data`]): the process profiles, the example fit profile, the
-//!   logo tile part document and its sample artwork, the disclaimer, the display
-//!   colours of the colour roles and the asset size limit.
+//!   logo tile part document, the artwork samples ([`artwork_samples_json`]:
+//!   the Neuraldeep.net marks, the playground's default, with their notice,
+//!   and the CC0 sample mark), the disclaimer, the display colours of the
+//!   colour roles and the asset size limit.
 
 pub mod coupon;
 pub mod data;
@@ -49,8 +51,9 @@ pub mod part;
 
 pub use coupon::{build_coupon, coupon_layout_json, export_coupon, CouponOut};
 pub use data::{
-    coupon_choices_json, disclaimer, example_fit_profile_json, logo_tile_part_json,
-    max_asset_bytes, process_profiles_json, role_colors_json, sample_logo_svg,
+    artwork_samples_json, coupon_choices_json, disclaimer, example_fit_profile_json,
+    logo_tile_part_json, max_asset_bytes, process_profiles_json, role_colors_json, sample_logo_svg,
+    BRAND_NOTICE, BRAND_NOTICE_URL,
 };
 pub use part::{
     evaluate_part, export_part, export_solids, resolve_params_json, AssetSet, ExportSolid,

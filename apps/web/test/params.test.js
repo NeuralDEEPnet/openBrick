@@ -193,6 +193,18 @@ test("download names follow {id}-{w}x{h}-{relief}[-{inlayStyle}].{ext}", () => {
   assert.equal(couponDownloadName("coupon-fdm-0.4-cross", "3mf"), "coupon-fdm-0.4-cross.3mf");
 });
 
+test("download names end with the sample's suffix, and the user's own SVG adds none", () => {
+  const visible = { inlayStyle: true };
+  const values = { size: [2, 4], relief: "inlay", inlayStyle: "parts" };
+  assert.equal(downloadName(LOGO_TILE, values, "3mf", visible, "neuraldeep"), "ndn.logo-tile-2x4-inlay-parts-neuraldeep.3mf");
+  assert.equal(downloadName(LOGO_TILE, { size: [4, 4], relief: "emboss" }, "stl", null, "neuraldeep-badge"), "ndn.logo-tile-4x4-emboss-neuraldeep-badge.stl");
+  assert.equal(downloadName(LOGO_TILE, values, "3mf", visible, null), "ndn.logo-tile-2x4-inlay-parts.3mf", "an uploaded SVG");
+  assert.equal(downloadName(LOGO_TILE, values, "3mf", visible, ""), "ndn.logo-tile-2x4-inlay-parts.3mf");
+  const names = ["neuraldeep", "neuraldeep-badge", "sample", null].map((s) => downloadName(LOGO_TILE, { size: [2, 4], relief: "emboss" }, "3mf", null, s));
+  assert.equal(new Set(names).size, names.length, `unique: ${names}`);
+  assert.equal(downloadName(LOGO_TILE, { size: [2, 4], relief: "emboss" }, "3mf", null, "a b/c"), "ndn.logo-tile-2x4-emboss-a-b-c.3mf", "made safe");
+});
+
 test("artwork over the core's limit is refused with a friendly message before it is sent", () => {
   const max = 4 * 1024 * 1024;
   assert.equal(assetSizeError("logo.svg", max, max), null, "exactly the limit passes");

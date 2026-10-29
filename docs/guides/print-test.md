@@ -132,9 +132,18 @@ openbrick build parts/ndn.logo-tile.obpart.json --param logo=./my-logo.svg \
 openbrick build parts/ndn.logo-tile.obpart.json --param logo=./my-logo.svg \
   --param relief=inlay --param inlayStyle=parts --fit my-fit.json \
   --out tile-inlay-parts.3mf
+
+# The Neuraldeep.net demo tile: the same tile with the Neuraldeep.net mark
+# (parts/ndn.brand-badge.obpart.json is the square badge on 4x4).
+openbrick build parts/ndn.brand-tile.obpart.json --fit my-fit.json \
+  --params relief=inlay inlayStyle=parts --out brand-tile.3mf
 ```
 
-Leave out `--param logo=...` to use the sample mark. Each build validates the
+Leave out `--param logo=...` to use the sample mark. The Neuraldeep.net marks
+belong to Neural Deep Network Ltd and may be used for these demo tiles only
+([notice](../../parts/assets/brand/NOTICE.md)). In the browser playground the
+sample chooser under the drop zone switches between the Neuraldeep.net mark
+(its default), the square badge and the CC0 sample mark. Each build validates the
 part first: if something would not print or fit (for example no fit profile,
 rule `FIT.MISSING`), nothing is written and every problem is listed with its
 rule, measured value, threshold and a fix. Warnings never block. Each build

@@ -14,6 +14,7 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 - DCO workflow skips merge commits, as the DCO app does; it failed on the merge commit in the M0 scaffold pull request.
 
 ### Added
+- Neuraldeep.net demo tiles. Neural Deep Network Ltd's portrait mark (2x4 and 4x6 drawings) and hexagon badge (4x4 and 2x2) are in `parts/assets/brand/`: trademarks, all rights reserved, for building, printing and showing the OpenBrick3D demo tiles only (see its NOTICE.md, LICENSE-POLICY.md, TRADEMARK.md and PACKAGING.md; the WebAssembly core and the playground bundle them). The CC0 part documents `ndn.brand-tile` (2x4) and `ndn.brand-badge` (4x4) have golden tests in every relief (`crates/openbrick-part/tests/brand.rs`). A new `.gitattributes` keeps SVG artwork byte-identical in every checkout, so content hashes also match on Windows with `core.autocrlf`. The playground gets a sample chooser whose default is the Neuraldeep.net mark; it also offers the square badge and the CC0 sample mark. Choosing the badge or the mark on a tile of the other shape sets 4x4 or 2x4. The owner's copyright line and a link to the notice show under the drop zone, and download names end with the sample, e.g. `ndn.logo-tile-2x4-emboss-neuraldeep.3mf`.
 - `openbrick` CLI (backlog items 11 and 14):
   - `build` validates a part document and writes a 3MF or a single-colour STL.
     - The 3MF is one object whose parts are the colour roles (the part-designer layout), with traceability metadata.

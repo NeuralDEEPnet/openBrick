@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { controlsFor, defaultValues, paramOverrides, visibility } from "../src/params.js";
 import { dispatch } from "../src/protocol.js";
+import { sampleFile, sizeForSample } from "../src/samples.js";
 import { findingView } from "../src/ui.js";
 
 const glue = new URL("../src/wasm/openbrick_wasm.js", import.meta.url);
@@ -63,7 +64,10 @@ test("the WebAssembly core evaluates, validates and exports the logo tile with i
   const doc = JSON.parse(b.logoTilePart);
   const spec = controlsFor(doc, { maxStuds: core.max_studs() });
   const values = defaultValues(spec);
-  const assets = [{ name: values.logo, bytes: new TextEncoder().encode(b.sampleLogoSvg) }];
+  // The CC0 sample mark, the logo tile's own default artwork.
+  const cc0 = sampleFile(b.samples.find((s) => s.id === "sample"), values.size);
+  assert.equal(cc0.asset, values.logo);
+  const assets = [{ name: values.logo, bytes: new TextEncoder().encode(cc0.svg) }];
   const request = { doc: b.logoTilePart, params: paramOverrides(spec, values), process: "fdm-0.4", fit: b.exampleFitProfile, assets };
   const { reply, transfer } = dispatch(core, { id: 2, type: "evaluatePart", ...request });
   assert.equal(reply.ok, true, reply.error);
@@ -105,6 +109,43 @@ test("the WebAssembly core evaluates, validates and exports the logo tile with i
     const resolved = dispatch(core, { id: 6, type: "resolveParams", doc: b.logoTilePart, params: { relief }, process: "fdm-0.4" }).reply;
     assert.equal(resolved.ok, true, resolved.error);
     assert.deepEqual(visibility(spec, { ...values, relief }).visible, resolved.result.visible, relief);
+  }
+});
+
+test("the Neuraldeep.net samples are the default and print on their tiles with nothing to report", { skip }, async () => {
+  const core = await loadCore();
+  const b = dispatch(core, { id: 1, type: "bundled" }).reply.result;
+  assert.deepEqual(
+    b.samples.map((s) => s.id),
+    ["neuraldeep-mark", "neuraldeep-badge", "sample"],
+    "the Neuraldeep.net mark first: the playground's default",
+  );
+  const doc = JSON.parse(b.logoTilePart);
+  const spec = controlsFor(doc, { maxStuds: core.max_studs() });
+  const values = defaultValues(spec);
+  let id = 2;
+  for (const sample of b.samples.filter((s) => s.notice)) {
+    // The first sentence of parts/assets/brand/NOTICE.md, word for word.
+    assert.equal(sample.notice, "Copyright Neural Deep Network Ltd. All rights reserved.");
+    assert.match(sample.noticeUrl, /\/parts\/assets\/brand\/NOTICE\.md$/);
+    // The tile the page builds when the sample is chosen on the default tile.
+    const size = sizeForSample(sample, values.size) ?? values.size;
+    const file = sampleFile(sample, size);
+    assert.deepEqual(file.tile, size, sample.id);
+    const params = { ...paramOverrides(spec, { ...values, size }), logo: file.asset };
+    const r = dispatch(core, {
+      id: id++,
+      type: "evaluatePart",
+      doc: b.logoTilePart,
+      params,
+      process: "fdm-0.4",
+      fit: b.exampleFitProfile,
+      assets: [{ name: file.asset, bytes: new TextEncoder().encode(file.svg) }],
+    }).reply;
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.result.exportAllowed, true, sample.id);
+    assert.deepEqual(r.result.report.findings, [], `${sample.id}: no FEATURE.MIN or anything else`);
+    assert.deepEqual(r.result.footprint, size);
   }
 });
 

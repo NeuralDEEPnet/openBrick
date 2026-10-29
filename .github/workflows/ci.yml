@@ -24,6 +24,8 @@ jobs:
       - run: cargo run -q -p xtask -- data
       - run: cargo run -q -p openbrick -- check parts/ndn.logo-tile.obpart.json
       - run: cargo run -q -p openbrick -- check parts/ndn.nameplate-keychain.obpart.json
+      - run: cargo run -q -p openbrick -- check parts/ndn.brand-tile.obpart.json
+      - run: cargo run -q -p openbrick -- check parts/ndn.brand-badge.obpart.json
 
   test-cross:
     needs: check
@@ -312,16 +314,18 @@ jobs:
     # (inlayStyle=parts) with and without display colours (--no-colour, for
     # Bambu Studio's import colour dialog, Q18) and a brick-height inlay as 3MF
     # in the part-designer layout (one object whose parts are the colour roles,
-    # Q18), the fused tile as STL and as 3MF, the default fdm-0.4 coupon with
-    # its manifest; records a fit profile and builds with it; and checks that a
-    # blocked build exits 1 and writes nothing. lib3mf 2.5.0 reads every file in
-    # strict mode and the script compares each one with what the CLI's --json
-    # says it wrote (layout, components object, objects, colours, UUIDs,
-    # metadata); --self-test also breaks copies of the files and of their
-    # descriptions. That the CLI and the playground write the same meshes, with
-    # and without colours, is checked by cargo test in the check job
-    # (crates/openbrick/tests/export_parity.rs). lib3mf ships Linux wheels for
-    # x86-64 only, so this job stays on ubuntu-24.04.
+    # Q18), the fused tile as STL and as 3MF, the Neuraldeep.net demo tile as a
+    # parts inlay and the Neuraldeep.net badge (their artwork is in
+    # parts/assets/brand/, all rights reserved, see its NOTICE.md), the default
+    # fdm-0.4 coupon with its manifest; records a fit profile and builds with
+    # it; and checks that a blocked build exits 1 and writes nothing. lib3mf
+    # 2.5.0 reads every file in strict mode and the script compares each one
+    # with what the CLI's --json says it wrote (layout, components object,
+    # objects, colours, UUIDs, metadata); --self-test also breaks copies of the
+    # files and of their descriptions. That the CLI and the playground write the
+    # same meshes, with and without colours, is checked by cargo test in the
+    # check job (crates/openbrick/tests/export_parity.rs). lib3mf ships Linux
+    # wheels for x86-64 only, so this job stays on ubuntu-24.04.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -357,6 +361,10 @@ jobs:
             --out "$out/logo-tile-fused.stl" --json > "$out/logo-tile-fused.json"
           $ob build parts/ndn.logo-tile.obpart.json --fit example --fuse \
             --out "$out/logo-tile-fused.3mf" --json > "$out/logo-tile-fused-3mf.json"
+          $ob build parts/ndn.brand-tile.obpart.json --fit example --params relief=inlay inlayStyle=parts \
+            --out "$out/brand-tile.3mf" --json > "$out/brand-tile.json"
+          $ob build parts/ndn.brand-badge.obpart.json --fit example \
+            --out "$out/brand-badge.3mf" --json > "$out/brand-badge.json"
           $ob calibrate coupon --process fdm-0.4 \
             --out "$out/coupon-fdm-0.4-cross.3mf" --manifest "$out/coupon-fdm-0.4-cross.json"
           $ob calibrate record --process fdm-0.4 --printer "CI" --material PLA \
@@ -375,6 +383,9 @@ jobs:
           test ! -e target/cli-exports/blocked.3mf
           grep -q "blocker FIT.MISSING" target/cli-exports/blocked.txt
       - name: Validate every CLI export with lib3mf
+        # The emboss tile stays first: --self-test breaks copies of the first
+        # file, and its overlap mutation needs a face-up part (it cannot make
+        # a face-down parts inlay's fill overlap the body).
         run: >-
           python -I scripts/validate-3mf.py --self-test
           target/cli-exports/logo-tile-emboss.json target/cli-exports/logo-tile-deboss.json
@@ -382,6 +393,7 @@ jobs:
           target/cli-exports/logo-tile-inlay-parts-no-colour.json
           target/cli-exports/logo-tile-inlay-brick.json target/cli-exports/logo-tile-fused.json
           target/cli-exports/logo-tile-fused-3mf.json target/cli-exports/logo-tile-recorded-fit.json
+          target/cli-exports/brand-tile.json target/cli-exports/brand-badge.json
           target/cli-exports/coupon-fdm-0.4-cross.json
       - name: Release wall time of the CLI
         run: |

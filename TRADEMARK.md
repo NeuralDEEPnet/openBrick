@@ -15,3 +15,9 @@ You may not:
 - Combine the name or logo with any third-party brick brand's marks.
 
 Neural Deep Network Ltd holds the name on behalf of the project; the merchandise business uses a separate brand. Questions: trademark@openbrick3d.org (until the domain is live, open an issue).
+
+## The Neuraldeep.net marks
+
+The portrait mark and the hexagon badge in [`parts/assets/brand/`](parts/assets/brand/NOTICE.md) are trademarks of Neural Deep Network Ltd, which also holds their copyright. They are not covered by this repository's licences: the MIT licence and the CC0 dedication do not apply to them.
+
+You are welcome to use them to build, print and show the OpenBrick3D demo tiles (`parts/ndn.brand-tile.obpart.json`, `parts/ndn.brand-badge.obpart.json` and the Neuraldeep.net samples in the playground), for example a tile on your desk or in a photo of your print. For anything else, such as products, merchandise, another project's branding or a modified mark, please ask Neural Deep Network Ltd for written permission first through <https://neuraldeep.net>. A fork that ships its own demo tiles should use its own artwork; the CC0 sample mark `parts/assets/mark.svg` is free for that.
