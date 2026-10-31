@@ -66,16 +66,18 @@ jobs:
         with:
           path: ~/.cache/openbrick-slicer-smoke
           key: orcaslicer-appimage-${{ hashFiles('scripts/slicer-smoke.sh') }}
+      # The work directory lives outside target/, which rust-cache restores
+      # between runs; the script refuses a non-empty directory it did not make.
       - name: Slice the CLI's files with OrcaSlicer
         id: slice
         timeout-minutes: 35
         run: >-
           scripts/slicer-smoke.sh --openbrick target/release/openbrick
-          --work target/slicer-smoke --download-dir ~/.cache/openbrick-slicer-smoke
+          --work "$RUNNER_TEMP/slicer-smoke" --download-dir ~/.cache/openbrick-slicer-smoke
       - name: Post the partial summary if the slicing step stopped before its report
         if: always() && steps.slice.outcome != 'skipped'
         run: |
-          work=target/slicer-smoke
+          work="$RUNNER_TEMP/slicer-smoke"
           if [ -f "$work/summary.md" ] && [ ! -f "$work/.summary-posted" ]; then
             {
               echo '> The slicing step stopped before its report (a timeout or an error, see its log). This summary is partial: files marked "not run" were not sliced.'
@@ -89,8 +91,8 @@ jobs:
         with:
           name: slicer-smoke
           path: |
-            target/slicer-smoke/
-            !target/slicer-smoke/orca/
-            !target/slicer-smoke/download/
+            ${{ runner.temp }}/slicer-smoke/
+            !${{ runner.temp }}/slicer-smoke/orca/
+            !${{ runner.temp }}/slicer-smoke/download/
           if-no-files-found: ignore
           retention-days: 30

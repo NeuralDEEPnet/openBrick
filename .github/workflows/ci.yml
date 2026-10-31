@@ -398,7 +398,9 @@ jobs:
       - name: Inputs of the OrcaSlicer smoke test (dry run; slicer-smoke.yml slices them weekly)
         run: |
           python3 -I scripts/slicer-smoke.py self-test
-          scripts/slicer-smoke.sh --dry-run --openbrick target/cli-install/bin/openbrick --work target/slicer-smoke
+          # A fresh directory outside target/: rust-cache restores target/ between
+          # runs, and the script refuses a non-empty directory it did not make.
+          scripts/slicer-smoke.sh --dry-run --openbrick target/cli-install/bin/openbrick --work "$RUNNER_TEMP/slicer-smoke"
       - name: Release wall time of the CLI
         run: |
           ob=target/cli-install/bin/openbrick
