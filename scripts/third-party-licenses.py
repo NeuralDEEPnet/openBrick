@@ -10,16 +10,22 @@ binaries included. This script collects those notices into one text file,
 which dist puts into every archive (dist-workspace.toml `include`; the release
 workflow runs this script before `dist build`, see .github/dist-build-setup.yml).
 
-It reads `cargo metadata --locked` (so it needs network only if the crates
-are not downloaded yet), follows the normal (not dev or build) dependencies of
-the `openbrick` package for every platform, and for each crate outside the
-workspace copies the licence files of its published package (LICENSE*,
-LICENCE*, COPYING*, NOTICE*, UNLICENSE*, COPYRIGHT*, and `license-file`). A
-crate whose package has none is listed with its SPDX expression and its
-repository, and the script says so on stderr.
+The crates are the ones `cargo tree -p openbrick -e normal --target all`
+lists: the normal (not dev or build) dependencies of the `openbrick` package
+for every platform, with features resolved for that package alone, as
+`dist build` compiles it (`cargo build --package=openbrick`, precise-builds in
+dist-workspace.toml). `cargo metadata` would resolve features for the whole
+workspace instead and add crates that only xtask or the WebAssembly facade
+switch on. For each crate outside the workspace the script copies the licence
+files of its published package (LICENSE*, LICENCE*, COPYING*, NOTICE*,
+UNLICENSE*, COPYRIGHT*, and `license-file`), found through `cargo metadata`.
+A crate whose package has none is listed with its SPDX expression and its
+repository, and the script says so on stderr. Both cargo commands run with
+`--locked`, so they need network only if the crates are not downloaded yet.
 
 Usage: python3 scripts/third-party-licenses.py OUT.txt
-Exit codes: 0 written; 1 cargo metadata failed or the package was not found.
+Exit codes: 0 written; 1 a cargo command failed, or a crate of the tree was
+not found in the metadata.
 """
 
 import json
@@ -42,50 +48,68 @@ def licence_files(pkg: dict) -> list[pathlib.Path]:
     return sorted(found, key=lambda p: p.name)
 
 
+def cargo(*args: str) -> str:
+    return subprocess.run(
+        ["cargo", *args, "--locked"], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def tree_crates() -> set[tuple[str, str]]:
+    """(name, version) of every package `cargo tree` lists for the CLI."""
+    # One package per line, as "name vX.Y.Z", followed by " (proc-macro)",
+    # " (<path or source>)" or " (*)" for a package already listed.
+    lines = cargo("tree", "-p", PACKAGE, "-e", "normal", "--target", "all", "--prefix", "none", "--format", "{p}")
+    found = set()
+    for line in lines.splitlines():
+        words = line.split()
+        if len(words) >= 2 and words[1].startswith("v"):
+            found.add((words[0], words[1][1:]))
+    return found
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__.strip().split("\n\n")[-2], file=sys.stderr)
         return 1
     out = pathlib.Path(sys.argv[1])
-    meta = json.loads(
-        subprocess.run(
-            ["cargo", "metadata", "--format-version", "1", "--locked"],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-    )
-    packages = {p["id"]: p for p in meta["packages"]}
-    nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
+    try:
+        meta = json.loads(cargo("metadata", "--format-version", "1"))
+        wanted = tree_crates()
+    except subprocess.CalledProcessError as e:
+        print(f"third-party-licenses.py: {' '.join(e.cmd)} failed:\n{e.stderr}", file=sys.stderr)
+        return 1
     workspace = set(meta["workspace_members"])
-    roots = [i for i in workspace if packages[i]["name"] == PACKAGE]
-    if len(roots) != 1:
+    if not any(p["name"] == PACKAGE and p["id"] in workspace for p in meta["packages"]):
         print(f"third-party-licenses.py: no workspace package {PACKAGE!r}", file=sys.stderr)
         return 1
 
-    seen, todo = set(), roots
-    while todo:
-        current = todo.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for dep in nodes[current]["deps"]:
-            if any(kind["kind"] is None for kind in dep["dep_kinds"]):
-                todo.append(dep["pkg"])
-    crates = sorted(
-        (packages[i] for i in seen - workspace),
-        key=lambda p: (p["name"], p["version"]),
-    )
+    by_key: dict[tuple[str, str], list[dict]] = {}
+    for p in meta["packages"]:
+        if p["id"] not in workspace:
+            by_key.setdefault((p["name"], p["version"]), []).append(p)
+    workspace_keys = {(p["name"], p["version"]) for p in meta["packages"] if p["id"] in workspace}
+    crates = []
+    for key in sorted(wanted - workspace_keys):
+        candidates = by_key.get(key, [])
+        if len(candidates) != 1:
+            # Not in the metadata, or the same name and version from two
+            # sources (crates.io and git): the tree line cannot tell which.
+            print(
+                f"third-party-licenses.py: {key[0]} {key[1]} matches {len(candidates)} packages of cargo metadata",
+                file=sys.stderr,
+            )
+            return 1
+        crates.append(candidates[0])
 
     parts = [
         "Third-party licences of the openbrick CLI\n",
         "=========================================\n\n",
         "OpenBrick3D's own code is under the MIT licence in LICENSE. The openbrick\n",
-        f"binary also contains code from the {len(crates)} crates below (every platform's\n",
-        "dependencies are listed, so a few are not in your build). Each entry gives\n",
-        "the crate, its version, its SPDX licence expression and the licence files\n",
-        "its published package ships, unchanged.\n",
+        f"binary also contains code from the {len(crates)} crates below. They are its\n",
+        "dependencies for every platform, so a few are not in your build, and they\n",
+        "include the procedural macros that only run while it compiles. Each entry\n",
+        "gives the crate, its version, its SPDX licence expression and the licence\n",
+        "files its published package ships, unchanged.\n",
     ]
     missing = []
     first_with_text = {}  # a licence text -> the first entry that printed it

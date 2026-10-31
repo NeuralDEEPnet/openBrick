@@ -16,7 +16,7 @@ block, which dist has no setting for:
 
 Because of that edit dist-workspace.toml sets `allow-dirty = ["ci"]`, so dist
 itself no longer checks release.yml; `--check` does instead (CI job
-release-plan).
+release in ci.yml, on every pull request).
 
 Usage, from anywhere in the repository, with the dist version that
 dist-workspace.toml pins (cargo-dist-version) on PATH:
@@ -24,6 +24,10 @@ dist-workspace.toml pins (cargo-dist-version) on PATH:
     python3 scripts/release-workflow.py --check    exit 1 if release.yml differs
     python3 scripts/release-workflow.py --dist-version
                                                    print the pinned dist version
+    python3 scripts/release-workflow.py --trigger-paths
+                                                   print TRIGGER_PATHS, one per line
+                                                   (the CI job builds the release
+                                                   archive only when one changed)
 
 dist only writes into the working tree, so the script removes the
 `allow-dirty` line from dist-workspace.toml while dist runs and puts the file
@@ -114,11 +118,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true", help="compare instead of writing")
     ap.add_argument("--dist-version", action="store_true", help="print the pinned dist version")
+    ap.add_argument("--trigger-paths", action="store_true", help="print the paths that trigger release.yml on pull requests")
     ap.add_argument("--dist", default=os.environ.get("DIST", "dist"), help="dist executable (default: dist, or $DIST)")
     args = ap.parse_args()
 
     if args.dist_version:
         print(pinned_dist_version())
+        return 0
+    if args.trigger_paths:
+        print("\n".join(TRIGGER_PATHS))
         return 0
 
     before = WORKFLOW.read_bytes() if WORKFLOW.exists() else None

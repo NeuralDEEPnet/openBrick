@@ -35,10 +35,13 @@ on your `PATH` yet, they add it to your shell profile (Windows: your user
 `OPENBRICK_NO_MODIFY_PATH=1` to leave your profile alone.
 
 The shell installer also checks the archive's SHA-256 checksum, which is
-written into it; the PowerShell installer that dist makes does not, so on
-Windows you may prefer to [verify the download](#verify-a-download) first.
-For one exact version, replace `latest/download` with `download/v0.1.0` (or
-the version you want).
+written into it, when the `sha256sum` command is there (most Linux systems
+have it; macOS may only have `shasum`). Without `sha256sum` it prints
+"skipping sha256 checksum verification" and installs anyway. The PowerShell
+installer that dist makes checks no checksum at all. The check that works
+everywhere is to [verify the download](#verify-a-download) with the GitHub CLI
+first. For one exact version, replace `latest/download` with
+`download/v0.1.0` (or the version you want).
 
 ## With cargo-binstall
 
@@ -79,9 +82,21 @@ openbrick about
 
 The installers install the program only. The example part documents, such as
 the logo tile in the [print-test guide](print-test.md), are in the
-repository's `parts/` folder: clone the repository as above, or download
-`source.tar.gz` from the release and unpack it. Then run the guide's commands
-from that folder.
+repository's `parts/` folder. Get them from the same release as your
+`openbrick`, because the part documents on the `main` branch can already need
+a newer version of the CLI:
+
+```sh
+git clone --branch "v$(openbrick --version | cut -d' ' -f2)" https://github.com/NeuralDEEPnet/openBrick
+cd openBrick
+```
+
+`openbrick --version` prints `openbrick 0.1.0`, so this clones the tag
+`v0.1.0` (in PowerShell, type the tag yourself: `--branch v0.1.0`); git says
+"You are in 'detached HEAD' state", which is fine for reading the parts. Or
+download `source.tar.gz` from the same release and unpack it. Then run the
+guide's commands from that folder. If you built the CLI from a clone, that
+clone already matches.
 
 ## Verify a download
 
@@ -113,7 +128,7 @@ attestation is how you check them meanwhile.
 |------|------------|
 | `openbrick-<target>.tar.xz`, `openbrick-x86_64-pc-windows-msvc.zip` | the binary with `README.md`, `LICENSE`, `CHANGELOG.md` and `THIRD-PARTY-LICENSES.txt` (the licence texts of the crates compiled into it) |
 | `openbrick-installer.sh`, `openbrick-installer.ps1` | the installers above |
-| `openbrick.cdx.xml` | a [CycloneDX](https://cyclonedx.org) software bill of materials: the Rust crates compiled into the CLI, with versions and licences (as resolved for x86-64 Linux; the other builds differ in a few platform crates) |
+| `openbrick.cdx.xml` | a [CycloneDX](https://cyclonedx.org) software bill of materials: the Rust crates that go into the CLI, with versions and licences. It errs on the side of listing too much: it is resolved for x86-64 Linux (the other builds differ in a few platform crates), it includes build-time helpers, and cargo-cyclonedx resolves features for the whole workspace, so it can name a crate or two that the CLI does not compile. `THIRD-PARTY-LICENSES.txt` follows the CLI's own dependency tree, for every platform |
 | `sha256.sum`, `*.sha256` | checksums |
 | `source.tar.gz` | the repository at the release tag |
 | `dist-manifest.json` | a machine-readable list of all of the above |
@@ -129,6 +144,18 @@ delete `openbrick` (`openbrick.exe`) from the folder above and the
 installer's receipt, `~/.config/openbrick/` (Windows:
 `%LOCALAPPDATA%\openbrick\`). A CLI installed with cargo-binstall or
 `cargo install` is removed with `cargo uninstall openbrick`.
+
+If the shell installer added `~/.cargo/bin` to your `PATH`, it did so the way
+rustup does: it wrote `~/.cargo/env` and `~/.cargo/env.fish` (unless they were
+there already); it added the line `. "$HOME/.cargo/env"` to `~/.profile` and
+`~/.zshrc` (creating them if needed, or `~/.zshenv` if only that exists) and to
+whichever of `~/.bashrc`, `~/.bash_profile` and `~/.bash_login` exist; and it
+wrote `~/.config/fish/conf.d/openbrick.env.fish`, which you can delete. If you
+use rustup, keep the `env` files and the profile lines, because rustup uses the
+same ones; otherwise you can delete them too. On Windows, the PowerShell
+installer added the folder to your user `PATH`; remove it in *Settings >
+System > About > Advanced system settings > Environment Variables* if you
+like.
 
 ## Other channels
 

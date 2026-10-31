@@ -33,14 +33,18 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/NeuralDEEPnet/open
 With cargo-binstall: `cargo binstall --git https://github.com/NeuralDEEPnet/openBrick openbrick`.
 The installers put `openbrick` in `~/.cargo/bin` and add that folder to your
 `PATH`; open a new terminal afterwards. This guide also needs the example
-parts, so get the repository as well (or unpack `source.tar.gz` from the
-release):
+parts, so get the repository as well, at the release tag of your `openbrick`
+(the parts on the `main` branch can already need a newer CLI):
 
 ```sh
-git clone https://github.com/NeuralDEEPnet/openBrick
-cd openBrick
 openbrick --version
+git clone --branch "v$(openbrick --version | cut -d' ' -f2)" https://github.com/NeuralDEEPnet/openBrick
+cd openBrick
 ```
+
+`openbrick --version` prints `openbrick 0.1.0`, so this clones the tag
+`v0.1.0`; in PowerShell, type the tag yourself (`--branch v0.1.0`). Unpacking
+`source.tar.gz` from the same release works too.
 
 **From the clone** (works before the first release too). You need Rust 1.90 or
 newer ([rustup.rs](https://rustup.rs)) and git.
