@@ -330,6 +330,13 @@ def report(args):
             results.append(entry)
             continue
         code_text = read_text(os.path.join(out_dir, "exit-code"))
+        if code_text is None:
+            # Not sliced yet (a partial report during the run) or never (the
+            # run stopped before this file): counted as a failure.
+            failed += 1
+            entry.update({"status": "not run", "sliced": None, "notes": ["Not sliced: the run had not reached this file, or stopped before it (see the job log)."]})
+            results.append(entry)
+            continue
         exit_code = int(code_text.strip()) if code_text and code_text.strip().lstrip("-").isdigit() else None
         result = read_json(os.path.join(out_dir, "result.json")) or {}
         project_path = os.path.join(out_dir, name + ".sliced.3mf")
@@ -606,6 +613,28 @@ def self_test():
         check("| `brand-tile.3mf` |" in md and "**no** (exit 156, return code -100: Slicing error)" in md, "the summary names the failure")
         check("load differently" in md, "the colour pair comparison is in the summary")
         check("**Logo tile**: t body → filament 1, t accent → filament 2" in md, "parts and filaments in the summary")
+
+        # A run stopped before the last file (the partial report after each
+        # slice, or a step timeout): that file is "not run" and still fails.
+        os.remove(os.path.join(work, "sliced", "coupon-fdm-0.4-cross", "exit-code"))
+        write_json(os.path.join(work, "sliced", "brand-tile", "result.json"), {"return_code": 0})
+        with open(os.path.join(work, "sliced", "brand-tile", "exit-code"), "w") as f:
+            f.write("0\n")
+        write_project(os.path.join(work, "sliced", "brand-tile", "brand-tile.sliced.3mf"), settings_one_object, info, None)
+        saved, sys.stdout = sys.stdout, open(os.devnull, "w")
+        try:
+            code = report(ns)
+        finally:
+            sys.stdout.close()
+            sys.stdout = saved
+        check(code == 1, f"a file that was not sliced fails the run (exit {code})")
+        with open(os.path.join(work, "results.json")) as f:
+            res = {r["file"]: r for r in json.load(f)["results"]}
+        coupon = res["coupon-fdm-0.4-cross.3mf"]
+        check(coupon["sliced"] is None and coupon["status"] == "not run", f"an unsliced file: {coupon}")
+        check(res["brand-tile.3mf"]["sliced"] is True, "the other files keep their results")
+        with open(os.path.join(work, "summary.md")) as f:
+            check("| `coupon-fdm-0.4-cross.3mf` | " in f.read(), "the unsliced file is in the summary")
 
         # report --dry-run: inputs only.
         ns.dry_run = True

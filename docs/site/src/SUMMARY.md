@@ -39,3 +39,7 @@
   - [Q01b manifold-csg comparison](spikes/q01b-manifold-csg-comparison.md)
   - [Q04 LDraw connectivity](spikes/q04-ldraw-connectivity.md)
   - [Q18 Slicer multi-material import](spikes/q18-slicer-multimaterial-import.md)
+
+---
+
+[Credits and licences](credits.md)

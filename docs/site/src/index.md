@@ -10,7 +10,7 @@ The part designer, the print pipeline and the `openbrick` command line work toda
   <a class="ob-card" href="guides/print-test.html"><strong>First print test</strong><span>Calibration coupon, fit profile, your own logo tile in one or two colours, pull test.</span></a>
   <a class="ob-card" href="cli.html"><strong>CLI reference</strong><span>Every <code>openbrick</code> command and option, generated from the program itself.</span></a>
   <a class="ob-card" href="plan/README.html"><strong>The plan</strong><span>Architecture, geometry spec, print pipeline, file formats, roadmap and risks.</span></a>
-  <a class="ob-card" href="spikes/q18-slicer-multimaterial-import.html"><strong>Spike reports</strong><span>What we measured before deciding: kernels, LDraw connectivity, slicer import.</span></a>
+  <a class="ob-card" href="spikes.html"><strong>Spike reports</strong><span>What we measured before deciding: kernels, LDraw connectivity, slicer import.</span></a>
 </div>
 
 ## How it fits together
@@ -25,12 +25,6 @@ Read the [executive summary](plan/00-executive-summary.md) for the whole picture
 
 ## Help and contributing
 
-The source, issues and discussions are on [GitHub](https://github.com/NeuralDEEPnet/openBrick). Contributions are welcome and reviewed kindly: start with [CONTRIBUTING.md](https://github.com/NeuralDEEPnet/openBrick/blob/main/CONTRIBUTING.md). This site is built from the repository by `cargo xtask docs`; every page has a link to its source.
+The source, issues and discussions are on [GitHub](https://github.com/NeuralDEEPnet/openBrick). Contributions are welcome and reviewed kindly: start with [CONTRIBUTING.md](https://github.com/NeuralDEEPnet/openBrick/blob/main/CONTRIBUTING.md). This site is built from the repository by `cargo xtask docs`; the foot of every page links to the file it comes from.
 
-The documentation is licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (credit "OpenBrick3D contributors" with a link to the repository), the code MIT, and part documents, profiles and the Dimensional Standard CC0 ([licence policy](https://github.com/NeuralDEEPnet/openBrick/blob/main/LICENSE-POLICY.md)). The OpenBrick3D name is covered by the [trademark policy](https://github.com/NeuralDEEPnet/openBrick/blob/main/TRADEMARK.md).
-
-<div class="ob-disclaimer">
-
-**Disclaimer.** <!--openbrick:disclaimer-->
-
-</div>
+The documentation is licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (credit "OpenBrick3D contributors" with a link to the repository), the code MIT, and part documents, profiles and the Dimensional Standard CC0 ([licence policy](https://github.com/NeuralDEEPnet/openBrick/blob/main/LICENSE-POLICY.md)). The OpenBrick3D name is covered by the [trademark policy](https://github.com/NeuralDEEPnet/openBrick/blob/main/TRADEMARK.md). The site is built with mdBook and includes mdBook's page scripts, style sheets and fonts; [Credits and licences](credits.md) names them and their licences.

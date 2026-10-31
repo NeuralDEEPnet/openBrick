@@ -1,5 +1,8 @@
 # The OpenBrick3D documentation site (docs/plan/10 section 7), built with
-# mdBook (MPL-2.0; a build-time tool only, never shipped or linked).
+# mdBook (MPL-2.0). mdBook runs as a program at build time and is never linked
+# into a crate, but the site it writes contains mdBook's own front-end files
+# (scripts, style sheets, templates) and the libraries and fonts it bundles,
+# unmodified; src/credits.md names each with its licence and source.
 #
 # Build it with `cargo xtask docs`, not with `mdbook build docs/site`: xtask
 # stages this directory together with docs/guides/, docs/plan/ and

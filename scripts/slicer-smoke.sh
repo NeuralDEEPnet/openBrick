@@ -24,7 +24,8 @@
 #      made and the filament each part got, and what that means for Q18
 #      (scripts/slicer-smoke.py report): WORK/summary.md (also appended to
 #      $GITHUB_STEP_SUMMARY) and WORK/results.json. Exit 1 when a file did not
-#      slice.
+#      slice. Both files are also rewritten after every slice, so a run that is
+#      stopped part way still leaves a partial summary for the artifact.
 #
 # OrcaSlicer is AGPL-3.0. It is run as a separate program only, never linked,
 # vendored or shipped (LICENSE-POLICY.md); the downloaded AppImage stays in
@@ -36,7 +37,8 @@
 #   --dry-run        build and check the inputs and write the summary, but do
 #                    not download, extract or run OrcaSlicer
 #   --openbrick      the openbrick binary (default: target/release/openbrick)
-#   --work           output directory (default: target/slicer-smoke); emptied first
+#   --work           output directory (default: target/slicer-smoke); emptied
+#                    first, so it must be new, empty, or made by this script
 #   --download-dir   where the AppImage is kept between runs (default: WORK/download)
 #   --orca-root DIR  use an OrcaSlicer you extracted yourself (the squashfs-root
 #                    of an AppImage, with AppRun) instead of downloading the
@@ -62,8 +64,12 @@ ORCA_MACHINE="Bambu Lab A1 0.4 nozzle"
 ORCA_PROCESS="0.20mm Standard @BBL A1"
 ORCA_FILAMENT="Bambu PLA Basic @BBL A1"
 ORCA_COLOURS="#E6E6E6,#1E5AA8"
-# Seconds one slice may take before it counts as failed.
-SLICE_TIMEOUT=600
+# Seconds one slice may take before it counts as failed. The workflow's
+# budget: 5 inputs x 300 s + 120 s for the `--help` probe = 1620 s = 27 min,
+# inside the slicing step's timeout-minutes of 35 (slicer-smoke.yml), which
+# sits inside the job's 60 with the system packages, the CLI build and the
+# download. A small part slices in well under a minute on a CI runner.
+SLICE_TIMEOUT=300
 
 dry_run=0
 openbrick="target/release/openbrick"
@@ -110,8 +116,13 @@ if [ ! -x "$openbrick" ]; then
 fi
 
 # The work directory is emptied, so it must be new, empty, or one this script
-# made before (it leaves a marker file there).
+# made before (it leaves a marker file there). Anything else at that path (a
+# file, a symbolic link) is left alone.
 marker=".slicer-smoke-work"
+if [ -L "$work" ] || { [ -e "$work" ] && [ ! -d "$work" ]; }; then
+  echo "slicer-smoke: $work is a file or a symbolic link, not a directory; choose a new directory with --work" >&2
+  exit 2
+fi
 if [ -d "$work" ] && [ ! -f "$work/$marker" ] && [ -n "$(ls -A "$work")" ]; then
   echo "slicer-smoke: $work is not empty and was not made by this script; choose a new directory with --work" >&2
   exit 2
@@ -155,14 +166,27 @@ for name in $names; do
   echo "slicer-smoke: input $name.3mf ($(wc -c < "$file") bytes)"
 done
 
+# WORK/summary.md and WORK/results.json. With --partial (after each slice)
+# nothing is printed or posted; otherwise the summary goes to the job summary
+# too, and WORK/.summary-posted records that it did (the workflow posts a
+# partial summary itself when this step is stopped before that).
 report() {
-  local status=0 pin=(--orca "$ORCA_VERSION" --appimage "$ORCA_APPIMAGE" --sha256 "$ORCA_SHA256")
+  local status=0 partial=0 pin=(--orca "$ORCA_VERSION" --appimage "$ORCA_APPIMAGE" --sha256 "$ORCA_SHA256")
+  if [ "${1:-}" = "--partial" ]; then
+    partial=1
+    shift
+  fi
   if [ -n "$orca_root" ]; then
     pin=(--orca "local build" --appimage "$orca_root" --sha256 "not checked (--orca-root)")
+  fi
+  if [ "$partial" -eq 1 ]; then
+    python3 -I scripts/slicer-smoke.py report --work "$work" "$@" "${pin[@]}" > /dev/null || true
+    return 0
   fi
   python3 -I scripts/slicer-smoke.py report --work "$work" "$@" "${pin[@]}" || status=$?
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "$work/summary.md" ]; then
     cat "$work/summary.md" >> "$GITHUB_STEP_SUMMARY"
+    : > "$work/.summary-posted"
   fi
   return "$status"
 }
@@ -252,6 +276,7 @@ for name in $names; do
     "$inputs/$name.3mf" > "$out/orca.log" 2>&1 || code=$?
   echo "$code" > "$out/exit-code"
   echo "slicer-smoke: $name.3mf: exit $code"
+  report --partial
 done
 
 # 5. Report.

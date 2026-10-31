@@ -13,22 +13,27 @@
 //!    other; a link to anything else in the repository (the root README, a
 //!    script, a data folder) becomes a link to the file on GitHub. A link to a
 //!    file that does not exist fails. Until `docs/guides/install.md` exists,
-//!    `docs/site/install-placeholder.md` stands in for it. The landing page gets
-//!    the disclaimer from `crates/openbrick-units/disclaimer.txt`, the file the
-//!    CLI and the playground read. Every Markdown file of the staged folders must
-//!    be in `SUMMARY.md`.
+//!    `docs/site/install-placeholder.md` stands in for it. Every Markdown file
+//!    of the staged folders must be in `SUMMARY.md`. Every page gets the same
+//!    footer ([`page_footer`]): a link to its source file on GitHub and the
+//!    disclaimer from `crates/openbrick-units/disclaimer.txt`, the file the CLI
+//!    and the playground read (docs/plan/12 section 4 puts it in the website
+//!    footer).
 //! 3. Build it with the pinned mdBook ([`MDBOOK_VERSION`]) into `target/docs/`.
 //!    Installing mdBook is the developer's job; xtask prints the command.
 //! 4. Check every link and anchor in the generated HTML: each relative `href`
 //!    or `src` must name a file in the book, and each `#fragment` an `id` in
-//!    that file. External links are counted, not fetched.
+//!    that file. External links are counted, not fetched. Then check that
+//!    every page carries the footer with the disclaimer ([`check_footers`]).
 //!
 //! `cargo xtask docs --mdbook-version` prints the pinned mdBook version (CI
 //! reads it to install and cache the same one). `cargo xtask check` also fails
 //! when the committed CLI reference is out of date ([`cli_reference_is_current`]).
 //!
-//! mdBook is MPL-2.0, a build-time tool that is run as a program and never
-//! linked or shipped.
+//! mdBook (MPL-2.0) runs as a program at build time and is never linked into a
+//! crate. The site it writes does contain mdBook's own front-end files,
+//! unmodified (scripts, style sheets, page templates, fonts and the libraries
+//! it bundles); `docs/site/src/credits.md` names each with its licence.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -46,7 +51,14 @@ const SITE_DIR: &str = "docs/site";
 const INSTALL_GUIDE: &str = "docs/guides/install.md";
 const INSTALL_PLACEHOLDER: &str = "docs/site/install-placeholder.md";
 const DISCLAIMER_FILE: &str = "crates/openbrick-units/disclaimer.txt";
-const DISCLAIMER_MARKER: &str = "<!--openbrick:disclaimer-->";
+/// The credits and licences of what mdBook puts into the site.
+const CREDITS_PAGE: &str = "docs/site/src/credits.md";
+/// The element every page ends with ([`page_footer`]).
+const FOOTER_OPEN: &str = "<footer class=\"ob-page-footer\">";
+/// Built pages that are not pages of their own: the whole book on one page
+/// (it repeats every chapter's footer; the theme shows the first) and the
+/// table of contents for readers without JavaScript.
+const NOT_PAGES: &[&str] = &["print.html", "toc.html"];
 /// The site's base path on GitHub Pages (`site-url` in docs/site/book.toml).
 const SITE_URL: &str = "/openBrick/docs/";
 const REPO_URL: &str = "https://github.com/NeuralDEEPnet/openBrick";
@@ -119,6 +131,10 @@ pub fn docs(root: &Path, options: &Options) -> bool {
         }
         return false;
     }
+    if let Err(e) = credits_name_pinned_mdbook(root) {
+        eprintln!("docs: {e}");
+        return false;
+    }
     if !mdbook_is_pinned() {
         return false;
     }
@@ -154,11 +170,28 @@ pub fn docs(root: &Path, options: &Options) -> bool {
         }
     }
     match check_links(&out) {
-        Ok(stats) => {
-            println!(
-                "docs: {} pages, {} internal links and anchors checked, {} external links not fetched",
-                stats.pages, stats.internal, stats.external
-            );
+        Ok(stats) => println!(
+            "docs: {} pages, {} internal links and anchors checked, {} external links not fetched",
+            stats.pages, stats.internal, stats.external
+        ),
+        Err(errors) => {
+            for e in &errors {
+                eprintln!("docs: {e}");
+            }
+            eprintln!("docs: {} broken links in {OUT_DIR}", errors.len());
+            return false;
+        }
+    }
+    let disclaimer = match std::fs::read_to_string(root.join(DISCLAIMER_FILE)) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("docs: cannot read {DISCLAIMER_FILE}: {e}");
+            return false;
+        }
+    };
+    match check_footers(&out, &disclaimer) {
+        Ok(pages) => {
+            println!("docs: {pages} pages end with their source link and the disclaimer");
             println!("docs: built {OUT_DIR}/index.html");
             true
         }
@@ -166,7 +199,10 @@ pub fn docs(root: &Path, options: &Options) -> bool {
             for e in &errors {
                 eprintln!("docs: {e}");
             }
-            eprintln!("docs: {} broken links in {OUT_DIR}", errors.len());
+            eprintln!(
+                "docs: {} pages without the footer in {OUT_DIR}",
+                errors.len()
+            );
             false
         }
     }
@@ -388,26 +424,27 @@ pub fn stage_book(root: &Path, stage: &Path) -> Result<(), Vec<String>> {
         return Err(errors);
     }
 
-    // The landing page carries the disclaimer, verbatim from its one source.
-    let index = src.join("index.md");
-    match (
-        std::fs::read_to_string(&index),
-        std::fs::read_to_string(root.join(DISCLAIMER_FILE)),
-    ) {
-        (Ok(page), Ok(disclaimer)) => {
-            if page.contains(DISCLAIMER_MARKER) {
-                let page = page.replace(DISCLAIMER_MARKER, disclaimer.trim());
-                if let Err(e) = std::fs::write(&index, page) {
-                    errors.push(format!("cannot write the staged index.md: {e}"));
-                }
-            } else {
-                errors.push(format!(
-                    "docs/site/src/index.md lost its disclaimer placeholder {DISCLAIMER_MARKER}"
-                ));
-            }
+    // Every page ends with the disclaimer, verbatim from its one source.
+    let disclaimer = match std::fs::read_to_string(root.join(DISCLAIMER_FILE)) {
+        Ok(d) if !d.trim().is_empty() => Some(d),
+        Ok(_) => {
+            errors.push(format!("{DISCLAIMER_FILE} is empty"));
+            None
         }
-        (Err(e), _) => errors.push(format!("cannot read docs/site/src/index.md: {e}")),
-        (_, Err(e)) => errors.push(format!("cannot read {DISCLAIMER_FILE}: {e}")),
+        Err(e) => {
+            errors.push(format!("cannot read {DISCLAIMER_FILE}: {e}"));
+            None
+        }
+    };
+    // The repository file each page of the book comes from (None: no source
+    // link, for the page-not-found page).
+    let mut sources: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for page in markdown_files(&site.join("src")) {
+        if page == "SUMMARY.md" {
+            continue;
+        }
+        let source = (page != "404.md").then(|| format!("{SITE_DIR}/src/{page}"));
+        sources.insert(page, source);
     }
 
     // The Markdown files of the staged folders, by repository path.
@@ -471,6 +508,24 @@ pub fn stage_book(root: &Path, stage: &Path) -> Result<(), Vec<String>> {
         {
             errors.push(format!("cannot stage {source}: {e}"));
         }
+        sources.insert(book_path.clone(), Some(source.to_string()));
+    }
+
+    // The footer of every page: its source on GitHub and the disclaimer.
+    if let Some(disclaimer) = &disclaimer {
+        for (book_path, source) in &sources {
+            let at = src.join(book_path);
+            let footed = std::fs::read_to_string(&at).and_then(|mut text| {
+                if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.push_str(&page_footer(source.as_deref(), disclaimer));
+                std::fs::write(&at, text)
+            });
+            if let Err(e) = footed {
+                errors.push(format!("cannot add the footer to {book_path}: {e}"));
+            }
+        }
     }
 
     // Every page of the staged folders and of docs/site/src is in SUMMARY.md.
@@ -510,6 +565,14 @@ pub fn stage_book(root: &Path, stage: &Path) -> Result<(), Vec<String>> {
 /// the page-not-found page (`input-404` in book.toml), which mdBook renders
 /// outside the table of contents.
 fn site_pages(dir: &Path) -> Vec<String> {
+    markdown_files(dir)
+        .into_iter()
+        .filter(|p| p != "SUMMARY.md" && p != "404.md")
+        .collect()
+}
+
+/// Every Markdown file under `dir`, as sorted slash paths relative to it.
+fn markdown_files(dir: &Path) -> Vec<String> {
     let mut pages = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -522,16 +585,45 @@ fn site_pages(dir: &Path) -> Vec<String> {
                 stack.push(p);
             } else if p.extension().is_some_and(|x| x == "md") {
                 if let Ok(rel) = p.strip_prefix(dir) {
-                    let rel = slash_path(rel);
-                    if rel != "SUMMARY.md" && rel != "404.md" {
-                        pages.push(rel);
-                    }
+                    pages.push(slash_path(rel));
                 }
             }
         }
     }
     pages.sort();
     pages
+}
+
+/// The footer `stage_book` adds to every page: a link to the page's source on
+/// GitHub (when it has one) and the disclaimer, whitespace collapsed to one
+/// line. It is a raw HTML block (no blank line inside), so mdBook passes it
+/// through as written: no smart quotes, no autolinks, the same text on every
+/// page, which [`check_footers`] then finds in the built HTML.
+pub fn page_footer(source: Option<&str>, disclaimer: &str) -> String {
+    let mut f = format!("\n{FOOTER_OPEN}\n");
+    if let Some(path) = source {
+        let path = escape_html(path);
+        f.push_str(&format!(
+            "<p class=\"ob-page-source\"><a href=\"{REPO_URL}/blob/main/{path}\">Source of this page on GitHub</a>: <code>{path}</code></p>\n"
+        ));
+    }
+    f.push_str(&format!(
+        "<p class=\"ob-disclaimer\">{}</p>\n</footer>\n",
+        disclaimer_html(disclaimer)
+    ));
+    f
+}
+
+/// The disclaimer as it appears in every footer.
+fn disclaimer_html(disclaimer: &str) -> String {
+    escape_html(&disclaimer.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// The chapter paths SUMMARY.md links to.
@@ -830,6 +922,29 @@ fn split_target(s: &str) -> (&str, &str) {
 // ---------------------------------------------------------------------------
 // mdBook
 
+/// The site's credits page names mdBook's front-end files and links to their
+/// source at the pinned release (MPL-2.0 section 3.1). A new pin can bring
+/// other files or licences, so the page must be read again whenever
+/// [`MDBOOK_VERSION`] changes; this fails until its links name that release.
+fn credits_name_pinned_mdbook(root: &Path) -> Result<(), String> {
+    let text = std::fs::read_to_string(root.join(CREDITS_PAGE))
+        .map_err(|e| format!("cannot read {CREDITS_PAGE}: {e}"))?;
+    if credits_name_version(&text, MDBOOK_VERSION) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{CREDITS_PAGE} does not link to mdBook's front-end source and licence at v{MDBOOK_VERSION}, the pinned version: compare the files in {OUT_DIR}/ with the page, update it, and change its links to v{MDBOOK_VERSION}"
+        ))
+    }
+}
+
+fn credits_name_version(text: &str, version: &str) -> bool {
+    let repo = "https://github.com/rust-lang/mdBook";
+    text.contains(&format!(
+        "{repo}/tree/v{version}/crates/mdbook-html/front-end"
+    )) && text.contains(&format!("{repo}/blob/v{version}/LICENSE"))
+}
+
 fn mdbook_is_pinned() -> bool {
     let install = format!("cargo install mdbook --locked --version {MDBOOK_VERSION}");
     match Command::new("mdbook").arg("--version").output() {
@@ -869,8 +984,8 @@ pub struct LinkStats {
     pub external: usize,
 }
 
-/// Check every relative link and fragment in the HTML files under `out`.
-pub fn check_links(out: &Path) -> Result<LinkStats, Vec<String>> {
+/// The HTML files under `out`, sorted.
+fn html_files(out: &Path) -> Result<Vec<PathBuf>, Vec<String>> {
     let mut files = Vec::new();
     let mut stack = vec![out.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -885,6 +1000,52 @@ pub fn check_links(out: &Path) -> Result<LinkStats, Vec<String>> {
         }
     }
     files.sort();
+    Ok(files)
+}
+
+/// Every built page under `out` (except [`NOT_PAGES`]) ends with exactly one
+/// page footer, and that footer carries `disclaimer` (the text of
+/// `crates/openbrick-units/disclaimer.txt`) as [`page_footer`] writes it.
+/// Returns the number of pages checked.
+pub fn check_footers(out: &Path, disclaimer: &str) -> Result<usize, Vec<String>> {
+    let expected = format!(
+        "<p class=\"ob-disclaimer\">{}</p>",
+        disclaimer_html(disclaimer)
+    );
+    let mut errors = Vec::new();
+    let mut pages = 0;
+    for file in html_files(out)? {
+        let shown = file.strip_prefix(out).map(slash_path).unwrap_or_default();
+        if NOT_PAGES.contains(&shown.as_str()) {
+            continue;
+        }
+        pages += 1;
+        let text = std::fs::read_to_string(&file).map_err(|e| vec![format!("{shown}: {e}")])?;
+        let footers = text.matches(FOOTER_OPEN).count();
+        if footers != 1 {
+            errors.push(format!(
+                "{shown}: {footers} page footers, expected 1 (stage_book adds one to every page)"
+            ));
+            continue;
+        }
+        let footer = &text[text.find(FOOTER_OPEN).unwrap_or(0)..];
+        let footer = &footer[..footer.find("</footer>").unwrap_or(footer.len())];
+        if !footer.contains(&expected) {
+            errors.push(format!(
+                "{shown}: the page footer does not carry the disclaimer of {DISCLAIMER_FILE}"
+            ));
+        }
+    }
+    if errors.is_empty() {
+        Ok(pages)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Check every relative link and fragment in the HTML files under `out`.
+pub fn check_links(out: &Path) -> Result<LinkStats, Vec<String>> {
+    let files = html_files(out)?;
     let mut ids: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     let mut texts = Vec::new();
     for f in &files {
@@ -1233,6 +1394,208 @@ mod tests {
         assert!(errors[1].contains("no such file"), "{errors:?}");
         assert!(errors[2].contains("outside the book"), "{errors:?}");
         let _ = std::fs::remove_dir_all(&out);
+    }
+
+    /// A small repository with everything `stage_book` reads.
+    fn site_tree(name: &str) -> PathBuf {
+        let root = temp(name);
+        let files: &[(&str, &str)] = &[
+            ("docs/site/book.toml", "[book]\n"),
+            ("docs/site/theme/openbrick.css", "a {}\n"),
+            (
+                "docs/site/src/SUMMARY.md",
+                "# Summary\n\n[Home](index.md)\n\n- [Install](guides/install.md)\n- [Plan](plan/README.md)\n- [S](spikes/s.md)\n",
+            ),
+            ("docs/site/src/index.md", "# Home\n\n[Plan](plan/README.md)"),
+            ("docs/site/src/404.md", "# Not found\n"),
+            ("docs/site/install-placeholder.md", "# Install (soon)\n"),
+            (
+                "docs/plan/README.md",
+                "# Plan\n\n[s](../spikes/s.md#x) [script](../../scripts/x.py)\n",
+            ),
+            ("docs/spikes/s.md", "# S\n\n```sh\nopen\n```\n"),
+            ("scripts/x.py", "x\n"),
+            (
+                "crates/openbrick-units/disclaimer.txt",
+                "Not affiliated with\n  anyone & everyone <here>.\n",
+            ),
+        ];
+        for (path, text) in files {
+            let p = root.join(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+        std::fs::create_dir_all(root.join("docs/guides")).unwrap();
+        root
+    }
+
+    fn read(p: &Path) -> String {
+        std::fs::read_to_string(p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    }
+
+    #[test]
+    fn stage_book_stages_every_page_with_its_footer() {
+        let root = site_tree("stage-ok");
+        let stage = root.join("target/docs-src");
+        stage_book(&root, &stage).unwrap();
+        let src = stage.join("src");
+        let disclaimer = "<p class=\"ob-disclaimer\">Not affiliated with anyone &amp; everyone &lt;here&gt;.</p>";
+        let source = |path: &str| format!("<a href=\"{REPO_URL}/blob/main/{path}\">");
+
+        // The install placeholder stands in for the missing guide.
+        let install = read(&src.join("guides/install.md"));
+        assert!(install.starts_with("# Install (soon)\n\n<footer class=\"ob-page-footer\">\n"));
+        assert!(install.contains(&source("docs/site/install-placeholder.md")));
+        // Links between staged folders stay relative; others go to GitHub.
+        let plan = read(&src.join("plan/README.md"));
+        assert!(plan.contains("[s](../spikes/s.md#x)"), "{plan}");
+        assert!(plan.contains(&format!("[script]({REPO_URL}/blob/main/scripts/x.py)")));
+        assert!(plan.contains(&source("docs/plan/README.md")));
+        // A page without a final newline still gets its footer on lines of
+        // its own, after a blank line.
+        let index = read(&src.join("index.md"));
+        assert!(
+            index.contains("[Plan](plan/README.md)\n\n<footer"),
+            "{index}"
+        );
+        assert!(index.contains(&source("docs/site/src/index.md")));
+        // The page-not-found page has the disclaimer but no source link.
+        let not_found = read(&src.join("404.md"));
+        assert!(!not_found.contains("ob-page-source"));
+        // Every page except SUMMARY.md ends with the footer, once.
+        for page in [
+            "index.md",
+            "404.md",
+            "guides/install.md",
+            "plan/README.md",
+            "spikes/s.md",
+        ] {
+            let text = read(&src.join(page));
+            assert_eq!(text.matches(FOOTER_OPEN).count(), 1, "{page}");
+            assert!(
+                text.ends_with(&format!("{disclaimer}\n</footer>\n")),
+                "{page}: {text}"
+            );
+        }
+        assert!(!read(&src.join("SUMMARY.md")).contains(FOOTER_OPEN));
+        assert!(stage.join("book.toml").is_file() && stage.join("theme/openbrick.css").is_file());
+
+        // Once the guide exists it replaces the placeholder.
+        std::fs::write(root.join("docs/guides/install.md"), "# Install\n").unwrap();
+        stage_book(&root, &stage).unwrap();
+        let install = read(&src.join("guides/install.md"));
+        assert!(install.starts_with("# Install\n\n<footer"));
+        assert!(install.contains(&source("docs/guides/install.md")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stage_book_fails_on_summary_gaps_broken_links_and_no_disclaimer() {
+        let root = site_tree("stage-bad");
+        let stage = root.join("target/docs-src");
+        // A page that is not in SUMMARY.md, and one SUMMARY.md lists but
+        // nobody wrote.
+        std::fs::write(root.join("docs/plan/extra.md"), "# Extra\n").unwrap();
+        let summary = root.join("docs/site/src/SUMMARY.md");
+        let mut text = read(&summary);
+        text.push_str("- [Gone](plan/gone.md)\n");
+        std::fs::write(&summary, text).unwrap();
+        let errors = stage_book(&root, &stage).unwrap_err();
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            errors[0].contains("plan/extra.md is not in docs/site/src/SUMMARY.md"),
+            "{errors:?}"
+        );
+        assert!(
+            errors[1].contains("lists plan/gone.md, which is not a page"),
+            "{errors:?}"
+        );
+        std::fs::remove_file(root.join("docs/plan/extra.md")).unwrap();
+        std::fs::write(
+            &summary,
+            read(&summary).replace("- [Gone](plan/gone.md)\n", ""),
+        )
+        .unwrap();
+        stage_book(&root, &stage).unwrap();
+
+        // A link to a file that does not exist.
+        std::fs::write(root.join("docs/spikes/s.md"), "[x](../plan/missing.md)\n").unwrap();
+        let errors = stage_book(&root, &stage).unwrap_err();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].starts_with(
+                "docs/spikes/s.md: the link ../plan/missing.md names docs/plan/missing.md"
+            ),
+            "{errors:?}"
+        );
+        std::fs::write(root.join("docs/spikes/s.md"), "# S\n").unwrap();
+
+        // No disclaimer, no site.
+        let disclaimer = root.join(DISCLAIMER_FILE);
+        std::fs::write(&disclaimer, " \n").unwrap();
+        let errors = stage_book(&root, &stage).unwrap_err();
+        assert_eq!(errors, [format!("{DISCLAIMER_FILE} is empty")]);
+        std::fs::remove_file(&disclaimer).unwrap();
+        let errors = stage_book(&root, &stage).unwrap_err();
+        assert!(
+            errors[0].starts_with(&format!("cannot read {DISCLAIMER_FILE}")),
+            "{errors:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_footer_check_finds_pages_without_the_disclaimer() {
+        let out = temp("footers");
+        let disclaimer = "Not affiliated  with\nanyone.\n";
+        let page = |source| format!("<main><h1>T</h1>{}</main>", page_footer(source, disclaimer));
+        std::fs::create_dir_all(out.join("plan")).unwrap();
+        std::fs::write(out.join("index.html"), page(Some("docs/site/src/index.md"))).unwrap();
+        std::fs::write(out.join("404.html"), page(None)).unwrap();
+        std::fs::write(out.join("plan/a.html"), page(Some("docs/plan/a.md"))).unwrap();
+        // print.html repeats every footer and toc.html has none: both skipped.
+        std::fs::write(out.join("print.html"), page(None).repeat(3)).unwrap();
+        std::fs::write(out.join("toc.html"), "<ol></ol>").unwrap();
+        assert_eq!(check_footers(&out, disclaimer), Ok(3));
+
+        // A page without a footer, one with two, and one whose disclaimer
+        // differs from the file (or was rendered as Markdown and changed).
+        std::fs::write(out.join("plan/b.html"), "<main><h1>B</h1></main>").unwrap();
+        std::fs::write(out.join("plan/c.html"), page(None).repeat(2)).unwrap();
+        std::fs::write(
+            out.join("plan/d.html"),
+            page(None).replace("anyone.", "anyone at all."),
+        )
+        .unwrap();
+        let errors = check_footers(&out, disclaimer).unwrap_err();
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert!(
+            errors[0].starts_with("plan/b.html: 0 page footers"),
+            "{errors:?}"
+        );
+        assert!(
+            errors[1].starts_with("plan/c.html: 2 page footers"),
+            "{errors:?}"
+        );
+        assert!(
+            errors[2].starts_with("plan/d.html: the page footer does not carry the disclaimer"),
+            "{errors:?}"
+        );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn the_credits_must_name_the_pinned_mdbook() {
+        let page = "[src](https://github.com/rust-lang/mdBook/tree/v0.5.4/crates/mdbook-html/front-end) [licence](https://github.com/rust-lang/mdBook/blob/v0.5.4/LICENSE)";
+        assert!(credits_name_version(page, "0.5.4"));
+        assert!(!credits_name_version(page, "0.5.5"));
+        assert!(!credits_name_version(
+            &page[..page.find(" [licence]").unwrap()],
+            "0.5.4"
+        ));
+        // The committed page names the version xtask pins.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        credits_name_pinned_mdbook(&root).unwrap();
     }
 
     #[test]
