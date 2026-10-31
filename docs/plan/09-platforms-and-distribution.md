@@ -29,6 +29,8 @@
 
 Tier 1 means CI-built, signed, tested on every release. Tier 2 means CI-built and smoke-tested, store review cadence.
 
+Status 2026-10-31 (M2 desktop alpha, `apps/desktop`): the playground runs in Tauri 2.12.5 (dialog plugin 2.8.4, CLI 2.12.4) with native open and save dialogs and builds from source on all three desktop OSes. CI compiles, lints and tests the Tauri app on Linux x64, Windows x64 and macOS arm64 on every pull request, but runs it on Linux only: a WebDriver smoke test under Xvfb (tauri-driver 2.1.0, WebKitWebDriver from webkit2gtk-driver) drives the debug app, and main keeps an unsigned .deb. Bundles for macOS, Windows and the arm64 targets will come from the desktop jobs of the release workflow (section 7), which are not written yet (`release.yml` builds only the CLI so far, backlog item 15); until then those platforms are tested by hand. Nothing is signed yet, so no platform is tier 1 in the sense above.
+
 ## 2. Install matrix
 
 | OS | Channel | Command or action | Available from |
@@ -55,6 +57,8 @@ Tier 1 means CI-built, signed, tested on every release. Tier 2 means CI-built an
 | iOS (own device) | developer tooling | `cargo tauri ios dev` or `xcrun devicectl` with a developer certificate | M5 |
 | iOS (EU) | alternative marketplace | evaluate an AltStore PAL listing after App Store launch; free OSS app pays nothing under the 5 percent Core Technology Commission | post-1.0 |
 
+Until openbrick3d.org is live, the M1 commands use the GitHub release URLs (`https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.sh` and `.ps1`); [docs/guides/install.md](../guides/install.md) has them. `cargo binstall` needs `--git https://github.com/NeuralDEEPnet/openBrick` until the crate is on crates.io.
+
 "Install from the command line" on a phone therefore means: `adb install` or Obtainium on Android; TestFlight links, `cargo tauri ios dev` or `devicectl` on iOS; and a QR code to the PWA on both. There is no CLI install for iOS App Store apps or for PWAs, and we say so in the README.
 
 ## 3. Desktop packaging, signing, notarisation
@@ -64,10 +68,11 @@ Tier 1 means CI-built, signed, tested on every release. Tier 2 means CI-built an
 - **Linux:** no CA needed. Flathub and Snap sign for us; AppImage carries GPG plus Tauri updater signatures; deb/rpm attached to releases.
 - **Tauri bundler outputs:** `.app`/DMG, NSIS and MSI, AppImage, deb, rpm, MSIX; documented paths to Flathub, Snap, AUR, Mac App Store, Microsoft Store, Google Play and iOS App Store.
 - **Linux rendering caveat:** WebKitGTK has no WebGPU and WebGL can silently fall back to software rendering on NVIDIA; the app ships a "safe rendering" setting that sets `WEBKIT_DISABLE_DMABUF_RENDERER` and related env vars before the webview starts, and the renderer backend is shown in About. If this becomes a support burden, an Electron build of the same bundle for Linux is the escape hatch (D13).
+- **Status (M2 alpha, 2026-10-31):** bundles come from `apps/desktop/src-tauri/tauri.conf.json` (`targets: all`, identifier `net.neuraldeep.OpenBrick3D`; Linux packages named `openbrick3d`, binary `openbrick-desktop`). Signing and notarisation are deferred to M4: M2 builds are unsigned (macOS needs the Privacy and Security override; SmartScreen warns on Windows). The AppImage waits for a licence decision. Unlike the .deb, it copies the system libraries the app runs on into the file, among them WebKitGTK, GTK and GLib (LGPL). That needs their notices and a source offer, and LICENSE-POLICY.md keeps LGPL code out of client packages. Until a maintainer decides, CI keeps only the .deb and the planned release job builds .deb and .rpm. Safe rendering exists as `--safe-rendering` or `OPENBRICK_SAFE_RENDERING=1` and sets only `WEBKIT_DISABLE_DMABUF_RENDERER=1`. Under Xvfb, WebKitGTK 2.52 shows no WebGL with it. It also shows none with `WEBKIT_DISABLE_COMPOSITING_MODE=1`, which the app never sets because WebKit shows WebGL only with accelerated compositing. Safe rendering is therefore opt-in and still needs a test on an NVIDIA machine. The setting in the app and the renderer in About come later in M2.
 
 ## 4. Updater
 
-Tauri updater plugin: desktop only (AppImage, `.app`, NSIS, MSI). Channels `stable` and `beta`; signed manifests; the updater key lives only in CI secrets (loss means no further updates, so it is backed up offline). Store builds (Microsoft Store, Flathub, Play, App Store) update through the stores. The PWA updates through the service worker.
+Tauri updater plugin: desktop only (AppImage, `.app`, NSIS, MSI). Channels `stable` and `beta`; signed manifests; the updater key lives only in CI secrets (loss means no further updates, so it is backed up offline). Store builds (Microsoft Store, Flathub, Play, App Store) update through the stores. The PWA updates through the service worker. Deferred: the M2 desktop alpha has no updater plugin and no updater key; both come with signed builds in M4. The AppImage, the only Linux format the updater serves, also waits for the licence decision in section 3.
 
 ## 5. Mobile strategy, honestly
 
@@ -96,6 +101,11 @@ Tauri updater plugin: desktop only (AppImage, `.app`, NSIS, MSI). Channels `stab
 ## 8. Supply chain and reproducibility
 
 Commit `Cargo.lock` and `rust-toolchain.toml`; set `SOURCE_DATE_EPOCH` from the commit; `--remap-path-prefix` or `trim-paths`; `cargo-auditable`; rebuild the CLI twice in CI and diff; CycloneDX SBOMs and GitHub artifact attestations on from the first tag, with the `gh attestation verify` one-liner in the README; aim for F-Droid reproducible builds on Android; `cargo xtask dist --unsigned` lets any contributor produce every artifact locally without secrets; fork pull requests never see signing secrets.
+
+Status at M1 (backlog item 15):
+
+- Enabled: `--remap-path-prefix` for registry sources (`trim-paths` is still unstable in Rust 1.99); a CycloneDX SBOM (cargo-cyclonedx 0.5.5 as dist 0.33.1 pins it: CycloneDX 1.3, no hashes, features resolved across the workspace, so it errs towards listing more); GitHub attestations for every release file; release actions pinned by commit; the licence texts of the CLI's 71 dependency crates in every archive.
+- Deferred: `cargo-auditable` (dist 0.33.1 installs it from an unpinned `releases/latest` URL); `SOURCE_DATE_EPOCH` (rustc embeds no timestamps, and dist ignores it for archive mtimes, so archives differ while binaries are identical); the rebuild-twice CI diff; `cargo xtask dist --unsigned`.
 
 ## 9. Yearly costs
 

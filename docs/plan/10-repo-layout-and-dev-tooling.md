@@ -50,7 +50,7 @@ openBrick/
     state/                      # document store mirroring the command log
     part-api/                   # @openbrick/part TS API for scripted parts (M5)
   apps/
-    desktop/                    # Tauri 2 project (desktop + Android + iOS)
+    desktop/                    # Tauri 2 project (desktop + Android + iOS); src-tauri/ is the openbrick-desktop crate, whose "app" feature pulls in Tauri, so core builds never need the webview libraries
     web/                        # PWA shell; today the M1 browser pipeline (core in a Web Worker, three.js viewer)
   standards/
     dimensions-v1.json          # Dimensional Standard v1 (CC0)
@@ -73,7 +73,7 @@ openBrick/
 
 - Rust: Cargo workspace; `cargo xtask check` runs fmt, clippy, tests and schema validation; `cargo xtask dist --unsigned` builds every artifact locally; `cargo xtask corpus` regenerates golden meshes (reviewed diffs).
 - TypeScript: pnpm workspace, Vite, `wasm-bindgen` output consumed by `packages/core-wasm`. Until that package exists, `cargo xtask wasm` writes it into `apps/web/src/wasm/`, with the wasm-bindgen CLI pinned to the crate version in `Cargo.lock`. Playwright for browser tests.
-- Tauri: `pnpm tauri dev`, `pnpm tauri build`, `pnpm tauri android build`, `pnpm tauri ios build`.
+- Tauri: `pnpm --dir apps/desktop dev`, `pnpm --dir apps/desktop build` (and `build:debug`), later `pnpm --dir apps/desktop tauri android build` and `tauri ios build`; the Tauri CLI is the pinned npm devDependency `@tauri-apps/cli`.
 - Caching: sccache in CI; pnpm store cache; Cargo registry cache.
 
 ## 3. Test strategy
@@ -103,7 +103,11 @@ rustfmt; clippy with `-D warnings`; biome for TypeScript; prettier and markdownl
 | test-cross | ubuntu-24.04, ubuntu-24.04-arm, windows-2025, windows-11-arm, macos-26 | cargo test per target; CLI smoke |
 | wasm, web | ubuntu-24.04 | wasm build, size budget (core under 2.5 MB gzip, `cargo xtask wasm`), Playwright smoke of the `apps/web` playground on Chromium (WebGL2 and WebGPU, phone layout, the `/openBrick/` Pages build) against the native values of the same Rust functions (downloads byte-identical to the native exports, every part 3MF in the part-designer layout), lib3mf strict validation of the downloaded 3MF files; WebKit to follow |
 | cli, part-exports, io-3mf | ubuntu-24.04 | the `openbrick` CLI end to end (installed from the clone; logo tile in every relief and inlay style, a parts inlay without colours, coupon, recorded fit, a blocked build) and the part crate's and writer's exports, every 3MF read by lib3mf 2.5.0 in strict mode against its description (`scripts/validate-3mf.py --self-test`) |
-| pages | ubuntu-24.04 (push to main, manual) | builds the core and `apps/web` with base `/openBrick/` and deploys the playground to GitHub Pages (`.github/workflows/pages.yml`) |
+| pages | ubuntu-24.04 (push to main, manual) | builds the core and `apps/web` with base `/openBrick/` and the documentation site (`cargo xtask docs`), and deploys both to GitHub Pages, the site under `docs/` (`.github/workflows/pages.yml`) |
+| docs | ubuntu-24.04 | plan links; `cargo xtask docs --check`: the CLI reference is current, the credits name the pinned mdBook, the mdBook site builds, every link and anchor resolves, every page ends with its source link and the disclaimer |
+| slicer-smoke | ubuntu-24.04 (weekly, manual; never required) | the CLI's logo tiles, brand tile and coupon sliced by a pinned, checksum-verified OrcaSlicer 2.4.2 AppImage; objects, parts and filaments per file for Q18 (`.github/workflows/slicer-smoke.yml`, `scripts/slicer-smoke.sh`) |
+| desktop | ubuntu-24.04 | the desktop app alpha (`apps/desktop`): clippy and tests of `openbrick-desktop` with its Tauri feature, `node --test` configuration checks (CSP, permissions, window, pins), the debug app, and a WebDriver smoke test under Xvfb (tauri-driver, WebKitWebDriver): the first tile equals native and is shown, the CSP is in force, saves through the app's save command are byte-identical to the native exports, also over Tauri's postMessage IPC fallback; an unsigned .deb artifact on main (no AppImage until the licence decision in [09](09-platforms-and-distribution.md) section 3) |
+| desktop-cross | windows-2025, macos-26 | clippy and tests of `openbrick-desktop` with its Tauri feature, so the app compiles on every desktop OS on every pull request (a dev build embeds no frontend, so no wasm or web build); a first step towards desktop-bundles below |
 | corpus | ubuntu-24.04 | golden meshes, LDraw round-trip, 3MF conformance (lib3mf, OrcaSlicer CLI) |
 | bench | ubuntu-24.04 (scheduled) | criterion and web harness; regression gate |
 | fuzz | ubuntu-24.04 (nightly) | cargo-fuzz on readers |
@@ -119,7 +123,16 @@ Fork pull requests never receive secrets; signed artifacts only from tags on the
 
 ## 7. Documentation site
 
-Static site from `docs/site/` (Astro Starlight or mdBook; choose in M0): user guide (designer, assembler, printing, calibration), the Dimensional Standard, the part document reference generated from the JSON Schemas, the CLI reference generated from clap, the fit-profile dataset browser, and this plan. Hosted at `docs.openbrick3d.org`. Docs are CC BY 4.0.
+Static site from `docs/site/`, built with mdBook (chosen 2026-10-31 over Astro Starlight because it is a Rust tool, so the site needs no JavaScript toolchain of its own; MPL-2.0; it runs as a program and is never linked; version pinned by `cargo xtask docs`). The published site contains mdBook's own MPL-2.0 front-end files and the libraries, fonts and icons it bundles (highlight.js BSD-3-Clause; elasticlunr.js, mark.js and clipboard.js MIT; Open Sans Apache-2.0; Source Code Pro OFL-1.1; Font Awesome icons CC BY 4.0), all unmodified and listed with their licences on the site's credits page. Its contents:
+
+- the user guide (designer, assembler, printing, calibration);
+- the Dimensional Standard;
+- the part document reference generated from the JSON Schemas;
+- the CLI reference generated from clap (done: `docs/site/src/cli.md`, the `--help` of every `openbrick` command);
+- the fit-profile dataset browser;
+- this plan (done, with the spike reports).
+
+`cargo xtask docs` stages `docs/guides`, `docs/plan` and `docs/spikes` beside `docs/site/src` without copying them into the repository, and ends every page with a link to its source and the disclaimer (plan 12 section 4). It builds the site into `target/docs` and checks every link, anchor and page footer ([docs/site/README.md](../site/README.md)). The site is hosted with the playground on GitHub Pages at https://neuraldeepnet.github.io/openBrick/docs/ until `docs.openbrick3d.org` is live. Docs are CC BY 4.0.
 
 ## 8. Contribution workflow and review culture
 

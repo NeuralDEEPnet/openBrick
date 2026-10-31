@@ -5,6 +5,7 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 ## Unreleased
 
 ### Changed
+- Version 0.1.0 for the first release, the M1 CLI alpha (docs/plan/11). Only the `openbrick` crate is released. The library crates and the WebAssembly core are `publish = false` until crates.io in M2.
 - Agent pull requests merge automatically once CI is green (GOVERNANCE.md, plan 14); commits and pull requests are attributed to the Neuraldeep.net design agents (CLAUDE.md).
 
 ### Fixed
@@ -14,6 +15,27 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 - DCO workflow skips merge commits, as the DCO app does; it failed on the merge commit in the M0 scaffold pull request.
 
 ### Added
+- Desktop app alpha (`apps/desktop`, crate `openbrick-desktop`): the playground in a Tauri 2.12.5 window on Linux, macOS and Windows with native open and save dialogs (three app commands; the webview has no dialog, file system or shell permission; saves work over Tauri's custom IPC protocol and over its postMessage fallback), a strict Content Security Policy, an original 2x2 brick icon, Linux packages named `openbrick3d`, opt-in `--safe-rendering` on Linux, compile and test checks on Linux, Windows and macOS, and a WebDriver smoke test under Xvfb whose saved 3MF, STL and coupon files are byte-identical to the native exports. Unsigned, no updater yet (M4); CI keeps an unsigned Linux .deb from main, and the AppImage waits for a licence decision.
+- Playground: calibration wizard (Calibration coupon > 2. Record my fit, docs/plan/05 section 4, 06 section 11). After printing the coupon, tap the best stud, tube bore and pocket on a map of it built from the core's cell layout, and fill in printer and material; the table shows each offset before you save. Download fit profile saves the same file `openbrick calibrate record` writes for the same choices, byte for byte (new wasm export `record_fit`; `crates/openbrick/tests/record_parity.rs`). Use this fit profile selects it in the logo tile at once and keeps it in this browser only. FIT.MISSING and FIT.PROCESS blockers offer Calibrate. Copies printed side by side are drawn one under the other, so every tap target stays at least 24 px on a phone. openbrick-print gains `fit_profile_text`, `offset_rows` and `DEFAULT_NOZZLE_MM`, which the CLI now uses too.
+- Documentation site (backlog item 16): an mdBook 0.5.4 site in `docs/site/`. It holds a landing page, install, the print-test guide, a CLI reference generated from the `openbrick` command's `--help` (`docs/site/src/cli.md`, kept current by `cargo xtask docs --check` and `cargo xtask check`), the plan and spike reports staged from where they live, and a credits page for the files mdBook bundles. Every page ends with a link to its source and the disclaimer. `cargo xtask docs` builds the site into `target/docs` and checks every link, anchor and page footer. The `pages` workflow publishes it at https://neuraldeepnet.github.io/openBrick/docs/, the `docs` job checks it on pull requests, and the playground's footer links to it.
+- OrcaSlicer slice smoke test (backlog item 18): `.github/workflows/slicer-smoke.yml` runs weekly and on demand and is never required. It slices the CLI's logo tiles, brand tile and coupon with a pinned, checksum-verified OrcaSlicer 2.4.2 AppImage and reports, for Q18, the objects, the parts and each part's filament (`scripts/slicer-smoke.sh`, `scripts/slicer-smoke.py`). The `cli` job runs its `--dry-run`.
+- CLI releases (backlog item 15, decision D15). A tag `vX.Y.Z` runs `.github/workflows/release.yml`, which dist 0.33.1 generates from `dist-workspace.toml`. It builds the `openbrick` CLI for:
+  - Linux x86-64 and arm64: glibc builds, plus static musl builds that the installers use on older systems;
+  - macOS: Apple silicon and Intel;
+  - Windows x86-64.
+
+  Each release also has:
+  - a shell installer (`curl … | sh`; it checks the archive's SHA-256 when `sha256sum` is present) and a PowerShell installer (`irm … | iex`);
+  - cargo-binstall metadata;
+  - checksums;
+  - a CycloneDX SBOM;
+  - a GitHub artifact attestation for every release file (`gh attestation verify <file> --repo NeuralDEEPnet/openBrick`).
+
+  Every archive holds README.md, LICENSE, CHANGELOG.md and THIRD-PARTY-LICENSES.txt. That file has the licence texts of the 71 crates in the CLI's dependency tree (`scripts/third-party-licenses.py`). Registry paths are remapped out of the binaries, so builds with different Cargo homes give identical bytes.
+
+  Pull requests that touch the release setup run `dist plan` only. CI checks the plan, checks that `release.yml` is dist's output (`scripts/release-workflow.py --check`) and that the README carries the install commands. When the release setup changes, CI also builds and installs the Linux archive through the shell installer.
+
+  New guide `docs/guides/install.md`. The print-test guide now starts with the installers and clones the release tag that matches the installed CLI.
 - Neuraldeep.net demo tiles. Neural Deep Network Ltd's portrait mark (2x4 and 4x6 drawings) and hexagon badge (4x4 and 2x2) are in `parts/assets/brand/`: trademarks, all rights reserved, for building, printing and showing the OpenBrick3D demo tiles only (see its NOTICE.md, LICENSE-POLICY.md, TRADEMARK.md and PACKAGING.md; the WebAssembly core and the playground bundle them). The CC0 part documents `ndn.brand-tile` (2x4) and `ndn.brand-badge` (4x4) have golden tests in every relief (`crates/openbrick-part/tests/brand.rs`). A new `.gitattributes` keeps SVG artwork byte-identical in every checkout, so content hashes also match on Windows with `core.autocrlf`. The playground gets a sample chooser whose default is the Neuraldeep.net mark; it also offers the square badge and the CC0 sample mark. Choosing the badge or the mark on a tile of the other shape sets 4x4 or 2x4. The owner's copyright line and a link to the notice show under the drop zone, and download names end with the sample, e.g. `ndn.logo-tile-2x4-emboss-neuraldeep.3mf`.
 - `openbrick` CLI (backlog items 11 and 14):
   - `build` validates a part document and writes a 3MF or a single-colour STL.
