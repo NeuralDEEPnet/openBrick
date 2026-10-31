@@ -1,0 +1,30 @@
+# Steps that dist puts before `dist build` in every build job of
+# .github/workflows/release.yml (`github-build-setup` in dist-workspace.toml).
+# Edit this file, then regenerate release.yml with
+# `python3 scripts/release-workflow.py`.
+
+# docs/plan/09 section 8. Dependencies compile from
+# $CARGO_HOME/registry/src/..., an absolute path that names the runner's home
+# folder and ends up in the binary (panic locations), so two machines build
+# different bytes from the same commit. Remapping it to /cargo removes that
+# difference; workspace crates already compile from relative paths. dist adds
+# its own flags (static CRT on Windows and musl) after these. Cargo's
+# trim-paths would do the same, but it is not stable yet (Rust 1.99).
+- name: Keep the runner's folders out of the binaries
+  shell: bash
+  run: |
+    cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    if command -v cygpath > /dev/null 2>&1; then
+      cargo_home="$(cygpath -w "$cargo_home")"
+    fi
+    echo "RUSTFLAGS=--remap-path-prefix=${cargo_home}=/cargo" >> "$GITHUB_ENV"
+    echo "RUSTFLAGS=--remap-path-prefix=${cargo_home}=/cargo"
+
+# The licence texts of the crates compiled into the CLI, which dist puts into
+# every archive (`include` in dist-workspace.toml). On Windows, python3 can be
+# the Microsoft Store stub, so the step uses python there.
+- name: Collect the third-party licence texts
+  shell: bash
+  run: |
+    if [ "$RUNNER_OS" = "Windows" ]; then py=python; else py=python3; fi
+    "$py" scripts/third-party-licenses.py target/THIRD-PARTY-LICENSES.txt

@@ -1,0 +1,84 @@
+# Release configuration for the openbrick CLI, read by dist (cargo-dist,
+# https://github.com/axodotdev/cargo-dist, MIT OR Apache-2.0; a build tool that
+# runs in CI only and is never shipped). Decision D15, docs/plan/09 sections 2,
+# 7 and 8, docs/plan/10 section 6, docs/guides/install.md.
+#
+# Only the `openbrick` binary crate is released. The library crates, the
+# WebAssembly core and xtask are not distributed (no binaries, and
+# `publish = false` in their manifests).
+#
+# .github/workflows/release.yml is dist's output with one edit, its `on:` block
+# (tags vX.Y.Z only; pull requests only when they touch the release
+# configuration, and then `dist plan` only). That edit is why `allow-dirty`
+# lists "ci". Never edit release.yml by hand: change this file, then run
+#   python3 scripts/release-workflow.py
+# with the dist version pinned below on PATH. CI runs the same script with
+# `--check`, so a stale or hand-edited release.yml fails the pull request.
+
+[workspace]
+members = ["cargo:."]
+
+[dist]
+# The dist version CI installs (from its GitHub release) and the one the
+# release workflow was generated with. 0.33.1 (2026-10-21) is the newest
+# stable release; crates.io stops at 0.32.0.
+cargo-dist-version = "0.33.1"
+ci = "github"
+# The one package dist releases.
+packages = ["openbrick"]
+# curl | sh (macOS, Linux) and irm | iex (Windows). cargo-binstall finds the
+# archives by itself; see [package.metadata.binstall] in crates/openbrick.
+installers = ["shell", "powershell"]
+# Install where `cargo install` would ($CARGO_HOME/bin, else ~/.cargo/bin).
+install-path = "CARGO_HOME"
+install-updater = false
+# Plain text: the installers embed it in a shell and a PowerShell string.
+install-success-msg = "openbrick is installed. Run openbrick --help; the first print test is at https://github.com/NeuralDEEPnet/openBrick/blob/main/docs/guides/print-test.md"
+# Prebuilt targets. The musl builds are fully static (dist links them with
+# +crt-static) and pure Rust, so they need no C toolchain; the installers use
+# them on Linux systems whose glibc is older than the gnu builds need.
+targets = [
+  "aarch64-apple-darwin",
+  "aarch64-unknown-linux-gnu",
+  "aarch64-unknown-linux-musl",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+]
+# Build only the openbrick package (cargo build -p openbrick), not the whole
+# workspace (xtask, the WebAssembly facade).
+precise-builds = true
+# Steps before each build (the path is relative to .github/workflows):
+# --remap-path-prefix for the registry sources (docs/plan/09 section 8), and
+# target/THIRD-PARTY-LICENSES.txt from scripts/third-party-licenses.py.
+github-build-setup = "../dist-build-setup.yml"
+checksum = "sha256"
+# Every archive holds the binary, the repository's README.md, LICENSE and
+# CHANGELOG.md, and THIRD-PARTY-LICENSES.txt, the licence texts of the crates
+# compiled into the binary (written by the build setup above; for a local
+# `dist build`, run `python3 scripts/third-party-licenses.py
+# target/THIRD-PARTY-LICENSES.txt` first).
+auto-includes = false
+include = ["README.md", "LICENSE", "CHANGELOG.md", "target/THIRD-PARTY-LICENSES.txt"]
+# CycloneDX SBOM of the released crate (cargo-cyclonedx, Apache-2.0, run by CI).
+cargo-cyclonedx = true
+# GitHub artifact attestations (Sigstore) for every file of the release,
+# installers and SBOM included, created when the release is hosted. Verify one
+# with `gh attestation verify <file> --repo NeuralDEEPnet/openBrick`.
+github-attestations = true
+github-attestations-phase = "host"
+github-release = "host"
+hosting = "github"
+# Pull requests only plan; nothing is built or published for them.
+pr-run-mode = "plan"
+allow-dirty = ["ci"]
+
+# Actions in the release workflow, pinned by commit (tags can move). Each is
+# the newest release of the major version dist 0.33.1 uses, resolved with
+# `git ls-remote --tags` on 2026-10-31.
+[dist.github-action-commits]
+"actions/checkout" = "d23441a48e516b6c34aea4fa41551a30e30af803" # v6.1.0
+"actions/upload-artifact" = "cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
+"actions/download-artifact" = "9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+"actions/attest" = "1e69f48acb82d1966a394da916b4c1698aa569d6" # v4.2.2

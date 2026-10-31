@@ -1,6 +1,6 @@
 # Print test: from the calibration coupon to your own logo tile
 
-This guide takes you from a fresh clone to a printed, brick-compatible 2x4 logo
+This guide takes you from a fresh install to a printed, brick-compatible 2x4 logo
 tile that grips genuine bricks, using only the `openbrick` command line and your
 slicer. It is written for FDM printers with a 0.4 mm nozzle and checked against
 three setups:
@@ -17,7 +17,33 @@ recommends PETG for parts that get played with (docs/plan/05 section 11).
 
 ## 1. Install
 
-You need Rust 1.90 or newer ([rustup.rs](https://rustup.rs)) and git.
+**With an installer** (from the first release, v0.1.0, on; no Rust needed).
+On macOS and Linux:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.ps1 | iex"
+```
+
+With cargo-binstall: `cargo binstall --git https://github.com/NeuralDEEPnet/openBrick openbrick`.
+The installers put `openbrick` in `~/.cargo/bin` and add that folder to your
+`PATH`; open a new terminal afterwards. This guide also needs the example
+parts, so get the repository as well (or unpack `source.tar.gz` from the
+release):
+
+```sh
+git clone https://github.com/NeuralDEEPnet/openBrick
+cd openBrick
+openbrick --version
+```
+
+**From the clone** (works before the first release too). You need Rust 1.90 or
+newer ([rustup.rs](https://rustup.rs)) and git.
 
 ```sh
 git clone https://github.com/NeuralDEEPnet/openBrick
@@ -25,6 +51,9 @@ cd openBrick
 cargo install --path crates/openbrick --locked
 openbrick --version
 ```
+
+[install.md](install.md) lists every way to install and shows how to check a
+download with `gh attestation verify` before you run it.
 
 Run the commands below from the `openBrick` folder, so the example part
 `parts/ndn.logo-tile.obpart.json` is found. Every command has `--help`.

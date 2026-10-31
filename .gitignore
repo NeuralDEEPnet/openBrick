@@ -9,3 +9,6 @@ dist
 .cache
 # TLS keys for serving the device harness to phones (bench/devices/README.md); keep them out of the tree.
 *.pem
+# SBOMs that `cargo cyclonedx` writes next to each crate manifest (the release
+# workflow moves them into target/distrib; dist-workspace.toml).
+*.cdx.xml

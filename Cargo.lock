@@ -756,7 +756,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openbrick"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "clap",
  "jsonschema",
@@ -771,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "openbrick-catalog"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "openbrick-geom",
  "openbrick-units",
@@ -781,7 +781,7 @@ dependencies = [
 
 [[package]]
 name = "openbrick-engine"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "openbrick-units",
  "serde",
@@ -790,7 +790,7 @@ dependencies = [
 
 [[package]]
 name = "openbrick-geom"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "clipper2-rust",
  "manifold-csg",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "openbrick-io"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "miniz_oxide",
  "openbrick-geom",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "openbrick-part"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "openbrick-geom",
  "openbrick-io",
@@ -836,7 +836,7 @@ dependencies = [
 
 [[package]]
 name = "openbrick-print"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "openbrick-geom",
  "openbrick-units",
@@ -847,7 +847,7 @@ dependencies = [
 
 [[package]]
 name = "openbrick-units"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -856,7 +856,7 @@ dependencies = [
 
 [[package]]
 name = "openbrick-wasm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "openbrick-geom",
  "openbrick-io",
@@ -1412,7 +1412,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "xtask"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "flate2",
  "jsonschema",
