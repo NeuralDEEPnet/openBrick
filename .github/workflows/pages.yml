@@ -2,11 +2,21 @@ name: pages
 
 # Builds the browser playground (apps/web) for GitHub Pages and deploys it to
 # https://neuraldeepnet.github.io/openBrick/. Pages must use "GitHub Actions" as
-# its source (Settings > Pages > Source). The core is built as in the ci
-# workflow's web job: the wasm-bindgen CLI pinned in Cargo.lock and the gzip
-# size budget of `cargo xtask wasm`. The app is built with the base path
-# /openBrick/, under which the page, the worker, the WebAssembly module and every
-# asset resolve (the web job's smoke test checks such a build). No secrets.
+# its source (Settings > Pages > Source).
+# - The core is built as in the ci workflow's web job: the wasm-bindgen CLI
+#   pinned in Cargo.lock and the gzip size budget of `cargo xtask wasm`.
+# - The app is built with the base path /openBrick/, under which the page, the
+#   worker, the WebAssembly module and every asset resolve (the web job's
+#   smoke test checks such a build).
+# - The documentation site (docs/site, mdBook, backlog item 16) is built by
+#   `cargo xtask docs` with the mdBook version it pins. The build checks its
+#   links and page footers, and the site goes into the same Pages artifact
+#   under docs/, so it is served at https://neuraldeepnet.github.io/openBrick/docs/
+#   (book.toml's site-url). Here the CLI reference is regenerated from the CLI
+#   being deployed; the ci workflow's docs job checks that the committed one
+#   is current. The site carries mdBook's own MPL-2.0 front-end files and the
+#   libraries and fonts it bundles; docs/site/src/credits.md lists them.
+# No secrets.
 
 on:
   push:
@@ -25,7 +35,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
@@ -60,6 +70,24 @@ jobs:
         run: pnpm --dir apps/web build
         env:
           OPENBRICK_BASE: /openBrick/
+      - name: mdBook version pinned by cargo xtask docs
+        id: mdbook
+        run: echo "version=$(cargo xtask docs --mdbook-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache mdBook
+        id: mdbook-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/mdbook
+          key: mdbook-${{ steps.mdbook.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Install mdBook
+        if: steps.mdbook-cache.outputs.cache-hit != 'true'
+        run: cargo install mdbook --version "=${{ steps.mdbook.outputs.version }}" --locked
+      - name: Build the documentation site (CLI reference, links, page footers)
+        run: cargo xtask docs
+      - name: Put the site under docs/ next to the playground
+        run: |
+          test ! -e apps/web/dist/docs
+          cp -R target/docs apps/web/dist/docs
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/web/dist

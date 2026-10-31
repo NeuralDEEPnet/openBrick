@@ -1,0 +1,96 @@
+name: slicer-smoke
+
+# OrcaSlicer slice smoke test (backlog item 18 in docs/plan/14, docs/plan/05
+# section 7, Q18 in docs/spikes/q18-slicer-multimaterial-import.md).
+# 1. Builds the openbrick CLI and writes five files: the 2x4 logo tile as
+#    emboss, as a multi-material (parts) inlay and as that inlay without
+#    colours; the Neuraldeep.net brand tile; and the fdm-0.4 calibration
+#    coupon.
+# 2. Slices each with the OrcaSlicer AppImage pinned in scripts/slicer-smoke.sh
+#    (version and SHA-256), extracted with --appimage-extract and run headless
+#    under Xvfb with the Bambu Lab A1 system profiles and two filaments.
+# 3. The job summary lists, per file, whether it sliced, the objects and parts
+#    OrcaSlicer made, the filament each part got and what that means for Q18.
+#    The inputs, OrcaSlicer's projects (with the G-code), its logs and
+#    results.json are kept as the slicer-smoke artifact.
+# The job fails when a file does not slice.
+#
+# Time budget: each slice may take 300 s. 5 x 300 s plus the 120 s --help
+# probe is 27 min, inside the slicing step's 35 minutes. The job's 60 minutes
+# also cover the packages, the CLI build and the download. The script rewrites
+# its report after every slice, and the step after it posts that partial
+# summary if the slicing step was stopped before its own report.
+#
+# OrcaSlicer is AGPL-3.0: it is downloaded and run as a separate program only,
+# never linked, vendored or shipped (LICENSE-POLICY.md). This workflow is
+# never a required pull request check: it runs weekly and on demand
+# (gh workflow run slicer-smoke.yml). The ci workflow's cli job runs the same
+# script with --dry-run on every pull request, so its inputs stay in step with
+# the CLI. No secrets.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 04:41 UTC.
+    - cron: "41 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slicer-smoke
+  cancel-in-progress: false
+
+jobs:
+  orcaslicer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Xvfb and the system libraries the OrcaSlicer AppImage expects
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libgl1 libegl1 libglu1-mesa libgtk-3-0t64 libwebkit2gtk-4.1-0 \
+            libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libsecret-1-0
+      - name: Build the openbrick CLI
+        run: cargo build --release --locked -p openbrick
+      - name: Self-test of the profile and report helpers
+        run: python3 -I scripts/slicer-smoke.py self-test
+      - name: Keep the pinned AppImage between runs (the script checks its SHA-256 every time)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/openbrick-slicer-smoke
+          key: orcaslicer-appimage-${{ hashFiles('scripts/slicer-smoke.sh') }}
+      - name: Slice the CLI's files with OrcaSlicer
+        id: slice
+        timeout-minutes: 35
+        run: >-
+          scripts/slicer-smoke.sh --openbrick target/release/openbrick
+          --work target/slicer-smoke --download-dir ~/.cache/openbrick-slicer-smoke
+      - name: Post the partial summary if the slicing step stopped before its report
+        if: always() && steps.slice.outcome != 'skipped'
+        run: |
+          work=target/slicer-smoke
+          if [ -f "$work/summary.md" ] && [ ! -f "$work/.summary-posted" ]; then
+            {
+              echo '> The slicing step stopped before its report (a timeout or an error, see its log). This summary is partial: files marked "not run" were not sliced.'
+              echo
+              cat "$work/summary.md"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Keep the inputs, OrcaSlicer's projects and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slicer-smoke
+          path: |
+            target/slicer-smoke/
+            !target/slicer-smoke/orca/
+            !target/slicer-smoke/download/
+          if-no-files-found: ignore
+          retention-days: 30
