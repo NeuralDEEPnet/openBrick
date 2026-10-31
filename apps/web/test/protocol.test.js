@@ -522,7 +522,7 @@ test("couponLayout and exportCoupon pass the layout as JSON text", () => {
 
 test("recordFit sends the wizard's choices as JSON text and answers the core's record or refusal", () => {
   const core = fakeCore();
-  const input = { process: "fdm-0.4", printer: "Prusa MINI+", material: "PLA", cells: { stud: 4.8 } };
+  const input = { process: "fdm-0.4", printer: "Prusa MINI+", material: "PLA", cells: { stud: 1.25 } }; // a fake core: any number of millimetres
   const ok = dispatch(core, { id: 1, type: "recordFit", input }).reply;
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.result, { ok: true, fileName: "x.json", text: "{}\n", fitProfile: { id: "x" }, offsets: [] });

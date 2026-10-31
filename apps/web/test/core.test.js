@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
-import { cellMap, choose, chosenCells, recordInput } from "../src/calibration.js";
+import { cellMap, choose, chosenCells, labelText, offsetRows, recordInput, signedMm } from "../src/calibration.js";
 import { controlsFor, defaultValues, paramOverrides, visibility } from "../src/params.js";
 import { dispatch } from "../src/protocol.js";
 import { sampleFile, sizeForSample } from "../src/samples.js";
@@ -175,6 +175,23 @@ test("the WebAssembly core's layouts are the map fixtures, and it records the ce
   assert.deepEqual(JSON.parse(r.result.text), r.result.fitProfile);
   assert.deepEqual(r.result.fitProfile.calibration.chosenCells, chosenCells(choices));
   assert.deepEqual(r.result.offsets.map((o) => o.cell), ["stud", "tube", "pocketTubeOD", "pocketRib"]);
+  // The offsets summary of the real core's offsets: the chosen cell as its
+  // label prints it, the core's nominal and offset with the CLI's signs.
+  const chosenLabel = Object.fromEntries(
+    ["stud", "tube", "pocket"].flatMap((group) => {
+      const cell = map.cells.find((c) => c.group === group && c.copy === 1);
+      return cell.cross ? [[cell.cellId, cell.lines[0]], [cell.cross.cellId, cell.lines[1]]] : [[cell.cellId, labelText(cell)]];
+    }),
+  );
+  const rows = offsetRows(r.result.offsets);
+  assert.deepEqual(
+    rows.map((row) => [row.cell, row.chosen, row.offset, row.field]),
+    r.result.offsets.map((o) => [o.cell, chosenLabel[o.cell], signedMm(o.offsetMm), o.offsetField]),
+  );
+  for (const [row, o] of rows.map((row, i) => [row, r.result.offsets[i]])) {
+    assert.equal(row.nominal, o.nominalMm.toFixed(3));
+    assert.ok(Math.abs(o.chosenMm - o.nominalMm - o.offsetMm) < 1e-9, `${o.cell}: the offset is the chosen cell minus the nominal`);
+  }
   // The pocket set says which pockets were printed: a full-set pocket is refused on a cross coupon.
   const full = cellMap(fixture("coupon-layout-fdm-0.4-full-256.json"));
   const labels = new Set(map.cells.map((c) => c.label));

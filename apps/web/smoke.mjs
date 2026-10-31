@@ -46,8 +46,10 @@
 //    downloads off until it is fixed. Then the calibration wizard (recordRun):
 //    "None" gives FIT.MISSING, whose Calibrate opens the coupon mode's record
 //    step; its map shows every cell of the native coupon labelled as printed
-//    in both copies and only the printed pockets; a stud chosen by click, a
-//    bore with the keyboard and a pocket by click in copy 2, the printer,
+//    in both copies and only the printed pockets, every tap target at least
+//    24 px and every label inside its cell; a stud chosen by click, a bore
+//    with the keyboard and a pocket by click in copy 2 (one checked cell per
+//    line kind, the others with its value marked as twins), the printer,
 //    material (an emptied one shows the core's message next to it) and date
 //    filled in, the offsets summary equals native; the fit profile downloads
 //    byte-identical to native_eval's record (which the CLI's
@@ -56,12 +58,19 @@
 //    then equals native with that profile, has no FIT.MISSING, and its 3MF
 //    names the profile and is byte-identical to native; another process gives
 //    FIT.PROCESS with Calibrate; a reload keeps the profile and Forget
-//    removes it.
+//    removes it; a profile kept for another process moves the tile to that
+//    process at load, and the fit note says so. Then the full pocket set on
+//    a 256 x 256 mm bed (copies side by side, drawn one under the other): the
+//    core's cells, legible (targets of 24 px or more, labels inside their
+//    cells) and tappable; and a layout answer that comes back after the
+//    coupon settings changed again is dropped, never shown for other settings.
 //    Unless --no-webgpu, a WebGPU run checks the first part again.
 // 4. A phone-sized run (390 x 844, touch, dark theme): no horizontal scrolling,
 //    every control inside the width, a different background from the light
 //    theme, a tap on a + button, a one-finger touch drag that orbits, and the
-//    record step's map and fields inside the width with a tap choosing a cell.
+//    record step's map and fields inside the width, legible, with a tap
+//    choosing a cell, for the default coupon and for the full pocket set on a
+//    256 x 256 mm bed.
 // 5. Unless --no-base-check, builds the app again with OPENBRICK_BASE=/openBrick/
 //    (the GitHub Pages path) into a temporary directory, serves it only under
 //    /openBrick/ and checks that the page, worker, module and assets all load
@@ -135,6 +144,149 @@ function nativeValues() {
 /** An offset as the record step's summary (and the CLI) shows it: +0.150. */
 const signed = (v) => `${v < 0 ? "-" : "+"}${Math.abs(v).toFixed(3)}`;
 
+/** WCAG 2.2 success criterion 2.5.8 (target size, minimum), CSS pixels. */
+const MIN_TARGET_PX = 24;
+/**
+ * The full pocket set on a 256 x 256 mm bed, as the core lays it out (the
+ * openbrick-wasm test the_web_fixtures_are_the_core_layouts keeps the file
+ * equal to coupon_layout_json): two copies side by side.
+ */
+const FULL_256 = JSON.parse(readFileSync(join(here, "test/fixtures/coupon-layout-fdm-0.4-full-256.json"), "utf8"));
+
+/**
+ * The record step's map as drawn: no sideways scroll, the map inside the page
+ * width and every cell inside the map, every tap target at least 24 px
+ * (WCAG 2.2, 2.5.8) and every label line inside its cell (so nothing is
+ * clipped). Returns the measurements for the log.
+ */
+async function mapLegibility(page, label) {
+  const m = await page.evaluate(() => {
+    const map = document.querySelector("#coupon-map").getBoundingClientRect().toJSON();
+    const cells = [...document.querySelectorAll(".coupon-map .cell")].map((b) => {
+      const r = b.getBoundingClientRect();
+      const out = [...b.querySelectorAll("span")]
+        .map((s) => s.getBoundingClientRect())
+        .some((q) => q.left < r.left - 0.5 || q.right > r.right + 0.5 || q.top < r.top - 0.5 || q.bottom > r.bottom + 0.5);
+      return { label: b.dataset.label, copy: b.dataset.copy, left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height, out, font: parseFloat(getComputedStyle(b).fontSize) };
+    });
+    return { map, cells, scrollWidth: document.documentElement.scrollWidth, bodyScrollWidth: document.body.scrollWidth, innerWidth };
+  });
+  check(m.scrollWidth <= m.innerWidth && m.bodyScrollWidth <= m.innerWidth, `${label}: the record step scrolls sideways (${m.scrollWidth} > ${m.innerWidth})`);
+  check(m.map.left >= 0 && m.map.right <= m.innerWidth + 0.5, `${label}: the map is outside the width (${JSON.stringify(m.map)})`);
+  const box = m.map;
+  check(
+    m.cells.every((c) => c.left >= box.left - 0.5 && c.right <= box.right + 0.5 && c.top >= box.top - 0.5 && c.bottom <= box.bottom + 0.5),
+    `${label}: a cell lies outside the map`,
+  );
+  const small = m.cells.filter((c) => Math.min(c.width, c.height) < MIN_TARGET_PX);
+  check(small.length === 0, `${label}: ${small.length} tap targets under ${MIN_TARGET_PX} px (${small.slice(0, 3).map((c) => `${c.label} ${c.width.toFixed(1)}x${c.height.toFixed(1)}`).join(", ")})`);
+  const clipped = m.cells.filter((c) => c.out);
+  check(clipped.length === 0, `${label}: ${clipped.length} labels run outside their cell (${clipped.slice(0, 3).map((c) => `${c.label} in copy ${c.copy}`).join(", ")})`);
+  const smallest = Math.min(...m.cells.map((c) => Math.min(c.width, c.height)));
+  const font = Math.min(...m.cells.map((c) => c.font));
+  return { width: m.map.width, height: m.map.height, cells: m.cells.length, smallest, font, text: `${Math.round(m.map.width)} x ${Math.round(m.map.height)} px, ${m.cells.length} cells, smallest ${smallest.toFixed(0)} px, labels ${font.toFixed(1)} px or more` };
+}
+
+/**
+ * A layout that answers after the coupon settings changed again is dropped
+ * and never taken for other settings (rec.key names only a stored layout).
+ * On the record step, in one go (so its layout is surely on its way): the
+ * pocket layout to cross and diagonal, which the default bed cannot take,
+ * then step 1 and the cross again. Once that answer is dropped, cross and
+ * diagonal again and step 2 must show that coupon's refusal, not the cross
+ * map; the cross is then set back. Last, cross and diagonal and straight
+ * back to the cross in one go: the cross map is drawn again, not left at
+ * "Loading".
+ */
+async function staleMapRun(page, label) {
+  const before = (await web(page)).recordLayouts;
+  const stale = (await web(page)).staleLayouts;
+  await page.evaluate(() => {
+    const pockets = document.querySelector("#coupon-pockets");
+    pockets.value = "crossAndDiagonal";
+    pockets.dispatchEvent(new Event("change"));
+    document.querySelector("#step-print").click();
+    pockets.value = "cross";
+    pockets.dispatchEvent(new Event("change"));
+  });
+  await page.waitForFunction((n) => window.__web?.recordLayouts > n, before, { timeout: 120_000, polling: 50 });
+  check((await web(page)).staleLayouts === stale + 1, `${label}: the cross-and-diagonal layout was not dropped as stale`);
+  await page.selectOption("#coupon-pockets", "crossAndDiagonal");
+  await page.click("#step-record");
+  await page.waitForFunction(() => document.querySelector("#coupon-map .map-empty.bad") !== null, null, { timeout: 120_000, polling: 100 });
+  const note = await page.textContent("#coupon-map");
+  check(note.includes("cannot be laid out") && note.includes("crossAndDiagonal"), `${label}: the map of cross and diagonal on the default bed says "${note.slice(0, 120)}"`);
+  check((await page.locator(".coupon-map .cell").count()) === 0, `${label}: a stale map is shown for cross and diagonal`);
+  check((await web(page)).record.cells === 0, `${label}: the record step still counts cells of another coupon`);
+  await page.selectOption("#coupon-pockets", "cross");
+  await page.waitForFunction(() => window.__web?.record?.cells > 0 && window.__web.record.shown === "asPrinted", null, { timeout: 120_000, polling: 100 });
+  // There and straight back, in one go: the cross map (stored) is drawn
+  // again over the "Loading" the other layout drew, and stays when that
+  // layout's answer is dropped.
+  const cells = (await web(page)).record.cells;
+  const asked = (await web(page)).recordLayouts;
+  await page.evaluate(() => {
+    const pockets = document.querySelector("#coupon-pockets");
+    pockets.value = "crossAndDiagonal";
+    pockets.dispatchEvent(new Event("change"));
+    pockets.value = "cross";
+    pockets.dispatchEvent(new Event("change"));
+  });
+  await page.waitForFunction((n) => window.__web?.recordLayouts > n, asked, { timeout: 120_000, polling: 50 });
+  await page.waitForFunction((n) => window.__web?.record?.cells === n, cells, { timeout: 30_000, polling: 100 });
+  check((await page.locator(".coupon-map .cell").count()) === cells, `${label}: after cross and diagonal and straight back the map shows ${await page.locator(".coupon-map .cell").count()} cells, not ${cells}`);
+}
+
+/**
+ * The full pocket set on a 256 x 256 mm bed in the record step (the coupon
+ * mode's settings are changed, then set back): the map has the core's cells,
+ * says the copies lie side by side and draws them one under the other,
+ * legibly; a tap on a stud of copy 2 checks it, and its twin in copy 1 is
+ * marked as the same value, not checked. `tap` is "tap" on a touch screen.
+ */
+async function fullMapRun(page, label, tap = "click") {
+  const bed = [await page.inputValue("#bed-x"), await page.inputValue("#bed-y")];
+  for (const [id, mm] of [["#bed-x", 256], ["#bed-y", 256]]) {
+    await page.fill(id, String(mm));
+    await page.dispatchEvent(id, "change");
+  }
+  await page.selectOption("#coupon-pockets", "full");
+  const labels = FULL_256.cells.map((c) => c.label);
+  await page.waitForFunction((n) => window.__web?.record?.cells === n && window.__web.record.shown === "oneUnderTheOther", labels.length, { timeout: 120_000, polling: 100 });
+  const w = await web(page);
+  check(JSON.stringify(w.record.labels) === JSON.stringify(labels), `${label} full set: the map's labels differ from the core's layout`);
+  const caption = await page.textContent("#map-caption-top");
+  check(caption.includes("Copy 1 (left) and Copy 2 (right) lie side by side"), `${label} full set: map caption "${caption}"`);
+  const bands = await page.$$eval(".coupon-map .band", (els) => els.map((e) => e.textContent));
+  check(JSON.stringify(bands) === '["Copy 1 (left)","Copy 2 (right)"]', `${label} full set: copy bands ${JSON.stringify(bands)}`);
+  const measured = await mapLegibility(page, `${label} full set`);
+  const stud = page.locator('.coupon-map .cell[data-group="stud"][data-copy="2"]').nth(2);
+  const studLabel = await stud.getAttribute("data-label");
+  await stud[tap]();
+  await page.waitForFunction(
+    (l) => {
+      const checked = [...document.querySelectorAll('.coupon-map .cell[data-group="stud"][aria-checked="true"]')];
+      return checked.length === 1 && checked[0].dataset.copy === "2" && checked[0].dataset.label === l;
+    },
+    studLabel,
+    { timeout: 10_000, polling: 100 },
+  );
+  const twins = await page.$$eval('.coupon-map .cell[data-group="stud"].twin', (els) => els.map((e) => [e.dataset.copy, e.dataset.label, e.getAttribute("aria-checked"), e.getAttribute("aria-describedby")]));
+  check(JSON.stringify(twins) === JSON.stringify([["1", studLabel, "false", "twin-note"]]), `${label} full set: the stud's twins are ${JSON.stringify(twins)}`);
+  if (shots) {
+    await page.locator("#coupon-map").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(shots, `${label}-record-full-256.png`) });
+  }
+  // Back to the coupon as it was.
+  await page.selectOption("#coupon-pockets", "cross");
+  for (const [id, mm] of [["#bed-x", bed[0]], ["#bed-y", bed[1]]]) {
+    await page.fill(id, mm);
+    await page.dispatchEvent(id, "change");
+  }
+  await page.waitForFunction(() => window.__web?.record?.shown === "asPrinted", null, { timeout: 120_000, polling: 100 });
+  return measured;
+}
+
 /**
  * The calibration wizard (docs/plan/05 section 4): FIT.MISSING offers
  * Calibrate, which opens the coupon mode's record step; the map shows every
@@ -147,7 +299,9 @@ const signed = (v) => `${v < 0 ? "-" : "+"}${Math.abs(v).toFixed(3)}`;
  * it in the tile and keeps it in localStorage; the tile then exports with it
  * (no FIT.MISSING, its id in the 3MF, byte-identical to native), another
  * process gives FIT.PROCESS with Calibrate again, a reload keeps it, and
- * Forget removes it. Returns the path of the tile 3MF.
+ * Forget removes it; a profile kept for another process moves the tile there
+ * at load and says so. Then fullMapRun and staleMapRun. Returns the tile 3MF,
+ * the fit profile and the map measurements.
  */
 async function recordRun(page, native, label) {
   const rec = native.record;
@@ -185,6 +339,7 @@ async function recordRun(page, native, label) {
   const pockets = new Set(cells.filter((c) => c.group === "pocket").map((c) => c.text));
   const printed = new Set(native.coupon.labels.filter((l) => l.includes("\n")));
   check(pockets.size === printed.size && [...pockets].every((p) => printed.has(p)), `${label}: the map offers pockets ${[...pockets].join(", ")}`);
+  const legible = await mapLegibility(page, label);
   if (shots) await page.screenshot({ path: join(shots, "desktop-light-record-empty.png") });
 
   // A stud by click (copy 1), a bore with the keyboard, a pocket by click (copy 2).
@@ -198,9 +353,20 @@ async function recordRun(page, native, label) {
     await page.keyboard.press("ArrowRight");
   }
   check(at?.label === two(input.cells.tube) && at.checked === "true", `${label}: the arrow keys did not reach and choose the ${two(input.cells.tube)} bore (${JSON.stringify(at)})`);
-  await page.click(`.coupon-map .cell[data-group="pocket"][data-copy="2"][data-label="${two(input.cells.pocketTubeOD)}/${two(input.cells.pocketRib)}"]`);
-  const twins = await page.locator('.coupon-map .cell[data-group="pocket"][aria-checked="true"]').count();
-  check(twins >= 2, `${label}: the chosen pocket is marked in ${twins} cells, not in both copies`);
+  const pocketLabel = `${two(input.cells.pocketTubeOD)}/${two(input.cells.pocketRib)}`;
+  await page.click(`.coupon-map .cell[data-group="pocket"][data-copy="2"][data-label="${pocketLabel}"]`);
+  // One checked cell per line kind (a radio group has one checked radio); the
+  // same pocket elsewhere (copy 1) is marked as a twin, not checked.
+  const marks = await page.$$eval('.coupon-map .cell[data-group="pocket"]', (els) =>
+    els.filter((e) => e.getAttribute("aria-checked") === "true" || e.classList.contains("twin")).map((e) => ({ copy: e.dataset.copy, label: e.dataset.label, checked: e.getAttribute("aria-checked"), twin: e.classList.contains("twin") })),
+  );
+  const checkedPockets = marks.filter((m) => m.checked === "true");
+  check(checkedPockets.length === 1 && checkedPockets[0].copy === "2" && !checkedPockets[0].twin, `${label}: checked pockets ${JSON.stringify(checkedPockets)}`);
+  check(marks.length >= 2 && marks.every((m) => m.label === pocketLabel) && marks.some((m) => m.twin && m.copy === "1"), `${label}: the pocket's twins are ${JSON.stringify(marks)}`);
+  for (const group of ["stud", "tube", "pocket"]) {
+    const n = await page.locator(`.coupon-map .cell[data-group="${group}"][aria-checked="true"]`).count();
+    check(n === 1, `${label}: ${n} ${group} cells are checked`);
+  }
 
   // The printer and material; the nozzle field starts at the core's default.
   check((await page.inputValue("#record-nozzle")) === String(input.nozzleMm), `${label}: the nozzle field starts at ${await page.inputValue("#record-nozzle")}`);
@@ -275,7 +441,32 @@ async function recordRun(page, native, label) {
   check((await page.inputValue("#fit")) === "example" && (await page.locator('#fit option[value="recorded"]').count()) === 0, `${label}: the recorded fit is still offered`);
   check((await page.evaluate(() => localStorage.getItem("openbrick.playground.recordedFit.v1"))) === null, `${label}: localStorage still holds the fit profile`);
   check(await page.isHidden("#fit-actions"), `${label}: Forget is still shown`);
-  return { tile, fit };
+
+  // A profile kept for another process: at load the tile moves to that
+  // process, and the note under the fit select says so. The stored text is
+  // the recorded file with its process changed (a stand-in for one recorded
+  // on the fdm-0.2 coupon); Forget then removes it.
+  const elsewhere = native.exports.fitProfile.text.replace(`"process": "${input.process}"`, '"process": "fdm-0.2"');
+  check(elsewhere !== native.exports.fitProfile.text, `${label}: the recorded file names no process ${input.process}`);
+  await page.evaluate((text) => localStorage.setItem("openbrick.playground.recordedFit.v1", text), elsewhere);
+  await page.reload();
+  w = await waitFor(page, {}, 120_000, `${label} reload with a profile for fdm-0.2`);
+  check((await page.inputValue("#process")) === "fdm-0.2" && w.fit?.selected === "recorded", `${label}: at load the tile has process ${await page.inputValue("#process")} and fit ${JSON.stringify(w.fit)}`);
+  const movedNote = await page.textContent("#fit-note");
+  check(movedNote.startsWith("The process is now fdm-0.2, the one it was calibrated for."), `${label}: the fit note at load says "${movedNote}"`);
+  n = w.evaluations;
+  await page.click("#forget-fit");
+  await page.selectOption("#process", input.process);
+  w = await waitFor(page, { after: n, want: (p) => p.contentHash === native.part.emboss.contentHash }, 60_000, `${label} forget the fdm-0.2 profile`);
+
+  // The full pocket set on a large bed: copies side by side, still legible.
+  // (The reload above started in the tile mode, so the coupon mode opens at step 1.)
+  await page.click("#tab-coupon");
+  await page.click("#step-record");
+  await page.waitForFunction(() => window.__web?.mode === "coupon" && window.__web?.step === "record" && window.__web?.record?.cells > 0, null, { timeout: 120_000, polling: 100 });
+  const full = await fullMapRun(page, label);
+  await staleMapRun(page, label);
+  return { tile, fit, legible, full };
 }
 
 /** Serve `root` under `base` only; everything else is a 404, so a wrong absolute URL shows. */
@@ -889,7 +1080,8 @@ async function fullRun(browser, origin, native) {
       `FIT.MISSING blocks downloads, 3MF ${threemf.bytes.length} bytes, STL ${count} triangles (both byte-identical to native), ${raceNote}, ` +
       `a refused fit profile and a refused coupon layout empty the view, ${cancelNote}, ` +
       `camera below the ground (y ${under.camera[1].toFixed(1)} mm), coupon ${nc.triangles} triangles in ${Math.round(w.coupon?.buildMs ?? 0)} ms, coupon 3MF ${coupon.bytes.length} bytes, ` +
-      `the wizard recorded ${recorded.fit.name} (${recorded.fit.bytes.length} bytes, byte-identical to native) and the tile exported with it (${recorded.tile.bytes.length} bytes, byte-identical to native)`,
+      `the wizard recorded ${recorded.fit.name} (${recorded.fit.bytes.length} bytes, byte-identical to native) and the tile exported with it (${recorded.tile.bytes.length} bytes, byte-identical to native), ` +
+      `record map ${recorded.legible.text}; full set on 256 x 256 mm ${recorded.full.text}`,
   );
   await context.close();
   return [threemf.path, inlay.path, inlayParts.path, badge.path, coupon.path, recorded.tile.path];
@@ -991,40 +1183,33 @@ async function phoneRun(browser, origin, native) {
   await page.tap("#tab-coupon");
   await page.tap("#step-record");
   await page.waitForFunction(() => window.__web?.record?.cells > 0, null, { timeout: 120_000, polling: 100 });
-  const recordLayout = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    bodyScrollWidth: document.body.scrollWidth,
-    innerWidth: window.innerWidth,
-    map: document.querySelector("#coupon-map").getBoundingClientRect().toJSON(),
-    cells: [...document.querySelectorAll(".coupon-map .cell")].map((b) => b.getBoundingClientRect().toJSON()),
-    fields: [...document.querySelectorAll("#coupon-record input, #coupon-record select, #coupon-record textarea, #coupon-record button")]
-      .filter((e) => e.offsetParent !== null)
-      .map((e) => ({ what: e.id || e.dataset.label || e.tagName, ...e.getBoundingClientRect().toJSON() })),
-  }));
-  check(
-    recordLayout.scrollWidth <= recordLayout.innerWidth && recordLayout.bodyScrollWidth <= recordLayout.innerWidth,
-    `${label}: the record step scrolls sideways (${recordLayout.scrollWidth} > ${recordLayout.innerWidth})`,
+  const legible = await mapLegibility(page, label);
+  const fields = await page.evaluate(() =>
+    [...document.querySelectorAll("#coupon-record input, #coupon-record select, #coupon-record textarea, #coupon-record button")]
+      .filter((e) => e.offsetParent !== null && !e.classList.contains("cell"))
+      .map((e) => ({ what: e.id || e.tagName, ...e.getBoundingClientRect().toJSON() })),
   );
-  check(recordLayout.map.left >= 0 && recordLayout.map.right <= recordLayout.innerWidth + 0.5, `${label}: the map is outside the width (${JSON.stringify(recordLayout.map)})`);
-  const m = recordLayout.map;
-  check(
-    recordLayout.cells.every((c) => c.left >= m.left - 0.5 && c.right <= m.right + 0.5 && c.top >= m.top - 0.5 && c.bottom <= m.bottom + 0.5),
-    `${label}: a cell lies outside the map`,
-  );
-  const smallest = Math.min(...recordLayout.cells.map((c) => Math.min(c.width, c.height)));
-  for (const f of recordLayout.fields) check(f.left >= 0 && f.right <= recordLayout.innerWidth + 0.5, `${label}: ${f.what} is outside the width (${f.left}..${f.right})`);
+  for (const f of fields) check(f.left >= 0 && f.right <= layout.innerWidth + 0.5, `${label}: ${f.what} is outside the width (${f.left}..${f.right})`);
   const stud = page.locator('.coupon-map .cell[data-group="stud"][data-copy="2"]').nth(3);
   await stud.tap();
-  await page.waitForFunction(() => document.querySelectorAll('.coupon-map .cell[data-group="stud"][aria-checked="true"]').length === 2, null, { timeout: 10_000, polling: 100 });
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('.coupon-map .cell[data-group="stud"][aria-checked="true"][data-copy="2"]').length === 1 &&
+      document.querySelectorAll('.coupon-map .cell[data-group="stud"][aria-checked="true"]').length === 1 &&
+      document.querySelectorAll('.coupon-map .cell[data-group="stud"].twin[data-copy="1"]').length === 1,
+    null,
+    { timeout: 10_000, polling: 100 },
+  );
   if (shots) {
     await page.locator("#coupon-map").scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(shots, "phone-dark-record.png") });
   }
+  const full = await fullMapRun(page, label, "tap");
 
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
   console.log(
     `# ${label}: no horizontal scroll at ${layout.innerWidth} px, dark background ${layout.background} (light ${light}), tap to 3x4, touch drag moved the camera ${moved.toFixed(1)} mm, ` +
-      `record step map ${Math.round(m.width)} x ${Math.round(m.height)} px with ${recordLayout.cells.length} cells (smallest side ${smallest.toFixed(0)} px), a tap chose a stud in both copies`,
+      `record step map ${legible.text}, a tap chose a stud (its twin in copy 1 marked); full set on 256 x 256 mm ${full.text}`,
   );
   await context.close();
 }

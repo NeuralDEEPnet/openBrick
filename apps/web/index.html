@@ -219,25 +219,38 @@
       .steps-nav button { flex: 1 1 0; min-width: 0; border: 0; background: transparent; border-radius: 7px; padding: 4px 8px; line-height: 1.2; white-space: normal; }
       .steps-nav button[aria-current="step"],
       .steps-nav button[aria-current="step"]:hover { background: var(--accent); color: var(--accent-text); font-weight: 600; }
-      .coupon-map {
-        position: relative; width: 100%; container-type: inline-size; margin: 0;
-        background: var(--coupon); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+      /*
+       * The map is drawn in coupon millimetres (src/calibration.js cellMap):
+       * --map-mm is its width in mm, so 100cqw / --map-mm is one mm on screen.
+       * A label's size is its group's --font-mm (calibration.js labelFontMm,
+       * which fits the symbol, the gap and the lines below to the cell: keep
+       * LABEL_EM in step with these ems), capped at 16px.
+       */
+      .coupon-map { position: relative; width: 100%; container-type: inline-size; margin: 0; }
+      .coupon-map .window { position: absolute; background: var(--coupon); border: 1px solid var(--line); border-radius: 8px; }
+      .coupon-map .band {
+        position: absolute; display: flex; align-items: flex-end; padding: 0 2px 3px;
+        color: var(--text); font-size: 12px; line-height: 1.2; font-weight: 600; white-space: nowrap; overflow: hidden;
       }
       .coupon-map .copy { position: absolute; border: 1.5px dashed var(--muted); border-radius: 6px; pointer-events: none; }
       .coupon-map [role="radiogroup"] { position: absolute; inset: 0; pointer-events: none; }
       .coupon-map .cell {
         position: absolute; pointer-events: auto; min-height: 0; padding: 0; margin: 0;
-        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.2em;
-        font-size: 2.9cqw; line-height: 1.05; font-variant-numeric: tabular-nums;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.15em;
+        font-size: min(16px, calc(var(--font-mm) * 100cqw / var(--map-mm))); line-height: 1.1; font-variant-numeric: tabular-nums;
         background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
       }
-      .coupon-map .cell::before { content: ""; flex: none; width: 1.1em; height: 1.1em; border-radius: 50%; opacity: 0.6; box-sizing: border-box; }
+      .coupon-map .cell span { white-space: nowrap; }
+      .coupon-map .cell::before { content: ""; flex: none; width: 1em; height: 1em; border-radius: 50%; opacity: 0.6; box-sizing: border-box; }
       .coupon-map .cell.stud::before { background: currentColor; }
-      .coupon-map .cell.tube::before { border: 0.24em solid currentColor; }
-      .coupon-map .cell.pocket::before { width: 1.5em; height: 1.5em; border: 0.2em solid currentColor; border-radius: 0.25em; }
+      .coupon-map .cell.tube::before { border: 0.22em solid currentColor; }
+      .coupon-map .cell.pocket::before { width: 1.2em; height: 1.2em; border: 0.18em solid currentColor; border-radius: 0.2em; }
       .coupon-map .cell[aria-checked="true"],
       .coupon-map .cell[aria-checked="true"]:hover { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 700; }
       .coupon-map .cell[aria-checked="true"]::before { opacity: 1; }
+      /* The same value as the choice, in the other copy or the other pocket line: not checked, but shown. */
+      .coupon-map .cell.twin { border: 2px dashed var(--accent); color: var(--accent); font-weight: 700; }
+      .coupon-map .cell.twin::before { opacity: 1; }
       .coupon-map .cell:focus-visible { outline: 3px solid var(--text); outline-offset: 0; z-index: 1; }
       .map-caption { margin: 4px 0; text-align: center; color: var(--muted); font-size: 12px; }
       .map-empty { margin: 0; padding: 16px; text-align: center; }
@@ -399,6 +412,7 @@
             <p class="note" id="record-coupon" aria-live="polite"></p>
             <p class="map-caption" id="map-caption-top"></p>
             <div id="coupon-map" class="coupon-map" role="group" aria-label="The printed coupon, cells at their printed positions" aria-describedby="map-help"></div>
+            <p id="twin-note" hidden>The same value as your choice, in the other copy or the other pocket line.</p>
             <p class="map-caption" id="map-caption-bottom"></p>
             <ul class="choice-list" id="choices" aria-live="polite"></ul>
             <p class="field-error" id="record-error-map" aria-live="polite"></p>
@@ -420,13 +434,14 @@
             <div class="row">
               <div class="field">
                 <label for="record-nozzle">Nozzle (mm)</label>
-                <input type="number" id="record-nozzle" inputmode="decimal" min="0" step="0.05" aria-describedby="record-error-nozzleMm" />
+                <input type="number" id="record-nozzle" inputmode="decimal" min="0" step="0.05" aria-describedby="nozzle-help record-error-nozzleMm" />
               </div>
               <div class="field">
                 <label for="record-date">Date</label>
                 <input type="date" id="record-date" aria-describedby="record-error-date" />
               </div>
             </div>
+            <p class="help" id="nozzle-help">The nozzle you printed the coupon with. It starts at <span id="nozzle-default"></span> mm, the command line's default: change it for another nozzle.</p>
             <p class="field-error" id="record-error-nozzleMm"></p>
             <p class="field-error" id="record-error-date"></p>
             <div class="field">

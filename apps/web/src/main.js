@@ -51,8 +51,8 @@ import {
   errorPlace,
   FORM_FIELDS,
   groupName,
-  isChosen,
   keepPrinted,
+  mapSelection,
   MATERIALS,
   moveInGroup,
   offsetRows,
@@ -108,6 +108,10 @@ const page = {
   /** Tile replies dropped because the controls changed while they were built. */
   staleReplies: 0,
   couponBuilds: 0,
+  /** Coupon layouts the record step asked for that answered, stored or (stale) dropped. */
+  recordLayouts: 0,
+  /** Of those, the ones dropped because the coupon settings had changed meanwhile. */
+  staleLayouts: 0,
   restarts: 0,
   traps: 0,
   warnings: [],
@@ -292,12 +296,19 @@ async function main() {
     },
     /** The record step (src/calibration.js). */
     record: {
-      /** The coupon layout the map shows ({ cells, summary }), its key and map. */
+      /**
+       * The coupon layout the map shows ({ cells, summary }), the coupon key it
+       * was laid out for (set only when it is stored, so a map is never used
+       * for other settings) and its map; the key of a layout on its way.
+       */
       layout: null,
       key: null,
       map: null,
       layoutError: null,
-      /** Group -> the chosen cell's values ({ stud: 4.8 } or { pocketTubeOD, pocketRib }). */
+      loadingKey: null,
+      /** Settles when the layout on its way answers. */
+      loading: null,
+      /** Group -> the chosen cell's values ({ stud: mm } or { pocketTubeOD: mm, pocketRib: mm }). */
       choices: {},
       /** Group -> the layout index of the cell chosen last: the group's Tab stop. */
       picked: {},
@@ -743,11 +754,13 @@ async function main() {
   // without storage simply starts without it.
   const stored = loadRecordedFit();
   if (stored.problem) page.warnings.push(`ignored the stored fit profile: ${stored.problem}`);
+  // selectRecorded may move the tile's process to the profile's: say so.
+  let movedAtLoad = "";
   if (stored.fit) {
     adoptRecorded(stored.fit.text, stored.fit.profile, true);
-    selectRecorded(stored.fit.profile);
+    movedAtLoad = selectRecorded(stored.fit.profile);
   }
-  showFitNote();
+  showFitNote(movedAtLoad);
 
   $("forget-fit").addEventListener("click", () => {
     const gone = forgetRecordedFit();
@@ -1361,17 +1374,25 @@ async function main() {
   printerSelect.append(...PRINTERS.map((p) => el("option", { value: p, text: p })), el("option", { value: OTHER_PRINTER, text: "Other…" }));
   $("record-materials").append(...MATERIALS.map((m) => el("option", { value: m })));
   fieldInputs.nozzleMm.value = typeof recordDefaults.nozzleMm === "number" ? String(recordDefaults.nozzleMm) : "";
+  $("nozzle-default").textContent = fieldInputs.nozzleMm.value || "–";
   fieldInputs.date.value = todayLocal();
   const mapEl = $("coupon-map");
   /** The map's cell buttons by layout index. */
   let cellButtons = [];
+  /** The coupon key whose map (or refusal) mapEl shows; null while it shows "Loading". */
+  let drawnKey = null;
 
   const printerName = () => (printerSelect.value === OTHER_PRINTER ? printerOther.value : printerSelect.value);
+
+  /** The map of the coupon as set above, or null while it loads or could not be laid out (a map of other settings is never used). */
+  const currentMap = () => (rec.key === couponKey() ? rec.map : null);
+  /** The coupon as set above could not be laid out (the core refused it). */
+  const layoutFailed = () => rec.key === couponKey() && Boolean(rec.layoutError);
 
   /** The record_fit input for the coupon the map shows and the fields as they are. */
   function recordRequest() {
     const nozzle = parseNozzle(fieldInputs.nozzleMm.value);
-    const summary = rec.layout?.summary;
+    const summary = currentMap() ? rec.layout.summary : null;
     const input = recordInput({
       process: summary?.process ?? state.coupon.process,
       pocketSet: summary?.pockets ?? state.coupon.pockets,
@@ -1392,7 +1413,7 @@ async function main() {
     const seq = ++rec.seq;
     const { input, nozzleError } = recordRequest();
     rec.nozzleError = nozzleError;
-    if (!rec.map || nozzleError) {
+    if (!currentMap() || nozzleError) {
       rec.result = null;
       rec.pending = null;
       renderRecord();
@@ -1419,34 +1440,68 @@ async function main() {
     return pending;
   }
 
-  /** Load the map of the coupon as set above (the layout, without geometry). */
+  /**
+   * Load the map of the coupon as set above (the layout, without geometry).
+   * rec.key names the settings of the stored layout only: an answer for
+   * settings changed meanwhile is dropped and leaves rec.key alone, so coming
+   * back to those settings loads them again instead of reusing another map.
+   */
   async function loadRecordMap() {
     if (state.coupon.invalid) return;
     const request = couponRequest();
     const key = couponKey();
-    if (rec.key === key && (rec.map || rec.layoutError)) return;
-    rec.key = key;
+    if (rec.key === key && (rec.map || rec.layoutError)) {
+      // Back to settings whose layout is stored while another was on its way:
+      // draw it again where "Loading" was drawn, and ask the core again.
+      if (drawnKey !== key) {
+        renderMap();
+        updateRecord();
+      }
+      return;
+    }
+    if (rec.loadingKey === key) return; // on its way
+    rec.loadingKey = key;
+    // Until it answers, the map of other settings is not shown or used.
+    renderMap();
+    renderRecord();
+    const asked = client.couponLayout(request);
+    rec.loading = asked.then(
+      () => {},
+      () => {},
+    );
     let layout;
     try {
-      layout = await client.couponLayout(request);
+      layout = await asked;
     } catch (err) {
       syncCounters();
-      if (couponKey() !== key) return;
-      Object.assign(rec, { layout: null, map: null, layoutError: err.message });
+      page.recordLayouts++;
+      if (rec.loadingKey === key) rec.loadingKey = null;
+      if (couponKey() !== key) {
+        page.staleLayouts++;
+        return;
+      }
+      Object.assign(rec, { key, layout: null, map: null, layoutError: err.message });
       renderMap();
       updateRecord();
       return;
     }
     syncCounters();
-    if (couponKey() !== key) return;
+    page.recordLayouts++;
+    if (rec.loadingKey === key) rec.loadingKey = null;
+    // Settings changed meanwhile, or an earlier request for them answered first.
+    if (couponKey() !== key || (rec.key === key && rec.map)) {
+      page.staleLayouts++;
+      return;
+    }
     const map = cellMap(layout);
     // A pocket the coupon as set now does not print is no longer offered.
     const { choices, dropped } = keepPrinted(rec.choices, map);
     rec.dropped = dropped.length
       ? `The coupon as set now has no such ${dropped.map((g) => groupName(g).toLowerCase()).join(" or ")} cell, so that choice was cleared: choose again.`
       : "";
-    for (const g of dropped) delete rec.picked[g];
-    Object.assign(rec, { layout, map, layoutError: null, choices });
+    // The cell indices picked on the last map mean nothing on this one.
+    rec.picked = {};
+    Object.assign(rec, { key, layout, map, layoutError: null, choices });
     renderMap();
     updateRecord();
   }
@@ -1454,9 +1509,10 @@ async function main() {
   const css = (b) => `left:${b.left};top:${b.top};width:${b.width};height:${b.height}`;
 
   function renderMap() {
-    const map = rec.map;
+    const map = currentMap();
     cellButtons = [];
-    const summary = rec.layout?.summary;
+    drawnKey = map || layoutFailed() ? rec.key : null;
+    const summary = map ? rec.layout.summary : null;
     $("record-coupon").textContent = summary
       ? `The map is the ${summary.process} coupon with ${summary.pockets === "crossAndDiagonal" ? "cross and diagonal" : summary.pockets} pockets and ${summary.copies} ${summary.copies === 1 ? "copy" : "copies"}, as set above: set them as you printed it.`
       : "";
@@ -1464,8 +1520,8 @@ async function main() {
       mapEl.style.aspectRatio = "";
       mapEl.replaceChildren(
         el("p", {
-          className: rec.layoutError ? "map-empty note bad" : "map-empty note",
-          text: rec.layoutError ? `No map: the coupon as set above cannot be laid out (${rec.layoutError}).` : "Loading the coupon's cells…",
+          className: layoutFailed() ? "map-empty note bad" : "map-empty note",
+          text: layoutFailed() ? `No map: the coupon as set above cannot be laid out (${rec.layoutError}).` : "Loading the coupon's cells…",
         }),
       );
       $("map-caption-top").textContent = "";
@@ -1473,7 +1529,16 @@ async function main() {
       return;
     }
     mapEl.style.aspectRatio = `${map.widthMm} / ${map.heightMm}`;
-    const outlines = map.copies.map((c) => el("div", { className: "copy", "aria-hidden": "true", style: css(boxPercent(map, c)) }));
+    mapEl.style.setProperty("--map-mm", String(map.widthMm));
+    // The coupon (one window, or one per copy with a band naming it) and the
+    // copy outlines where a window holds more than one copy; the cells' own
+    // names say their copy, so these are not read out.
+    const windows = map.windows.flatMap((w) => [
+      el("div", { className: "window", "aria-hidden": "true", style: css(boxPercent(map, w)) }),
+      ...(w.band ? [el("div", { className: "band", "aria-hidden": "true", style: css(boxPercent(map, w.band)), text: w.band.text })] : []),
+    ]);
+    const several = new Set(map.windows.filter((w) => w.copies.length > 1).flatMap((w) => w.copies));
+    const outlines = map.copies.filter((c) => several.has(c.copy)).map((c) => el("div", { className: "copy", "aria-hidden": "true", style: css(boxPercent(map, c)) }));
     const groups = Object.entries(map.groups).map(([group, order]) => {
       const box = el("div", { role: "radiogroup", "aria-label": `Best ${groupName(group).toLowerCase()} cell`, "data-group": group });
       for (const index of order) {
@@ -1492,7 +1557,7 @@ async function main() {
             "data-line": cell.line,
             "data-label": cell.lines.join("/"),
             "data-index": index,
-            style: css(boxPercent(map, cell.box)),
+            style: `${css(boxPercent(map, cell.box))};--font-mm:${cell.fontMm.toFixed(4)}`,
           },
           ...cell.lines.map((text) => el("span", { text })),
         );
@@ -1508,28 +1573,35 @@ async function main() {
       }
       return box;
     });
-    mapEl.replaceChildren(...outlines, ...groups);
+    mapEl.replaceChildren(...windows, ...outlines, ...groups);
     $("map-caption-top").textContent = map.captions.top;
     $("map-caption-bottom").textContent = map.captions.bottom;
     renderMapSelection();
   }
 
-  /** aria-checked on every cell with a chosen value (both copies), and one Tab stop per line kind. */
+  /**
+   * One checked cell per kind of cell (aria-checked), its twins with the same
+   * value marked as such (class and description, not checked), and one Tab
+   * stop per kind (calibration.js mapSelection).
+   */
   function renderMapSelection() {
-    const map = rec.map;
-    if (!map) return;
-    for (const [group, order] of Object.entries(map.groups)) {
-      const chosen = order.filter((i) => isChosen(rec.choices, map.cells[i]));
-      const stop = chosen.includes(rec.picked[group]) ? rec.picked[group] : (chosen[0] ?? order[0]);
-      for (const i of order) {
-        cellButtons[i].setAttribute("aria-checked", String(chosen.includes(i)));
-        cellButtons[i].tabIndex = i === stop ? 0 : -1;
+    const map = currentMap();
+    if (!map || cellButtons.length === 0) return;
+    for (const [group, { checked, twins, stop }] of Object.entries(mapSelection(map, rec.choices, rec.picked))) {
+      for (const i of map.groups[group]) {
+        const b = cellButtons[i];
+        const twin = twins.includes(i);
+        b.setAttribute("aria-checked", String(i === checked));
+        b.classList.toggle("twin", twin);
+        if (twin) b.setAttribute("aria-describedby", "twin-note");
+        else b.removeAttribute("aria-describedby");
+        b.tabIndex = i === stop ? 0 : -1;
       }
     }
   }
 
   function pick(index, { focus = false } = {}) {
-    const cell = rec.map?.cells[index];
+    const cell = currentMap()?.cells[index];
     if (!cell) return;
     rec.choices = choose(rec.choices, cell);
     rec.picked[cell.group] = index;
@@ -1550,7 +1622,7 @@ async function main() {
 
   function renderRecord() {
     renderMapSelection();
-    const map = rec.map;
+    const map = currentMap();
     const error = shownError();
     // The choices under the map, one line per kind of cell, with a refusal that concerns one.
     const groups = map ? Object.keys(map.groups) : [];
@@ -1580,7 +1652,7 @@ async function main() {
     }
     const r = rec.result?.ok ? rec.result : null;
     $("record-summary").textContent = r
-      ? `Fit profile ${r.fitProfile.id} for ${r.fitProfile.process}${r.fitProfile.calibration?.pocketSet ? `, ${r.fitProfile.calibration.pocketSet} pockets` : ""}: ${r.fileName}. Offsets are the chosen cell minus the standard nominal of its line.`
+      ? `Fit profile ${r.fitProfile.id} for ${r.fitProfile.process}${r.fitProfile.calibration?.pocketSet ? `, ${r.fitProfile.calibration.pocketSet} pockets` : ""}, ${r.fitProfile.nozzleMm} mm nozzle: ${r.fileName}. Offsets are the chosen cell minus the standard nominal of its line.`
       : map
         ? "Choose your cells and fill in the printer and material: the offsets show here before you save."
         : "";
@@ -1596,10 +1668,13 @@ async function main() {
         ),
       ),
     );
+    const marks = map ? mapSelection(map, rec.choices, rec.picked) : {};
     page.record = {
       step: state.coupon.step,
       cells: map?.cells.length ?? 0,
       labels: map?.cells.map((c) => c.label) ?? [],
+      shown: map?.shown ?? null,
+      checked: Object.fromEntries(Object.entries(marks).map(([g, m]) => [g, m.checked])),
       choices: chosenCells(rec.choices),
       ok: Boolean(r),
       id: r?.fitProfile.id ?? null,
@@ -1638,8 +1713,8 @@ async function main() {
   /** The profile of the current choices once the core answered, or null after showing what to fix. */
   async function recordReady() {
     rec.attempted = true;
-    // The newest answer, if one is on its way.
-    while (rec.pending) await rec.pending;
+    // The map of the coupon as set, and the newest answer, if on their way.
+    while (rec.loadingKey || rec.pending) await (rec.pending ?? rec.loading);
     renderRecord();
     if (rec.result?.ok) return rec.result;
     const error = shownError();

@@ -401,7 +401,7 @@ test("bundled, resolveParams and couponLayout are plain requests", async () => {
 
 test("recordFit is a plain request with the wizard's choices, never superseded by a build", async () => {
   const env = await started();
-  const input = { process: "fdm-0.4", printer: "Prusa MINI+", material: "PLA", cells: { stud: 4.8 } };
+  const input = { process: "fdm-0.4", printer: "Prusa MINI+", material: "PLA", cells: { stud: 1.25 } }; // a fake core: any number of millimetres
   const rec = env.client.recordFit(input);
   const build = env.client.evaluatePart(PART);
   const sent = env.worker.sent.slice(1);

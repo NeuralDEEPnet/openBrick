@@ -9,8 +9,9 @@
 // map only places the core's cells for display, as the viewer places meshes:
 // it keeps the coupon's millimetres and turns the y axis down, so the back of
 // the coupon (line 1, largest y) is at the top and the labels read upright, as
-// printed. JavaScript computes no geometry and no offsets (CLAUDE.md): the
-// offsets shown are the core's.
+// printed. Copies printed side by side are shown one under the other, each
+// copy as printed (see cellMap). JavaScript computes no geometry and no
+// offsets (CLAUDE.md): the offsets shown are the core's.
 
 /** Printer suggestions in the record step; "Other" lets the person type one. */
 export const PRINTERS = Object.freeze(["Prusa MINI+", "Prusa XL", "Bambu Lab A1"]);
@@ -21,6 +22,20 @@ export const MATERIALS = Object.freeze(["PLA", "PETG", "ABS", "ASA"]);
 
 /** How much of the room between neighbouring cells a cell's tap target takes. */
 const FILL = 0.9;
+
+/**
+ * The band above each copy that names it, when copies printed side by side
+ * are shown one under the other: a share of the map's width.
+ */
+const BAND = 0.08;
+
+/**
+ * A cell's label in ems, as index.html draws it (keep the two in step): the
+ * symbol above the label (a dot, a ring, or a larger square for a pocket),
+ * the gap under it, each label line, the room a tabular digit or point takes
+ * across, and the slack kept free around them so nothing is clipped.
+ */
+export const LABEL_EM = Object.freeze({ symbol: 1, pocketSymbol: 1.2, gap: 0.15, line: 1.1, char: 0.62, slack: 0.35 });
 
 /**
  * The group a coupon cell belongs to: `pocket` for a cell that carries a
@@ -59,7 +74,7 @@ export function labelLines(cell) {
   return String(cell.label).split("\n");
 }
 
-/** A cell's label on one line, as the cell table and the CLI show it: "6.50 / 0.30". */
+/** A cell's label on one line, as the cell table and the CLI show it: "tube OD / rib depth" for a pocket. */
 export function labelText(cell) {
   return labelLines(cell).join(" / ");
 }
@@ -84,18 +99,63 @@ export function copyName(summary, copy) {
 /**
  * The captions above and below the map: which edge is the back and where the
  * copies are, so the map is read the way the coupon lies with its labels
- * upright.
+ * upright. Copies side by side are shown one under the other (cellMap), and
+ * the caption says so.
  */
 export function mapCaptions(summary) {
   const copies = summary?.copies ?? 1;
   if (copies <= 1) return { top: "Back edge (labels read upright)", bottom: "Front edge" };
   if (summary.arrangement === "sideBySide") {
+    const names = copies === 2 ? `${copyName(summary, 0)} and ${copyName(summary, 1)}` : `Copies 1 to ${copies}`;
     return {
-      top: `Back edge (labels read upright). ${copyName(summary, 0)} and ${copyName(summary, 1)}${copies > 2 ? ` to copy ${copies}, left to right` : ""}.`,
+      top: `${names} lie side by side${copies > 2 ? ", left to right" : ""}; here each is shown under the one before, back edge at the top (labels read upright).`,
       bottom: "Front edge",
     };
   }
   return { top: `Back edge: ${copyName(summary, 0)}`, bottom: `Front edge: ${copyName(summary, copies - 1)}` };
+}
+
+/**
+ * The font size a cell's label fits its tap target with, in map millimetres
+ * (index.html turns it into pixels with the map's width): the symbol, the
+ * gap and every label line fit the box's height, the longest line its width,
+ * each with LABEL_EM's slack.
+ */
+export function labelFontMm(cell) {
+  const lines = cell.lines ?? labelLines(cell);
+  const symbol = (cell.group ?? groupOf(cell)) === "pocket" ? LABEL_EM.pocketSymbol : LABEL_EM.symbol;
+  const tall = symbol + LABEL_EM.gap + lines.length * LABEL_EM.line + LABEL_EM.slack;
+  const wide = Math.max(...lines.map((l) => l.length)) * LABEL_EM.char + LABEL_EM.slack;
+  return Math.min(cell.box.height / tall, cell.box.width / wide);
+}
+
+/**
+ * Where each copy is drawn. Stacked copies are drawn as printed: one window,
+ * the whole coupon. Copies side by side would make the map about as wide as
+ * two copies, too small to tap or read in a side panel or on a phone, so each
+ * copy's part of the coupon (cut halfway between the copies) gets a window of
+ * its own, one under the other, each under a band that names the copy; inside
+ * a window every cell is where it is printed.
+ */
+function windowsOf(summary, outlines, widthMm, heightMm) {
+  if (summary.arrangement !== "sideBySide" || outlines.length < 2) {
+    const whole = { copies: outlines.map((o) => o.copy), x0: 0, left: 0, top: 0, width: widthMm, height: heightMm, band: null };
+    return { shown: "asPrinted", windows: [whole], width: widthMm, height: heightMm };
+  }
+  const sorted = [...outlines].sort((a, b) => a.left - b.left);
+  const cuts = sorted.slice(1).map((o, i) => (sorted[i].right + o.left) / 2);
+  const spans = sorted.map((o, i) => ({ copy: o.copy, x0: i > 0 ? cuts[i - 1] : 0, x1: i < cuts.length ? cuts[i] : widthMm }));
+  const width = Math.max(...spans.map((s) => s.x1 - s.x0));
+  const band = BAND * width;
+  let top = 0;
+  const windows = spans.map((s) => {
+    const w = s.x1 - s.x0;
+    const left = (width - w) / 2;
+    const win = { copies: [s.copy], x0: s.x0, left, top: top + band, width: w, height: heightMm, band: { left, top, width: w, height: band, text: copyName(summary, s.copy) } };
+    top += band + heightMm;
+    return win;
+  });
+  return { shown: "oneUnderTheOther", windows, width, height: top };
 }
 
 /** The smallest gap between neighbouring values, or null for fewer than two. */
@@ -113,11 +173,13 @@ const EPS = 1e-9;
 
 /**
  * The map of the printed coupon from the core's layout: { widthMm, heightMm,
- * cells, copies, captions, groups }. Each cell keeps the core's data (index in
- * the layout, row, copy, cellId, valueMm, cross, label) and adds its group, its
- * label lines, the values choosing it records, and a tap target in map
- * millimetres: centre (x, y) with y measured down from the back edge, and a
- * box (left, top, width, height).
+ * shown, windows, cells, copies, captions, groups }. Each cell keeps the
+ * core's data (index in the layout, row, copy, cellId, valueMm, cross, label)
+ * and adds its group, its label lines, the values choosing it records, where
+ * it is printed (`printed`: x from the left edge, y down from the back edge,
+ * mm), and its place on the map in map millimetres: centre (x, y), a tap
+ * target `box` (left, top, width, height), and `fontMm`, the size its label
+ * fits the box with (the same for every cell of a group).
  *
  * The boxes split the coupon between the cells, so no two overlap: across, a
  * cell reaches halfway to its neighbours on the same line (and to a twin line
@@ -125,6 +187,8 @@ const EPS = 1e-9;
  * down, a line reaches halfway to the nearest line above and below that
  * shares some of its width (the coupon's edge for the first and last). Each
  * box then takes FILL of its share, so neighbours keep a visible gap.
+ * `windows` say where each copy is drawn (windowsOf: the whole coupon as
+ * printed, or copies side by side one under the other, `shown` says which);
  * `copies` are the outlines of the copies; `groups` the cell indices of each
  * group in reading order (copy, line, left to right), the order the arrow keys
  * follow.
@@ -200,29 +264,52 @@ export function cellMap(layout) {
   // between two targets further out, so the outline runs in the gaps.
   const gap = Math.min(...out.map((c) => (Math.min(c.box.width, c.box.height) * (1 - FILL)) / FILL));
   const pad = gap / 4;
-  const copies = [];
+  const outlines = [];
   for (const cell of out) {
     const b = cell.box;
-    const o = (copies[cell.copy] ??= { copy: cell.copy, name: copyName(summary, cell.copy), left: b.left, top: b.top, right: b.left + b.width, bottom: b.top + b.height });
+    const o = (outlines[cell.copy] ??= { copy: cell.copy, name: copyName(summary, cell.copy), left: b.left, top: b.top, right: b.left + b.width, bottom: b.top + b.height });
     o.left = Math.min(o.left, b.left);
     o.top = Math.min(o.top, b.top);
     o.right = Math.max(o.right, b.left + b.width);
     o.bottom = Math.max(o.bottom, b.top + b.height);
   }
-  for (const o of copies.filter(Boolean)) {
+  const copies = outlines.filter(Boolean);
+  for (const o of copies) {
     o.left = Math.max(0, o.left - pad);
     o.top = Math.max(0, o.top - pad);
     o.right = Math.min(widthMm, o.right + pad);
     o.bottom = Math.min(heightMm, o.bottom + pad);
   }
+  // Onto the map: each copy moves with its window (a translation only, so
+  // inside a copy every cell keeps its printed place).
+  const shown = windowsOf(summary, copies, widthMm, heightMm);
+  const move = new Map(shown.windows.flatMap((w) => w.copies.map((copy) => [copy, { dx: w.left - w.x0, dy: w.top }])));
+  for (const cell of out) {
+    const { dx, dy } = move.get(cell.copy);
+    cell.printed = { x: cell.x, y: cell.y };
+    cell.x += dx;
+    cell.y += dy;
+    cell.box = { ...cell.box, left: cell.box.left + dx, top: cell.box.top + dy };
+  }
+  for (const o of copies) {
+    const { dx, dy } = move.get(o.copy);
+    Object.assign(o, { left: o.left + dx, right: o.right + dx, top: o.top + dy, bottom: o.bottom + dy });
+  }
   const groups = {};
-  const order = [...out].sort((a, b) => a.copy - b.copy || a.row - b.row || a.x - b.x);
+  const order = [...out].sort((a, b) => a.copy - b.copy || a.row - b.row || a.printed.x - b.printed.x);
   for (const cell of order) (groups[cell.group] ??= []).push(cell.index);
+  // One label size per group, the largest every cell of the group fits.
+  for (const indices of Object.values(groups)) {
+    const fontMm = Math.min(...indices.map((i) => labelFontMm(out[i])));
+    for (const i of indices) out[i].fontMm = fontMm;
+  }
   return {
-    widthMm,
-    heightMm,
+    widthMm: shown.width,
+    heightMm: shown.height,
+    shown: shown.shown,
+    windows: shown.windows.map(({ copies: inside, left, top, width, height, band }) => ({ copies: inside, left, top, width, height, band })),
     cells: out,
-    copies: copies.filter(Boolean).map(({ copy, name, left, top, right, bottom }) => ({ copy, name, left, top, width: right - left, height: bottom - top })),
+    copies: copies.map(({ copy, name, left, top, right, bottom }) => ({ copy, name, left, top, width: right - left, height: bottom - top })),
     captions: mapCaptions(summary),
     groups,
   };
@@ -239,7 +326,7 @@ export function boxPercent(map, box) {
   };
 }
 
-/** The name a screen reader gives a cell: "Stud 4.80 mm, copy 1 (back), line 1". */
+/** The name a screen reader gives a cell: "Stud <label> mm, copy 1 (back), line 1". */
 export function cellAccessibleName(map, cell, summary) {
   const value = cell.cross ? `${cell.lines.join(" / ")} mm, tube OD / rib depth` : `${cell.lines.join(" ")} mm`;
   return `${groupName(cell.group)} ${value}, ${copyName(summary, cell.copy).toLowerCase()}, line ${cell.line}`;
@@ -285,10 +372,29 @@ export function choose(choices, cell) {
   return { ...choices, [cell.group ?? groupOf(cell)]: { ...(cell.values ?? cellValues(cell)) } };
 }
 
-/** Whether `cell` is its group's choice (every cell with the same values is: both copies of a cell). */
+/** Whether `cell` carries its group's choice (every cell with the same values does: both copies of a cell). */
 export function isChosen(choices, cell) {
   const chosen = choices?.[cell.group ?? groupOf(cell)];
   return Boolean(chosen) && sameValues(chosen, cell.values ?? cellValues(cell));
+}
+
+/**
+ * What the map marks, by group: `checked`, the one cell shown as the group's
+ * choice (aria-checked; a radio group has one), which is the cell picked last
+ * (`picked`: group -> cell index) when it carries the choice, else the first
+ * that does in reading order, or null without a choice; `twins`, the other
+ * cells with the same values (the cell in the other copy, the nominal pocket
+ * in both pocket lines), marked as the same value but not as checked; and
+ * `stop`, the group's one Tab stop (the checked cell, else the first).
+ */
+export function mapSelection(map, choices, picked = {}) {
+  const out = {};
+  for (const [group, order] of Object.entries(map?.groups ?? {})) {
+    const same = order.filter((i) => isChosen(choices, map.cells[i]));
+    const checked = same.includes(picked?.[group]) ? picked[group] : (same[0] ?? null);
+    out[group] = { checked, twins: same.filter((i) => i !== checked), stop: checked ?? order[0] };
+  }
+  return out;
 }
 
 /** The chosen cells as record_fit takes them: { stud, tube, pocketTubeOD, pocketRib, ... }. */
@@ -312,7 +418,7 @@ export function keepPrinted(choices, map) {
   return { choices: kept, dropped };
 }
 
-/** A choice as its cell's label shows it: "4.80" or "6.50 / 0.30"; null when the group has none. */
+/** A choice as its cell's label shows it (labelText); null when the group has none. */
 export function choiceText(map, choices, group) {
   const cell = map?.cells.find((c) => c.group === group && isChosen(choices, c));
   return cell ? labelText(cell) : null;

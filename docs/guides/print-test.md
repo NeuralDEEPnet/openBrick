@@ -141,19 +141,23 @@ per printer and material; print the coupon again when you change filament
 brand.
 
 **Or record it in the browser.** The [playground](https://neuraldeepnet.github.io/openBrick/?mode=coupon&step=record)
-(or `pnpm --dir apps/web start`, see [apps/web/README.md](../../apps/web/README.md))
+(once GitHub Pages is switched on for the repository; or run it yourself with
+`pnpm --dir apps/web start`, see [apps/web/README.md](../../apps/web/README.md))
 does the same without the command line:
 
 1. Open **Calibration coupon** and set the process, pocket layout and bed size
    you printed the coupon with, then choose **2. Record my fit**. In the logo
    tile, **Calibrate** next to a `FIT.MISSING` blocker opens the same step.
 2. The map shows your coupon as it lies with its labels upright: both copies,
-   every cell where it is printed, labelled as printed. Tap the best stud, the
-   best tube bore and the best pocket, in either copy (a pocket is one tap: its
-   tube OD and rib depth together; only the pockets your layout printed are
-   on the map). With a keyboard, Tab to a line and use the arrow keys.
+   every cell where it is printed, labelled as printed. Copies printed side by
+   side (the full pocket layout on a large bed) are shown one under the other,
+   each named. Tap the best stud, the best tube bore and the best pocket, in
+   either copy (a pocket is one tap: its tube OD and rib depth together; only
+   the pockets your layout printed are on the map). With a keyboard, Tab to a
+   line and use the arrow keys.
 3. Choose the printer (Prusa MINI+, Prusa XL, Bambu Lab A1 or Other) and type
-   the material; the nozzle (0.4 mm), slicer, date (today) and notes are
+   the material. The nozzle is pre-filled with 0.4 mm (change it if you
+   printed with another nozzle) and the date with today; slicer and notes are
    optional. The table shows each offset before you save; a refused value is
    explained next to its field.
 4. **Download fit profile** saves the same file `openbrick calibrate record`

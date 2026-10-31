@@ -22,8 +22,11 @@ import {
   groupOf,
   isChosen,
   keepPrinted,
+  LABEL_EM,
+  labelFontMm,
   labelText,
   mapCaptions,
+  mapSelection,
   moveInGroup,
   offsetRows,
   parseNozzle,
@@ -42,8 +45,9 @@ const overlaps = (a, b) => a.left < b.left + b.width - 1e-9 && b.left < a.left +
 test("the map has every cell of the core's layout, with its label, value and copy", () => {
   for (const layout of [cross, full]) {
     const map = cellMap(layout);
+    const [width, height] = layout.summary.footprintMm;
     assert.equal(map.cells.length, layout.cells.length);
-    assert.deepEqual([map.widthMm, map.heightMm], layout.summary.footprintMm);
+    if (map.shown === "asPrinted") assert.deepEqual([map.widthMm, map.heightMm], [width, height]);
     map.cells.forEach((c, i) => {
       const core = layout.cells[i];
       assert.equal(c.index, i);
@@ -52,10 +56,15 @@ test("the map has every cell of the core's layout, with its label, value and cop
       assert.equal(c.copy, core.copy);
       assert.equal(c.valueMm, core.valueMm);
       assert.equal(c.group, core.cross ? "pocket" : core.cellId);
-      // Placed, not computed: the centre is the core's, the y axis turned down.
-      assert.equal(c.x, core.centerMm[0]);
-      assert.equal(c.y, layout.summary.footprintMm[1] - core.centerMm[1]);
-      // The tap target holds the centre and stays on the coupon.
+      // Placed, not computed: where it is printed is the core's centre, the y
+      // axis turned down; on the map it moves with its copy's window only.
+      assert.equal(c.printed.x, core.centerMm[0]);
+      assert.equal(c.printed.y, height - core.centerMm[1]);
+      const win = map.windows.find((w) => w.copies.includes(c.copy));
+      assert.ok(win, `cell ${i} has no window`);
+      assert.ok(c.x >= win.left && c.x <= win.left + win.width && c.y >= win.top && c.y <= win.top + win.height, `cell ${i} outside its window`);
+      if (map.shown === "asPrinted") assert.deepEqual([c.x, c.y], [c.printed.x, c.printed.y]);
+      // The tap target holds the centre and stays on the map.
       assert.ok(c.box.left <= c.x && c.x <= c.box.left + c.box.width, `cell ${i} x`);
       assert.ok(c.box.top <= c.y && c.y <= c.box.top + c.box.height, `cell ${i} y`);
       assert.ok(c.box.left >= 0 && c.box.top >= 0 && c.box.left + c.box.width <= map.widthMm + 1e-9 && c.box.top + c.box.height <= map.heightMm + 1e-9, `cell ${i} inside`);
@@ -80,6 +89,9 @@ test("no two tap targets overlap, so every cell can be tapped", () => {
 
 test("the back of the coupon is at the top: line 1 of copy 1 first, the copies where the CLI says", () => {
   const map = cellMap(cross);
+  // Stacked copies are drawn as printed: one window, the whole coupon.
+  assert.equal(map.shown, "asPrinted");
+  assert.deepEqual(map.windows, [{ copies: [0, 1], left: 0, top: 0, width: map.widthMm, height: map.heightMm, band: null }]);
   const top = map.cells.reduce((a, b) => (b.y < a.y ? b : a));
   assert.equal(top.row, 0);
   assert.equal(top.copy, 0);
@@ -89,26 +101,44 @@ test("the back of the coupon is at the top: line 1 of copy 1 first, the copies w
   assert.ok(one.top + one.height <= two.top + 1e-9, "copy 1 above copy 2");
   assert.deepEqual(map.copies.map((c) => c.name), ["Copy 1 (back)", "Copy 2 (front)"]);
   assert.deepEqual(mapCaptions(cross.summary), { top: "Back edge: Copy 1 (back)", bottom: "Front edge: Copy 2 (front)" });
-  // Side by side: copy 1 on the left, each line has its twin at the same depth.
+  // Printed side by side (copy 1 on the left, each line with its twin at the
+  // same depth), drawn one under the other, each copy in a window of its own
+  // under a band naming it, every cell where it is printed in its copy.
   const wide = cellMap(full);
-  const [left, right] = wide.copies;
-  assert.ok(left.left + left.width <= right.left + 1e-9, "copy 1 left of copy 2");
+  assert.equal(wide.shown, "oneUnderTheOther");
   assert.deepEqual(wide.copies.map((c) => c.name), ["Copy 1 (left)", "Copy 2 (right)"]);
-  assert.match(mapCaptions(full.summary).top, /Copy 1 \(left\) and Copy 2 \(right\)/);
+  assert.match(mapCaptions(full.summary).top, /Copy 1 \(left\) and Copy 2 \(right\) lie side by side; here each is shown under the one before/);
+  const [w1, w2] = wide.windows;
+  assert.deepEqual([w1.copies, w2.copies], [[0], [1]]);
+  assert.deepEqual([w1.band.text, w2.band.text], ["Copy 1 (left)", "Copy 2 (right)"]);
+  assert.ok(w1.band.top + w1.band.height <= w1.top + 1e-9 && w1.top + w1.height <= w2.band.top + 1e-9, "band, copy 1, band, copy 2 from the top");
+  assert.ok(Math.abs(w2.top + w2.height - wide.heightMm) < 1e-9, "the map ends with copy 2");
+  // Each window is the copy's part of the coupon: as deep as the coupon, as
+  // wide as the cut halfway between the copies leaves.
+  for (const w of wide.windows) assert.equal(w.height, full.summary.footprintMm[1]);
+  assert.ok(Math.abs(w1.width + w2.width - full.summary.footprintMm[0]) < 1e-9);
+  const firstX = Math.min(...full.cells.filter((c) => c.copy === 1).map((c) => c.centerMm[0]));
+  const lastX = Math.max(...full.cells.filter((c) => c.copy === 0).map((c) => c.centerMm[0]));
+  assert.ok(lastX < w1.width && w1.width < firstX, `the cut at ${w1.width} mm lies between the copies (${lastX}, ${firstX})`);
   for (const c of wide.cells.filter((c) => c.copy === 0)) {
-    assert.ok(wide.cells.some((t) => t.copy === 1 && t.label === c.label && t.y === c.y), `${c.label} has no twin`);
+    const twin = wide.cells.find((t) => t.copy === 1 && t.label === c.label && t.printed.y === c.printed.y && t.row - t.copy * full.summary.rowsPerCopy === c.row);
+    assert.ok(twin, `${c.label} has no twin`);
+    // Moved as a whole: the same offset from its window as printed.
+    assert.ok(Math.abs(twin.x - w2.left - (twin.printed.x - w1.width) - (c.x - w1.left - c.printed.x)) < 1e-9, `${c.label} moved across`);
+    assert.ok(Math.abs(twin.y - w2.top - (c.y - w1.top)) < 1e-9, `${c.label} moved down`);
   }
   assert.equal(copyPlace("stacked", 1, 3), null);
   assert.equal(copyName({ arrangement: "stacked", copies: 3 }, 2), "Copy 3");
   assert.equal(mapCaptions({ copies: 1 }).top, "Back edge (labels read upright)");
 });
 
-test("each copy's outline holds its cells, stays on the coupon and leaves the other copy alone", () => {
+test("each copy's outline holds its cells, stays in its window and leaves the other copy alone", () => {
   for (const layout of [cross, full]) {
     const map = cellMap(layout);
     assert.equal(map.copies.length, layout.summary.copies);
     for (const o of map.copies) {
-      assert.ok(o.left >= 0 && o.top >= 0 && o.left + o.width <= map.widthMm + 1e-9 && o.top + o.height <= map.heightMm + 1e-9, `${o.name} leaves the coupon`);
+      const w = map.windows.find((w) => w.copies.includes(o.copy));
+      assert.ok(o.left >= w.left - 1e-9 && o.top >= w.top - 1e-9 && o.left + o.width <= w.left + w.width + 1e-9 && o.top + o.height <= w.top + w.height + 1e-9, `${o.name} leaves its window`);
       for (const c of map.cells.filter((c) => c.copy === o.copy)) {
         const b = c.box;
         assert.ok(b.left > o.left && b.top >= o.top && b.left + b.width < o.left + o.width && b.top + b.height <= o.top + o.height, `${c.label} is not inside ${o.name}`);
@@ -132,7 +162,7 @@ test("each group's reading order: copy, line, left to right; the arrow keys foll
     assert.ok(cells.every((c) => c.group === group));
     for (let k = 1; k < cells.length; k++) {
       const [a, b] = [cells[k - 1], cells[k]];
-      assert.ok(a.copy < b.copy || (a.copy === b.copy && (a.row < b.row || (a.row === b.row && a.x < b.x))), `${group} order at ${k}`);
+      assert.ok(a.copy < b.copy || (a.copy === b.copy && (a.row < b.row || (a.row === b.row && a.printed.x < b.printed.x))), `${group} order at ${k}`);
     }
   }
   const studs = map.groups.stud;
@@ -169,14 +199,14 @@ test("a pocket is one choice: its tube OD and rib depth together, from the cell'
   assert.equal(groupOf(cross.cells[stud.index]), "stud");
 });
 
-test("a chosen cell is chosen in both copies (same values), and only those", () => {
+test("a choice is carried by every cell with its values (both copies), and only those", () => {
   const map = cellMap(cross);
   const stud = map.cells.find((c) => c.group === "stud" && c.copy === 1);
   const choices = choose({}, stud);
   const chosen = map.cells.filter((c) => isChosen(choices, c));
   assert.deepEqual(chosen.map((c) => c.copy).sort(), [0, 1]);
   assert.ok(chosen.every((c) => c.label === stud.label && c.group === "stud"));
-  // The nominal pocket is printed in both pocket lines of a copy: all four are one choice.
+  // The nominal pocket is printed in both pocket lines of a copy: all four carry one choice.
   const label = (c) => c.label;
   const counts = new Map();
   for (const c of map.cells.filter((c) => c.group === "pocket")) counts.set(label(c), (counts.get(label(c)) ?? 0) + 1);
@@ -184,6 +214,74 @@ test("a chosen cell is chosen in both copies (same values), and only those", () 
   assert.ok(nominal, "the nominal pocket is in both lines of both copies");
   const both = choose({}, map.cells.find((c) => c.label === nominal));
   assert.equal(map.cells.filter((c) => isChosen(both, c)).length, 4);
+});
+
+test("the map checks one cell per kind (a radio group has one checked radio); the others with its value are twins", () => {
+  const map = cellMap(cross);
+  const nominal = map.groups.pocket.map((i) => map.cells[i]).find((c, _, all) => all.filter((o) => o.label === c.label).length === 4);
+  const tapped = map.groups.pocket.filter((i) => map.cells[i].label === nominal.label)[2];
+  const stud = map.cells.find((c) => c.group === "stud" && c.copy === 1);
+  const choices = choose(choose({}, stud), map.cells[tapped]);
+  const marks = mapSelection(map, choices, { pocket: tapped, stud: stud.index });
+  // The cell tapped is the one checked; the other three with its values are twins.
+  assert.equal(marks.pocket.checked, tapped);
+  assert.equal(marks.pocket.stop, tapped);
+  assert.equal(marks.pocket.twins.length, 3);
+  assert.ok(marks.pocket.twins.every((i) => i !== tapped && map.cells[i].label === nominal.label));
+  assert.equal(marks.stud.checked, stud.index);
+  assert.deepEqual(marks.stud.twins.map((i) => map.cells[i].copy), [0]);
+  // Nothing chosen: nothing checked, the first cell is the Tab stop.
+  assert.deepEqual(marks.tube, { checked: null, twins: [], stop: map.groups.tube[0] });
+  // A picked index that does not carry the choice (a new map, a choice set
+  // another way) gives way to the first cell that does, in reading order.
+  const fallback = mapSelection(map, choices, { pocket: map.groups.pocket.find((i) => map.cells[i].label !== nominal.label) });
+  assert.equal(fallback.pocket.checked, map.groups.pocket.find((i) => map.cells[i].label === nominal.label));
+  assert.equal(mapSelection(map, choices).stud.checked, map.groups.stud.find((i) => map.cells[i].label === stud.label));
+  // Exactly one checked cell in every group that has a choice, on both coupons.
+  for (const layout of [cross, full]) {
+    const m = cellMap(layout);
+    let all = {};
+    for (const order of Object.values(m.groups)) all = choose(all, m.cells[order.at(-1)]);
+    for (const [group, mark] of Object.entries(mapSelection(m, all))) {
+      assert.ok(mark.checked !== null, `${group} has no checked cell`);
+      assert.equal(new Set([mark.checked, ...mark.twins]).size, 1 + mark.twins.length);
+      assert.equal(1 + mark.twins.length, m.groups[group].filter((i) => isChosen(all, m.cells[i])).length);
+    }
+  }
+  assert.deepEqual(mapSelection(null, {}), {});
+});
+
+/** The narrowest map: the desktop side panel at its narrowest (320 px) or a 320 px phone, less the panel's 12 px gutters. */
+const NARROWEST_MAP_PX = 320 - 2 * 12;
+/** WCAG 2.2 success criterion 2.5.8 (target size, minimum), CSS pixels. */
+const MIN_TARGET_PX = 24;
+
+test("every tap target is at least 24 px and every label at least 10 px on the narrowest map, its label fitting its box", () => {
+  for (const layout of [cross, full]) {
+    const map = cellMap(layout);
+    const px = NARROWEST_MAP_PX / map.widthMm;
+    const name = `${layout.summary.pockets} (${map.shown})`;
+    const smallest = Math.min(...map.cells.map((c) => Math.min(c.box.width, c.box.height)));
+    assert.ok(smallest * px >= MIN_TARGET_PX, `${name}: the smallest tap target is ${(smallest * px).toFixed(1)} px`);
+    for (const [group, order] of Object.entries(map.groups)) {
+      const sizes = new Set(order.map((i) => map.cells[i].fontMm));
+      assert.equal(sizes.size, 1, `${name}: ${group} labels differ in size`);
+      const [fontMm] = sizes;
+      assert.ok(fontMm * px >= 10, `${name}: ${group} labels are ${(fontMm * px).toFixed(1)} px`);
+      for (const i of order) {
+        const c = map.cells[i];
+        assert.ok(fontMm <= labelFontMm(c) + 1e-12, `${name}: ${c.label} is drawn larger than its box takes`);
+        // The symbol, the gap and the lines fit the height, the longest line the width.
+        const symbol = group === "pocket" ? LABEL_EM.pocketSymbol : LABEL_EM.symbol;
+        assert.ok((symbol + LABEL_EM.gap + c.lines.length * LABEL_EM.line) * fontMm < c.box.height, `${name}: ${c.label} is too tall`);
+        assert.ok(Math.max(...c.lines.map((l) => l.length)) * LABEL_EM.char * fontMm < c.box.width, `${name}: ${c.label} is too wide`);
+      }
+    }
+  }
+  // Printed side by side, the copies would share the width and the targets would be too small: that is why they are drawn one under the other.
+  const sideBySide = full.summary.footprintMm[0];
+  const smallestFull = Math.min(...cellMap(full).cells.map((c) => Math.min(c.box.width, c.box.height)));
+  assert.ok(smallestFull * (NARROWEST_MAP_PX / sideBySide) < MIN_TARGET_PX);
 });
 
 test("only pockets the printed pocket set has are offered; a choice the new coupon lacks is dropped", () => {
@@ -247,17 +345,19 @@ test("refusals go next to their field; cell and coupon refusals go with the map"
 });
 
 test("the offsets summary shows the core's numbers with the CLI's signs", () => {
+  // Neutral numbers, not brick dimensions (CLAUDE.md): this checks the
+  // formatting only; core.test.js checks the rows of the real core's offsets.
   const rows = offsetRows([
-    { cell: "stud", chosenMm: 4.8, nominalMm: 4.8, offsetField: "studDiameter", offsetMm: 0 },
-    { cell: "pocketTubeOD", chosenMm: 6.5, nominalMm: 6.514, offsetField: "tubeOuterDiameter", offsetMm: -0.014 },
-    { cell: "tube", chosenMm: 4.95, nominalMm: 4.8, offsetField: "tubeInnerDiameter", offsetMm: 0.15 },
+    { cell: "stud", chosenMm: 1.25, nominalMm: 1.25, offsetField: "studDiameter", offsetMm: 0 },
+    { cell: "pocketTubeOD", chosenMm: 2.5, nominalMm: 2.514, offsetField: "tubeOuterDiameter", offsetMm: -0.014 },
+    { cell: "tube", chosenMm: 1.35, nominalMm: 1.2, offsetField: "tubeInnerDiameter", offsetMm: 0.15 },
   ]);
   assert.deepEqual(
     rows.map((r) => [r.name, r.chosen, r.nominal, r.offset, r.field]),
     [
-      ["Stud", "4.80", "4.800", "+0.000", "studDiameter"],
-      ["Pocket tube OD", "6.50", "6.514", "-0.014", "tubeOuterDiameter"],
-      ["Tube bore", "4.95", "4.800", "+0.150", "tubeInnerDiameter"],
+      ["Stud", "1.25", "1.250", "+0.000", "studDiameter"],
+      ["Pocket tube OD", "2.50", "2.514", "-0.014", "tubeOuterDiameter"],
+      ["Tube bore", "1.35", "1.200", "+0.150", "tubeInnerDiameter"],
     ],
   );
   assert.deepEqual(offsetRows(null), []);
