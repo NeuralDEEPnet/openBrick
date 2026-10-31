@@ -7,15 +7,18 @@
 //! - `read_picked_file(kind, maxBytes)` reads that file once, at most
 //!   `maxBytes` (and never more than [`MAX_READ_BYTES`]), and answers with its
 //!   bytes.
-//! - `save_file(bytes)` takes the file bytes as the raw request body and the
+//! - `save_file(bytes)` takes the file bytes as the request body and the
 //!   suggested name and format in two headers, shows the native save dialog,
 //!   and writes the bytes to the path the user chose. It answers with the
-//!   saved file's name and path, or `null` when the user cancelled.
+//!   saved file's name and path, or `null` when the user cancelled. The body
+//!   is raw bytes over Tauri's custom IPC protocol and a JSON array of numbers
+//!   over its postMessage fallback ([`save_bytes`]).
 //!
 //! The webview gets no dialog, file system, shell or opener permission
 //! (capabilities/main.json grants only these three commands), so the page can
 //! read only a file the user just chose and write only where the user said.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -83,6 +86,38 @@ fn scripted_dialogs() -> Option<PathBuf> {
 #[cfg(not(debug_assertions))]
 fn scripted_dialogs() -> Option<PathBuf> {
     None
+}
+
+/// The file bytes of a save, from the request body.
+///
+/// Over Tauri's custom IPC protocol the page's `Uint8Array` arrives as the raw
+/// body. When the webview cannot use that protocol (Tauri then warns "IPC
+/// custom protocol failed" and switches the page to `postMessage` for good;
+/// Android always does so), the page's IPC script turns the `Uint8Array` into
+/// a JSON array of numbers (`Array.from`, tauri 2.12.5
+/// `scripts/process-ipc-message-fn.js`) and Tauri hands it over as
+/// `InvokeBody::Json` (`src/ipc/protocol.rs`). The two headers travel in
+/// `options.headers` either way. Every item must be a whole number from 0 to
+/// 255; anything else is refused, never truncated.
+fn save_bytes(body: &InvokeBody) -> Result<Cow<'_, [u8]>, String> {
+    match body {
+        InvokeBody::Raw(bytes) => Ok(Cow::Borrowed(bytes)),
+        InvokeBody::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                item.as_u64()
+                    .and_then(|n| u8::try_from(n).ok())
+                    .ok_or_else(|| {
+                        format!(
+                            "the save's bytes are broken: item {i} is {item}, not a whole number from 0 to 255"
+                        )
+                    })
+            })
+            .collect::<Result<Vec<u8>, String>>()
+            .map(Cow::Owned),
+        InvokeBody::Json(_) => Err("the save carries no file bytes".to_string()),
+    }
 }
 
 fn poisoned<T>(_: T) -> String {
@@ -162,9 +197,7 @@ async fn save_file(
     folder: State<'_, LastFolder>,
     request: Request<'_>,
 ) -> Result<Option<SavedFile>, String> {
-    let InvokeBody::Raw(bytes) = request.body() else {
-        return Err("the save carries no file bytes".to_string());
-    };
+    let bytes = save_bytes(request.body())?;
     let header = |name: &str| {
         request
             .headers()
@@ -200,7 +233,7 @@ async fn save_file(
     };
     let (path, extension_added) = files::with_format_extension(&chosen, format);
     files::check_save_target(&path, extension_added)?;
-    files::write_atomically(&path, bytes)?;
+    files::write_atomically(&path, &bytes)?;
     folder.remember(&path);
     Ok(Some(SavedFile {
         name: files::display_name(&path),
@@ -298,6 +331,47 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn a_save_takes_its_bytes_from_either_ipc_path() {
+        // The custom protocol: the raw body, borrowed as it is.
+        let raw = InvokeBody::Raw(vec![0, 7, 128, 255]);
+        assert_eq!(save_bytes(&raw).unwrap().as_ref(), &[0, 7, 128, 255]);
+        assert!(matches!(save_bytes(&raw).unwrap(), Cow::Borrowed(_)));
+        // The postMessage fallback: what Array.from(new Uint8Array([0, 7, 128, 255]))
+        // serialises to.
+        let json = InvokeBody::Json(serde_json::json!([0, 7, 128, 255]));
+        assert_eq!(save_bytes(&json).unwrap().as_ref(), &[0, 7, 128, 255]);
+        // An empty file is the same on both paths.
+        assert!(save_bytes(&InvokeBody::Raw(Vec::new())).unwrap().is_empty());
+        assert!(save_bytes(&InvokeBody::Json(serde_json::json!([])))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_save_refuses_a_body_that_is_not_bytes() {
+        // No payload at all (Tauri's default body is JSON null), or arguments
+        // instead of bytes.
+        for body in [
+            serde_json::json!(null),
+            serde_json::json!({ "bytes": [1, 2] }),
+        ] {
+            let err = save_bytes(&InvokeBody::Json(body)).unwrap_err();
+            assert_eq!(err, "the save carries no file bytes");
+        }
+        // Items outside a byte are refused, never wrapped or truncated:
+        // 256 = u8::MAX + 1, -1 and 1.5 are no byte, and neither is a string.
+        for (body, bad) in [
+            (serde_json::json!([1, 256]), "item 1 is 256"),
+            (serde_json::json!([-1]), "item 0 is -1"),
+            (serde_json::json!([0, 0, 1.5]), "item 2 is 1.5"),
+            (serde_json::json!(["7"]), "item 0 is \"7\""),
+        ] {
+            let err = save_bytes(&InvokeBody::Json(body)).unwrap_err();
+            assert!(err.contains(bad), "{err}");
+        }
     }
 
     #[test]

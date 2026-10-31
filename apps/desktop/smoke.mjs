@@ -10,10 +10,11 @@
 // Content Security Policy is in force and the page needs nothing it forbids,
 // and that the desktop adapter (apps/web/src/files.js) routes every save and
 // open through the app's commands: Download 3MF and STL and the coupon 3MF
-// write byte-identical copies of what `native_eval` exports, an SVG and a fit
-// profile open from the open dialog, a file over the core's limit is refused
-// before it is read, a cancelled open changes nothing, and a project link does
-// not navigate the window away.
+// write byte-identical copies of what `native_eval` exports (the coupon 3MF
+// also over Tauri's postMessage fallback, which carries the bytes as a JSON
+// array of numbers), an SVG and a fit profile open from the open dialog, a
+// file over the core's limit is refused before it is read, a cancelled open
+// changes nothing, and a project link does not navigate the window away.
 //
 // WebDriver cannot reach a native dialog, so the debug app is started with
 // OPENBRICK_DESKTOP_TEST_DIALOGS set to a temporary folder: saves land there
@@ -392,6 +393,31 @@ async function main() {
     check(w.coupon.contentHash === native.coupon.contentHash, `${label}: coupon hash ${w.coupon.contentHash}, native ${native.coupon.contentHash}`);
     await save(session, "#download-coupon-3mf", dialogs, native.exports.coupon3mf, `${label} coupon 3MF`);
     if (shots) await screenshots(session, "desktop-coupon");
+
+    // Tauri's IPC fallback. When a request over its custom protocol fails,
+    // Tauri's IPC script switches the page to postMessage for good, and a
+    // Uint8Array then travels as a JSON array of numbers; save_file accepts
+    // that too (src-tauri/src/app.rs, save_bytes). Make the page's fetch
+    // refuse the IPC origin, as a blocked custom protocol would, and save the
+    // coupon 3MF (the largest file) again: it must arrive byte-identical, and
+    // the fetch must have been refused, so the save really took the fallback.
+    // This is the last step, because the page stays on postMessage.
+    rmSync(join(dialogs, native.exports.coupon3mf.name));
+    await session.exec(`
+      const fetch = window.fetch;
+      window.__ipcRefused = 0;
+      window.fetch = function (input, init) {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.startsWith("ipc:") || url.startsWith("http://ipc.localhost")) {
+          window.__ipcRefused += 1;
+          return Promise.reject(new TypeError("smoke test: the IPC custom protocol is blocked"));
+        }
+        return fetch.call(window, input, init);
+      };`);
+    await save(session, "#download-coupon-3mf", dialogs, native.exports.coupon3mf, `${label} coupon 3MF over the IPC fallback`);
+    const refused = await session.exec("return window.__ipcRefused;");
+    check(refused >= 1, `${label}: the save never tried the custom protocol (${refused} refused requests), so the fallback was not tested`);
+    console.log(`# ${label}: the page's fetch refused ${refused} IPC request(s); the save went over postMessage`);
   } finally {
     await session.quit();
     driver.kill();

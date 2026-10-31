@@ -24,10 +24,13 @@ default = []
 # src/files.rs, which need neither the system webview libraries (WebKitGTK on
 # Linux) nor the built frontend. The Tauri CLI turns it on through
 # tauri.conf.json (`build.features`); see apps/desktop/README.md.
-app = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:serde", "dep:opener"]
+app = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:serde", "dep:serde_json", "dep:opener"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
+# The save body over Tauri's postMessage fallback is a JSON array of numbers
+# (src/app.rs, `save_bytes`); the same serde_json 1 that Tauri uses.
+serde_json = { workspace = true, optional = true }
 # Tauri 2 and its dialog plugin, pinned exactly (Apache-2.0 OR MIT). The webview
 # gets no dialog or file system permission: the app's own commands in
 # src/app.rs show the native dialogs and read or write the one file the user
