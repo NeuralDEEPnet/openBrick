@@ -67,7 +67,7 @@ Bambu Lab acknowledged the bug in [issue #9666](https://github.com/bambulab/Bamb
 
 **Layout (b) with colours takes the per-triangle path (source).** OpenBrick3D's colours sit on the part meshes (`pid` and `pindex` on each mesh object), not on the components object, which the specification forbids from carrying `pid`. So every triangle of both parts gets a colour and both parts carry per-volume colour data. `src/slic3r/GUI/Plater.cpp` (`master`, line 8890) opens the colour dialog (`ObjColorDialog`, type `Standard3mf`) when the file is not Bambu's own, its colour-group map is not empty, some volume has colour data, and `extract_colors_to_obj_dialog` returns true. **Unconfirmed:** that last function's body was not found in the files read (`Plater.cpp`, `bbs_3mf.cpp`, `Model.cpp`, `ObjColorDialog.cpp`), so whether it skips the dialog when each part has a single colour is not known. Without colours (`ExportObject::color_srgb = None`) OpenBrick3D writes no colour group and no `pid`, so no triangle gets a colour (`pid` defaults to -1, line 952), the map is empty and the dialog cannot open (source).
 
-**OrcaSlicer**, a fork of Bambu Studio, was not researched.
+**OrcaSlicer**, a fork of Bambu Studio, was not researched for this report. Its command line now slices the CLI's files every week; see [OrcaSlicer smoke test](#orcaslicer-smoke-test-backlog-item-18) below.
 
 ## Not pursued: vendor configuration files
 
@@ -134,9 +134,31 @@ Record, with screenshots, under this question and Q06:
 - whether Cancel in Bambu's dialog leaves per-part filaments working, and whether the colourless files skip the dialog and take a filament per part directly;
 - whether the sliced preview shows the logo colour only in the logo.
 
+## OrcaSlicer smoke test (backlog item 18)
+
+Added 2026-10-31. The `slicer-smoke` workflow (`.github/workflows/slicer-smoke.yml`) slices the CLI's own files with the OrcaSlicer command line, so this question gets a machine-checked answer for one slicer every week. It runs on Mondays and on demand, and it is never a required pull request check:
+
+```sh
+gh workflow run slicer-smoke.yml            # start it on main (add --ref <branch> for a branch)
+gh run watch                                # follow it; the job summary has the table
+gh run download --name slicer-smoke         # inputs, OrcaSlicer's projects with the G-code, logs, results.json
+```
+
+What it does (`scripts/slicer-smoke.sh`, with `scripts/slicer-smoke.py` for the profiles and the report):
+- builds the openbrick CLI and writes the 2x4 logo tile as emboss, as a multi-material inlay (`inlayStyle=parts`) and as that inlay without colours (`--no-colour`), the Neuraldeep.net brand tile as a parts inlay, and the fdm-0.4 coupon as the single-colour baseline, each with its `--json` description;
+- downloads OrcaSlicer 2.4.2, the latest stable release (7 July 2026), as `OrcaSlicer_Linux_AppImage_Ubuntu2404_V2.4.2.AppImage` from its GitHub release, and checks its SHA-256 (`d12fb8c8…f029fd`, from the release page) before it runs anything from it; it is extracted with `--appimage-extract` and run as a separate program only, because OrcaSlicer is AGPL-3.0;
+- slices each file headless under Xvfb for a Bambu Lab A1 0.4 nozzle with `0.20mm Standard @BBL A1` and two `Bambu PLA Basic @BBL A1` filaments (grey and blue). OrcaSlicer's command line does not follow a profile's `inherits` chain (source: `ConfigBase::load_from_json` in `src/libslic3r/Config.cpp`), so the script resolves the chains from the AppImage's own system profiles first;
+- reports, per file, whether it sliced (exit code and the `result.json` the command line writes), the objects and parts in OrcaSlicer's exported project (`Metadata/model_settings.config`), the filament each part got, and the filaments the slice used (`Metadata/slice_info.config`). The job fails when a file does not slice.
+
+`scripts/slicer-smoke.sh --dry-run --openbrick target/debug/openbrick` builds and checks the inputs without downloading OrcaSlicer, and the `cli` job of the `ci` workflow runs it on every pull request. On Linux x86-64 with `xvfb-run`, the script without `--dry-run` does the whole run locally. `--orca-root DIR` uses an OrcaSlicer you extracted yourself instead.
+
+What OrcaSlicer 2.4.2's source predicts, to be confirmed by the first run (all **source**, `src/libslic3r/Format/bbs_3mf.cpp` at tag `v2.4.2`):
+- the components object loads as one object whose parts are the components, as in Bambu Studio (`_generate_current_object_list`, then one volume per component);
+- colours do not reach the filaments. The importer ignores a triangle's `pid` and `p1` to `p3` (`_handle_start_triangle`), keeps one colour per colour group, and gives a filament only to a build item's object whose own `pid` names a colour group. The components object carries no `pid`, so both parts print with filament 1, with or without `--no-colour`, and the user picks the accent's filament by hand. Since the importer keeps no per-triangle colours, the data that Bambu Studio's "Standard 3MF Import color" dialog works from is missing here (**unconfirmed**: OrcaSlicer's GUI code was not read).
+
 ## Sources
 
-All read on 2026-10-28.
+All read on 2026-10-28, except the OrcaSlicer sources below (2026-10-31).
 
 - PrusaSlicer source at tag `version_2.9.6`:
   - [`src/libslic3r/Format/3mf.cpp`](https://github.com/prusa3d/PrusaSlicer/blob/version_2.9.6/src/libslic3r/Format/3mf.cpp)
@@ -161,3 +183,6 @@ All read on 2026-10-28.
 - [3MF Core specification 1.4.0](https://github.com/3MFConsortium/spec_core/blob/master/3MF%20Core%20Specification.md) (6 February 2025).
 - Not opened: Bambu Lab's wiki pages "Standard 3MF File Color Parsing" and "3mf compatibility" answered HTTP 402.
 - Not used: [a blog post on multi-colour 3MF export](https://modelrift.com/blog/multicolor-3mf-export/) (18 May 2026) says Bambu Studio matches `basematerials` display colours to loaded filaments by RGB distance. That disagrees with the painting reports above and is not confirmed.
+- OrcaSlicer, read on 2026-10-31 for the smoke test (behaviour only; nothing from it is in the repository):
+  - [OrcaSlicer releases](https://github.com/OrcaSlicer/OrcaSlicer/releases): v2.4.2 of 7 July 2026 is the latest stable release; v2.5.0-beta (27 October 2026) is a pre-release. The AppImage's SHA-256 is the digest listed with the asset on the release page.
+  - Source at tag `v2.4.2`: [`src/OrcaSlicer.cpp`](https://github.com/OrcaSlicer/OrcaSlicer/blob/v2.4.2/src/OrcaSlicer.cpp) (the command line, `result.json`), [`src/libslic3r/PrintConfig.cpp`](https://github.com/OrcaSlicer/OrcaSlicer/blob/v2.4.2/src/libslic3r/PrintConfig.cpp) (its options), [`src/libslic3r/Config.cpp`](https://github.com/OrcaSlicer/OrcaSlicer/blob/v2.4.2/src/libslic3r/Config.cpp) (`load_from_json`), [`src/libslic3r/Utils.hpp`](https://github.com/OrcaSlicer/OrcaSlicer/blob/v2.4.2/src/libslic3r/Utils.hpp) (its return codes), [`src/libslic3r/Format/bbs_3mf.cpp`](https://github.com/OrcaSlicer/OrcaSlicer/blob/v2.4.2/src/libslic3r/Format/bbs_3mf.cpp) (3MF import and the project's `model_settings.config` and `slice_info.config`), and the A1 profiles under `resources/profiles/BBL/`.

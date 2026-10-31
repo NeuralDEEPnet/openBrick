@@ -356,6 +356,8 @@ async function fullRun(browser, origin, native) {
   check(!(await page.isDisabled("#download-3mf")) && !(await page.isDisabled("#download-stl")), `${label}: downloads are disabled for the default tile`);
   const disclaimer = await page.textContent("footer");
   check(disclaimer.includes("not affiliated with") && disclaimer.includes("Source code on GitHub"), `${label}: footer "${disclaimer}"`);
+  const docsLink = await page.getAttribute('footer a:text-is("Documentation")', "href");
+  check(docsLink === "https://neuraldeepnet.github.io/openBrick/docs/", `${label}: the footer links the documentation site at ${docsLink}`);
   if (shots) {
     await settle(page);
     await page.screenshot({ path: join(shots, "desktop-light-emboss.png") });

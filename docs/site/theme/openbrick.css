@@ -1,0 +1,61 @@
+/* OpenBrick3D touches on mdBook's themes: the playground's accent colours for
+   links (apps/web/index.html), a card grid for the landing page, and a quiet
+   disclaimer. WCAG contrast of the link colours on mdBook 0.5.4's page
+   backgrounds: #1d5fae on light (#fff) 6.4:1; #7cc4ff on navy 9.4:1, coal
+   9.7:1 and ayu 9.9:1; all above the 4.5:1 of WCAG 2.1 AA. The rust theme
+   keeps its own colours. */
+
+.light, html:not(.js) {
+  --links: #1d5fae;
+  --sidebar-active: #1d5fae;
+}
+
+.navy, .coal, .ayu {
+  --links: #7cc4ff;
+  --sidebar-active: #7cc4ff;
+}
+
+.ob-lead {
+  font-size: 1.15em;
+  line-height: 1.55;
+}
+
+.ob-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15em, 1fr));
+  gap: 0.8em;
+  margin: 1.2em 0 1.6em;
+}
+
+.ob-card {
+  display: block;
+  padding: 0.8em 1em;
+  border: 1px solid var(--table-border-color);
+  border-radius: 8px;
+  background: var(--quote-bg);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.ob-card:hover,
+.ob-card:focus-visible {
+  border-color: var(--links);
+  text-decoration: none;
+}
+
+.ob-card strong {
+  display: block;
+  margin-bottom: 0.25em;
+  color: var(--links);
+}
+
+.content a.ob-card span {
+  color: var(--fg);
+  font-size: 0.92em;
+}
+
+.ob-disclaimer {
+  margin-top: 2em;
+  font-size: 0.85em;
+  line-height: 1.5;
+}

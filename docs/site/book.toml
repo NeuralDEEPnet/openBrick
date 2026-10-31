@@ -1,0 +1,43 @@
+# The OpenBrick3D documentation site (docs/plan/10 section 7), built with
+# mdBook (MPL-2.0; a build-time tool only, never shipped or linked).
+#
+# Build it with `cargo xtask docs`, not with `mdbook build docs/site`: xtask
+# stages this directory together with docs/guides/, docs/plan/ and
+# docs/spikes/ (read from where they live, never copied into the repository)
+# in target/docs-src/, regenerates the CLI reference (src/cli.md) from the
+# openbrick command, builds the book into target/docs/ and checks every link
+# and anchor in the result. See docs/site/README.md.
+
+[book]
+title = "OpenBrick3D"
+description = "OpenBrick3D: an open-source, brick-compatible part designer, assembler and 3D-print pipeline. User guide, CLI reference, the plan and the spike reports."
+authors = ["OpenBrick3D contributors"]
+language = "en"
+src = "src"
+
+[build]
+# A chapter missing from the staged tree is an error, never an empty page
+# created on the fly.
+create-missing = false
+# No `links` preprocessor (xtask stages every file, so nothing uses
+# {{#include}}, and plan text is never read as a directive) and no `index`
+# preprocessor (it would serve plan/README.md as plan/index.html while the
+# plan's own links still point to README.md).
+use-default-preprocessors = false
+
+[output.html]
+# The site is published under the playground on GitHub Pages; the 404 page
+# resolves its links from here.
+site-url = "/openBrick/docs/"
+git-repository-url = "https://github.com/NeuralDEEPnet/openBrick"
+git-repository-icon = "fab-github"
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["theme/openbrick.css"]
+# The plan's chapters carry their own numbers (00 to 14); no "4.1." in front.
+no-section-label = true
+# A friendlier page not found, with links back in (src/404.md).
+input-404 = "404.md"
+
+[output.html.search]
+enable = true

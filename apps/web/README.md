@@ -2,7 +2,7 @@
 
 The M1 browser playground ([02 sections 1 to 3](../../docs/plan/02-architecture.md#3-the-wasm-boundary-and-threading), [06 sections 5, 11 and 13](../../docs/plan/06-part-designer-and-dsl.md#11-designer-ui-on-desktop-and-mobile), decisions D10 and D14). Pick a tile size, keep the Neuraldeep.net mark or choose another sample or drop an SVG, see the brick-compatible logo tile in 3D with its validation report, and download a printable 3MF or STL. A second mode builds the calibration coupon ([05 section 4](../../docs/plan/05-3d-printing-pipeline.md#4-calibration-coupon-and-wizard)) and downloads it. Everything runs in the browser: the Rust core is compiled to WebAssembly with wasm-bindgen and runs in a Web Worker, and the page shows the meshes it returns with the three.js `WebGPURenderer`, which falls back to WebGL2 where WebGPU is missing.
 
-It is published at <https://neuraldeepnet.github.io/openBrick/> once GitHub Pages is switched on for the repository (Settings > Pages > Source: GitHub Actions); the `pages` workflow builds it with the base path `/openBrick/`.
+It is published at <https://neuraldeepnet.github.io/openBrick/> once GitHub Pages is switched on for the repository (Settings > Pages > Source: GitHub Actions); the `pages` workflow builds it with the base path `/openBrick/`. The same workflow publishes the documentation site (the guides, the CLI reference and the plan, built from [`docs/site/`](../../docs/site/README.md) by `cargo xtask docs`) beside it at <https://neuraldeepnet.github.io/openBrick/docs/>, and the page's footer links there.
 
 JavaScript computes no geometry and no validation ([CLAUDE.md](../../CLAUDE.md)). The tile comes from `openbrick_part::evaluate` with `parts/ndn.logo-tile.obpart.json`, the report from `openbrick_part::validate`, the files from `openbrick_io`, and the coupon from `openbrick_part::build_coupon`, all through `crates/openbrick-wasm`. The page builds its controls from the part document's `params`, reads files into bytes, and displays what comes back.
 
@@ -44,7 +44,7 @@ OPENBRICK_BASE=/openBrick/ pnpm --dir apps/web build   # the GitHub Pages build
 
 `cargo xtask wasm` builds `crates/openbrick-wasm` in release for `wasm32-unknown-unknown`. It then runs `wasm-bindgen --target web` into `src/wasm/`, which is generated and gitignored, and prints the module size. It fails if the gzipped module exceeds the 2.5 MB budget in [10 section 5](../../docs/plan/10-repo-layout-and-dev-tooling.md#5-ci-matrix). With the evaluator, usvg, the validator, the coupon, the 3MF and STL writers and the bundled artwork (the four Neuraldeep.net drawings add about 42 KB of SVG text) linked, the module is 3,064,623 bytes raw and 1,014,230 bytes gzipped (flate2 at its best compression), 41 percent of the budget.
 
-The footer carries the non-affiliation disclaimer ([12 section 4](../../docs/plan/12-legal-and-naming.md#4-disclaimer-text)) from `crates/openbrick-units/disclaimer.txt`, the one file the CLI's `openbrick about` and the core's `disclaimer()` also read; `vite.config.js` writes it into the HTML.
+The footer carries the non-affiliation disclaimer ([12 section 4](../../docs/plan/12-legal-and-naming.md#4-disclaimer-text)) from `crates/openbrick-units/disclaimer.txt`, the one file the CLI's `openbrick about` and the core's `disclaimer()` also read; `vite.config.js` writes it into the HTML. After it come the links to the documentation site and to the source code.
 
 ### On a phone on the same network
 
