@@ -8,6 +8,7 @@
 
 import wasmUrl from "./wasm/openbrick_wasm_bg.wasm?url";
 import { CoreClient } from "./client.js";
+import { createFileAccess, desktopBridge, errorText, savedText } from "./files.js";
 import {
   assetSizeError,
   controlsFor,
@@ -86,7 +87,11 @@ function el(tag, attrs = {}, ...children) {
 const EVALUATE_DELAY_MS = 150;
 /** Largest fit profile file read; real ones are about 2 KB. */
 const MAX_FIT_BYTES = 1024 * 1024;
-const MIME = { "3mf": "model/3mf", stl: "model/stl", json: "application/json" };
+/**
+ * Saving and opening: browser downloads and file inputs, or the native dialogs
+ * of the desktop app (apps/desktop) when the page runs inside it (src/files.js).
+ */
+const files = createFileAccess({ bridge: desktopBridge(window) });
 const POCKET_LABELS = {
   cross: "Cross: the default, the smallest",
   crossAndDiagonal: "Cross and diagonal: needs a larger bed",
@@ -117,6 +122,8 @@ const page = {
   warnings: [],
   error: null,
   downloads: [],
+  /** True inside the desktop app, where saving and opening use native dialogs. */
+  desktop: files.desktop,
   /** The artwork in use: { sample (its id, null for the user's SVG), asset, notice (shown) }. */
   artwork: null,
   /** The core's artwork size limit (max_asset_bytes()), once loaded. */
@@ -194,14 +201,13 @@ async function compileCore(url) {
   }
 }
 
-/** Hand bytes to the browser as a download. */
+/**
+ * Save bytes as `name`: a browser download, or the desktop app's save dialog.
+ * Resolves to `{ saved, name, path }`; `saved` is false only when the user
+ * cancelled the desktop dialog.
+ */
 function save(bytes, name, format) {
-  const url = URL.createObjectURL(new Blob([bytes], { type: MIME[format] ?? "application/octet-stream" }));
-  const a = el("a", { href: url, download: name, hidden: true });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return files.save(bytes, name, format);
 }
 
 const kb = (n) => `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n / 1024)} KB`;
@@ -512,7 +518,7 @@ async function main() {
             type: "button",
             id: "drop",
             "aria-describedby": "art-note",
-            onclick: () => fileInput.click(),
+            onclick: () => chooseArtwork(),
           },
           el("strong", { text: "Drop an SVG here, or choose a file" }),
           el("span", { text: c.help || "Single-colour SVG" }),
@@ -649,6 +655,17 @@ async function main() {
     fileInput.value = "";
     useFile(file);
   });
+  /** The drop zone's button: the file input, or the desktop app's open dialog. */
+  function chooseArtwork() {
+    if (!files.desktop) {
+      fileInput.click();
+      return;
+    }
+    files
+      .open("svg", data.maxAssetBytes)
+      .then(useFile)
+      .catch((err) => showArtNote(`The file could not be opened: ${errorText(err)}. The tile keeps ${state.artwork.label}.`, true));
+  }
   // Dropping a file anywhere on the 3D view works too.
   const stage = $("stage");
   stage.addEventListener("dragover", (e) => {
@@ -784,16 +801,25 @@ async function main() {
   fitSelect.addEventListener("change", () => {
     if (fitSelect.value === "load") {
       fitSelect.value = state.fit; // until a file is read
-      fitFile.click();
+      if (files.desktop) {
+        files
+          .open("fit", MAX_FIT_BYTES)
+          .then(useFitFile)
+          .catch((err) => fitError(`The file could not be opened: ${errorText(err)}.`));
+      } else fitFile.click();
       return;
     }
     state.fit = fitSelect.value;
     showFitNote();
     changed();
   });
-  fitFile.addEventListener("change", async () => {
+  fitFile.addEventListener("change", () => {
     const file = fitFile.files?.[0];
     fitFile.value = "";
+    useFitFile(file);
+  });
+  /** Read a fit profile the user chose (a browser File, or one from the desktop app's dialog). */
+  async function useFitFile(file) {
     if (!file) return;
     if (file.size > MAX_FIT_BYTES) {
       fitError(`“${file.name}” is ${kb(file.size)}; a fit profile is a small JSON file (about 2 KB) written by openbrick calibrate record.`);
@@ -822,7 +848,7 @@ async function main() {
     state.fit = "mine";
     showFitNote();
     changed();
-  });
+  }
 
   for (const role of ["body", "accent"]) {
     const input = $(`color-${role}`);
@@ -1001,7 +1027,11 @@ async function main() {
 
   const legend = $("legend");
   function swatch(colour, text, id) {
-    return el("li", { id }, el("span", { className: "swatch", style: `background:${colour}`, "aria-hidden": "true" }), el("span", { text }));
+    const box = el("span", { className: "swatch", "aria-hidden": "true" });
+    // Through the CSSOM, not a style="" attribute, which the desktop app's
+    // Content Security Policy (style-src 'self') refuses.
+    box.style.background = colour;
+    return el("li", { id }, box, el("span", { text }));
   }
   /** The legend's line when a build failed: why the 3D view is empty. */
   const emptyNote = (what) => el("li", { id: "legend-empty", text: `Nothing to show: the ${what} could not be built (see the status line).` });
@@ -1134,12 +1164,12 @@ async function main() {
     renderDownloads();
     try {
       const { bytes } = await client.exportPart({ ...state.request, format, colors: { ...state.colors } });
-      save(bytes, name, format);
-      page.downloads.push({ name, format, bytes: bytes.byteLength });
+      const saved = await save(bytes, name, format);
+      if (saved.saved) page.downloads.push({ name: saved.name, format, bytes: bytes.byteLength });
       $("download-reason").textContent = "";
-      showStatus([`Saved ${name}`, kb(bytes.byteLength)]);
+      showStatus(savedText(saved, kb(bytes.byteLength)));
     } catch (err) {
-      showStatus([`The download failed: ${err.message}`], "bad");
+      showStatus([`The download failed: ${errorText(err)}`], "bad");
     } finally {
       syncCounters();
       state.exporting = false;
@@ -1337,11 +1367,11 @@ async function main() {
     renderCouponDownloads();
     try {
       const { bytes } = await client.exportCoupon({ ...c.request, format, colors: { body: state.colors.body } });
-      save(bytes, name, format);
-      page.downloads.push({ name, format, bytes: bytes.byteLength });
-      showStatus([`Saved ${name}`, kb(bytes.byteLength)]);
+      const saved = await save(bytes, name, format);
+      if (saved.saved) page.downloads.push({ name: saved.name, format, bytes: bytes.byteLength });
+      showStatus(savedText(saved, kb(bytes.byteLength)));
     } catch (err) {
-      showStatus([`The download failed: ${err.message}`], "bad");
+      showStatus([`The download failed: ${errorText(err)}`], "bad");
     } finally {
       syncCounters();
       c.exporting = false;
@@ -1735,9 +1765,15 @@ async function main() {
     const r = await recordReady();
     if (!r) return;
     const bytes = new TextEncoder().encode(r.text);
-    save(bytes, r.fileName, "json");
-    page.downloads.push({ name: r.fileName, format: "json", bytes: bytes.byteLength });
-    showStatus([`Saved ${r.fileName}`, kb(bytes.byteLength)]);
+    try {
+      // A browser download, or the desktop app's save dialog, which the user
+      // may cancel (then nothing was saved).
+      const saved = await save(bytes, r.fileName, "json");
+      if (saved.saved) page.downloads.push({ name: saved.name, format: "json", bytes: bytes.byteLength });
+      showStatus(savedText(saved, kb(bytes.byteLength)));
+    } catch (err) {
+      showStatus([`The download failed: ${errorText(err)}`], "bad");
+    }
   });
 
   $("use-fit").addEventListener("click", async () => {

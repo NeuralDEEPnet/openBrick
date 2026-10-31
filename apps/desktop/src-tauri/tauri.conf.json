@@ -1,0 +1,72 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenBrick3D",
+  "mainBinaryName": "openbrick-desktop",
+  "identifier": "net.neuraldeep.OpenBrick3D",
+  "build": {
+    "beforeDevCommand": "pnpm run frontend:dev",
+    "beforeBuildCommand": "pnpm run frontend",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist",
+    "features": ["app"]
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "OpenBrick3D",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "worker-src": "'self'",
+        "style-src": "'self'",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self'",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-src": "'none'"
+      },
+      "capabilities": ["main"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "OpenBrick3D contributors",
+    "copyright": "Copyright OpenBrick3D contributors. MIT licence.",
+    "category": "GraphicsAndDesign",
+    "shortDescription": "Brick-compatible part designer and 3D-print pipeline",
+    "longDescription": "Design brick-compatible logo tiles, validate them for your printer and export 3MF and STL; the calibration coupon fits the tiles to your printer. OpenBrick3D is an independent, community-driven open-source project published by Neural Deep Network Ltd (Malta). It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group. LEGO®, the LEGO® logo and the Minifigure are trademarks of the LEGO Group of companies, which does not sponsor, authorize or endorse this project. Works with LEGO®-compatible bricks. LDraw™ is a trademark of the Estate of James Jessiman. This software uses the LDraw Parts Library (https://www.ldraw.org).",
+    "homepage": "https://github.com/NeuralDEEPnet/openBrick",
+    "license": "MIT",
+    "licenseFile": "../../../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    },
+    "linux": {
+      "deb": {
+        "section": "graphics"
+      }
+    }
+  }
+}

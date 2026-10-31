@@ -181,6 +181,8 @@
       #notes ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
       #notes li { margin-bottom: 4px; overflow-wrap: anywhere; }
       .downloads { display: flex; flex-wrap: wrap; gap: 8px; }
+      /* No style="" attributes: the desktop app's Content Security Policy (style-src 'self') refuses them. */
+      .downloads.spaced { margin-top: 10px; }
       #download-reason, #coupon-download-note { margin: 8px 0 0; font-size: 13px; }
       #download-reason:empty { display: none; }
       table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -378,7 +380,7 @@
           <section aria-labelledby="coupon-result-heading">
             <h2 id="coupon-result-heading">Coupon</h2>
             <dl class="stats" id="coupon-stats"></dl>
-            <div class="downloads" style="margin-top: 10px">
+            <div class="downloads spaced">
               <button type="button" class="primary" id="download-coupon-3mf" disabled>Download coupon 3MF</button>
               <button type="button" id="download-coupon-stl" disabled>Download coupon STL</button>
             </div>

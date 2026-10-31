@@ -1,0 +1,22 @@
+{
+  "name": "@openbrick3d/desktop",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Desktop app alpha: the playground (apps/web) in a Tauri 2 window with native open and save dialogs (docs/plan/09 sections 1 to 4, decision D13)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "wasm": "cd ../.. && cargo xtask wasm",
+    "frontend": "node scripts/frontend.mjs build",
+    "frontend:dev": "node scripts/frontend.mjs dev",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:debug": "tauri build --debug --no-bundle",
+    "test": "node --test",
+    "smoke": "node smoke.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

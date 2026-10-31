@@ -11,6 +11,7 @@ members = [
   "crates/openbrick",
   "crates/openbrick-wasm",
   "crates/xtask",
+  "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
