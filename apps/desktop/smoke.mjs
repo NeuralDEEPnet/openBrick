@@ -96,9 +96,31 @@ class Session {
     return this.cmd("POST", `/session/${this.id}/execute/sync`, { script, args });
   }
 
+  /**
+   * Click the element `css` as a person would: wait until it is enabled, scroll
+   * it into the middle of its scroll containers (the side panel scrolls on
+   * its own, and WebKitWebDriver does not always scroll nested containers
+   * before a click; how far down a button sits depends on the fonts, so it
+   * differs between machines), then click. A failed click reports where the
+   * element was.
+   */
   async click(css) {
+    const where = await this.waitFor(
+      `const el = document.querySelector(arguments[0]);
+       if (!el || el.disabled) return null;
+       el.scrollIntoView({ block: "center", inline: "center" });
+       const r = el.getBoundingClientRect();
+       return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height), viewport: [innerWidth, innerHeight], hidden: el.closest("[hidden]") !== null };`,
+      `${css} enabled`,
+      30_000,
+      css,
+    );
     const element = await this.cmd("POST", `/session/${this.id}/element`, { using: "css selector", value: css });
-    await this.cmd("POST", `/session/${this.id}/element/${Object.values(element)[0]}/click`, {});
+    try {
+      await this.cmd("POST", `/session/${this.id}/element/${Object.values(element)[0]}/click`, {});
+    } catch (err) {
+      throw new Error(`clicking ${css} failed (${JSON.stringify(where)}): ${err.message}`);
+    }
   }
 
   async screenshot(path) {
