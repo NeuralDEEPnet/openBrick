@@ -37,6 +37,11 @@ pub const FIT_INTENTS: &[&str] = &["fits-genuine-bricks", "fits-itself"];
 /// Credit author written when the caller names none.
 pub const ANONYMOUS_AUTHOR: &str = "anonymous";
 
+/// The nozzle diameter assumed when the caller names none, mm: the default of
+/// `openbrick calibrate record --nozzle` and of the browser wizard's nozzle
+/// field, so both front ends write the same profile for the same inputs.
+pub const DEFAULT_NOZZLE_MM: f64 = 0.4;
+
 /// What the calibration wizard or `openbrick calibrate record` collected.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RecordInput {
@@ -264,6 +269,56 @@ pub fn record_with(spec: &CouponSpec, input: &RecordInput) -> Result<FitProfile,
             )
         }),
     })
+}
+
+/// A fit profile as a file: pretty-printed JSON with a final newline. Both
+/// `openbrick calibrate record` and the browser wizard (`record_fit` in
+/// openbrick-wasm) write their files with this one function, so the same
+/// inputs give byte-identical files.
+pub fn fit_profile_text(profile: &FitProfile) -> Result<String, serde_json::Error> {
+    let mut text = serde_json::to_string_pretty(profile)?;
+    text.push('\n');
+    Ok(text)
+}
+
+/// One line of the offsets a recorded profile holds: the chosen cell, the
+/// standard nominal of its row, the offset field it sets and the offset
+/// (chosen minus nominal, as [`record`] rounds it). Serialised in camelCase
+/// (`cell`, `chosenMm`, `nominalMm`, `offsetField`, `offsetMm`), as the CLI's
+/// `--json` and the browser wizard's summary show it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OffsetRow {
+    pub cell: String,
+    pub chosen_mm: f64,
+    pub nominal_mm: f64,
+    pub offset_field: String,
+    pub offset_mm: f64,
+}
+
+/// The offsets of a recorded profile, one row per chosen cell, in the order of
+/// the coupon data (`stud`, `tube`, `pocketTubeOD`, `pocketRib`, ...). Empty
+/// for a profile without a calibration record.
+pub fn offset_rows(profile: &FitProfile) -> Vec<OffsetRow> {
+    let Some(cal) = &profile.calibration else {
+        return Vec::new();
+    };
+    coupon_v1()
+        .cells
+        .iter()
+        .filter_map(|cell| {
+            let &chosen = cal.chosen_cells.get(&cell.id)?;
+            let field = cell.offset_field.clone()?;
+            let offset = profile.offsets_mm.get(&field)?;
+            Some(OffsetRow {
+                cell: cell.id.clone(),
+                chosen_mm: chosen,
+                nominal_mm: cell.nominal_mm(),
+                offset_field: field,
+                offset_mm: offset,
+            })
+        })
+        .collect()
 }
 
 /// Whether `chosen` holds a pocket, after checking that it holds both of its

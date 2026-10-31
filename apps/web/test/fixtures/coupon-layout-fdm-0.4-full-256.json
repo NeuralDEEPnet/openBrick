@@ -1,0 +1,2078 @@
+{
+  "cells": [
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        15,
+        520
+      ],
+      "centerMm": [
+        6.0,
+        208.0
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.60",
+      "row": 0,
+      "valueMm": 4.6
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        47,
+        520
+      ],
+      "centerMm": [
+        18.8,
+        208.0
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.65",
+      "row": 0,
+      "valueMm": 4.65
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        79,
+        520
+      ],
+      "centerMm": [
+        31.6,
+        208.0
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.70",
+      "row": 0,
+      "valueMm": 4.7
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        111,
+        520
+      ],
+      "centerMm": [
+        44.400000000000006,
+        208.0
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.75",
+      "row": 0,
+      "valueMm": 4.75
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        143,
+        520
+      ],
+      "centerMm": [
+        57.2,
+        208.0
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.80",
+      "row": 0,
+      "valueMm": 4.8
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        175,
+        520
+      ],
+      "centerMm": [
+        70.0,
+        208.0
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.85",
+      "row": 0,
+      "valueMm": 4.85
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        207,
+        520
+      ],
+      "centerMm": [
+        82.80000000000001,
+        208.0
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.90",
+      "row": 0,
+      "valueMm": 4.9
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        239,
+        520
+      ],
+      "centerMm": [
+        95.60000000000001,
+        208.0
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.95",
+      "row": 0,
+      "valueMm": 4.95
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        47,
+        486
+      ],
+      "centerMm": [
+        18.8,
+        194.4
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.80",
+      "row": 1,
+      "valueMm": 4.8
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        79,
+        486
+      ],
+      "centerMm": [
+        31.6,
+        194.4
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.85",
+      "row": 1,
+      "valueMm": 4.85
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        111,
+        486
+      ],
+      "centerMm": [
+        44.400000000000006,
+        194.4
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.90",
+      "row": 1,
+      "valueMm": 4.9
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        143,
+        486
+      ],
+      "centerMm": [
+        57.2,
+        194.4
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "4.95",
+      "row": 1,
+      "valueMm": 4.95
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        175,
+        486
+      ],
+      "centerMm": [
+        70.0,
+        194.4
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "5.00",
+      "row": 1,
+      "valueMm": 5.0
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        207,
+        486
+      ],
+      "centerMm": [
+        82.80000000000001,
+        194.4
+      ],
+      "copy": 0,
+      "cross": null,
+      "label": "5.05",
+      "row": 1,
+      "valueMm": 5.05
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        22,
+        442
+      ],
+      "centerMm": [
+        8.8,
+        176.8
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.40\n0.20",
+      "row": 2,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        64,
+        442
+      ],
+      "centerMm": [
+        25.6,
+        176.8
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.45\n0.20",
+      "row": 2,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        106,
+        442
+      ],
+      "centerMm": [
+        42.400000000000006,
+        176.8
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.50\n0.20",
+      "row": 2,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        148,
+        442
+      ],
+      "centerMm": [
+        59.2,
+        176.8
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.55\n0.20",
+      "row": 2,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        190,
+        442
+      ],
+      "centerMm": [
+        76.0,
+        176.8
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.60\n0.20",
+      "row": 2,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        232,
+        442
+      ],
+      "centerMm": [
+        92.80000000000001,
+        176.8
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.65\n0.20",
+      "row": 2,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        22,
+        376
+      ],
+      "centerMm": [
+        8.8,
+        150.4
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.40\n0.25",
+      "row": 3,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        64,
+        376
+      ],
+      "centerMm": [
+        25.6,
+        150.4
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.45\n0.25",
+      "row": 3,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        106,
+        376
+      ],
+      "centerMm": [
+        42.400000000000006,
+        150.4
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.50\n0.25",
+      "row": 3,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        148,
+        376
+      ],
+      "centerMm": [
+        59.2,
+        150.4
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.55\n0.25",
+      "row": 3,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        190,
+        376
+      ],
+      "centerMm": [
+        76.0,
+        150.4
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.60\n0.25",
+      "row": 3,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        232,
+        376
+      ],
+      "centerMm": [
+        92.80000000000001,
+        150.4
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.65\n0.25",
+      "row": 3,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        22,
+        310
+      ],
+      "centerMm": [
+        8.8,
+        124.0
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.40\n0.30",
+      "row": 4,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        64,
+        310
+      ],
+      "centerMm": [
+        25.6,
+        124.0
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.45\n0.30",
+      "row": 4,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        106,
+        310
+      ],
+      "centerMm": [
+        42.400000000000006,
+        124.0
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.50\n0.30",
+      "row": 4,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        148,
+        310
+      ],
+      "centerMm": [
+        59.2,
+        124.0
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.55\n0.30",
+      "row": 4,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        190,
+        310
+      ],
+      "centerMm": [
+        76.0,
+        124.0
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.60\n0.30",
+      "row": 4,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        232,
+        310
+      ],
+      "centerMm": [
+        92.80000000000001,
+        124.0
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.65\n0.30",
+      "row": 4,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        22,
+        244
+      ],
+      "centerMm": [
+        8.8,
+        97.60000000000001
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.40\n0.35",
+      "row": 5,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        64,
+        244
+      ],
+      "centerMm": [
+        25.6,
+        97.60000000000001
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.45\n0.35",
+      "row": 5,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        106,
+        244
+      ],
+      "centerMm": [
+        42.400000000000006,
+        97.60000000000001
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.50\n0.35",
+      "row": 5,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        148,
+        244
+      ],
+      "centerMm": [
+        59.2,
+        97.60000000000001
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.55\n0.35",
+      "row": 5,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        190,
+        244
+      ],
+      "centerMm": [
+        76.0,
+        97.60000000000001
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.60\n0.35",
+      "row": 5,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        232,
+        244
+      ],
+      "centerMm": [
+        92.80000000000001,
+        97.60000000000001
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.65\n0.35",
+      "row": 5,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        22,
+        178
+      ],
+      "centerMm": [
+        8.8,
+        71.2
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.40\n0.40",
+      "row": 6,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        64,
+        178
+      ],
+      "centerMm": [
+        25.6,
+        71.2
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.45\n0.40",
+      "row": 6,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        106,
+        178
+      ],
+      "centerMm": [
+        42.400000000000006,
+        71.2
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.50\n0.40",
+      "row": 6,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        148,
+        178
+      ],
+      "centerMm": [
+        59.2,
+        71.2
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.55\n0.40",
+      "row": 6,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        190,
+        178
+      ],
+      "centerMm": [
+        76.0,
+        71.2
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.60\n0.40",
+      "row": 6,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        232,
+        178
+      ],
+      "centerMm": [
+        92.80000000000001,
+        71.2
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.65\n0.40",
+      "row": 6,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        22,
+        112
+      ],
+      "centerMm": [
+        8.8,
+        44.800000000000004
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.40\n0.45",
+      "row": 7,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        64,
+        112
+      ],
+      "centerMm": [
+        25.6,
+        44.800000000000004
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.45\n0.45",
+      "row": 7,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        106,
+        112
+      ],
+      "centerMm": [
+        42.400000000000006,
+        44.800000000000004
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.50\n0.45",
+      "row": 7,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        148,
+        112
+      ],
+      "centerMm": [
+        59.2,
+        44.800000000000004
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.55\n0.45",
+      "row": 7,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        190,
+        112
+      ],
+      "centerMm": [
+        76.0,
+        44.800000000000004
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.60\n0.45",
+      "row": 7,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        232,
+        112
+      ],
+      "centerMm": [
+        92.80000000000001,
+        44.800000000000004
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.65\n0.45",
+      "row": 7,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        22,
+        46
+      ],
+      "centerMm": [
+        8.8,
+        18.400000000000002
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.40\n0.50",
+      "row": 8,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        64,
+        46
+      ],
+      "centerMm": [
+        25.6,
+        18.400000000000002
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.45\n0.50",
+      "row": 8,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        106,
+        46
+      ],
+      "centerMm": [
+        42.400000000000006,
+        18.400000000000002
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.50\n0.50",
+      "row": 8,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        148,
+        46
+      ],
+      "centerMm": [
+        59.2,
+        18.400000000000002
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.55\n0.50",
+      "row": 8,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        190,
+        46
+      ],
+      "centerMm": [
+        76.0,
+        18.400000000000002
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.60\n0.50",
+      "row": 8,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        232,
+        46
+      ],
+      "centerMm": [
+        92.80000000000001,
+        18.400000000000002
+      ],
+      "copy": 0,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.65\n0.50",
+      "row": 8,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        267,
+        520
+      ],
+      "centerMm": [
+        106.80000000000001,
+        208.0
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.60",
+      "row": 9,
+      "valueMm": 4.6
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        299,
+        520
+      ],
+      "centerMm": [
+        119.60000000000001,
+        208.0
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.65",
+      "row": 9,
+      "valueMm": 4.65
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        331,
+        520
+      ],
+      "centerMm": [
+        132.4,
+        208.0
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.70",
+      "row": 9,
+      "valueMm": 4.7
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        363,
+        520
+      ],
+      "centerMm": [
+        145.20000000000002,
+        208.0
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.75",
+      "row": 9,
+      "valueMm": 4.75
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        395,
+        520
+      ],
+      "centerMm": [
+        158.0,
+        208.0
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.80",
+      "row": 9,
+      "valueMm": 4.8
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        427,
+        520
+      ],
+      "centerMm": [
+        170.8,
+        208.0
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.85",
+      "row": 9,
+      "valueMm": 4.85
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        459,
+        520
+      ],
+      "centerMm": [
+        183.60000000000002,
+        208.0
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.90",
+      "row": 9,
+      "valueMm": 4.9
+    },
+    {
+      "cellId": "stud",
+      "centerLdu": [
+        491,
+        520
+      ],
+      "centerMm": [
+        196.4,
+        208.0
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.95",
+      "row": 9,
+      "valueMm": 4.95
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        299,
+        486
+      ],
+      "centerMm": [
+        119.60000000000001,
+        194.4
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.80",
+      "row": 10,
+      "valueMm": 4.8
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        331,
+        486
+      ],
+      "centerMm": [
+        132.4,
+        194.4
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.85",
+      "row": 10,
+      "valueMm": 4.85
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        363,
+        486
+      ],
+      "centerMm": [
+        145.20000000000002,
+        194.4
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.90",
+      "row": 10,
+      "valueMm": 4.9
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        395,
+        486
+      ],
+      "centerMm": [
+        158.0,
+        194.4
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "4.95",
+      "row": 10,
+      "valueMm": 4.95
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        427,
+        486
+      ],
+      "centerMm": [
+        170.8,
+        194.4
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "5.00",
+      "row": 10,
+      "valueMm": 5.0
+    },
+    {
+      "cellId": "tube",
+      "centerLdu": [
+        459,
+        486
+      ],
+      "centerMm": [
+        183.60000000000002,
+        194.4
+      ],
+      "copy": 1,
+      "cross": null,
+      "label": "5.05",
+      "row": 10,
+      "valueMm": 5.05
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        274,
+        442
+      ],
+      "centerMm": [
+        109.60000000000001,
+        176.8
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.40\n0.20",
+      "row": 11,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        316,
+        442
+      ],
+      "centerMm": [
+        126.4,
+        176.8
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.45\n0.20",
+      "row": 11,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        358,
+        442
+      ],
+      "centerMm": [
+        143.20000000000002,
+        176.8
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.50\n0.20",
+      "row": 11,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        400,
+        442
+      ],
+      "centerMm": [
+        160.0,
+        176.8
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.55\n0.20",
+      "row": 11,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        442,
+        442
+      ],
+      "centerMm": [
+        176.8,
+        176.8
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.60\n0.20",
+      "row": 11,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        484,
+        442
+      ],
+      "centerMm": [
+        193.60000000000002,
+        176.8
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.2
+      },
+      "label": "6.65\n0.20",
+      "row": 11,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        274,
+        376
+      ],
+      "centerMm": [
+        109.60000000000001,
+        150.4
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.40\n0.25",
+      "row": 12,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        316,
+        376
+      ],
+      "centerMm": [
+        126.4,
+        150.4
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.45\n0.25",
+      "row": 12,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        358,
+        376
+      ],
+      "centerMm": [
+        143.20000000000002,
+        150.4
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.50\n0.25",
+      "row": 12,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        400,
+        376
+      ],
+      "centerMm": [
+        160.0,
+        150.4
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.55\n0.25",
+      "row": 12,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        442,
+        376
+      ],
+      "centerMm": [
+        176.8,
+        150.4
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.60\n0.25",
+      "row": 12,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        484,
+        376
+      ],
+      "centerMm": [
+        193.60000000000002,
+        150.4
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.25
+      },
+      "label": "6.65\n0.25",
+      "row": 12,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        274,
+        310
+      ],
+      "centerMm": [
+        109.60000000000001,
+        124.0
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.40\n0.30",
+      "row": 13,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        316,
+        310
+      ],
+      "centerMm": [
+        126.4,
+        124.0
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.45\n0.30",
+      "row": 13,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        358,
+        310
+      ],
+      "centerMm": [
+        143.20000000000002,
+        124.0
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.50\n0.30",
+      "row": 13,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        400,
+        310
+      ],
+      "centerMm": [
+        160.0,
+        124.0
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.55\n0.30",
+      "row": 13,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        442,
+        310
+      ],
+      "centerMm": [
+        176.8,
+        124.0
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.60\n0.30",
+      "row": 13,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        484,
+        310
+      ],
+      "centerMm": [
+        193.60000000000002,
+        124.0
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.3
+      },
+      "label": "6.65\n0.30",
+      "row": 13,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        274,
+        244
+      ],
+      "centerMm": [
+        109.60000000000001,
+        97.60000000000001
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.40\n0.35",
+      "row": 14,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        316,
+        244
+      ],
+      "centerMm": [
+        126.4,
+        97.60000000000001
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.45\n0.35",
+      "row": 14,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        358,
+        244
+      ],
+      "centerMm": [
+        143.20000000000002,
+        97.60000000000001
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.50\n0.35",
+      "row": 14,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        400,
+        244
+      ],
+      "centerMm": [
+        160.0,
+        97.60000000000001
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.55\n0.35",
+      "row": 14,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        442,
+        244
+      ],
+      "centerMm": [
+        176.8,
+        97.60000000000001
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.60\n0.35",
+      "row": 14,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        484,
+        244
+      ],
+      "centerMm": [
+        193.60000000000002,
+        97.60000000000001
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.35
+      },
+      "label": "6.65\n0.35",
+      "row": 14,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        274,
+        178
+      ],
+      "centerMm": [
+        109.60000000000001,
+        71.2
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.40\n0.40",
+      "row": 15,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        316,
+        178
+      ],
+      "centerMm": [
+        126.4,
+        71.2
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.45\n0.40",
+      "row": 15,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        358,
+        178
+      ],
+      "centerMm": [
+        143.20000000000002,
+        71.2
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.50\n0.40",
+      "row": 15,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        400,
+        178
+      ],
+      "centerMm": [
+        160.0,
+        71.2
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.55\n0.40",
+      "row": 15,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        442,
+        178
+      ],
+      "centerMm": [
+        176.8,
+        71.2
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.60\n0.40",
+      "row": 15,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        484,
+        178
+      ],
+      "centerMm": [
+        193.60000000000002,
+        71.2
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.4
+      },
+      "label": "6.65\n0.40",
+      "row": 15,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        274,
+        112
+      ],
+      "centerMm": [
+        109.60000000000001,
+        44.800000000000004
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.40\n0.45",
+      "row": 16,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        316,
+        112
+      ],
+      "centerMm": [
+        126.4,
+        44.800000000000004
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.45\n0.45",
+      "row": 16,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        358,
+        112
+      ],
+      "centerMm": [
+        143.20000000000002,
+        44.800000000000004
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.50\n0.45",
+      "row": 16,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        400,
+        112
+      ],
+      "centerMm": [
+        160.0,
+        44.800000000000004
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.55\n0.45",
+      "row": 16,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        442,
+        112
+      ],
+      "centerMm": [
+        176.8,
+        44.800000000000004
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.60\n0.45",
+      "row": 16,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        484,
+        112
+      ],
+      "centerMm": [
+        193.60000000000002,
+        44.800000000000004
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.45
+      },
+      "label": "6.65\n0.45",
+      "row": 16,
+      "valueMm": 6.65
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        274,
+        46
+      ],
+      "centerMm": [
+        109.60000000000001,
+        18.400000000000002
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.40\n0.50",
+      "row": 17,
+      "valueMm": 6.4
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        316,
+        46
+      ],
+      "centerMm": [
+        126.4,
+        18.400000000000002
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.45\n0.50",
+      "row": 17,
+      "valueMm": 6.45
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        358,
+        46
+      ],
+      "centerMm": [
+        143.20000000000002,
+        18.400000000000002
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.50\n0.50",
+      "row": 17,
+      "valueMm": 6.5
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        400,
+        46
+      ],
+      "centerMm": [
+        160.0,
+        18.400000000000002
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.55\n0.50",
+      "row": 17,
+      "valueMm": 6.55
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        442,
+        46
+      ],
+      "centerMm": [
+        176.8,
+        18.400000000000002
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.60\n0.50",
+      "row": 17,
+      "valueMm": 6.6
+    },
+    {
+      "cellId": "pocketTubeOD",
+      "centerLdu": [
+        484,
+        46
+      ],
+      "centerMm": [
+        193.60000000000002,
+        18.400000000000002
+      ],
+      "copy": 1,
+      "cross": {
+        "cellId": "pocketRib",
+        "valueMm": 0.5
+      },
+      "label": "6.65\n0.50",
+      "row": 17,
+      "valueMm": 6.65
+    }
+  ],
+  "summary": {
+    "arrangement": "sideBySide",
+    "baseMm": 1.0,
+    "cellDepthMm": 2.2,
+    "copies": 2,
+    "couponRevision": 2,
+    "couponVersion": 1,
+    "footprintLdu": [
+      506,
+      532
+    ],
+    "footprintMm": [
+      202.4,
+      212.8
+    ],
+    "heightMm": 3.2,
+    "labelReliefMm": 0.6,
+    "labelStrokeMm": 0.8,
+    "pockets": "full",
+    "process": "fdm-0.4",
+    "rowsPerCopy": 9,
+    "unbuiltCells": [
+      "technicH",
+      "pin",
+      "axleTips",
+      "axle",
+      "bar",
+      "clip"
+    ]
+  }
+}

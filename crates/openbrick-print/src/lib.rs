@@ -16,8 +16,8 @@ pub use coupon::{
     POCKET_CELLS, POCKET_SETS,
 };
 pub use record::{
-    is_profile_id, record, record_with, slug_id, RecordError, RecordInput, ANONYMOUS_AUTHOR,
-    FIT_INTENTS, RECORD_DECIMALS,
+    fit_profile_text, is_profile_id, offset_rows, record, record_with, slug_id, OffsetRow,
+    RecordError, RecordInput, ANONYMOUS_AUTHOR, DEFAULT_NOZZLE_MM, FIT_INTENTS, RECORD_DECIMALS,
 };
 pub use validate::{
     finding_unit, validate, validate_with, FeatureNames, IMPLEMENTED_RULES, LENGTH_TOLERANCE_MM,

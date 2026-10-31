@@ -404,3 +404,43 @@ fn both_pocket_values_come_together_from_a_known_set() {
     assert_eq!(f.openbrick, "1.0");
     assert_eq!(f.calibration.expect("cal").pocket_set, None);
 }
+
+/// The file both front ends write (`fit_profile_text`) and the offsets table
+/// they show (`offset_rows`): pretty JSON with one final newline that reads
+/// back as the same profile, and one row per chosen cell in the order of the
+/// coupon data, each offset the chosen cell minus the standard nominal.
+#[test]
+fn the_file_and_the_offsets_table() {
+    use openbrick_print::{fit_profile_text, offset_rows};
+    let pocket = *coupon_v1()
+        .printed_pockets(DEFAULT_POCKET_SET)
+        .expect("the default set")
+        .last()
+        .expect("a pocket");
+    let profile = record(&with_pocket(pocket, &[("tube", first("tube"))])).expect("recorded");
+    let text = fit_profile_text(&profile).expect("encodes");
+    assert!(text.ends_with("}\n") && !text.ends_with("\n\n"), "{text}");
+    assert_eq!(
+        text,
+        format!("{}\n", serde_json::to_string_pretty(&profile).unwrap())
+    );
+    let back: FitProfile = serde_json::from_str(&text).expect("reads back");
+    assert_eq!(fit_profile_text(&back).unwrap(), text);
+    let rows = offset_rows(&profile);
+    let cells: Vec<&str> = rows.iter().map(|r| r.cell.as_str()).collect();
+    assert_eq!(cells, ["tube", POCKET_CELLS[0], POCKET_CELLS[1]]);
+    for r in &rows {
+        let cell = coupon_v1().cell(&r.cell).expect("a coupon cell");
+        assert_eq!(r.nominal_mm, STANDARD.get().mm(&cell.standard_id), "{r:?}");
+        assert_eq!(Some(r.offset_field.as_str()), cell.offset_field.as_deref());
+        assert!(
+            (r.offset_mm - (r.chosen_mm - r.nominal_mm)).abs() < 5e-4,
+            "{r:?}"
+        );
+        assert_eq!(profile.offsets_mm.get(&r.offset_field), Some(r.offset_mm));
+    }
+    // A profile without a calibration record has no rows.
+    let mut bare = example_fit_profile();
+    bare.calibration = None;
+    assert!(offset_rows(&bare).is_empty());
+}

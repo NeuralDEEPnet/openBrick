@@ -2,7 +2,8 @@
 
 This guide takes you from a fresh install to a printed, brick-compatible 2x4 logo
 tile that grips genuine bricks, using only the `openbrick` command line and your
-slicer. It is written for FDM printers with a 0.4 mm nozzle and checked against
+slicer (section 4 shows how to record your fit in the browser playground
+instead, if you prefer tapping the cells to typing them). It is written for FDM printers with a 0.4 mm nozzle and checked against
 three setups:
 
 | Printer | Bed | Colours | Slicer |
@@ -138,6 +139,29 @@ standard size). A value that is not on the coupon, or a pocket your pocket set
 did not print, is refused with the list of valid choices. Record one profile
 per printer and material; print the coupon again when you change filament
 brand.
+
+**Or record it in the browser.** The [playground](https://neuraldeepnet.github.io/openBrick/?mode=coupon&step=record)
+(or `pnpm --dir apps/web start`, see [apps/web/README.md](../../apps/web/README.md))
+does the same without the command line:
+
+1. Open **Calibration coupon** and set the process, pocket layout and bed size
+   you printed the coupon with, then choose **2. Record my fit**. In the logo
+   tile, **Calibrate** next to a `FIT.MISSING` blocker opens the same step.
+2. The map shows your coupon as it lies with its labels upright: both copies,
+   every cell where it is printed, labelled as printed. Tap the best stud, the
+   best tube bore and the best pocket, in either copy (a pocket is one tap: its
+   tube OD and rib depth together; only the pockets your layout printed are
+   on the map). With a keyboard, Tab to a line and use the arrow keys.
+3. Choose the printer (Prusa MINI+, Prusa XL, Bambu Lab A1 or Other) and type
+   the material; the nozzle (0.4 mm), slicer, date (today) and notes are
+   optional. The table shows each offset before you save; a refused value is
+   explained next to its field.
+4. **Download fit profile** saves the same file `openbrick calibrate record`
+   writes for the same choices, byte for byte, named after the profile id (for
+   example `prusa-mini-pla-fdm-0.4.json`), so `--fit` takes it in section 5.
+   **Use this fit profile** selects it in the logo tile at once and keeps it in
+   that browser only (Forget removes it); the tile's downloads then carry its
+   id. Nothing leaves your browser.
 
 ## 5. Build a logo tile from your SVG
 

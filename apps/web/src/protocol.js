@@ -21,12 +21,16 @@
 //   buildCoupon    process, layout                          a coupon result (buildCoupon() below)
 //   couponLayout   process, layout                          { cells, summary }, without geometry
 //   exportCoupon   format, process, layout, colors          { format, bytes: Uint8Array, buildMs }
+//   recordFit      input                                    the calibration record (recordFit() below)
 //
 // `doc` is the part document as JSON text, `params` an object of parameter
 // overrides, `process` a bundled process profile id, `fit` a fit profile as JSON
 // text ("" for none), `assets` [{ name, bytes: Uint8Array }] by the names the
 // document uses, `layout` the coupon options (CouponOptions in JSON form), and
-// `colors` an object of colour role to "#rrggbb" ({} for the core's colours).
+// `colors` an object of colour role to "#rrggbb" ({} for the core's colours),
+// and `input` the calibration wizard's choices (RecordFitInput in
+// crates/openbrick-wasm/src/record.rs: process, pocketSet, printer, material,
+// nozzleMm, slicer, date, notes, cells).
 //
 // `module` is a compiled WebAssembly.Module, so a replacement worker starts without
 // fetching or compiling again. Mesh arrays and file bytes in results travel as
@@ -38,7 +42,7 @@
 // exports of crates/openbrick-wasm, so the unit tests run it against a fake core
 // and, when it is built, the real one.
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Requests that build geometry: the client lets a newer one supersede an older one. */
 export const BUILD_TYPES = Object.freeze(["brick", "evaluatePart", "buildCoupon"]);
@@ -317,6 +321,19 @@ export function exportCoupon(core, request, now = () => performance.now()) {
   return { format, bytes, buildMs: now() - t0 };
 }
 
+/**
+ * Record the calibration wizard's choices as a fit profile with the core's
+ * record_fit, which writes the file `openbrick calibrate record` writes for the
+ * same choices. Result: { ok: true, fitProfile, text (the file, byte for byte),
+ * fileName, offsets: [{ cell, chosenMm, nominalMm, offsetField, offsetMm }] },
+ * or { ok: false, error: { field, message } } when the core refuses a choice.
+ */
+export function recordFit(core, request) {
+  const input = request?.input;
+  if (!isObject(input)) throw new TypeError("recordFit needs the wizard's choices as an object (input)");
+  return JSON.parse(core.record_fit(JSON.stringify(input)));
+}
+
 /** The buffers of a result to transfer instead of copying: mesh arrays and file bytes. */
 export function transferables(result) {
   const out = [];
@@ -378,6 +395,9 @@ export function dispatch(core, request, now) {
         break;
       case "exportCoupon":
         result = exportCoupon(core, request, now);
+        break;
+      case "recordFit":
+        result = recordFit(core, request);
         break;
       default:
         throw new Error(`unknown request type ${JSON.stringify(request?.type)}`);

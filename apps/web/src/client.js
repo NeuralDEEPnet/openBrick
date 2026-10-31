@@ -124,6 +124,15 @@ export class CoreClient {
   }
 
   /**
+   * The calibration wizard's choices as a fit profile (protocol.js
+   * recordFit()): { ok, fitProfile, text, fileName, offsets } or { ok: false,
+   * error: { field, message } }. A plain request: it is never superseded.
+   */
+  recordFit(input) {
+    return this.#send({ type: "recordFit", input });
+  }
+
+  /**
    * Build a nominal brick. Resolves with the mesh result of src/protocol.js, or with
    * null when a newer build superseded this one.
    */
