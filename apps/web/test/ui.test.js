@@ -20,6 +20,7 @@ import {
   readStep,
   recordCommand,
   removedText,
+  reportPasses,
   reportSummary,
   sizeText,
   SLOW_BUILD_MS,
@@ -97,6 +98,20 @@ test("blockers come first, and the download reason names them", () => {
   assert.equal(reportSummary(report), "2 blockers, 1 warning.");
   assert.equal(reportSummary({ findings: [removed] }), "0 blockers, 1 warning.");
   assert.match(reportSummary({ findings: [] }), /^No findings/);
+});
+
+test("the summary names rules that were not checked and is a pass only without them", () => {
+  const bed = { rule: "SIZE.BED", reason: "no printer or bed was given" };
+  const logo = { rule: "TRADEMARK.LOGO", reason: "the matcher is planned" };
+  assert.equal(reportSummary({ findings: [], unchecked: [] }), "No findings: every implemented rule passes.");
+  assert.equal(reportPasses({ findings: [], unchecked: [] }), true);
+  assert.equal(reportSummary({ findings: [], unchecked: [bed] }), "No findings; 1 rule not checked (SIZE.BED).");
+  assert.equal(reportPasses({ findings: [], unchecked: [bed] }), false, "an unchecked rule is not a pass");
+  assert.equal(reportSummary({ findings: [], unchecked: [bed, logo] }), "No findings; 2 rules not checked (SIZE.BED, TRADEMARK.LOGO).");
+  assert.equal(reportSummary({ findings: [removed], unchecked: [bed] }), "0 blockers, 1 warning; 1 rule not checked (SIZE.BED).");
+  assert.equal(reportPasses({ findings: [removed], unchecked: [] }), false);
+  // A rule listed twice is named once.
+  assert.equal(reportSummary({ findings: [], unchecked: [bed, bed] }), "No findings; 1 rule not checked (SIZE.BED).");
 });
 
 test("stats show triangles, size in mm, mass and time from the core's numbers", () => {

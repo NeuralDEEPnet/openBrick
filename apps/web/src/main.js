@@ -35,6 +35,7 @@ import {
   readStep,
   recordCommand,
   removedText,
+  reportPasses,
   reportSummary,
   SLOW_BUILD_MS,
   sortedFindings,
@@ -1146,7 +1147,7 @@ async function main() {
     const r = state.result;
     if (!r) return;
     summary.textContent = reportSummary(r.report);
-    summary.className = r.report.findings.length === 0 ? "ok" : "";
+    summary.className = reportPasses(r.report) ? "ok" : "";
     findingsList.replaceChildren(
       ...sortedFindings(r.report).map((f) => {
         const v = findingView(f);
