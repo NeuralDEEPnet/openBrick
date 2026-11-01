@@ -4,6 +4,10 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 
 ## Unreleased
 
+## 0.1.0 - 2026-11-01
+
+The M1 CLI alpha: the first release.
+
 ### Changed
 - Version 0.1.0 for the first release, the M1 CLI alpha (docs/plan/11). Only the `openbrick` crate is released. The library crates and the WebAssembly core are `publish = false` until crates.io in M2.
 - Agent pull requests merge automatically once CI is green (GOVERNANCE.md, plan 14); commits and pull requests are attributed to the Neuraldeep.net design agents (CLAUDE.md).
