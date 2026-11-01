@@ -13,9 +13,20 @@ name: desktop-release
 #    suffix, so this workflow starts only on tags without one.
 # 2. wasm: builds the core once (cargo xtask wasm, the pinned wasm-bindgen
 #    CLI), as the desktop job of ci.yml does; every row bundles the same files.
-# 3. bundle: one row per desktop OS, each building the playground and the app
+# 3. notices: the licence texts of everything compiled into the app (its
+#    crates, the WebAssembly core's crates and three.js), written once by
+#    scripts/third-party-licenses.py --desktop. Every bundle ships them as
+#    THIRD-PARTY-LICENSES.txt beside the app's LICENSE
+#    (apps/desktop/src-tauri/tauri.release.conf.json, bundle.resources): the
+#    MIT, Apache-2.0 and BSD licences ask that their notice travel with every
+#    copy, binaries included, as the CLI's archives already do.
+# 4. bundle: one row per desktop OS, each building the playground and the app
 #    with the Tauri CLI that apps/desktop pins (2.12.4):
-#      - ubuntu-24.04: .deb and .rpm (x86-64; glibc 2.39 and WebKitGTK 4.1);
+#      - ubuntu-24.04: .deb and .rpm (x86-64; WebKitGTK 4.1, and glibc 2.39,
+#        Ubuntu 24.04's, which both packages declare as a dependency
+#        (tauri.linux.conf.json), so apt and dnf refuse them on an older
+#        system instead of the app failing at its first start; the row checks
+#        the declared version against the binary's symbols);
 #      - windows-2025: NSIS .exe and .msi (x86-64);
 #      - macos-26: one universal (Apple silicon and Intel) .dmg, and the same
 #        .app as .app.tar.gz.
@@ -26,7 +37,7 @@ name: desktop-release
 #    (tauri.conf.json bundle.macOS.signingIdentity "-"), and Windows nothing;
 #    real signing comes in M4. Each row writes a .sha256 file per installer
 #    and keeps everything as a workflow artifact for 14 days.
-# 4. publish (tag pushes only): a GitHub artifact attestation for every file,
+# 5. publish (tag pushes only): a GitHub artifact attestation for every file,
 #    as release.yml makes for the CLI; then it waits until release.yml has
 #    created the release (up to 90 minutes), uploads the files with
 #    desktop-sha256.sum, and adds a short desktop section to the release
@@ -106,9 +117,34 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  notices:
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: The npm packages the playground bundles (their licence files)
+        run: pnpm install --frozen-lockfile
+      - name: The licence texts of the app's crates and npm packages
+        run: python3 -I scripts/third-party-licenses.py --desktop target/desktop-notices/THIRD-PARTY-LICENSES.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-notices
+          path: target/desktop-notices/
+          if-no-files-found: error
+          retention-days: 1
+
   bundle:
     name: bundle (${{ matrix.name }})
-    needs: [version, wasm]
+    needs: [version, wasm, notices]
     strategy:
       fail-fast: false
       matrix:
@@ -162,11 +198,18 @@ jobs:
         with:
           name: desktop-wasm
           path: apps/web/src/wasm/
-      - name: Build the app and its installers (unsigned)
+      - name: The licence texts from the notices job
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-notices
+          path: target/desktop-notices/
+      - name: Build the app and its installers (unsigned, with the licence notices)
         shell: bash
         run: |
           set -euo pipefail
-          args=(--bundles "$BUNDLES")
+          # tauri.release.conf.json adds LICENSE and THIRD-PARTY-LICENSES.txt
+          # to the bundle's resources; local builds leave them out.
+          args=(--bundles "$BUNDLES" --config src-tauri/tauri.release.conf.json)
           if [ -n "$TARGET" ]; then args+=(--target "$TARGET"); fi
           pnpm --dir apps/desktop tauri build "${args[@]}"
       - name: Collect the installers with their SHA-256 checksums
@@ -179,6 +222,18 @@ jobs:
               cp "$OUT"/deb/*.deb "$OUT"/rpm/*.rpm desktop-out/
               # The package version comes from the workspace (Cargo.toml).
               test "$(dpkg-deb -f desktop-out/*.deb Version)" = "$VERSION"
+              # The licence notices travel with the app. (The list is read
+              # first: `grep -q` would close the pipe early under pipefail.)
+              files=$(dpkg-deb -c desktop-out/*.deb)
+              grep -q 'usr/lib/openbrick3d/THIRD-PARTY-LICENSES.txt$' <<< "$files"
+              grep -q 'usr/lib/openbrick3d/LICENSE$' <<< "$files"
+              # The glibc the packages declare covers the newest symbol the
+              # binary needs, and the rpm declares the same version.
+              need=$(objdump -T "${OUT%/bundle}/openbrick-desktop" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)
+              declared=$(dpkg-deb -f desktop-out/*.deb Depends | grep -oP 'libc6 \(>= \K[0-9.]+')
+              echo "glibc: the binary needs $need, the packages declare $declared"
+              dpkg --compare-versions "$declared" ge "$need"
+              grep -qF "libc.so.6(GLIBC_${declared})(64bit)" apps/desktop/src-tauri/tauri.linux.conf.json
               ;;
             Windows)
               cp "$OUT"/nsis/*-setup.exe "$OUT"/msi/*.msi desktop-out/
@@ -192,6 +247,8 @@ jobs:
               test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
               lipo -archs "$app/Contents/MacOS/openbrick-desktop" | grep -q arm64
               lipo -archs "$app/Contents/MacOS/openbrick-desktop" | grep -q x86_64
+              test -s "$app/Contents/Resources/THIRD-PARTY-LICENSES.txt"
+              test -s "$app/Contents/Resources/LICENSE"
               tar -czf "desktop-out/OpenBrick3D_${VERSION}_universal.app.tar.gz" -C "$OUT/macos" OpenBrick3D.app
               ;;
           esac

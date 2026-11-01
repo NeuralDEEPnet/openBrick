@@ -138,3 +138,24 @@ test("the release workflow builds no AppImage and uploads only from tags", () =>
   assert.match(wf, /if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)/);
   assert.equal(conf.bundle.targets, "all", "the workflow picks the bundles; local builds may make all of them");
 });
+
+test("release bundles carry the licence notices, and the Linux packages declare their glibc", () => {
+  // .github/workflows/desktop-release.yml builds with --config
+  // src-tauri/tauri.release.conf.json after scripts/third-party-licenses.py
+  // --desktop has written target/desktop-notices/THIRD-PARTY-LICENSES.txt.
+  const release = JSON.parse(read(here, "src-tauri", "tauri.release.conf.json"));
+  assert.deepEqual(Object.keys(release), ["$schema", "bundle"]);
+  assert.deepEqual(Object.values(release.bundle.resources).sort(), ["LICENSE", "THIRD-PARTY-LICENSES.txt"]);
+  assert.equal(conf.bundle.resources, undefined, "local builds need no generated file");
+  // The binary built on ubuntu-24.04 needs glibc 2.39; deb and rpm say so, so
+  // older systems refuse the package instead of the app failing at its start.
+  const linux = JSON.parse(read(here, "src-tauri", "tauri.linux.conf.json")).bundle.linux;
+  const deb = linux.deb.depends.map((d) => d.match(/^libc6 \(>= ([\d.]+)\)$/)?.[1]).filter(Boolean);
+  const rpm = linux.rpm.depends.map((d) => d.match(/^libc\.so\.6\(GLIBC_([\d.]+)\)\(64bit\)$/)?.[1]).filter(Boolean);
+  assert.equal(deb.length, 1);
+  assert.deepEqual(rpm, deb, "deb and rpm declare the same glibc");
+  const wf = read(repo, ".github", "workflows", "desktop-release.yml");
+  assert.match(wf, /third-party-licenses\.py --desktop target\/desktop-notices\/THIRD-PARTY-LICENSES\.txt/);
+  assert.match(wf, /--config src-tauri\/tauri\.release\.conf\.json/);
+  assert.match(wf, /os: ubuntu-24\.04\n/, "glibc 2.39 is Ubuntu 24.04's; another build OS needs another version");
+});

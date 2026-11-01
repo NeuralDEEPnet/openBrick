@@ -4,10 +4,12 @@
   "bundle": {
     "linux": {
       "deb": {
-        "desktopTemplate": "linux/openbrick3d.desktop"
+        "desktopTemplate": "linux/openbrick3d.desktop",
+        "depends": ["libc6 (>= 2.39)"]
       },
       "rpm": {
-        "desktopTemplate": "linux/openbrick3d.desktop"
+        "desktopTemplate": "linux/openbrick3d.desktop",
+        "depends": ["libc.so.6(GLIBC_2.39)(64bit)"]
       }
     }
   }
