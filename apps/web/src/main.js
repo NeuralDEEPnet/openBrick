@@ -1137,8 +1137,8 @@ async function main() {
   function showPrinterNote() {
     const p = printerById(state.printer);
     $("printer-note").textContent = p
-      ? `SIZE.BED checks that the tile fits the ${volumeText(p)} build volume, as ${p.maker} publishes it.`
-      : "Choose your printer to check that the tile fits its bed (rule SIZE.BED); until then the report lists it as not checked.";
+      ? `SIZE.BED checks that the part fits the ${volumeText(p)} build volume, as ${p.maker} publishes it.`
+      : "Choose your printer to check that the part fits its bed (rule SIZE.BED); until then the report lists it as not checked.";
   }
   bedPrinter.value = state.printer;
   showPrinterNote();

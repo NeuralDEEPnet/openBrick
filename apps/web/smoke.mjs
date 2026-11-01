@@ -1299,7 +1299,8 @@ function cliBuild(text, label) {
  * picker then names it); those values kept as a new preset; and the part
  * saved: the file is byte-identical to native_eval's (add_preset_json and
  * save_part_json), the page then builds the saved document, and the CLI
- * builds the saved file with the same content hash. Then the nameplate
+ * builds the saved file with the same content hash; the reopened file is
+ * checked against a printer's bed (SIZE.BED) and back. Then the nameplate
  * keychain, dropped on the 3D view: its text label and key ring are named as
  * features this version cannot build, with what turns them off; the font has
  * a kind note instead of a control; a text over its limit is refused in the
@@ -1377,6 +1378,20 @@ async function designerRun(browser, origin, native) {
   w = await waitFor(page, { after: n, want: (p) => p.contentHash === d.savedPart.contentHash }, 120_000, `${label} saved part reopened`);
   check(w.design.presets.includes(d.presetName) && w.design.preset === "Pressed-in mark", `${label}: reopened presets ${JSON.stringify(w.design.presets)}, matching ${w.design.preset}`);
 
+  // An opened part is checked against the chosen printer too (SIZE.BED through
+  // evaluate_part_on_printer); the bed does not change the content hash.
+  check(w.part.unchecked.includes("SIZE.BED"), `${label}: without a printer SIZE.BED is checked for the opened part: ${JSON.stringify(w.part.unchecked)}`);
+  n = w.evaluations;
+  await page.selectOption("#printer", "prusa-mini-plus");
+  w = await waitFor(page, { after: n, want: (p) => p.printer === "prusa-mini-plus" }, 120_000, `${label} saved part on a printer`);
+  check(!w.part.unchecked.includes("SIZE.BED") && !w.part.blockers.includes("SIZE.BED"), `${label}: the opened part on the Prusa MINI+ ${JSON.stringify(w.part)}`);
+  check(w.part.contentHash === d.savedPart.contentHash, `${label}: the printer changed the opened part's content hash`);
+  check((await page.textContent("#printer-note")).includes("the part fits"), `${label}: printer note "${await page.textContent("#printer-note")}"`);
+  n = w.evaluations;
+  await page.selectOption("#printer", "");
+  w = await waitFor(page, { after: n, want: (p) => p.printer === "" }, 120_000, `${label} saved part without a printer`);
+  check(w.part.unchecked.includes("SIZE.BED"), `${label}: without a printer SIZE.BED is checked for the opened part`);
+
   // The keychain, dropped on the 3D view: its unsupported features are named.
   const keychainText = readFileSync(join(repo, "parts/ndn.nameplate-keychain.obpart.json"), "utf8");
   await page.evaluate((text) => {
@@ -1423,7 +1438,7 @@ async function designerRun(browser, origin, native) {
   console.log(
     `# ${label}: the Neuraldeep.net tile opened (bundled and from its file) equals native, 2x6 with "Pressed-in mark" equals native, ` +
       `a new preset and the saved part (${saved.bytes.length} bytes) are byte-identical to native, the CLI builds it with the page's hash ${d.savedPart.contentHash.slice(0, 12)}…, ` +
-      `the keychain names relief.text and loop.keyring and builds with studs on top and no ring, a fit profile is refused as a part`,
+      `the saved part is checked on the Prusa MINI+ bed (SIZE.BED), the keychain names relief.text and loop.keyring and builds with studs on top and no ring, a fit profile is refused as a part`,
   );
   await context.close();
 }
