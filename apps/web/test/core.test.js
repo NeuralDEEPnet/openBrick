@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
+import { cellMap, choose, chosenCells, labelText, offsetRows, recordInput, signedMm } from "../src/calibration.js";
 import { controlsFor, defaultValues, paramOverrides, visibility } from "../src/params.js";
 import { dispatch } from "../src/protocol.js";
 import { sampleFile, sizeForSample } from "../src/samples.js";
@@ -147,6 +148,60 @@ test("the Neuraldeep.net samples are the default and print on their tiles with n
     assert.deepEqual(r.result.report.findings, [], `${sample.id}: no FEATURE.MIN or anything else`);
     assert.deepEqual(r.result.footprint, size);
   }
+});
+
+test("the WebAssembly core's layouts are the map fixtures, and it records the cells tapped on them", { skip }, async () => {
+  const core = await loadCore();
+  const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+  const cases = [
+    ["coupon-layout-fdm-0.4-cross.json", {}],
+    ["coupon-layout-fdm-0.4-full-256.json", { pockets: "full", bedMm: [256, 256] }],
+  ];
+  for (const [name, layout] of cases) {
+    const r = dispatch(core, { id: 1, type: "couponLayout", process: "fdm-0.4", layout }).reply;
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(r.result, fixture(name), name);
+  }
+  // Tap a stud, a bore and a pocket of copy 2 on the default coupon's map.
+  const map = cellMap(fixture("coupon-layout-fdm-0.4-cross.json"));
+  let choices = {};
+  for (const group of ["stud", "tube", "pocket"]) choices = choose(choices, map.cells.find((c) => c.group === group && c.copy === 1));
+  const input = recordInput({ process: "fdm-0.4", pocketSet: "cross", printer: "Prusa MINI+", material: "PLA", nozzleMm: 0.4, date: "2026-11-12", choices });
+  const r = dispatch(core, { id: 2, type: "recordFit", input }).reply;
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.result.ok, true, JSON.stringify(r.result.error));
+  assert.equal(r.result.fileName, "prusa-mini-pla-fdm-0.4.json");
+  assert.ok(r.result.text.endsWith("}\n"));
+  assert.deepEqual(JSON.parse(r.result.text), r.result.fitProfile);
+  assert.deepEqual(r.result.fitProfile.calibration.chosenCells, chosenCells(choices));
+  assert.deepEqual(r.result.offsets.map((o) => o.cell), ["stud", "tube", "pocketTubeOD", "pocketRib"]);
+  // The offsets summary of the real core's offsets: the chosen cell as its
+  // label prints it, the core's nominal and offset with the CLI's signs.
+  const chosenLabel = Object.fromEntries(
+    ["stud", "tube", "pocket"].flatMap((group) => {
+      const cell = map.cells.find((c) => c.group === group && c.copy === 1);
+      return cell.cross ? [[cell.cellId, cell.lines[0]], [cell.cross.cellId, cell.lines[1]]] : [[cell.cellId, labelText(cell)]];
+    }),
+  );
+  const rows = offsetRows(r.result.offsets);
+  assert.deepEqual(
+    rows.map((row) => [row.cell, row.chosen, row.offset, row.field]),
+    r.result.offsets.map((o) => [o.cell, chosenLabel[o.cell], signedMm(o.offsetMm), o.offsetField]),
+  );
+  for (const [row, o] of rows.map((row, i) => [row, r.result.offsets[i]])) {
+    assert.equal(row.nominal, o.nominalMm.toFixed(3));
+    assert.ok(Math.abs(o.chosenMm - o.nominalMm - o.offsetMm) < 1e-9, `${o.cell}: the offset is the chosen cell minus the nominal`);
+  }
+  // The pocket set says which pockets were printed: a full-set pocket is refused on a cross coupon.
+  const full = cellMap(fixture("coupon-layout-fdm-0.4-full-256.json"));
+  const labels = new Set(map.cells.map((c) => c.label));
+  const extra = full.cells.find((c) => c.group === "pocket" && !labels.has(c.label));
+  const refused = dispatch(core, { id: 3, type: "recordFit", input: { ...input, cells: chosenCells(choose(choices, extra)) } }).reply;
+  assert.equal(refused.result.ok, false);
+  assert.equal(refused.result.error.field, "pocket");
+  assert.match(refused.result.error.message, /not a pocket of the `cross` pocket set/);
+  const empty = dispatch(core, { id: 4, type: "recordFit", input: { ...input, material: " " } }).reply;
+  assert.deepEqual(empty.result.error, { field: "material", message: "material is empty; it is required" });
 });
 
 test("the WebAssembly core lays out the coupon and refuses artwork over its limit", { skip }, async () => {

@@ -1,0 +1,90 @@
+/* OpenBrick3D touches on mdBook's themes: the playground's accent colours for
+   links (apps/web/index.html), a card grid for the landing page, and the page
+   footer (source link and disclaimer) that `cargo xtask docs` adds to every
+   page. WCAG contrast of the link colours on mdBook 0.5.4's backgrounds (page;
+   sidebar, where --sidebar-active is drawn): #1d5fae on light 6.36:1; 6.10:1;
+   #7cc4ff on navy 9.39:1; 7.28:1, coal 9.78:1; 7.49:1, ayu 9.84:1; 9.42:1, and
+   on the dark scheme mdBook uses without JavaScript (the coal colours,
+   hsl(200, 7%, 8%); #292c2f) 9.78:1; 7.49:1. All are above the 4.5:1 of WCAG
+   2.1 AA. The rust theme keeps its own colours. */
+
+.light, html:not(.js) {
+  --links: #1d5fae;
+  --sidebar-active: #1d5fae;
+}
+
+/* mdBook's variables.css gives html:not(.js) the coal colours under a dark
+   colour scheme; the rule above, loaded later, would put the light theme's
+   dark blue on that near-black background (2.88:1). */
+@media (prefers-color-scheme: dark) {
+  html:not(.js) {
+    --links: #7cc4ff;
+    --sidebar-active: #7cc4ff;
+  }
+}
+
+.navy, .coal, .ayu {
+  --links: #7cc4ff;
+  --sidebar-active: #7cc4ff;
+}
+
+.ob-lead {
+  font-size: 1.15em;
+  line-height: 1.55;
+}
+
+.ob-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15em, 1fr));
+  gap: 0.8em;
+  margin: 1.2em 0 1.6em;
+}
+
+.ob-card {
+  display: block;
+  padding: 0.8em 1em;
+  border: 1px solid var(--table-border-color);
+  border-radius: 8px;
+  background: var(--quote-bg);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.ob-card:hover,
+.ob-card:focus-visible {
+  border-color: var(--links);
+  text-decoration: none;
+}
+
+.ob-card strong {
+  display: block;
+  margin-bottom: 0.25em;
+  color: var(--links);
+}
+
+.content a.ob-card span {
+  color: var(--fg);
+  font-size: 0.92em;
+}
+
+.ob-page-footer {
+  margin-top: 3em;
+  padding-top: 0.8em;
+  border-top: 1px solid var(--table-border-color);
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.ob-page-footer p {
+  margin: 0.4em 0;
+}
+
+/* print.html holds every chapter, each with its footer: show the disclaimer
+   once, without the first chapter's source link. */
+.ob-page-footer ~ .ob-page-footer {
+  display: none;
+}
+
+.ob-page-footer:has(~ .ob-page-footer) .ob-page-source {
+  display: none;
+}

@@ -1,0 +1,55 @@
+[package]
+name = "openbrick-desktop"
+description = "OpenBrick3D desktop app: the playground in a Tauri 2 window with native open and save dialogs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "openbrick_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "openbrick-desktop"
+path = "src/main.rs"
+required-features = ["app"]
+
+[features]
+default = []
+# The Tauri application. Off by default so that `cargo test --workspace` and
+# `cargo clippy --workspace` on every OS build only the file rules in
+# src/files.rs, which need neither the system webview libraries (WebKitGTK on
+# Linux) nor the built frontend. The Tauri CLI turns it on through
+# tauri.conf.json (`build.features`); see apps/desktop/README.md.
+app = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:serde", "dep:serde_json", "dep:opener"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+# The save body over Tauri's postMessage fallback is a JSON array of numbers
+# (src/app.rs, `save_bytes`); the same serde_json 1 that Tauri uses.
+serde_json = { workspace = true, optional = true }
+# Tauri 2 and its dialog plugin, pinned exactly (Apache-2.0 OR MIT). The webview
+# gets no dialog or file system permission: the app's own commands in
+# src/app.rs show the native dialogs and read or write the one file the user
+# chose (capabilities/main.json).
+tauri = { version = "=2.12.5", optional = true, features = [] }
+tauri-plugin-dialog = { version = "=2.8.4", optional = true }
+# Opens the project's own links (source, print test guide, the notice of the
+# Neuraldeep.net marks) in the system browser (MIT OR Apache-2.0, no default
+# features). Only links that src/shell.rs allows reach it; the webview has no
+# permission to open anything itself.
+opener = { version = "=0.9.0", optional = true }
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", optional = true, features = [] }
+
+[lints]
+workspace = true
+
+# The desktop app is released by tauri-action (docs/plan/09 section 7), not by
+# dist, which releases the CLI.
+[package.metadata.dist]
+dist = false

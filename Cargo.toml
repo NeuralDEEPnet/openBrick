@@ -11,10 +11,11 @@ members = [
   "crates/openbrick",
   "crates/openbrick-wasm",
   "crates/xtask",
+  "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"
@@ -60,3 +61,9 @@ all = "warn"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# The profile dist builds release binaries with (dist-workspace.toml): the
+# release profile unchanged, so `cargo install --path crates/openbrick` and a
+# published binary are built with the same settings.
+[profile.dist]
+inherits = "release"

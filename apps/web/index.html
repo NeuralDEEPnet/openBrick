@@ -28,6 +28,8 @@
         --warn-bg: #fff4e0;
         --ok: #1e6b35;
         --removed: #e5242b;
+        /* The coupon map of the record step. */
+        --coupon: #d9e1ea;
         /* Read by src/viewer.js for the 3D scene. */
         --stage-bg: #dde5ee;
         --grid-major: #7d8a99;
@@ -51,6 +53,7 @@
           --warn-bg: #33270f;
           --ok: #8fdca5;
           --removed: #ff4d4f;
+          --coupon: #222d3a;
           --stage-bg: #10161d;
           --grid-major: #4f5d6e;
           --grid-minor: #26303c;
@@ -178,6 +181,8 @@
       #notes ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
       #notes li { margin-bottom: 4px; overflow-wrap: anywhere; }
       .downloads { display: flex; flex-wrap: wrap; gap: 8px; }
+      /* No style="" attributes: the desktop app's Content Security Policy (style-src 'self') refuses them. */
+      .downloads.spaced { margin-top: 10px; }
       #download-reason, #coupon-download-note { margin: 8px 0 0; font-size: 13px; }
       #download-reason:empty { display: none; }
       table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -211,6 +216,62 @@
       #status span:first-child { color: var(--text); font-weight: 600; }
       #status.bad span { color: var(--bad); font-weight: 600; }
       .disclaimer { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+      /* The coupon mode's steps and the record step (src/calibration.js). */
+      .steps-nav { display: flex; gap: 4px; padding: 3px; margin: 0 0 14px; background: var(--control); border: 1px solid var(--line); border-radius: 10px; }
+      .steps-nav button { flex: 1 1 0; min-width: 0; border: 0; background: transparent; border-radius: 7px; padding: 4px 8px; line-height: 1.2; white-space: normal; }
+      .steps-nav button[aria-current="step"],
+      .steps-nav button[aria-current="step"]:hover { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+      /*
+       * The map is drawn in coupon millimetres (src/calibration.js cellMap):
+       * --map-mm is its width in mm, so 100cqw / --map-mm is one mm on screen.
+       * A label's size is its group's --font-mm (calibration.js labelFontMm,
+       * which fits the symbol, the gap and the lines below to the cell: keep
+       * LABEL_EM in step with these ems), capped at 16px.
+       */
+      .coupon-map { position: relative; width: 100%; container-type: inline-size; margin: 0; }
+      .coupon-map .window { position: absolute; background: var(--coupon); border: 1px solid var(--line); border-radius: 8px; }
+      .coupon-map .band {
+        position: absolute; display: flex; align-items: flex-end; padding: 0 2px 3px;
+        color: var(--text); font-size: 12px; line-height: 1.2; font-weight: 600; white-space: nowrap; overflow: hidden;
+      }
+      .coupon-map .copy { position: absolute; border: 1.5px dashed var(--muted); border-radius: 6px; pointer-events: none; }
+      .coupon-map [role="radiogroup"] { position: absolute; inset: 0; pointer-events: none; }
+      .coupon-map .cell {
+        position: absolute; pointer-events: auto; min-height: 0; padding: 0; margin: 0;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.15em;
+        font-size: min(16px, calc(var(--font-mm) * 100cqw / var(--map-mm))); line-height: 1.1; font-variant-numeric: tabular-nums;
+        background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+      }
+      .coupon-map .cell span { white-space: nowrap; }
+      .coupon-map .cell::before { content: ""; flex: none; width: 1em; height: 1em; border-radius: 50%; opacity: 0.6; box-sizing: border-box; }
+      .coupon-map .cell.stud::before { background: currentColor; }
+      .coupon-map .cell.tube::before { border: 0.22em solid currentColor; }
+      .coupon-map .cell.pocket::before { width: 1.2em; height: 1.2em; border: 0.18em solid currentColor; border-radius: 0.2em; }
+      .coupon-map .cell[aria-checked="true"],
+      .coupon-map .cell[aria-checked="true"]:hover { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 700; }
+      .coupon-map .cell[aria-checked="true"]::before { opacity: 1; }
+      /* The same value as the choice, in the other copy or the other pocket line: not checked, but shown. */
+      .coupon-map .cell.twin { border: 2px dashed var(--accent); color: var(--accent); font-weight: 700; }
+      .coupon-map .cell.twin::before { opacity: 1; }
+      .coupon-map .cell:focus-visible { outline: 3px solid var(--text); outline-offset: 0; z-index: 1; }
+      .map-caption { margin: 4px 0; text-align: center; color: var(--muted); font-size: 12px; }
+      .map-empty { margin: 0; padding: 16px; text-align: center; }
+      .choice-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }
+      .choice-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; }
+      .choice-list .value { font-variant-numeric: tabular-nums; font-weight: 600; }
+      .choice-list .missing { color: var(--muted); font-weight: 400; }
+      .choice-list .field-error { grid-column: 1 / -1; }
+      .field-error { margin: 0; color: var(--bad); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+      .field-error:empty { display: none; }
+      .field input[type="text"], .field input[type="date"], .field textarea { width: 100%; padding: 0 8px; }
+      textarea { font: inherit; color: var(--text); background: var(--control); border: 1px solid var(--line); border-radius: 8px; min-height: 64px; padding: 6px 8px; resize: vertical; }
+      textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--bad); outline: 2px solid var(--bad); outline-offset: -1px; }
+      #record-summary { margin: 0 0 6px; overflow-wrap: anywhere; }
+      #record-note { margin: 8px 0 0; }
+      #record-note:empty, #fit-actions:empty { display: none; }
+      #fit-actions { margin: 4px 0 0; font-size: 13px; }
+      .calibrate-row { margin: 6px 0 0; font-size: 13px; }
       [hidden] { display: none !important; }
       .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
       @media (max-width: 480px) {
@@ -251,6 +312,7 @@
               <select id="fit" disabled></select>
               <input type="file" id="fit-file" accept=".json,application/json" hidden />
               <p class="note" id="fit-note" aria-live="polite"></p>
+              <p id="fit-actions" hidden><button type="button" class="link" id="forget-fit">Forget my recorded fit profile</button> (this browser keeps it until you do)</p>
             </div>
             <div class="row">
               <div class="field">
@@ -283,6 +345,7 @@
               <button type="button" id="download-stl" disabled aria-describedby="download-reason">Download STL</button>
             </div>
             <p id="download-reason" aria-live="polite"></p>
+            <p class="calibrate-row" id="calibrate-row" hidden><button type="button" class="link" id="download-calibrate">Calibrate</button>: record how your printer fits from the printed calibration coupon, here in the browser.</p>
             <p class="note" id="download-note">The 3MF is one object whose parts are the colour roles, each with its colour: give each part its own filament in the slicer. The STL is one solid for a single colour.</p>
           </section>
         </div>
@@ -309,10 +372,15 @@
               </div>
             </div>
           </section>
+          <nav class="steps-nav" aria-label="Calibration steps">
+            <button type="button" id="step-print" aria-controls="coupon-print" aria-current="step">1. Print the coupon</button>
+            <button type="button" id="step-record" aria-controls="coupon-record">2. Record my fit</button>
+          </nav>
+          <div id="coupon-print">
           <section aria-labelledby="coupon-result-heading">
             <h2 id="coupon-result-heading">Coupon</h2>
             <dl class="stats" id="coupon-stats"></dl>
-            <div class="downloads" style="margin-top: 10px">
+            <div class="downloads spaced">
               <button type="button" class="primary" id="download-coupon-3mf" disabled>Download coupon 3MF</button>
               <button type="button" id="download-coupon-stl" disabled>Download coupon STL</button>
             </div>
@@ -323,10 +391,10 @@
             <ol class="steps">
               <li>Slice it flat side down as it comes, without supports, with XY and elephant-foot compensation off (the model has the first-layer chamfer).</li>
               <li>Press a genuine 1x1 plate onto each stud, a turned-over 1x1 plate's stud into each tube bore, and a turned-over 2x2 plate into each pocket. Pick the cell in each line that holds best without force.</li>
-              <li>Record your choices with the command line tool (the values below are examples):</li>
+              <li>Tap those cells in <button type="button" class="link" id="howto-record">2. Record my fit</button>; it writes your fit profile here in the browser. Or record them with the command line tool (the values below are examples):</li>
             </ol>
             <pre><code id="record-command"></code></pre>
-            <p class="note">Then choose “Load my fit profile…” in the logo tile and pick the file it wrote. The <a href="https://github.com/NeuralDEEPnet/openBrick/blob/main/docs/guides/print-test.md" target="_blank" rel="noopener">print test guide</a> has the details.</p>
+            <p class="note">The command line tool writes the same file; choose “Load my fit profile…” in the logo tile and pick it. The <a href="https://github.com/NeuralDEEPnet/openBrick/blob/main/docs/guides/print-test.md" target="_blank" rel="noopener">print test guide</a> has the details.</p>
           </section>
           <section aria-labelledby="cells-heading">
             <h2 id="cells-heading">Cells (first copy)</h2>
@@ -338,12 +406,81 @@
               </table>
             </div>
           </section>
+          </div>
+          <div id="coupon-record" hidden>
+          <section aria-labelledby="record-heading">
+            <h2 id="record-heading" tabindex="-1">Record my fit</h2>
+            <p class="note" id="map-help">Tap the cell in each line that held best: one stud, one tube bore and one 2x2 pocket (a pocket is one choice: its tube OD and rib depth together). Both copies carry the same cells, so choose from either. With a keyboard: Tab to a line, the arrow keys move and choose.</p>
+            <p class="note" id="record-coupon" aria-live="polite"></p>
+            <p class="map-caption" id="map-caption-top"></p>
+            <div id="coupon-map" class="coupon-map" role="group" aria-label="The printed coupon, cells at their printed positions" aria-describedby="map-help"></div>
+            <p id="twin-note" hidden>The same value as your choice, in the other copy or the other pocket line.</p>
+            <p class="map-caption" id="map-caption-bottom"></p>
+            <ul class="choice-list" id="choices" aria-live="polite"></ul>
+            <p class="field-error" id="record-error-map" aria-live="polite"></p>
+          </section>
+          <section aria-labelledby="record-printer-heading">
+            <h2 id="record-printer-heading">Printer and material</h2>
+            <div class="field">
+              <label for="record-printer">Printer</label>
+              <select id="record-printer" aria-describedby="record-error-printer"></select>
+              <input type="text" id="record-printer-other" aria-label="Printer name" placeholder="Printer name" autocomplete="off" hidden aria-describedby="record-error-printer" />
+              <p class="field-error" id="record-error-printer"></p>
+            </div>
+            <div class="field">
+              <label for="record-material">Material</label>
+              <input type="text" id="record-material" list="record-materials" placeholder="PLA, PETG, …" autocomplete="off" aria-describedby="record-error-material" />
+              <datalist id="record-materials"></datalist>
+              <p class="field-error" id="record-error-material"></p>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="record-nozzle">Nozzle (mm)</label>
+                <input type="number" id="record-nozzle" inputmode="decimal" min="0" step="0.05" aria-describedby="nozzle-help record-error-nozzleMm" />
+              </div>
+              <div class="field">
+                <label for="record-date">Date</label>
+                <input type="date" id="record-date" aria-describedby="record-error-date" />
+              </div>
+            </div>
+            <p class="help" id="nozzle-help">The nozzle you printed the coupon with. It starts at <span id="nozzle-default"></span> mm, the command line's default: change it for another nozzle.</p>
+            <p class="field-error" id="record-error-nozzleMm"></p>
+            <p class="field-error" id="record-error-date"></p>
+            <div class="field">
+              <label for="record-slicer">Slicer and version (optional)</label>
+              <input type="text" id="record-slicer" placeholder="PrusaSlicer 2.9" autocomplete="off" aria-describedby="record-error-slicer" />
+              <p class="field-error" id="record-error-slicer"></p>
+            </div>
+            <div class="field">
+              <label for="record-notes">Notes (optional)</label>
+              <textarea id="record-notes" rows="2" placeholder="Layer height, walls, flow…" aria-describedby="record-error-notes"></textarea>
+              <p class="field-error" id="record-error-notes"></p>
+            </div>
+          </section>
+          <section aria-labelledby="record-result-heading">
+            <h2 id="record-result-heading">Your fit profile</h2>
+            <p id="record-summary" aria-live="polite"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="visually-hidden">Offsets: the chosen cell minus the standard nominal of its line</caption>
+                <thead><tr><th scope="col">Cell</th><th scope="col">Chosen</th><th scope="col">Nominal</th><th scope="col">Offset (mm)</th></tr></thead>
+                <tbody id="record-offsets"></tbody>
+              </table>
+            </div>
+            <div class="downloads" style="margin-top: 10px">
+              <button type="button" class="primary" id="use-fit">Use this fit profile</button>
+              <button type="button" id="download-fit">Download fit profile</button>
+            </div>
+            <p class="note" id="record-note" aria-live="polite"></p>
+            <p class="note">Use selects it in the logo tile and keeps it in this browser only. The file is the one <code>openbrick calibrate record</code> writes for the same choices; keep it to use elsewhere.</p>
+          </section>
+          </div>
         </div>
       </aside>
     </div>
     <footer>
       <output id="status" role="status" aria-live="polite"></output>
-      <p class="disclaimer"><span id="disclaimer"><!--openbrick:disclaimer--></span> <a href="https://github.com/NeuralDEEPnet/openBrick" target="_blank" rel="noopener">Source code on GitHub</a></p>
+      <p class="disclaimer"><span id="disclaimer"><!--openbrick:disclaimer--></span> <a href="https://neuraldeepnet.github.io/openBrick/docs/" target="_blank" rel="noopener">Documentation</a> · <a href="https://github.com/NeuralDEEPnet/openBrick" target="_blank" rel="noopener">Source code on GitHub</a></p>
     </footer>
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -4,8 +4,12 @@
 //! reader writes back, and self-checks the schemas and their fixtures; it also checks
 //! the validator fixtures' expected reports against `schemas/report.schema.json` and
 //! that every coupon cell records a valid fit profile (see `validator.rs`); `wasm`
-//! builds `openbrick-wasm` for the browser into `apps/web/src/wasm/` (see `wasm.rs`).
+//! builds `openbrick-wasm` for the browser into `apps/web/src/wasm/` (see `wasm.rs`);
+//! `docs` regenerates the CLI reference and builds the documentation site with
+//! mdBook into `target/docs/`, checking every link (see `docs.rs`). `check` also
+//! fails when the committed CLI reference is out of date.
 
+mod docs;
 mod schema;
 mod validator;
 mod wasm;
@@ -153,11 +157,22 @@ fn main() -> ExitCode {
                 ])
                 && run(&["test", "--workspace"])
                 && data(root)
+                && docs::cli_reference_is_current(root)
         }
         "data" => data(root),
         "wasm" => wasm::wasm(root),
+        "docs" => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            match docs::Options::parse(&args) {
+                Ok(options) => docs::docs(root, &options),
+                Err(e) => {
+                    eprintln!("docs: {e}");
+                    false
+                }
+            }
+        }
         _ => {
-            eprintln!("usage: cargo xtask <check|data|wasm>");
+            eprintln!("usage: cargo xtask <check|data|wasm|docs [--check | --mdbook-version]>");
             false
         }
     };

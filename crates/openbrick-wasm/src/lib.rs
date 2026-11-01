@@ -38,6 +38,10 @@
 //!   writes, so the CLI's tests can compare meshes with the playground's.
 //! - Calibration coupon ([`coupon`], docs/plan/05 section 4): [`build_coupon`],
 //!   [`coupon_layout_json`] and [`export_coupon`].
+//! - Calibration wizard ([`record`], docs/plan/05 section 4): [`record_fit`]
+//!   turns the coupon cells a person tapped into the fit profile file
+//!   `openbrick calibrate record` writes for the same choices, byte for byte,
+//!   with its offsets, or a refusal that names the field it concerns.
 //! - Bundled data ([`data`]): the process profiles, the example fit profile, the
 //!   logo tile part document, the artwork samples ([`artwork_samples_json`]:
 //!   the Neuraldeep.net marks, the playground's default, with their notice,
@@ -48,6 +52,7 @@ pub mod coupon;
 pub mod data;
 mod layout;
 pub mod part;
+pub mod record;
 
 pub use coupon::{build_coupon, coupon_layout_json, export_coupon, CouponOut};
 pub use data::{
@@ -59,6 +64,7 @@ pub use part::{
     evaluate_part, export_part, export_solids, resolve_params_json, AssetSet, ExportSolid,
     PartExport, PartOut,
 };
+pub use record::{record_fit, RecordFitInput};
 
 use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_geom::nominal::{nominal_brick, Detail, NominalDims};

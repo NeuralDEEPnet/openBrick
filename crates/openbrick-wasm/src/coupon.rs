@@ -284,6 +284,44 @@ mod tests {
         assert!(export_coupon("obj", "fdm-0.4", "", "").is_err());
     }
 
+    /// The coupon layouts the playground's unit tests read
+    /// (`apps/web/test/fixtures/`), so its cell map and choices are tested on
+    /// the core's own layouts: the default coupon (copies stacked) and the
+    /// full pocket set on a 256 x 256 mm bed (copies side by side). Run with
+    /// `OPENBRICK_UPDATE_FIXTURES=1` to write them again after a layout change.
+    #[test]
+    fn the_web_fixtures_are_the_core_layouts() {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/web/test/fixtures");
+        for (name, layout) in [
+            ("coupon-layout-fdm-0.4-cross.json", ""),
+            (
+                "coupon-layout-fdm-0.4-full-256.json",
+                r#"{"pockets":"full","bedMm":[256,256]}"#,
+            ),
+        ] {
+            let path = dir.join(name);
+            let fresh: serde_json::Value =
+                serde_json::from_str(&coupon_layout_json("fdm-0.4", layout).unwrap()).unwrap();
+            if std::env::var_os("OPENBRICK_UPDATE_FIXTURES").is_some() {
+                std::fs::create_dir_all(&dir).unwrap();
+                let mut text = serde_json::to_string_pretty(&fresh).unwrap();
+                text.push('\n');
+                std::fs::write(&path, text).unwrap();
+            }
+            let stored: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+            )
+            .unwrap();
+            assert_eq!(
+                stored,
+                fresh,
+                "{name} is not the core's layout; run OPENBRICK_UPDATE_FIXTURES=1 cargo test -p openbrick-wasm the_web_fixtures"
+            );
+        }
+    }
+
     #[test]
     fn the_coupon_exports() {
         let threemf = export_coupon("3mf", "fdm-0.4", "", "").unwrap();

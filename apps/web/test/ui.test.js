@@ -12,10 +12,12 @@ import {
   evaluatingParts,
   findingView,
   fitLabel,
+  needsCalibration,
   partStats,
   pocketSetFlag,
   PRINT_TEST_GUIDE_URL,
   readMode,
+  readStep,
   recordCommand,
   removedText,
   reportSummary,
@@ -23,6 +25,7 @@ import {
   SLOW_BUILD_MS,
   sortedFindings,
   writeMode,
+  writeStep,
 } from "../src/ui.js";
 
 const missing = {
@@ -136,6 +139,24 @@ test("the mode lives in the URL, the tile without a parameter", () => {
   assert.equal(writeMode("?backend=webgl2", "coupon"), "?backend=webgl2&mode=coupon");
   assert.equal(writeMode("?mode=coupon&backend=webgl2", "tile"), "?backend=webgl2");
   assert.equal(writeMode("?mode=coupon", "tile"), "");
+});
+
+test("the coupon mode's step lives in the URL too, only in the coupon mode and only for record", () => {
+  assert.deepEqual(readStep(""), { step: "print", errors: [] });
+  assert.deepEqual(readStep("?mode=coupon&step=record"), { step: "record", errors: [] });
+  assert.equal(readStep("?step=pay").step, "print");
+  assert.match(readStep("?step=pay").errors[0], /step must be one of print, record/);
+  assert.equal(writeStep(writeMode("?backend=webgl2", "coupon"), "coupon", "record"), "?backend=webgl2&mode=coupon&step=record");
+  assert.equal(writeStep("?mode=coupon&step=record", "coupon", "print"), "?mode=coupon");
+  assert.equal(writeStep(writeMode("?mode=coupon&step=record", "tile"), "tile", "record"), "");
+});
+
+test("FIT.MISSING and FIT.PROCESS blockers offer the calibration wizard; warnings and other rules do not", () => {
+  assert.equal(needsCalibration({ findings: [missing] }), true);
+  assert.equal(needsCalibration({ findings: [{ ...missing, rule: "FIT.PROCESS" }] }), true);
+  assert.equal(needsCalibration({ findings: [{ ...missing, severity: "warning" }] }), false);
+  assert.equal(needsCalibration({ findings: [wall, removed] }), false);
+  assert.equal(needsCalibration(null), false);
 });
 
 test("fit profiles are labelled by printer and material", () => {

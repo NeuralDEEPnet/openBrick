@@ -8,6 +8,7 @@
 
 import wasmUrl from "./wasm/openbrick_wasm_bg.wasm?url";
 import { CoreClient } from "./client.js";
+import { createFileAccess, desktopBridge, errorText, savedText } from "./files.js";
 import {
   assetSizeError,
   controlsFor,
@@ -26,10 +27,12 @@ import {
   evaluatingParts,
   findingView,
   fitLabel,
+  needsCalibration,
   partStats,
   PRINT_TEST_GUIDE_URL,
   readBackend,
   readMode,
+  readStep,
   recordCommand,
   removedText,
   reportSummary,
@@ -37,7 +40,30 @@ import {
   sortedFindings,
   stepStuds,
   writeMode,
+  writeStep,
 } from "./ui.js";
+import {
+  boxPercent,
+  cellAccessibleName,
+  cellMap,
+  choiceText,
+  choose,
+  chosenCells,
+  errorPlace,
+  FORM_FIELDS,
+  groupName,
+  keepPrinted,
+  mapSelection,
+  MATERIALS,
+  moveInGroup,
+  offsetRows,
+  OTHER_PRINTER,
+  parseNozzle,
+  PRINTERS,
+  recordInput,
+  todayLocal,
+} from "./calibration.js";
+import { forgetRecordedFit, loadRecordedFit, saveRecordedFit } from "./storage.js";
 import { sampleFile, sampleLabel, sizeForSample, sizeNote } from "./samples.js";
 import { createViewer } from "./viewer.js";
 
@@ -61,7 +87,11 @@ function el(tag, attrs = {}, ...children) {
 const EVALUATE_DELAY_MS = 150;
 /** Largest fit profile file read; real ones are about 2 KB. */
 const MAX_FIT_BYTES = 1024 * 1024;
-const MIME = { "3mf": "model/3mf", stl: "model/stl" };
+/**
+ * Saving and opening: browser downloads and file inputs, or the native dialogs
+ * of the desktop app (apps/desktop) when the page runs inside it (src/files.js).
+ */
+const files = createFileAccess({ bridge: desktopBridge(window) });
 const POCKET_LABELS = {
   cross: "Cross: the default, the smallest",
   crossAndDiagonal: "Cross and diagonal: needs a larger bed",
@@ -83,15 +113,31 @@ const page = {
   /** Tile replies dropped because the controls changed while they were built. */
   staleReplies: 0,
   couponBuilds: 0,
+  /** Coupon layouts the record step asked for that answered, stored or (stale) dropped. */
+  recordLayouts: 0,
+  /** Of those, the ones dropped because the coupon settings had changed meanwhile. */
+  staleLayouts: 0,
   restarts: 0,
   traps: 0,
   warnings: [],
   error: null,
   downloads: [],
+  /** True inside the desktop app, where saving and opening use native dialogs. */
+  desktop: files.desktop,
   /** The artwork in use: { sample (its id, null for the user's SVG), asset, notice (shown) }. */
   artwork: null,
   /** The core's artwork size limit (max_asset_bytes()), once loaded. */
   maxAssetBytes: null,
+  /** The coupon mode's step: print or record. */
+  step: "print",
+  /**
+   * The record step: { cells, labels (in layout order), choices (cell id ->
+   * mm), ok, id, fileName, offsets, error ({ field, message } or null),
+   * nozzleError, kept }, or null before its map first loads.
+   */
+  record: null,
+  /** The fit select: { selected (example, recorded, mine, none), recordedId, recordedKept }. */
+  fit: null,
   stats: () => null,
 };
 window.__web = page;
@@ -155,14 +201,13 @@ async function compileCore(url) {
   }
 }
 
-/** Hand bytes to the browser as a download. */
+/**
+ * Save bytes as `name`: a browser download, or the desktop app's save dialog.
+ * Resolves to `{ saved, name, path }`; `saved` is false only when the user
+ * cancelled the desktop dialog.
+ */
 function save(bytes, name, format) {
-  const url = URL.createObjectURL(new Blob([bytes], { type: MIME[format] ?? "application/octet-stream" }));
-  const a = el("a", { href: url, download: name, hidden: true });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return files.save(bytes, name, format);
 }
 
 const kb = (n) => `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n / 1024)} KB`;
@@ -170,7 +215,8 @@ const kb = (n) => `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }
 async function main() {
   const { backend: wanted, errors: backendErrors } = readBackend(location.search);
   const { mode: firstMode, errors: modeErrors } = readMode(location.search);
-  page.warnings.push(...backendErrors, ...modeErrors);
+  const { step: firstStep, errors: stepErrors } = readStep(location.search);
+  page.warnings.push(...backendErrors, ...modeErrors, ...stepErrors);
   showStatus(["Loading the core…"]);
   const [module, viewer] = await Promise.all([
     compileCore(wasmUrl),
@@ -225,7 +271,13 @@ async function main() {
     statusNote: null,
     process: data.processProfiles.some((p) => p.id === exampleFit.process) ? exampleFit.process : data.processProfiles[0].id,
     fit: "example",
-    fits: { example: data.exampleFitProfile, mine: null },
+    /**
+     * The fit profiles the select offers, as JSON text: the example, the one
+     * recorded in the record step (kept in this browser), and a loaded file.
+     */
+    fits: { example: data.exampleFitProfile, recorded: null, mine: null },
+    /** Whether this browser's storage kept the recorded profile. */
+    recordedKept: false,
     colors: { body: data.roleColors.body, accent: data.roleColors.accent },
     /** The request and result on screen, and whether the controls changed since. */
     request: null,
@@ -245,6 +297,38 @@ async function main() {
       /** A bed size field holds something that is not a positive number. */
       invalid: false,
       exporting: false,
+      /** The coupon mode's step: print the coupon, or record the fit. */
+      step: firstStep,
+    },
+    /** The record step (src/calibration.js). */
+    record: {
+      /**
+       * The coupon layout the map shows ({ cells, summary }), the coupon key it
+       * was laid out for (set only when it is stored, so a map is never used
+       * for other settings) and its map; the key of a layout on its way.
+       */
+      layout: null,
+      key: null,
+      map: null,
+      layoutError: null,
+      loadingKey: null,
+      /** Settles when the layout on its way answers. */
+      loading: null,
+      /** Group -> the chosen cell's values ({ stud: mm } or { pocketTubeOD: mm, pocketRib: mm }). */
+      choices: {},
+      /** Group -> the layout index of the cell chosen last: the group's Tab stop. */
+      picked: {},
+      /** Fields the person has edited, and whether a save was tried: their errors show. */
+      touched: new Set(),
+      attempted: false,
+      /** The core's answer for the current choices (record_fit), and its request number. */
+      result: null,
+      callError: null,
+      nozzleError: null,
+      seq: 0,
+      pending: null,
+      /** A note on choices the coupon no longer prints. */
+      dropped: "",
     },
   };
 
@@ -434,7 +518,7 @@ async function main() {
             type: "button",
             id: "drop",
             "aria-describedby": "art-note",
-            onclick: () => fileInput.click(),
+            onclick: () => chooseArtwork(),
           },
           el("strong", { text: "Drop an SVG here, or choose a file" }),
           el("span", { text: c.help || "Single-colour SVG" }),
@@ -571,6 +655,17 @@ async function main() {
     fileInput.value = "";
     useFile(file);
   });
+  /** The drop zone's button: the file input, or the desktop app's open dialog. */
+  function chooseArtwork() {
+    if (!files.desktop) {
+      fileInput.click();
+      return;
+    }
+    files
+      .open("svg", data.maxAssetBytes)
+      .then(useFile)
+      .catch((err) => showArtNote(`The file could not be opened: ${errorText(err)}. The tile keeps ${state.artwork.label}.`, true));
+  }
   // Dropping a file anywhere on the 3D view works too.
   const stage = $("stage");
   stage.addEventListener("dragover", (e) => {
@@ -611,22 +706,93 @@ async function main() {
   fitSelect.value = state.fit;
   fitSelect.disabled = false;
 
-  function showFitNote() {
+  /** "id: printer, material, calibrated for process on date." for a fit profile. */
+  const fitSummary = (p) => {
+    const what = [p.printer, p.material?.type ?? p.material].filter((x) => typeof x === "string" && x).join(", ");
+    const date = p.calibration?.date ? ` on ${p.calibration.date}` : "";
+    return `${p.id}: ${what}, calibrated for ${p.process}${date}.`;
+  };
+
+  /** The note under the fit select; `before` is said first (what just changed). */
+  function showFitNote(before = "") {
     fitNote.className = "note";
+    const lead = before ? `${before} ` : "";
     if (state.fit === "example") {
-      fitNote.textContent = `${exampleFit.notes} Calibrated for ${exampleFit.process}.`;
+      fitNote.textContent = `${lead}${exampleFit.notes} Calibrated for ${exampleFit.process}.`;
+    } else if (state.fit === "recorded") {
+      const kept = state.recordedKept
+        ? "Kept in this browser only."
+        : "This browser's storage is off, so it is gone when the page reloads: download it in the record step to keep it.";
+      fitNote.textContent = `${lead}${fitSummary(JSON.parse(state.fits.recorded))} ${kept}`;
     } else if (state.fit === "mine") {
-      const mine = JSON.parse(state.fits.mine);
-      fitNote.textContent = `${mine.id}: ${[mine.printer, mine.material?.type ?? mine.material].filter(Boolean).join(", ")}, calibrated for ${mine.process}.`;
+      fitNote.textContent = `${lead}${fitSummary(JSON.parse(state.fits.mine))}`;
     } else {
       fitNote.replaceChildren(
-        "Without a fit profile the tile's tubes are not compensated for your printer, so downloads stay off. ",
+        `${lead}Without a fit profile the tile's tubes are not compensated for your printer, so downloads stay off. `,
         el("button", { type: "button", className: "link", onclick: () => setMode("coupon", { focus: true }) }, "Print the calibration coupon"),
-        " first.",
+        ", then ",
+        el("button", { type: "button", className: "link", onclick: () => openRecordStep() }, "record your fit"),
+        ".",
       );
     }
+    page.fit = { selected: state.fit, recordedId: state.fits.recorded ? JSON.parse(state.fits.recorded).id : null, recordedKept: state.recordedKept };
   }
-  showFitNote();
+
+  const recordedOption = () => fitSelect.querySelector('option[value="recorded"]');
+  /** Offer the recorded profile in the fit select (replacing an earlier one). */
+  function adoptRecorded(text, profile, kept) {
+    state.fits.recorded = text;
+    state.recordedKept = kept;
+    let option = recordedOption();
+    if (!option) {
+      option = el("option", { value: "recorded" });
+      fitSelect.insertBefore(option, fitSelect.querySelector('option[value="load"]'));
+    }
+    option.textContent = fitLabel("Recorded in this browser", profile);
+    $("fit-actions").hidden = false;
+  }
+  /**
+   * Select the recorded profile. It was calibrated for one process and rule
+   * FIT.PROCESS blocks any other, so the tile's process follows it; returns a
+   * sentence saying so, or "".
+   */
+  function selectRecorded(profile) {
+    fitSelect.value = "recorded";
+    state.fit = "recorded";
+    if (state.process !== profile.process && data.processProfiles.some((p) => p.id === profile.process)) {
+      state.process = profile.process;
+      processSelect.value = profile.process;
+      return `The process is now ${profile.process}, the one it was calibrated for.`;
+    }
+    return "";
+  }
+
+  // A profile recorded earlier in this browser is the one to use; a page
+  // without storage simply starts without it.
+  const stored = loadRecordedFit();
+  if (stored.problem) page.warnings.push(`ignored the stored fit profile: ${stored.problem}`);
+  // selectRecorded may move the tile's process to the profile's: say so.
+  let movedAtLoad = "";
+  if (stored.fit) {
+    adoptRecorded(stored.fit.text, stored.fit.profile, true);
+    movedAtLoad = selectRecorded(stored.fit.profile);
+  }
+  showFitNote(movedAtLoad);
+
+  $("forget-fit").addEventListener("click", () => {
+    const gone = forgetRecordedFit();
+    recordedOption()?.remove();
+    state.fits.recorded = null;
+    state.recordedKept = false;
+    $("fit-actions").hidden = true;
+    if (state.fit === "recorded") {
+      state.fit = "example";
+      fitSelect.value = "example";
+    }
+    showFitNote(gone ? "Forgot the recorded fit profile: this browser no longer keeps it." : "Removed the recorded fit profile from this page; this browser's storage could not be changed.");
+    fitSelect.focus();
+    changed();
+  });
 
   function fitError(text) {
     fitNote.className = "note bad";
@@ -635,16 +801,25 @@ async function main() {
   fitSelect.addEventListener("change", () => {
     if (fitSelect.value === "load") {
       fitSelect.value = state.fit; // until a file is read
-      fitFile.click();
+      if (files.desktop) {
+        files
+          .open("fit", MAX_FIT_BYTES)
+          .then(useFitFile)
+          .catch((err) => fitError(`The file could not be opened: ${errorText(err)}.`));
+      } else fitFile.click();
       return;
     }
     state.fit = fitSelect.value;
     showFitNote();
     changed();
   });
-  fitFile.addEventListener("change", async () => {
+  fitFile.addEventListener("change", () => {
     const file = fitFile.files?.[0];
     fitFile.value = "";
+    useFitFile(file);
+  });
+  /** Read a fit profile the user chose (a browser File, or one from the desktop app's dialog). */
+  async function useFitFile(file) {
     if (!file) return;
     if (file.size > MAX_FIT_BYTES) {
       fitError(`“${file.name}” is ${kb(file.size)}; a fit profile is a small JSON file (about 2 KB) written by openbrick calibrate record.`);
@@ -673,7 +848,7 @@ async function main() {
     state.fit = "mine";
     showFitNote();
     changed();
-  });
+  }
 
   for (const role of ["body", "accent"]) {
     const input = $(`color-${role}`);
@@ -852,7 +1027,11 @@ async function main() {
 
   const legend = $("legend");
   function swatch(colour, text, id) {
-    return el("li", { id }, el("span", { className: "swatch", style: `background:${colour}`, "aria-hidden": "true" }), el("span", { text }));
+    const box = el("span", { className: "swatch", "aria-hidden": "true" });
+    // Through the CSSOM, not a style="" attribute, which the desktop app's
+    // Content Security Policy (style-src 'self') refuses.
+    box.style.background = colour;
+    return el("li", { id }, box, el("span", { text }));
   }
   /** The legend's line when a build failed: why the 3D view is empty. */
   const emptyNote = (what) => el("li", { id: "legend-empty", text: `Nothing to show: the ${what} could not be built (see the status line).` });
@@ -939,7 +1118,9 @@ async function main() {
               ? el(
                   "p",
                   {},
-                  el("button", { type: "button", className: "link", onclick: () => setMode("coupon", { focus: true }) }, "Print the calibration coupon"),
+                  el("button", { type: "button", className: "link", onclick: () => openRecordStep() }, "Calibrate"),
+                  " · ",
+                  el("button", { type: "button", className: "link", onclick: () => openCouponStep("print") }, "Print the calibration coupon"),
                   " · ",
                   el("a", { href: PRINT_TEST_GUIDE_URL, target: "_blank", rel: "noopener" }, "How to print and measure it"),
                 )
@@ -970,7 +1151,10 @@ async function main() {
     downloadStl.disabled = !enabled;
     reason.textContent = why ?? "";
     reason.className = why && ((state.result && !state.dirty && !state.exporting) || invalid.size > 0) ? "error" : "";
+    // FIT.MISSING or FIT.PROCESS: the way out is the calibration wizard.
+    $("calibrate-row").hidden = !(state.result && !state.dirty && !state.error && invalid.size === 0 && needsCalibration(state.result.report));
   }
+  $("download-calibrate").addEventListener("click", () => openRecordStep());
 
   async function downloadPart(format) {
     if (!state.result?.exportAllowed || state.dirty || state.exporting) return;
@@ -980,12 +1164,12 @@ async function main() {
     renderDownloads();
     try {
       const { bytes } = await client.exportPart({ ...state.request, format, colors: { ...state.colors } });
-      save(bytes, name, format);
-      page.downloads.push({ name, format, bytes: bytes.byteLength });
+      const saved = await save(bytes, name, format);
+      if (saved.saved) page.downloads.push({ name: saved.name, format, bytes: bytes.byteLength });
       $("download-reason").textContent = "";
-      showStatus([`Saved ${name}`, kb(bytes.byteLength)]);
+      showStatus(savedText(saved, kb(bytes.byteLength)));
     } catch (err) {
-      showStatus([`The download failed: ${err.message}`], "bad");
+      showStatus([`The download failed: ${errorText(err)}`], "bad");
     } finally {
       syncCounters();
       state.exporting = false;
@@ -1029,7 +1213,10 @@ async function main() {
       renderCouponDownloads();
       return;
     }
-    if (page.mode === "coupon") buildCoupon();
+    if (page.mode === "coupon") {
+      buildCoupon();
+      if (state.coupon.step === "record") loadRecordMap();
+    }
   }
   couponProcess.addEventListener("change", couponChanged);
   pocketsSelect.addEventListener("change", couponChanged);
@@ -1180,11 +1367,11 @@ async function main() {
     renderCouponDownloads();
     try {
       const { bytes } = await client.exportCoupon({ ...c.request, format, colors: { body: state.colors.body } });
-      save(bytes, name, format);
-      page.downloads.push({ name, format, bytes: bytes.byteLength });
-      showStatus([`Saved ${name}`, kb(bytes.byteLength)]);
+      const saved = await save(bytes, name, format);
+      if (saved.saved) page.downloads.push({ name: saved.name, format, bytes: bytes.byteLength });
+      showStatus(savedText(saved, kb(bytes.byteLength)));
     } catch (err) {
-      showStatus([`The download failed: ${err.message}`], "bad");
+      showStatus([`The download failed: ${errorText(err)}`], "bad");
     } finally {
       syncCounters();
       c.exporting = false;
@@ -1193,6 +1380,455 @@ async function main() {
   }
   couponButtons[0].addEventListener("click", () => downloadCoupon("3mf"));
   couponButtons[1].addEventListener("click", () => downloadCoupon("stl"));
+
+  // ------------------------------------------------------------------ record step
+  //
+  // docs/plan/05 section 4 ("tap the cell") and 06 section 11: a map of the
+  // printed coupon from the core's layout (src/calibration.js places the
+  // core's cells for display), one choice per line, the printer fields, the
+  // core's record_fit for the profile, its offsets and its refusals, then
+  // Download and Use.
+
+  const rec = state.record;
+  const recordDefaults = data.couponChoices.record ?? {};
+  const printerSelect = $("record-printer");
+  const printerOther = $("record-printer-other");
+  const fieldInputs = {
+    printer: printerSelect,
+    material: $("record-material"),
+    nozzleMm: $("record-nozzle"),
+    date: $("record-date"),
+    slicer: $("record-slicer"),
+    notes: $("record-notes"),
+  };
+  printerSelect.append(...PRINTERS.map((p) => el("option", { value: p, text: p })), el("option", { value: OTHER_PRINTER, text: "Other…" }));
+  $("record-materials").append(...MATERIALS.map((m) => el("option", { value: m })));
+  fieldInputs.nozzleMm.value = typeof recordDefaults.nozzleMm === "number" ? String(recordDefaults.nozzleMm) : "";
+  $("nozzle-default").textContent = fieldInputs.nozzleMm.value || "–";
+  fieldInputs.date.value = todayLocal();
+  const mapEl = $("coupon-map");
+  /** The map's cell buttons by layout index. */
+  let cellButtons = [];
+  /** The coupon key whose map (or refusal) mapEl shows; null while it shows "Loading". */
+  let drawnKey = null;
+
+  const printerName = () => (printerSelect.value === OTHER_PRINTER ? printerOther.value : printerSelect.value);
+
+  /** The map of the coupon as set above, or null while it loads or could not be laid out (a map of other settings is never used). */
+  const currentMap = () => (rec.key === couponKey() ? rec.map : null);
+  /** The coupon as set above could not be laid out (the core refused it). */
+  const layoutFailed = () => rec.key === couponKey() && Boolean(rec.layoutError);
+
+  /** The record_fit input for the coupon the map shows and the fields as they are. */
+  function recordRequest() {
+    const nozzle = parseNozzle(fieldInputs.nozzleMm.value);
+    const summary = currentMap() ? rec.layout.summary : null;
+    const input = recordInput({
+      process: summary?.process ?? state.coupon.process,
+      pocketSet: summary?.pockets ?? state.coupon.pockets,
+      printer: printerName(),
+      material: fieldInputs.material.value,
+      nozzleMm: nozzle.value,
+      slicer: fieldInputs.slicer.value,
+      notes: fieldInputs.notes.value,
+      // Without a date the CLI writes today's; so does the page.
+      date: fieldInputs.date.value || todayLocal(),
+      choices: rec.choices,
+    });
+    return { input, nozzleError: nozzle.error ?? null };
+  }
+
+  /** Ask the core for the profile of the current choices; the newest answer wins. */
+  function updateRecord() {
+    const seq = ++rec.seq;
+    const { input, nozzleError } = recordRequest();
+    rec.nozzleError = nozzleError;
+    if (!currentMap() || nozzleError) {
+      rec.result = null;
+      rec.pending = null;
+      renderRecord();
+      return null;
+    }
+    const pending = client
+      .recordFit(input)
+      .then(
+        (answer) => {
+          if (seq === rec.seq) Object.assign(rec, { result: answer, callError: null });
+        },
+        (err) => {
+          if (seq === rec.seq) Object.assign(rec, { result: null, callError: err.message });
+        },
+      )
+      .finally(() => {
+        syncCounters();
+        if (seq === rec.seq) {
+          rec.pending = null;
+          renderRecord();
+        }
+      });
+    rec.pending = pending;
+    return pending;
+  }
+
+  /**
+   * Load the map of the coupon as set above (the layout, without geometry).
+   * rec.key names the settings of the stored layout only: an answer for
+   * settings changed meanwhile is dropped and leaves rec.key alone, so coming
+   * back to those settings loads them again instead of reusing another map.
+   */
+  async function loadRecordMap() {
+    if (state.coupon.invalid) return;
+    const request = couponRequest();
+    const key = couponKey();
+    if (rec.key === key && (rec.map || rec.layoutError)) {
+      // Back to settings whose layout is stored while another was on its way:
+      // draw it again where "Loading" was drawn, and ask the core again.
+      if (drawnKey !== key) {
+        renderMap();
+        updateRecord();
+      }
+      return;
+    }
+    if (rec.loadingKey === key) return; // on its way
+    rec.loadingKey = key;
+    // Until it answers, the map of other settings is not shown or used.
+    renderMap();
+    renderRecord();
+    const asked = client.couponLayout(request);
+    rec.loading = asked.then(
+      () => {},
+      () => {},
+    );
+    let layout;
+    try {
+      layout = await asked;
+    } catch (err) {
+      syncCounters();
+      page.recordLayouts++;
+      if (rec.loadingKey === key) rec.loadingKey = null;
+      if (couponKey() !== key) {
+        page.staleLayouts++;
+        return;
+      }
+      Object.assign(rec, { key, layout: null, map: null, layoutError: err.message });
+      renderMap();
+      updateRecord();
+      return;
+    }
+    syncCounters();
+    page.recordLayouts++;
+    if (rec.loadingKey === key) rec.loadingKey = null;
+    // Settings changed meanwhile, or an earlier request for them answered first.
+    if (couponKey() !== key || (rec.key === key && rec.map)) {
+      page.staleLayouts++;
+      return;
+    }
+    const map = cellMap(layout);
+    // A pocket the coupon as set now does not print is no longer offered.
+    const { choices, dropped } = keepPrinted(rec.choices, map);
+    rec.dropped = dropped.length
+      ? `The coupon as set now has no such ${dropped.map((g) => groupName(g).toLowerCase()).join(" or ")} cell, so that choice was cleared: choose again.`
+      : "";
+    // The cell indices picked on the last map mean nothing on this one.
+    rec.picked = {};
+    Object.assign(rec, { key, layout, map, layoutError: null, choices });
+    renderMap();
+    updateRecord();
+  }
+
+  const css = (b) => `left:${b.left};top:${b.top};width:${b.width};height:${b.height}`;
+
+  function renderMap() {
+    const map = currentMap();
+    cellButtons = [];
+    drawnKey = map || layoutFailed() ? rec.key : null;
+    const summary = map ? rec.layout.summary : null;
+    $("record-coupon").textContent = summary
+      ? `The map is the ${summary.process} coupon with ${summary.pockets === "crossAndDiagonal" ? "cross and diagonal" : summary.pockets} pockets and ${summary.copies} ${summary.copies === 1 ? "copy" : "copies"}, as set above: set them as you printed it.`
+      : "";
+    if (!map) {
+      mapEl.style.aspectRatio = "";
+      mapEl.replaceChildren(
+        el("p", {
+          className: layoutFailed() ? "map-empty note bad" : "map-empty note",
+          text: layoutFailed() ? `No map: the coupon as set above cannot be laid out (${rec.layoutError}).` : "Loading the coupon's cells…",
+        }),
+      );
+      $("map-caption-top").textContent = "";
+      $("map-caption-bottom").textContent = "";
+      return;
+    }
+    mapEl.style.aspectRatio = `${map.widthMm} / ${map.heightMm}`;
+    mapEl.style.setProperty("--map-mm", String(map.widthMm));
+    // The coupon (one window, or one per copy with a band naming it) and the
+    // copy outlines where a window holds more than one copy; the cells' own
+    // names say their copy, so these are not read out.
+    const windows = map.windows.flatMap((w) => [
+      el("div", { className: "window", "aria-hidden": "true", style: css(boxPercent(map, w)) }),
+      ...(w.band ? [el("div", { className: "band", "aria-hidden": "true", style: css(boxPercent(map, w.band)), text: w.band.text })] : []),
+    ]);
+    const several = new Set(map.windows.filter((w) => w.copies.length > 1).flatMap((w) => w.copies));
+    const outlines = map.copies.filter((c) => several.has(c.copy)).map((c) => el("div", { className: "copy", "aria-hidden": "true", style: css(boxPercent(map, c)) }));
+    const groups = Object.entries(map.groups).map(([group, order]) => {
+      const box = el("div", { role: "radiogroup", "aria-label": `Best ${groupName(group).toLowerCase()} cell`, "data-group": group });
+      for (const index of order) {
+        const cell = map.cells[index];
+        const button = el(
+          "button",
+          {
+            type: "button",
+            role: "radio",
+            className: `cell ${group}`,
+            "aria-checked": "false",
+            tabindex: -1,
+            "aria-label": cellAccessibleName(map, cell, summary),
+            "data-group": group,
+            "data-copy": cell.copy + 1,
+            "data-line": cell.line,
+            "data-label": cell.lines.join("/"),
+            "data-index": index,
+            style: `${css(boxPercent(map, cell.box))};--font-mm:${cell.fontMm.toFixed(4)}`,
+          },
+          ...cell.lines.map((text) => el("span", { text })),
+        );
+        button.addEventListener("click", () => pick(index));
+        button.addEventListener("keydown", (e) => {
+          const next = moveInGroup(order, index, e.key);
+          if (next === null) return;
+          e.preventDefault();
+          pick(next, { focus: true });
+        });
+        cellButtons[index] = button;
+        box.append(button);
+      }
+      return box;
+    });
+    mapEl.replaceChildren(...windows, ...outlines, ...groups);
+    $("map-caption-top").textContent = map.captions.top;
+    $("map-caption-bottom").textContent = map.captions.bottom;
+    renderMapSelection();
+  }
+
+  /**
+   * One checked cell per kind of cell (aria-checked), its twins with the same
+   * value marked as such (class and description, not checked), and one Tab
+   * stop per kind (calibration.js mapSelection).
+   */
+  function renderMapSelection() {
+    const map = currentMap();
+    if (!map || cellButtons.length === 0) return;
+    for (const [group, { checked, twins, stop }] of Object.entries(mapSelection(map, rec.choices, rec.picked))) {
+      for (const i of map.groups[group]) {
+        const b = cellButtons[i];
+        const twin = twins.includes(i);
+        b.setAttribute("aria-checked", String(i === checked));
+        b.classList.toggle("twin", twin);
+        if (twin) b.setAttribute("aria-describedby", "twin-note");
+        else b.removeAttribute("aria-describedby");
+        b.tabIndex = i === stop ? 0 : -1;
+      }
+    }
+  }
+
+  function pick(index, { focus = false } = {}) {
+    const cell = currentMap()?.cells[index];
+    if (!cell) return;
+    rec.choices = choose(rec.choices, cell);
+    rec.picked[cell.group] = index;
+    rec.dropped = "";
+    renderMapSelection();
+    if (focus) cellButtons[index].focus();
+    updateRecord();
+  }
+
+  /** The refusal to show, if any: map errors once a save was tried (or always but "no cells"), field errors once touched. */
+  function shownError() {
+    const e = rec.result && !rec.result.ok ? rec.result.error : null;
+    if (!e) return null;
+    const place = errorPlace(e.field);
+    const shown = rec.attempted || (place === "map" ? e.field !== "cells" : rec.touched.has(place));
+    return shown ? { ...e, place } : null;
+  }
+
+  function renderRecord() {
+    renderMapSelection();
+    const map = currentMap();
+    const error = shownError();
+    // The choices under the map, one line per kind of cell, with a refusal that concerns one.
+    const groups = map ? Object.keys(map.groups) : [];
+    $("choices").replaceChildren(
+      ...groups.map((group) => {
+        const text = choiceText(map, rec.choices, group);
+        const own = error?.place === "map" && error.field === group ? error.message : "";
+        return el(
+          "li",
+          { "data-group": group },
+          el("span", { text: groupName(group) }),
+          el("span", { className: text ? "value" : "value missing", text: text ? `${text} mm` : "not chosen" }),
+          el("p", { className: "field-error", text: own }),
+        );
+      }),
+    );
+    const mapMessage = error?.place === "map" && !groups.includes(error.field) ? error.message : "";
+    $("record-error-map").textContent = [rec.dropped, mapMessage, rec.callError ? `The core could not record: ${rec.callError}` : ""].filter(Boolean).join(" ");
+    for (const field of FORM_FIELDS) {
+      let message = error?.place === field ? error.message : "";
+      if (field === "nozzleMm" && rec.nozzleError && (rec.attempted || rec.touched.has("nozzleMm"))) message = rec.nozzleError;
+      $(`record-error-${field}`).textContent = message;
+      const input = field === "printer" && printerSelect.value === OTHER_PRINTER ? printerOther : fieldInputs[field];
+      if (message) input.setAttribute("aria-invalid", "true");
+      else input.removeAttribute("aria-invalid");
+      if (field === "printer") (input === printerOther ? printerSelect : printerOther).removeAttribute("aria-invalid");
+    }
+    const r = rec.result?.ok ? rec.result : null;
+    $("record-summary").textContent = r
+      ? `Fit profile ${r.fitProfile.id} for ${r.fitProfile.process}${r.fitProfile.calibration?.pocketSet ? `, ${r.fitProfile.calibration.pocketSet} pockets` : ""}, ${r.fitProfile.nozzleMm} mm nozzle: ${r.fileName}. Offsets are the chosen cell minus the standard nominal of its line.`
+      : map
+        ? "Choose your cells and fill in the printer and material: the offsets show here before you save."
+        : "";
+    $("record-offsets").replaceChildren(
+      ...offsetRows(r?.offsets).map((row) =>
+        el(
+          "tr",
+          { "data-cell": row.cell },
+          el("td", { text: row.name }),
+          el("td", { text: row.chosen }),
+          el("td", { text: row.nominal }),
+          el("td", {}, el("strong", { text: row.offset }), el("span", { className: "help", text: ` ${row.field}` })),
+        ),
+      ),
+    );
+    const marks = map ? mapSelection(map, rec.choices, rec.picked) : {};
+    page.record = {
+      step: state.coupon.step,
+      cells: map?.cells.length ?? 0,
+      labels: map?.cells.map((c) => c.label) ?? [],
+      shown: map?.shown ?? null,
+      checked: Object.fromEntries(Object.entries(marks).map(([g, m]) => [g, m.checked])),
+      choices: chosenCells(rec.choices),
+      ok: Boolean(r),
+      id: r?.fitProfile.id ?? null,
+      fileName: r?.fileName ?? null,
+      offsets: r?.offsets ?? null,
+      error: rec.result && !rec.result.ok ? rec.result.error : null,
+      shownError: error ? error.message : null,
+      nozzleError: rec.nozzleError,
+      kept: state.recordedKept,
+    };
+  }
+
+  for (const [field, input] of Object.entries(fieldInputs)) {
+    const edited = () => {
+      // Choosing "Other…" is not yet a printer name: no message until one is typed.
+      if (!(field === "printer" && printerSelect.value === OTHER_PRINTER)) rec.touched.add(field);
+      updateRecord();
+    };
+    input.addEventListener("input", edited);
+    input.addEventListener("change", edited);
+  }
+  printerSelect.addEventListener("change", () => {
+    const other = printerSelect.value === OTHER_PRINTER;
+    printerOther.hidden = !other;
+    if (other) printerOther.focus();
+  });
+  printerOther.addEventListener("input", () => {
+    rec.touched.add("printer");
+    updateRecord();
+  });
+  fieldInputs.date.addEventListener("change", () => {
+    // An emptied date means today, as on the command line.
+    if (!fieldInputs.date.value) fieldInputs.date.value = todayLocal();
+  });
+
+  /** The profile of the current choices once the core answered, or null after showing what to fix. */
+  async function recordReady() {
+    rec.attempted = true;
+    // The map of the coupon as set, and the newest answer, if on their way.
+    while (rec.loadingKey || rec.pending) await (rec.pending ?? rec.loading);
+    renderRecord();
+    if (rec.result?.ok) return rec.result;
+    const error = shownError();
+    const target =
+      error && error.place !== "map"
+        ? error.field === "printer" && printerSelect.value === OTHER_PRINTER
+          ? printerOther
+          : fieldInputs[error.place]
+        : rec.nozzleError
+          ? fieldInputs.nozzleMm
+          : (cellButtons.find((b) => b?.tabIndex === 0) ?? $("record-heading"));
+    target?.focus();
+    showStatus([`Not recorded yet: ${error?.message ?? rec.nozzleError ?? rec.callError ?? "choose your cells first."}`], "bad");
+    return null;
+  }
+
+  $("download-fit").addEventListener("click", async () => {
+    const r = await recordReady();
+    if (!r) return;
+    const bytes = new TextEncoder().encode(r.text);
+    try {
+      // A browser download, or the desktop app's save dialog, which the user
+      // may cancel (then nothing was saved).
+      const saved = await save(bytes, r.fileName, "json");
+      if (saved.saved) page.downloads.push({ name: saved.name, format: "json", bytes: bytes.byteLength });
+      showStatus(savedText(saved, kb(bytes.byteLength)));
+    } catch (err) {
+      showStatus([`The download failed: ${errorText(err)}`], "bad");
+    }
+  });
+
+  $("use-fit").addEventListener("click", async () => {
+    const r = await recordReady();
+    if (!r) return;
+    const kept = saveRecordedFit(r.text);
+    adoptRecorded(r.text, r.fitProfile, kept);
+    const moved = selectRecorded(r.fitProfile);
+    showFitNote(`Using the fit profile you recorded.${moved ? ` ${moved}` : ""}`);
+    changed();
+    const where = kept ? "This browser keeps it (and only this browser)." : "This browser's storage is off, so it is gone when the page reloads: download it to keep it.";
+    $("record-note").replaceChildren(
+      `The logo tile now uses ${r.fitProfile.id}. ${where} `,
+      el("button", { type: "button", className: "link", id: "record-to-tile", onclick: () => setMode("tile", { focus: true }) }, "Design a tile with it"),
+    );
+    showStatus([`Using fit profile ${r.fitProfile.id} in the logo tile`]);
+    renderRecord();
+  });
+
+  // ------------------------------------------------------------------ coupon steps
+
+  const stepButtons = { print: $("step-print"), record: $("step-record") };
+  const stepPanels = { print: $("coupon-print"), record: $("coupon-record") };
+  /** The URL for the mode and step shown (?mode=coupon&step=record). */
+  const pageUrl = () => `${location.pathname}${writeStep(writeMode(location.search, page.mode), page.mode, state.coupon.step)}${location.hash}`;
+
+  function setStep(step, { focus = false } = {}) {
+    state.coupon.step = step;
+    page.step = step;
+    for (const [s, button] of Object.entries(stepButtons)) {
+      if (s === step) button.setAttribute("aria-current", "step");
+      else button.removeAttribute("aria-current");
+      stepPanels[s].hidden = s !== step;
+    }
+    if (page.mode === "coupon") {
+      history.replaceState(null, "", pageUrl());
+      if (step === "record") {
+        renderMap();
+        renderRecord();
+        loadRecordMap();
+      }
+    }
+    if (focus) (step === "record" ? $("record-heading") : stepButtons.print).focus();
+  }
+  for (const [step, button] of Object.entries(stepButtons)) button.addEventListener("click", () => setStep(step));
+  $("howto-record").addEventListener("click", () => setStep("record", { focus: true }));
+
+  /** The coupon mode at `step`. */
+  function openCouponStep(step) {
+    state.coupon.step = step;
+    setMode("coupon", { focus: step === "print" });
+    if (step === "record") $("record-heading").focus();
+  }
+  /** The calibration wizard's record step: the "Calibrate" of FIT.MISSING and FIT.PROCESS. */
+  const openRecordStep = () => openCouponStep("record");
 
   // ------------------------------------------------------------------ modes
 
@@ -1212,7 +1848,7 @@ async function main() {
     }
     if (focus) tabs[mode].focus();
     document.querySelector("aside").scrollTop = 0;
-    history.replaceState(null, "", `${location.pathname}${writeMode(location.search, mode)}${location.hash}`);
+    history.replaceState(null, "", pageUrl());
     if (mode === "tile") {
       legend.replaceChildren();
       if (state.dirty || !state.result) {
@@ -1226,6 +1862,8 @@ async function main() {
       timer = null;
       renderCouponLegend();
       buildCoupon();
+      // Shows the step's panel (and loads the record step's map).
+      setStep(state.coupon.step);
     }
   }
 

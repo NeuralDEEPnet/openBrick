@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "openbrick3d",
+  "bundle": {
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/openbrick3d.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/openbrick3d.desktop"
+      }
+    }
+  }
+}

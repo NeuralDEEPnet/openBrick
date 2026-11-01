@@ -32,3 +32,18 @@ openbrick-wasm = { workspace = true }
 
 [lints]
 workspace = true
+
+# cargo-binstall: where the release archives that dist builds live
+# (dist-workspace.toml, docs/guides/install.md). Each Unix archive holds the
+# folder openbrick-<target>/; the Windows zip holds its files at the top.
+# QuickInstall's third-party builds are off: binstall takes our attested
+# archives or, where there is none, compiles from source.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
+disabled-strategies = ["quick-install"]
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+bin-dir = "{ bin }{ binary-ext }"

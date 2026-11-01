@@ -395,6 +395,12 @@ jobs:
           target/cli-exports/logo-tile-fused-3mf.json target/cli-exports/logo-tile-recorded-fit.json
           target/cli-exports/brand-tile.json target/cli-exports/brand-badge.json
           target/cli-exports/coupon-fdm-0.4-cross.json
+      - name: Inputs of the OrcaSlicer smoke test (dry run; slicer-smoke.yml slices them weekly)
+        run: |
+          python3 -I scripts/slicer-smoke.py self-test
+          # A fresh directory outside target/: rust-cache restores target/ between
+          # runs, and the script refuses a non-empty directory it did not make.
+          scripts/slicer-smoke.sh --dry-run --openbrick target/cli-install/bin/openbrick --work "$RUNNER_TEMP/slicer-smoke"
       - name: Release wall time of the CLI
         run: |
           ob=target/cli-install/bin/openbrick
@@ -411,8 +417,326 @@ jobs:
           path: target/cli-exports/
           retention-days: 14
 
-  docs:
+  release:
+    # The CLI release setup (backlog item 15, decision D15; dist-workspace.toml,
+    # docs/guides/install.md), so a broken setup fails here and not when a tag
+    # is pushed.
+    #
+    # On every push and pull request, in a minute or two (nothing is compiled):
+    # with the dist version that dist-workspace.toml pins, `dist plan` must
+    # succeed and .github/workflows/release.yml must be exactly what
+    # scripts/release-workflow.py generates (dist's output plus the edited `on:`
+    # block); and README.md, which every release archive ships, must carry the
+    # install commands and the attestation check.
+    #
+    # Only when the change touches the release build (the paths that trigger
+    # release.yml, plus Cargo.lock, the files every archive includes and this
+    # workflow), or when there is no base commit to compare with: it builds the
+    # x86_64 Linux archive and the shell installer as a release job does (the
+    # steps of .github/dist-build-setup.yml: registry paths remapped,
+    # third-party licence texts collected), installs from that local archive
+    # through the installer (file://, nothing is downloaded), runs the
+    # installed CLI, checks what the archive holds and that no runner path is
+    # left in the binary, and writes the SBOM with the cargo-cyclonedx version
+    # dist 0.33.1 uses (0.5.5). That part takes about ten minutes (a thin-LTO
+    # release build).
+    #
+    # dist (MIT OR Apache-2.0) and cargo-cyclonedx (Apache-2.0) are build tools
+    # here and in release.yml; neither is shipped. Both come from their GitHub
+    # releases by exact version, as release.yml installs them.
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The release-build scope below compares with the base commit.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Install dist (the version dist-workspace.toml pins)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 scripts/release-workflow.py --dist-version)
+          curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/axodotdev/cargo-dist/releases/download/v${version}/cargo-dist-installer.sh" | sh
+          dist --version
+      - name: dist plan
+        run: dist plan
+      - name: release.yml is what dist generates from dist-workspace.toml
+        run: python3 scripts/release-workflow.py --check
+      - name: The README that every archive ships has the install commands
+        run: |
+          set -euo pipefail
+          for s in \
+            'https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.sh' \
+            'https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.ps1' \
+            'cargo binstall --git https://github.com/NeuralDEEPnet/openBrick openbrick' \
+            'gh attestation verify' \
+            'docs/guides/install.md'; do
+            grep -qF -- "$s" README.md || { echo "README.md lacks: $s (docs/guides/install.md has the text)"; exit 1; }
+          done
+          if grep -qF 'Nothing is installable yet' README.md; then
+            echo "README.md still says nothing is installable"; exit 1
+          fi
+      - name: Does this change touch the release build?
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="" ;;
+          esac
+          paths="$RUNNER_TEMP/release-paths.txt"
+          {
+            python3 scripts/release-workflow.py --trigger-paths
+            printf '%s\n' Cargo.lock README.md LICENSE CHANGELOG.md .github/workflows/ci.yml
+          } > "$paths"
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2> /dev/null; then
+            echo "no base commit to compare with; building to be safe"
+            build=true
+          else
+            git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed.txt"
+            if grep -xF -f "$paths" "$RUNNER_TEMP/changed.txt"; then
+              build=true
+            else
+              build=false
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "release build, install and SBOM: $build"
+      - uses: Swatinem/rust-cache@v2
+        if: steps.scope.outputs.build == 'true'
+      - name: Build the Linux archive and the shell installer as a release job does
+        if: steps.scope.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          python3 scripts/third-party-licenses.py target/THIRD-PARTY-LICENSES.txt
+          RUSTFLAGS="--remap-path-prefix=${cargo_home}=/cargo" \
+            dist build --target x86_64-unknown-linux-gnu --artifacts=all
+      - name: Install from the local archive with the shell installer, then run it
+        if: steps.scope.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          OPENBRICK_DOWNLOAD_URL="file://$PWD/target/distrib" \
+            OPENBRICK_UNMANAGED_INSTALL="$RUNNER_TEMP/openbrick" \
+            sh target/distrib/openbrick-installer.sh
+          ob="$RUNNER_TEMP/openbrick/openbrick"
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          test "$("$ob" --version)" = "openbrick $version"
+          "$ob" about > /dev/null
+          "$ob" build parts/ndn.logo-tile.obpart.json --fit example --out "$RUNNER_TEMP/tile.3mf"
+          test -s "$RUNNER_TEMP/tile.3mf"
+          tar -tJf target/distrib/openbrick-x86_64-unknown-linux-gnu.tar.xz > "$RUNNER_TEMP/contents.txt"
+          cat "$RUNNER_TEMP/contents.txt"
+          for f in openbrick README.md LICENSE CHANGELOG.md THIRD-PARTY-LICENSES.txt; do
+            grep -qx "openbrick-x86_64-unknown-linux-gnu/$f" "$RUNNER_TEMP/contents.txt"
+          done
+          if grep -qF "${CARGO_HOME:-$HOME/.cargo}" "$ob"; then
+            echo "the runner's cargo folder is still in the binary"; exit 1
+          fi
+      - name: SBOM with the cargo-cyclonedx version dist uses
+        if: steps.scope.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/CycloneDX/cyclonedx-rust-cargo/releases/download/cargo-cyclonedx-0.5.5/cargo-cyclonedx-installer.sh | sh
+          cargo cyclonedx -v
+          python3 -I -c 'import sys, xml.etree.ElementTree as ET; ns = {"c": "http://cyclonedx.org/schema/bom/1.3"}; bom = ET.parse(sys.argv[1]).getroot(); n = len(bom.findall("c:components/c:component", ns)); print(n, "components"); sys.exit(0 if n > 0 else 1)' crates/openbrick/openbrick.cdx.xml
+      - name: Keep the archive, the installer and the SBOM
+        if: always() && steps.scope.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-preview
+          path: |
+            target/distrib/*.tar.xz
+            target/distrib/*.sha256
+            target/distrib/sha256.sum
+            target/distrib/openbrick-installer.sh
+            crates/openbrick/openbrick.cdx.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  desktop:
+    # Desktop app alpha (apps/desktop): the playground in a Tauri 2 window with
+    # native open and save dialogs (docs/plan/09 sections 1 to 4, D13). Builds
+    # the core (cargo xtask wasm), checks the openbrick-desktop crate with its
+    # Tauri feature (clippy, tests; the file rules also run in check and
+    # test-cross through cargo test --workspace), runs the configuration tests
+    # (node --test: CSP, permissions, window, pins), builds the debug app and
+    # runs the smoke test: the debug app under Xvfb, driven by tauri-driver
+    # 2.1.0 and WebKitWebDriver. It checks that the first tile equals
+    # native_eval and is shown in the 3D view, that the Content Security Policy
+    # is in force, that Download 3MF, Download STL and the coupon 3MF write
+    # files byte-identical to native_eval's exports through the app's save
+    # command (the coupon 3MF also over Tauri's postMessage IPC fallback),
+    # that an SVG and a fit profile open through the open command, and
+    # that a file over the core's limit is refused before it is read. On main
+    # it also bundles an unsigned .deb and keeps it as an artifact. No AppImage
+    # yet: it would copy system libraries under the LGPL (WebKitGTK, GTK, GLib)
+    # into the file, which needs their notices and a source offer and is a
+    # licence decision for a maintainer (apps/desktop/README.md). The macOS and
+    # Windows compile checks are in desktop-cross; their bundles come with the
+    # release workflow (docs/plan/09 section 7).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux packages for Tauri (WebKitGTK 4.1) and the smoke test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libsoup-3.0-dev webkit2gtk-driver xvfb
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: wasm-bindgen version pinned in Cargo.lock
+        id: wbg
+        run: echo "version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print }' Cargo.lock)" >> "$GITHUB_OUTPUT"
+      - name: Cache the wasm-bindgen CLI and tauri-driver
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/wasm-bindgen
+            ~/.cargo/bin/tauri-driver
+          key: desktop-tools-wasm-bindgen-${{ steps.wbg.outputs.version }}-tauri-driver-2.1.0-${{ runner.os }}-${{ runner.arch }}
+      - name: Install the wasm-bindgen CLI and tauri-driver
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install wasm-bindgen-cli --version "=${{ steps.wbg.outputs.version }}" --locked
+          cargo install tauri-driver --version =2.1.0 --locked
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the core (wasm-bindgen --target web)
+        run: cargo xtask wasm
+      - name: Clippy and tests of the desktop crate with the Tauri app
+        run: |
+          cargo clippy -p openbrick-desktop --features app --all-targets -- -D warnings
+          cargo test -p openbrick-desktop --features app
+      - name: Configuration tests (node --test)
+        run: pnpm --dir apps/desktop test
+      - name: Build the debug app (no bundle)
+        run: pnpm --dir apps/desktop build:debug
+      - name: Smoke test under Xvfb (tauri-driver and WebKitWebDriver; software rendering)
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" pnpm --dir apps/desktop smoke --no-build --screenshots smoke-screenshots
+      - name: Bundle the unsigned .deb (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: pnpm --dir apps/desktop tauri build --bundles deb
+      - name: Keep the smoke screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke
+          path: apps/desktop/smoke-screenshots
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Keep the Linux .deb
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-deb-unsigned
+          path: target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 30
+
+  desktop-cross:
+    # The Tauri app (feature `app` of openbrick-desktop) compiled, linted and
+    # tested on Windows and macOS on every pull request, so app.rs and main.rs
+    # (the Windows subsystem attribute, the dialog and opener calls, the
+    # Linux-only safe rendering block) are not first compiled at release time.
+    # A dev build of a Tauri app embeds no frontend (tauri-codegen 2.7.4,
+    # src/context.rs: with devUrl set it uses empty assets), so this job needs
+    # neither the wasm core nor the web build, and on these OSes no system
+    # packages either (WebView2 and WKWebView come with the OS; the WebView2
+    # loader is linked statically on MSVC). The tests are the navigation guard
+    # and the save body checks; the file rules also run in test-cross. Linux is
+    # covered by the desktop job. Bundles for these OSes come from the release
+    # workflow (docs/plan/09 section 7); tauri-action builds on pull requests
+    # (docs/plan/10 section 5, desktop-bundles) can replace this job later.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy of the desktop crate with the Tauri app
+        run: cargo clippy -p openbrick-desktop --features app --all-targets -- -D warnings
+      - name: Tests of the desktop crate with the Tauri app
+        run: cargo test -p openbrick-desktop --features app
+
+# Note for release.yml (docs/plan/09 section 7; not written here): on tags
+# vX.Y.Z add a `desktop` matrix job next to the dist jobs, unsigned until M4.
+# Matrix, one row per tier-1 desktop target of plan 09 section 1:
+#   - ubuntu-22.04 (Linux x64; the oldest glibc and WebKitGTK 4.1 for the
+#     packages): `--bundles deb,rpm`; same apt packages as the desktop job,
+#     without webkit2gtk-driver and xvfb.
+#   - ubuntu-22.04-arm (Linux arm64, native runner; cross-compiling
+#     against WebKitGTK would need an arm64 sysroot): `--bundles deb,rpm`,
+#     same packages.
+#     No AppImage on either Linux row until a maintainer has made the licence
+#     decision in apps/desktop/README.md (notices and a source offer for the
+#     LGPL libraries it copies in); plan 09 lists AppImage, so this is a
+#     deferral, not a removal.
+#   - windows-2025 (Windows x64): NSIS and MSI.
+#   - windows-11-arm (Windows arm64, native runner, or windows-2025 with
+#     `--target aarch64-pc-windows-msvc` and the MSVC arm64 build tools):
+#     NSIS; check whether tauri-bundler's WiX path supports arm64 MSI before
+#     adding `msi` to that row.
+#   - macos-26 with `--target aarch64-apple-darwin` and
+#     `--target x86_64-apple-darwin` (DMG; or one universal-apple-darwin
+#     build).
+# Steps: checkout; Rust stable with wasm32-unknown-unknown (plus the row's
+# target); the pinned wasm-bindgen CLI; pnpm install --frozen-lockfile;
+# cargo xtask wasm (scripts/frontend.mjs refuses to build without
+# apps/web/src/wasm/); then tauri-apps/tauri-action (pin it by commit SHA)
+# with `projectPath: apps/desktop`, `tauriScript: pnpm tauri`, `args:` the
+# row's `--target` and `--bundles`, `tagName: ${{ github.ref_name }}`,
+# `releaseDraft: true`, `includeUpdaterJson: false`, and no APPLE_*,
+# TAURI_SIGNING_* or Windows signing secrets (unsigned; the updater plugin
+# and its key come in M4 with signing, docs/plan/09 sections 3 and 4).
+# Permissions: contents: write for that job only. The release notes say the
+# desktop builds are unsigned and how to open them (README of apps/desktop).
+
+  docs:
+    # Plan links, then the documentation site (docs/site, backlog item 16,
+    # docs/plan/10 section 7). `cargo xtask docs --check`:
+    # - fails when the committed CLI reference (docs/site/src/cli.md,
+    #   generated from the openbrick command's --help) is out of date;
+    # - stages docs/guides, docs/plan and docs/spikes beside docs/site/src: a
+    #   link to a file that does not exist fails, links to other repository
+    #   files become GitHub links, every page must be in SUMMARY.md, and every
+    #   page gets a footer with its source link and the disclaimer;
+    # - checks that the credits page names the pinned mdBook (MPL-2.0; its
+    #   front-end files ship with the site);
+    # - builds the site with the mdBook version pinned in crates/xtask/src/docs.rs;
+    # - checks every relative link, every #anchor and every page footer in
+    #   the HTML.
+    # The pages workflow publishes the same build at
+    # https://neuraldeepnet.github.io/openBrick/docs/.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Check plan links
@@ -428,3 +752,29 @@ jobs:
                   if not os.path.exists(p): print('broken', f, t); bad+=1
           sys.exit(1 if bad else 0)
           EOF
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - name: mdBook version pinned by cargo xtask docs
+        id: mdbook
+        run: echo "version=$(cargo xtask docs --mdbook-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache mdBook
+        id: mdbook-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/mdbook
+          key: mdbook-${{ steps.mdbook.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Install mdBook
+        if: steps.mdbook-cache.outputs.cache-hit != 'true'
+        run: cargo install mdbook --version "=${{ steps.mdbook.outputs.version }}" --locked
+      - name: Build the site, check its links, page footers and the CLI reference
+        run: cargo xtask docs --check
+      - name: Keep the built site
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: target/docs/
+          if-no-files-found: ignore
+          retention-days: 14

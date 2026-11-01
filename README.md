@@ -4,7 +4,7 @@
 
 > **Disclaimer.** OpenBrick3D is an independent, community-driven open-source project published by Neural Deep Network Ltd (Malta). It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group. LEGO®, the LEGO® logo and the Minifigure are trademarks of the LEGO Group of companies, which does not sponsor, authorize or endorse this project. Works with LEGO®-compatible bricks. LDraw™ is a trademark of the Estate of James Jessiman. This software uses the LDraw Parts Library (https://www.ldraw.org).
 
-**Status:** milestone M0. The geometry kernel works (pure Rust, bit-identical on native and WebAssembly), data documents have JSON Schemas, and the M0 spikes are reported in [`docs/spikes/`](docs/spikes/). Nothing is installable yet, but the browser playground runs at https://neuraldeepnet.github.io/openBrick/ once GitHub Pages is switched on. There you design a logo tile, starting from the Neuraldeep.net demo tile (the playground's default artwork; its sample chooser also has a square badge and a CC0 sample mark) or from your own SVG, check it and download a 3MF or STL, or print the calibration coupon; see [apps/web/README.md](apps/web/README.md). The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
+**Status:** milestone M1, the CLI alpha (0.1.0). The geometry kernel works (pure Rust, bit-identical on native and WebAssembly), data documents have JSON Schemas, and the M0 spikes are reported in [`docs/spikes/`](docs/spikes/). The `openbrick` command line installs with one command from the first release, v0.1.0, on (see [Install](#install)); the browser playground runs at https://neuraldeepnet.github.io/openBrick/ once GitHub Pages is switched on. There you design a logo tile, starting from the Neuraldeep.net demo tile (the playground's default artwork; its sample chooser also has a square badge and a CC0 sample mark) or from your own SVG, check it and download a 3MF or STL, or print the calibration coupon; see [apps/web/README.md](apps/web/README.md). The same playground runs as a desktop app alpha too (Tauri 2, native open and save dialogs, unsigned; build it from source with [apps/desktop/README.md](apps/desktop/README.md), and CI keeps an unsigned Linux .deb from main). The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
 
 ## Three pillars, one core
 
@@ -28,7 +28,7 @@
 ```
 crates/        Rust workspace: units, geom, part, print, engine, catalog, io, openbrick (CLI), openbrick-wasm, xtask
 packages/      TypeScript packages: viewport (kernel-to-three.js frame so far); core-wasm, ui, state from M2
-apps/          web (the browser playground: logo tile designer and calibration coupon; Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (Tauri 2, from M2)
+apps/          web (the browser playground: logo tile designer and calibration coupon; Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (the desktop app alpha: the same playground in a Tauri 2 window with native open and save dialogs)
 standards/     Dimensional Standard v1 (CC0) and measurement data
 profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla) and example fit profiles
 parts/         openBrick-native part documents (CC0; the Neuraldeep.net marks in parts/assets/brand/ are all rights reserved, see its NOTICE.md)
@@ -36,6 +36,7 @@ schemas/       JSON Schemas for every document kind
 bench/         device render harness (bench/harness) and device results (bench/devices)
 docs/plan/     the full planning record
 docs/spikes/   M0 spike reports (kernels, LDraw connectivity)
+docs/site/     the documentation site (mdBook; cargo xtask docs)
 ```
 
 ## Building (M0)
@@ -43,24 +44,40 @@ docs/spikes/   M0 spike reports (kernels, LDraw connectivity)
 ```
 cargo xtask check      # fmt, clippy, tests, data validation
 cargo xtask wasm       # WebAssembly core into apps/web/src/wasm/ (pinned wasm-bindgen CLI, size budget)
+cargo xtask docs       # documentation site into target/docs/ (mdBook 0.5.4: cargo install mdbook --locked --version 0.5.4)
 cargo run -p openbrick -- standard   # print the Dimensional Standard
 cargo install --path crates/openbrick --locked                      # the openbrick CLI from this clone
 openbrick calibrate coupon --out coupon.3mf --manifest coupon.json  # print it, then openbrick calibrate record ...
 openbrick build parts/ndn.logo-tile.obpart.json --fit my-fit.json --out tile.3mf
 ```
 
-Requires Rust 1.90 or newer (`rust-toolchain.toml` selects stable). Node 22 and pnpm are needed for the device render harness (`pnpm --dir bench/harness dev`) and the web app (`pnpm --dir apps/web start`, which first runs `cargo xtask wasm`; that needs the `wasm32-unknown-unknown` target and `cargo install wasm-bindgen-cli --version =0.2.129 --locked`). `pnpm test` runs their unit tests. See [apps/web/README.md](apps/web/README.md).
+Requires Rust 1.90 or newer (`rust-toolchain.toml` selects stable). Node 22 and pnpm are needed for the device render harness (`pnpm --dir bench/harness dev`) and the web app (`pnpm --dir apps/web start`, which first runs `cargo xtask wasm`; that needs the `wasm32-unknown-unknown` target and `cargo install wasm-bindgen-cli --version =0.2.129 --locked`). `pnpm test` runs their unit tests. See [apps/web/README.md](apps/web/README.md). The desktop app: `pnpm --dir apps/desktop dev` after `cargo xtask wasm`, with the Tauri prerequisites of your OS ([apps/desktop/README.md](apps/desktop/README.md)).
 
 First print test (coupon, fit profile, logo tile in one or two colours, pull test): [docs/guides/print-test.md](docs/guides/print-test.md).
 
-## Install (planned)
+Prefer tapping to typing? The playground's Calibration coupon mode records your fit too (2. Record my fit): tap the best cells on a map of the printed coupon, and the logo tile uses the fit profile at once, kept in that browser only.
+
+The documentation site (install, the print-test guide, the CLI reference generated from the `openbrick` command, the plan and the spike reports) is published with the playground at https://neuraldeepnet.github.io/openBrick/docs/ once GitHub Pages is switched on. Its source and how to build it are in [docs/site/README.md](docs/site/README.md).
+
+## Install
+
+From the first release, v0.1.0, on ([every way to install, and how to verify a download](docs/guides/install.md)):
+
+| System | Command |
+|--------|---------|
+| macOS, Linux | `curl --proto '=https' --tlsv1.2 -LsSf https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.sh \| sh` |
+| Windows (PowerShell) | `powershell -ExecutionPolicy Bypass -c "irm https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.ps1 \| iex"` |
+| cargo-binstall | `cargo binstall --git https://github.com/NeuralDEEPnet/openBrick openbrick` (`cargo binstall openbrick` once the crate is on crates.io, M2) |
+| From a clone | `cargo install --path crates/openbrick --locked` (works today) |
+
+Every release file has a GitHub artifact attestation; check one with `gh attestation verify <file> --repo NeuralDEEPnet/openBrick`. Each release also carries a CycloneDX SBOM (`openbrick.cdx.xml`). The example parts of the [print-test guide](docs/guides/print-test.md) are in `parts/`; clone the release tag that matches your `openbrick --version` (for example `git clone --branch v0.1.0 https://github.com/NeuralDEEPnet/openBrick`).
+
+Planned channels:
 
 | Channel | Command | Milestone |
 |---------|---------|-----------|
-| Shell installer | `curl -fsSL https://openbrick3d.org/install.sh \| sh` | M1 |
-| PowerShell | `irm https://openbrick3d.org/install.ps1 \| iex` | M1 |
-| cargo-binstall | `cargo binstall openbrick` | M1 |
 | npm, uv, Homebrew tap, scoop | see [docs/plan/09](docs/plan/09-platforms-and-distribution.md) | M2 |
+| Desktop app alpha (unsigned) | from source: `pnpm --dir apps/desktop build`; a Linux .deb as a CI artifact from main ([apps/desktop](apps/desktop/README.md)) | M2 |
 | Desktop stores, Flathub, winget | | M4 |
 | PWA, Android | `openbrick serve --qr` and scan | M4 |
 | iOS | TestFlight, then App Store | M5, M6 |

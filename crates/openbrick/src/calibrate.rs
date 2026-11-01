@@ -12,7 +12,8 @@ use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_io::ExportMeta;
 use openbrick_part::coupon::{build_coupon, Arrangement, CouponOptions, PocketSet};
 use openbrick_print::{
-    coupon_v1, record, FitProfile, RecordInput, DEFAULT_POCKET_SET, FIT_INTENTS, POCKET_SETS,
+    coupon_v1, fit_profile_text, offset_rows, record, RecordInput, DEFAULT_NOZZLE_MM,
+    DEFAULT_POCKET_SET, FIT_INTENTS, POCKET_SETS,
 };
 use serde_json::{json, Value};
 
@@ -103,7 +104,7 @@ pub struct RecordArgs {
     #[arg(long)]
     pub brand: Option<String>,
     /// Nozzle diameter in mm.
-    #[arg(long, default_value_t = 0.4, value_parser = finite, value_name = "MM")]
+    #[arg(long, default_value_t = DEFAULT_NOZZLE_MM, value_parser = finite, value_name = "MM")]
     pub nozzle: f64,
     /// Slicer and version, for example "PrusaSlicer 2.9.2".
     #[arg(long, default_value = "")]
@@ -537,24 +538,6 @@ fn chosen_cells(args: &RecordArgs) -> BTreeMap<String, f64> {
     .collect()
 }
 
-/// The rows of the offsets table, in the order of the coupon data: (cell,
-/// chosen, nominal, offset field, offset).
-fn offset_rows(profile: &FitProfile) -> Vec<(String, f64, f64, String, f64)> {
-    let Some(cal) = &profile.calibration else {
-        return Vec::new();
-    };
-    coupon_v1()
-        .cells
-        .iter()
-        .filter_map(|cell| {
-            let &chosen = cal.chosen_cells.get(&cell.id)?;
-            let field = cell.offset_field.clone()?;
-            let offset = profile.offsets_mm.get(&field)?;
-            Some((cell.id.clone(), chosen, cell.nominal_mm(), field, offset))
-        })
-        .collect()
-}
-
 /// `openbrick calibrate record`.
 pub fn record_cmd(args: &RecordArgs, ui: Ui) -> Result<Outcome, Fail> {
     let input = RecordInput {
@@ -573,9 +556,10 @@ pub fn record_cmd(args: &RecordArgs, ui: Ui) -> Result<Outcome, Fail> {
         pocket_set: Some(args.pocket_set.clone()),
     };
     let profile = record(&input).map_err(|e| Fail::Input(e.to_string()))?;
-    let mut text = serde_json::to_string_pretty(&profile)
+    // The browser wizard writes its file with the same function
+    // (crates/openbrick/tests/record_parity.rs).
+    let text = fit_profile_text(&profile)
         .map_err(|e| Fail::Internal(format!("cannot encode the fit profile: {e}")))?;
-    text.push('\n');
     write_file(&args.out, text.as_bytes()).map_err(Fail::Input)?;
 
     let rows = offset_rows(&profile);
@@ -590,10 +574,14 @@ pub fn record_cmd(args: &RecordArgs, ui: Ui) -> Result<Outcome, Fail> {
         "  {:<13} {:>7} {:>8} {:>8}  offset field",
         "cell", "chosen", "nominal", "offset"
     ));
-    for (cell, chosen, nominal, field, offset) in &rows {
+    for row in &rows {
         ui.say(format!(
-            "  {cell:<13} {chosen:>7.2} {nominal:>8.3} {:>8}  {field}",
-            signed(*offset)
+            "  {:<13} {:>7.2} {:>8.3} {:>8}  {}",
+            row.cell,
+            row.chosen_mm,
+            row.nominal_mm,
+            signed(row.offset_mm),
+            row.offset_field
         ));
     }
     ui.say(format!(
@@ -601,18 +589,8 @@ pub fn record_cmd(args: &RecordArgs, ui: Ui) -> Result<Outcome, Fail> {
         args.out.display()
     ));
     ui.say("Then run the pull test (docs/guides/print-test.md) and share the result if you like.");
-    let offsets: Vec<Value> = rows
-        .iter()
-        .map(|(cell, chosen, nominal, field, offset)| {
-            json!({
-                "cell": cell,
-                "chosenMm": chosen,
-                "nominalMm": nominal,
-                "offsetField": field,
-                "offsetMm": offset,
-            })
-        })
-        .collect();
+    let offsets = serde_json::to_value(&rows)
+        .map_err(|e| Fail::Internal(format!("cannot encode the offsets: {e}")))?;
     Ok(Outcome {
         code: 0,
         json: json!({

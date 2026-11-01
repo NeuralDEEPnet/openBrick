@@ -33,6 +33,33 @@ export function writeMode(search, mode) {
   return s ? `?${s}` : "";
 }
 
+/** The steps of the coupon mode: print the coupon, then record the fit. */
+export const STEPS = ["print", "record"];
+
+/** Read ?step= (print, the default, or record); it applies to the coupon mode. */
+export function readStep(search) {
+  const step = new URLSearchParams(search).get("step") ?? "print";
+  if (STEPS.includes(step)) return { step, errors: [] };
+  return { step: "print", errors: [`step must be one of ${STEPS.join(", ")}, got ${JSON.stringify(step)}`] };
+}
+
+/** The query string with ?step= set for the coupon mode (left out for print and in the tile mode). */
+export function writeStep(search, mode, step) {
+  const q = new URLSearchParams(search);
+  if (mode === "coupon" && step !== "print") q.set("step", step);
+  else q.delete("step");
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
+/** The rules a fit profile fixes: their blockers offer the calibration wizard. */
+export const CALIBRATION_RULES = ["FIT.MISSING", "FIT.PROCESS"];
+
+/** Whether a report has a blocker that calibrating fixes (FIT.MISSING or FIT.PROCESS). */
+export function needsCalibration(report) {
+  return (report?.findings ?? []).some((f) => f.severity === "blocker" && CALIBRATION_RULES.includes(f.rule));
+}
+
 /** The value a stepper button produces: current + step, kept within min and max. */
 export function stepStuds(current, step, maxStuds, minStuds = 1) {
   const n = Number.isInteger(current) ? current : minStuds;
@@ -122,7 +149,7 @@ export function findingView(f) {
     threshold: f.threshold === null ? null : num(f.threshold, unit),
     fix: f.fix,
     feature: f.feature ?? null,
-    calibrate: f.rule === "FIT.MISSING" || f.rule === "FIT.PROCESS",
+    calibrate: CALIBRATION_RULES.includes(f.rule),
   };
 }
 

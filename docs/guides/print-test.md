@@ -1,8 +1,9 @@
 # Print test: from the calibration coupon to your own logo tile
 
-This guide takes you from a fresh clone to a printed, brick-compatible 2x4 logo
+This guide takes you from a fresh install to a printed, brick-compatible 2x4 logo
 tile that grips genuine bricks, using only the `openbrick` command line and your
-slicer. It is written for FDM printers with a 0.4 mm nozzle and checked against
+slicer (section 4 shows how to record your fit in the browser playground
+instead, if you prefer tapping the cells to typing them). It is written for FDM printers with a 0.4 mm nozzle and checked against
 three setups:
 
 | Printer | Bed | Colours | Slicer |
@@ -17,7 +18,37 @@ recommends PETG for parts that get played with (docs/plan/05 section 11).
 
 ## 1. Install
 
-You need Rust 1.90 or newer ([rustup.rs](https://rustup.rs)) and git.
+**With an installer** (from the first release, v0.1.0, on; no Rust needed).
+On macOS and Linux:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/NeuralDEEPnet/openBrick/releases/latest/download/openbrick-installer.ps1 | iex"
+```
+
+With cargo-binstall: `cargo binstall --git https://github.com/NeuralDEEPnet/openBrick openbrick`.
+The installers put `openbrick` in `~/.cargo/bin` and add that folder to your
+`PATH`; open a new terminal afterwards. This guide also needs the example
+parts, so get the repository as well, at the release tag of your `openbrick`
+(the parts on the `main` branch can already need a newer CLI):
+
+```sh
+openbrick --version
+git clone --branch "v$(openbrick --version | cut -d' ' -f2)" https://github.com/NeuralDEEPnet/openBrick
+cd openBrick
+```
+
+`openbrick --version` prints `openbrick 0.1.0`, so this clones the tag
+`v0.1.0`; in PowerShell, type the tag yourself (`--branch v0.1.0`). Unpacking
+`source.tar.gz` from the same release works too.
+
+**From the clone** (works before the first release too). You need Rust 1.90 or
+newer ([rustup.rs](https://rustup.rs)) and git.
 
 ```sh
 git clone https://github.com/NeuralDEEPnet/openBrick
@@ -25,6 +56,9 @@ cd openBrick
 cargo install --path crates/openbrick --locked
 openbrick --version
 ```
+
+[install.md](install.md) lists every way to install and shows how to check a
+download with `gh attestation verify` before you run it.
 
 Run the commands below from the `openBrick` folder, so the example part
 `parts/ndn.logo-tile.obpart.json` is found. Every command has `--help`.
@@ -105,6 +139,33 @@ standard size). A value that is not on the coupon, or a pocket your pocket set
 did not print, is refused with the list of valid choices. Record one profile
 per printer and material; print the coupon again when you change filament
 brand.
+
+**Or record it in the browser.** The [playground](https://neuraldeepnet.github.io/openBrick/?mode=coupon&step=record)
+(once GitHub Pages is switched on for the repository; or run it yourself with
+`pnpm --dir apps/web start`, see [apps/web/README.md](../../apps/web/README.md))
+does the same without the command line:
+
+1. Open **Calibration coupon** and set the process, pocket layout and bed size
+   you printed the coupon with, then choose **2. Record my fit**. In the logo
+   tile, **Calibrate** next to a `FIT.MISSING` blocker opens the same step.
+2. The map shows your coupon as it lies with its labels upright: both copies,
+   every cell where it is printed, labelled as printed. Copies printed side by
+   side (the full pocket layout on a large bed) are shown one under the other,
+   each named. Tap the best stud, the best tube bore and the best pocket, in
+   either copy (a pocket is one tap: its tube OD and rib depth together; only
+   the pockets your layout printed are on the map). With a keyboard, Tab to a
+   line and use the arrow keys.
+3. Choose the printer (Prusa MINI+, Prusa XL, Bambu Lab A1 or Other) and type
+   the material. The nozzle is pre-filled with 0.4 mm (change it if you
+   printed with another nozzle) and the date with today; slicer and notes are
+   optional. The table shows each offset before you save; a refused value is
+   explained next to its field.
+4. **Download fit profile** saves the same file `openbrick calibrate record`
+   writes for the same choices, byte for byte, named after the profile id (for
+   example `prusa-mini-pla-fdm-0.4.json`), so `--fit` takes it in section 5.
+   **Use this fit profile** selects it in the logo tile at once and keeps it in
+   that browser only (Forget removes it); the tile's downloads then carry its
+   id. Nothing leaves your browser.
 
 ## 5. Build a logo tile from your SVG
 

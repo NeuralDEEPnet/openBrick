@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- OpenBrick3D app icon (CC0): a generic 2x2 brick-compatible brick in isometric
+       view, flat colours, no text and no logo. Source of apps/desktop/src-tauri/icons/,
+       generated from apps/desktop with: pnpm tauri icon icon.svg -o src-tauri/icons -->
+  <polygon points="72,359.6 512,613.6 512,918.5 72,664.4" fill="#2f6db5"/>
+  <polygon points="952,359.6 512,613.6 512,918.5 952,664.4" fill="#1f4c86"/>
+  <polygon points="512,105.5 952,359.6 512,613.6 72,359.6" fill="#4a8be0"/>
+  <path d="M418.7,232.6 A93.3,53.9 0 0 0 605.3,232.6 L605.3,176.7 L418.7,176.7 Z" fill="#2a64a8"/>
+  <ellipse cx="512" cy="176.7" rx="93.3" ry="53.9" fill="#6aa6ec"/>
+  <path d="M638.7,359.6 A93.3,53.9 0 0 0 825.3,359.6 L825.3,303.7 L638.7,303.7 Z" fill="#2a64a8"/>
+  <ellipse cx="732" cy="303.7" rx="93.3" ry="53.9" fill="#6aa6ec"/>
+  <path d="M198.7,359.6 A93.3,53.9 0 0 0 385.3,359.6 L385.3,303.7 L198.7,303.7 Z" fill="#2a64a8"/>
+  <ellipse cx="292" cy="303.7" rx="93.3" ry="53.9" fill="#6aa6ec"/>
+  <path d="M418.7,486.6 A93.3,53.9 0 0 0 605.3,486.6 L605.3,430.7 L418.7,430.7 Z" fill="#2a64a8"/>
+  <ellipse cx="512" cy="430.7" rx="93.3" ry="53.9" fill="#6aa6ec"/>
+</svg>

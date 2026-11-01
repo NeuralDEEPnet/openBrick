@@ -163,6 +163,14 @@ function fakeCore({ throws = null } = {}) {
       calls.push(["coupon_layout_json", process, layout]);
       return '{"cells":[],"summary":{}}';
     },
+    record_fit(input) {
+      calls.push(["record_fit", input]);
+      fail();
+      const parsed = JSON.parse(input);
+      return parsed.material
+        ? JSON.stringify({ ok: true, fileName: "x.json", text: "{}\n", fitProfile: { id: "x" }, offsets: [] })
+        : JSON.stringify({ ok: false, error: { field: "material", message: "material is empty; it is required" } });
+    },
     export_coupon(format, process, layout, colors) {
       calls.push(["export_coupon", format, process, layout, colors]);
       fail();
@@ -510,6 +518,22 @@ test("couponLayout and exportCoupon pass the layout as JSON text", () => {
     ["export_coupon", "3mf", "fdm-0.4", '{"copies":1}', ""],
   ]);
   assert.match(dispatch(core, { id: 3, type: "exportCoupon", format: "step", process: "fdm-0.4" }).reply.error, /format must be/);
+});
+
+test("recordFit sends the wizard's choices as JSON text and answers the core's record or refusal", () => {
+  const core = fakeCore();
+  const input = { process: "fdm-0.4", printer: "Prusa MINI+", material: "PLA", cells: { stud: 1.25 } }; // a fake core: any number of millimetres
+  const ok = dispatch(core, { id: 1, type: "recordFit", input }).reply;
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.result, { ok: true, fileName: "x.json", text: "{}\n", fitProfile: { id: "x" }, offsets: [] });
+  assert.deepEqual(core.calls[0], ["record_fit", JSON.stringify(input)]);
+  // A refusal is an answer, not a failed request: the page shows it by its field.
+  const refused = dispatch(core, { id: 2, type: "recordFit", input: { ...input, material: "" } }).reply;
+  assert.equal(refused.ok, true);
+  assert.deepEqual(refused.result.error, { field: "material", message: "material is empty; it is required" });
+  for (const bad of [undefined, "{}", [], null]) {
+    assert.match(dispatch(core, { id: 3, type: "recordFit", input: bad }).reply.error, /recordFit needs the wizard's choices/);
+  }
 });
 
 test("build and export request types are listed for the client", () => {

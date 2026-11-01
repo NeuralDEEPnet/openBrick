@@ -5,7 +5,10 @@
 //! here is repeated in JavaScript.
 
 use openbrick_part::coupon::CouponOptions;
-use openbrick_print::{default_process_profiles, DEFAULT_POCKET_SET, POCKET_SETS};
+use openbrick_print::{
+    default_process_profiles, DEFAULT_NOZZLE_MM, DEFAULT_POCKET_SET, FIT_INTENTS, POCKET_CELLS,
+    POCKET_SETS,
+};
 use serde_json::{json, Value};
 
 #[cfg(target_arch = "wasm32")]
@@ -198,15 +201,23 @@ pub fn max_asset_bytes() -> u32 {
     u32::try_from(openbrick_part::eval::MAX_SVG_BYTES).expect("the limit fits u32")
 }
 
-/// What the coupon controls offer: `{ pocketSets, defaultPocketSet, defaults }`,
-/// where `defaults` is `CouponOptions::default()` in its JSON form (the layout
-/// [`crate::build_coupon`] takes).
+/// What the coupon controls offer: `{ pocketSets, defaultPocketSet, defaults,
+/// record }`, where `defaults` is `CouponOptions::default()` in its JSON form
+/// (the layout [`crate::build_coupon`] takes) and `record` the defaults of the
+/// wizard's record step, the CLI's (`{ nozzleMm, intents, pocketCells }`: the
+/// nozzle `openbrick_print::DEFAULT_NOZZLE_MM`, the fit intents, the default
+/// first, and the two cell ids of a pocket, tube OD then rib depth).
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn coupon_choices_json() -> String {
     json!({
         "pocketSets": POCKET_SETS,
         "defaultPocketSet": DEFAULT_POCKET_SET,
         "defaults": CouponOptions::default(),
+        "record": {
+            "nozzleMm": DEFAULT_NOZZLE_MM,
+            "intents": FIT_INTENTS,
+            "pocketCells": POCKET_CELLS,
+        },
     })
     .to_string()
 }
@@ -362,5 +373,11 @@ mod tests {
         assert_eq!(v["defaultPocketSet"], "cross");
         let opts: CouponOptions = serde_json::from_value(v["defaults"].clone()).unwrap();
         assert_eq!(opts, CouponOptions::default());
+        assert_eq!(v["record"]["nozzleMm"], DEFAULT_NOZZLE_MM);
+        assert_eq!(v["record"]["intents"][0], "fits-genuine-bricks");
+        assert_eq!(
+            v["record"]["pocketCells"],
+            json!(["pocketTubeOD", "pocketRib"])
+        );
     }
 }
