@@ -36,7 +36,7 @@ use serde_json::json;
 const LOGO_TILE: &str = include_str!("../../../parts/ndn.logo-tile.obpart.json");
 const MARK_SVG: &[u8] = include_bytes!("../../../parts/assets/mark.svg");
 const BRAND_TILE: &str = include_str!("../../../parts/ndn.brand-tile.obpart.json");
-const BRAND_SVG: &[u8] = include_bytes!("../../../parts/assets/brand/neuraldeep-mark-2x4.svg");
+const BRAND_SVG: &[u8] = include_bytes!("../../../parts/assets/brand/neuraldeep-wordmark-2x6.svg");
 use openbrick_print::{default_process_profiles, example_fit_profile};
 
 fn doc(x: u32, y: u32, kind: &str) -> PartDoc {
@@ -95,7 +95,10 @@ fn main() {
         let mut params = ParamValues::new();
         let assets = MemoryAssets::new()
             .with("assets/mark.svg", MARK_SVG.to_vec())
-            .with("assets/brand/neuraldeep-mark-2x4.svg", BRAND_SVG.to_vec());
+            .with(
+                "assets/brand/neuraldeep-wordmark-2x6.svg",
+                BRAND_SVG.to_vec(),
+            );
         let d = if size == "brand" {
             if !kind.is_empty() {
                 params = params.with("relief", json!(kind));

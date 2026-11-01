@@ -323,7 +323,7 @@ async function main() {
   const label = "desktop";
   try {
     await session.start(exe);
-    // The first tile: the Neuraldeep.net mark, emboss, example fit profile.
+    // The first tile: the NEURALDEEP.NET wordmark on 2x6, emboss, example fit profile.
     let w = await session.waitFor(READY, `${label} first tile`, 180_000, "tile", 0);
     check(w.desktop === true, `${label}: the page does not see the desktop app (window.__web.desktop ${w.desktop})`);
     const where = await session.exec("return { protocol: location.protocol, host: location.host, tauri: typeof window.__TAURI__?.core?.invoke };");
@@ -332,6 +332,11 @@ async function main() {
       `${label}: the page is served from ${where.protocol}//${where.host}, not the app's own origin`,
     );
     check(where.tauri === "function", `${label}: window.__TAURI__.core.invoke is ${where.tauri}`);
+    // The Neuraldeep.net logo loads from the app's own origin under its CSP.
+    const logos = await session.exec(
+      "return [...document.querySelectorAll('img[alt=\"Neuraldeep.net logo\"]')].map((i) => ({ loaded: i.complete && i.naturalWidth > 0, w: i.naturalWidth, h: i.naturalHeight }));",
+    );
+    check(logos.length === 2 && logos.every((l) => l.loaded), `${label}: the Neuraldeep.net logo images are ${JSON.stringify(logos)}`);
     const part = native.part.emboss;
     check(w.part.contentHash === part.contentHash, `${label}: content hash ${w.part.contentHash}, native ${part.contentHash}`);
     check(w.part.triangles === part.triangles, `${label}: ${w.part.triangles} triangles, native ${part.triangles}`);

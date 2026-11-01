@@ -1,21 +1,22 @@
 {
   "openbrick": "1.0",
   "id": "ndn.brand-badge",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "name": "Neuraldeep.net badge",
   "license": "CC0-1.0",
-  "credit": { "author": "Neural Deep Network Ltd; default artwork: the Neuraldeep.net badge, all rights reserved (parts/assets/brand/NOTICE.md)", "url": "https://neuraldeep.net" },
+  "credit": { "author": "Neural Deep Network Ltd; default artwork: the NEURALDEEP.NET wordmark, all rights reserved (parts/assets/brand/NOTICE.md)", "url": "https://neuraldeep.net" },
   "provenance": {
     "source": "parts/ndn.logo-tile.obpart.json 1.3.0",
     "modified": true,
     "history": [
-      "1.0.0: the logo tile on a square 4x4 footprint with the Neuraldeep.net badge (assets/brand/neuraldeep-badge-4x4.svg) as its default logo. This document is CC0-1.0; the badge is not: it is Copyright Neural Deep Network Ltd, all rights reserved, and its use is limited to the OpenBrick3D demo tiles (parts/assets/brand/NOTICE.md)."
+      "1.0.0: the logo tile on a square 4x4 footprint with the Neuraldeep.net badge (assets/brand/neuraldeep-badge-4x4.svg) as its default logo. This document is CC0-1.0; the badge is not: it is Copyright Neural Deep Network Ltd, all rights reserved, and its use is limited to the OpenBrick3D demo tiles (parts/assets/brand/NOTICE.md).",
+      "2.0.0: the default artwork is the NEURALDEEP.NET wordmark set in three lines for 4x4 (assets/brand/neuraldeep-wordmark-4x4.svg, letters from Inter under the SIL Open Font License 1.1); the earlier hexagon badge and its 2x2 drawing are withdrawn, as the whole text does not print on 2x2. The wordmark is Copyright Neural Deep Network Ltd, all rights reserved (parts/assets/brand/NOTICE.md)."
     ]
   },
   "params": {
     "size":   { "type": "grid2", "unit": "stud", "default": [4, 4], "min": [1, 1], "max": [16, 32], "group": "Size", "manipulator": "corner" },
     "height": { "type": "enum", "default": "plate", "options": [ { "value": "plate", "label": "Plate (1/3)" }, { "value": "brick", "label": "Brick" } ], "group": "Size" },
-    "logo":   { "type": "svg", "default": "assets/brand/neuraldeep-badge-4x4.svg", "group": "Artwork", "help": "Single-colour SVG; lines under 0.8 mm are removed. The default is the Neuraldeep.net badge drawn for 4x4 (assets/brand/neuraldeep-badge-2x2.svg is drawn for 2x2), Copyright Neural Deep Network Ltd, all rights reserved: see assets/brand/NOTICE.md" },
+    "logo":   { "type": "svg", "default": "assets/brand/neuraldeep-wordmark-4x4.svg", "group": "Artwork", "help": "Single-colour SVG; lines under 0.8 mm are removed. The default is the NEURALDEEP.NET wordmark drawn for 4x4 (NEURAL / DEEP / .NET), Copyright Neural Deep Network Ltd, all rights reserved: see assets/brand/NOTICE.md" },
     "relief": { "type": "enum", "default": "emboss", "options": ["emboss", "deboss", "inlay"], "group": "Artwork" },
     "inlayStyle": { "type": "enum", "default": "swap", "options": [ { "value": "swap", "label": "Filament swap (one extruder)" }, { "value": "parts", "label": "Logo as its own part (AMS, tool changer)" } ], "visibleWhen": "relief == 'inlay'", "group": "Artwork", "help": "Swap: the face slab is one part and you change filament after it. Parts: the logo fill is its own part, so each part gets its own filament" },
     "reliefHeight": { "type": "length", "unit": "mm", "default": 0.6, "min": 0.2, "max": 1.5, "step": 0.1, "visibleWhen": "relief != 'inlay'", "help": "Deboss is clamped so 1.8 mm of cavity remains (0.4 mm on plates)" },

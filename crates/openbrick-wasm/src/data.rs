@@ -1,6 +1,6 @@
 //! Bundled data for the page: the process profiles, the example fit profile, the
 //! bundled part documents (the logo tile and the Neuraldeep.net tile) and their
-//! size limit, the artwork samples (the Neuraldeep.net marks and
+//! size limit, the artwork samples (the NEURALDEEP.NET wordmark and
 //! the CC0 sample mark), the disclaimer, the display colours of the colour roles
 //! and the asset size limit. The page builds its controls from these, so nothing
 //! here is repeated in JavaScript.
@@ -19,44 +19,46 @@ use wasm_bindgen::prelude::wasm_bindgen;
 const LOGO_TILE_PART: &str = include_str!("../../../parts/ndn.logo-tile.obpart.json");
 /// `parts/ndn.brand-tile.obpart.json`, the Neuraldeep.net tile with its
 /// presets, the playground's second bundled part. Its default artwork is the
-/// Neuraldeep.net mark (see the brand drawings below).
+/// NEURALDEEP.NET wordmark (see the brand drawings below).
 const BRAND_TILE_PART: &str = include_str!("../../../parts/ndn.brand-tile.obpart.json");
 /// `parts/assets/mark.svg` (CC0), the default `logo` of the logo tile. Asset paths
 /// in a part document are relative to the part file, so the document names it
 /// `assets/mark.svg`.
 const SAMPLE_LOGO: &str = include_str!("../../../parts/assets/mark.svg");
 
-/// The Neuraldeep.net drawings in `parts/assets/brand/`: Copyright Neural Deep
-/// Network Ltd, all rights reserved, trademarks of Neural Deep Network Ltd and
-/// not covered by this repository's licences; they may be used to build, print
-/// and show the OpenBrick3D demo tiles (`parts/assets/brand/NOTICE.md`). The
-/// playground is Neural Deep Network's public demo, so the portrait mark is its
-/// default artwork. Each is named as a part document in `parts/` names it.
-/// Because they are bundled here, this module and the playground built from it
-/// carry artwork that is not MIT (LICENSE-POLICY.md): a fork or package that
-/// may not ship the marks removes these four and their two entries in
-/// [`artwork_samples_json`], which leaves the CC0 sample as the default.
-const BRAND_MARK_2X4: (&str, &str) = (
-    "assets/brand/neuraldeep-mark-2x4.svg",
-    include_str!("../../../parts/assets/brand/neuraldeep-mark-2x4.svg"),
+/// The NEURALDEEP.NET wordmark drawings in `parts/assets/brand/` (letters from
+/// Inter, SIL Open Font License 1.1, made by `scripts/brand-text.py`):
+/// Copyright Neural Deep Network Ltd, all rights reserved, trademarks of
+/// Neural Deep Network Ltd and not covered by this repository's licences; they
+/// may be used to build, print and show the OpenBrick3D demo tiles
+/// (`parts/assets/brand/NOTICE.md`). The playground is Neural Deep Network's
+/// public demo, so the wordmark is its default artwork. Each is named as a
+/// part document in `parts/` names it. Because they are bundled here, this
+/// module and the playground built from it carry artwork that is not MIT
+/// (LICENSE-POLICY.md): a fork or package that may not ship the marks removes
+/// these four and their two entries in [`artwork_samples_json`], which leaves
+/// the CC0 sample as the default.
+const WORDMARK_2X6: (&str, &str) = (
+    "assets/brand/neuraldeep-wordmark-2x6.svg",
+    include_str!("../../../parts/assets/brand/neuraldeep-wordmark-2x6.svg"),
 );
-const BRAND_MARK_4X6: (&str, &str) = (
-    "assets/brand/neuraldeep-mark-4x6.svg",
-    include_str!("../../../parts/assets/brand/neuraldeep-mark-4x6.svg"),
+const WORDMARK_2X8: (&str, &str) = (
+    "assets/brand/neuraldeep-wordmark-2x8.svg",
+    include_str!("../../../parts/assets/brand/neuraldeep-wordmark-2x8.svg"),
 );
-const BRAND_BADGE_2X2: (&str, &str) = (
-    "assets/brand/neuraldeep-badge-2x2.svg",
-    include_str!("../../../parts/assets/brand/neuraldeep-badge-2x2.svg"),
+const WORDMARK_2X10: (&str, &str) = (
+    "assets/brand/neuraldeep-wordmark-2x10.svg",
+    include_str!("../../../parts/assets/brand/neuraldeep-wordmark-2x10.svg"),
 );
-const BRAND_BADGE_4X4: (&str, &str) = (
-    "assets/brand/neuraldeep-badge-4x4.svg",
-    include_str!("../../../parts/assets/brand/neuraldeep-badge-4x4.svg"),
+const WORDMARK_4X4: (&str, &str) = (
+    "assets/brand/neuraldeep-wordmark-4x4.svg",
+    include_str!("../../../parts/assets/brand/neuraldeep-wordmark-4x4.svg"),
 );
 
 /// The first sentence of the owner's notice in `parts/assets/brand/NOTICE.md`,
 /// word for word (the copyright line): the page shows it under the drop zone,
 /// with a link to the whole notice ([`BRAND_NOTICE_URL`]), while a
-/// Neuraldeep.net mark is in use.
+/// Neuraldeep.net drawing is in use.
 pub const BRAND_NOTICE: &str = "Copyright Neural Deep Network Ltd. All rights reserved.";
 
 /// Where the page links the notice.
@@ -162,11 +164,13 @@ fn sample_file((asset, svg): (&str, &str), tile: Option<[u32; 2]>) -> Value {
 /// notice, noticeUrl, files }`:
 ///
 /// - `label`: the chooser's text; `title`: the sample in a sentence ("the
-///   Neuraldeep.net mark"); `suffix`: what the download names end with, so
-///   files made from different samples never share a name;
+///   NEURALDEEP.NET wordmark"); `suffix`: what the download names end with,
+///   so files made from different samples never share a name;
 /// - `shape`: the tiles a sample is drawn for: `"portrait"` (longer than
 ///   wide), `"square"`, or null for any; choosing a sample on a tile of
-///   another shape sets the tile to `size`;
+///   another shape, or on a tile smaller than its smallest drawing's, sets
+///   the tile to `size` (the smallest drawing's tile; the playground starts
+///   there with the first sample);
 /// - `notice`: the line the page shows under the drop zone while the sample is
 ///   in use, and `noticeUrl` its link (null for the CC0 sample);
 /// - `files`: `{ asset, tile, svg }`, one drawing per tile it was drawn for,
@@ -178,32 +182,30 @@ fn sample_file((asset, svg): (&str, &str), tile: Option<[u32; 2]>) -> Value {
 pub fn artwork_samples_json() -> String {
     json!([
         {
-            "id": "neuraldeep-mark",
-            "label": "Neuraldeep.net mark",
-            "title": "the Neuraldeep.net mark",
+            "id": "neuraldeep-wordmark",
+            "label": "NEURALDEEP.NET wordmark",
+            "title": "the NEURALDEEP.NET wordmark",
             "suffix": "neuraldeep",
             "shape": "portrait",
-            "size": [2, 4],
+            "size": [2, 6],
             "notice": BRAND_NOTICE,
             "noticeUrl": BRAND_NOTICE_URL,
             "files": [
-                sample_file(BRAND_MARK_2X4, Some([2, 4])),
-                sample_file(BRAND_MARK_4X6, Some([4, 6])),
+                sample_file(WORDMARK_2X6, Some([2, 6])),
+                sample_file(WORDMARK_2X8, Some([2, 8])),
+                sample_file(WORDMARK_2X10, Some([2, 10])),
             ],
         },
         {
-            "id": "neuraldeep-badge",
-            "label": "Neuraldeep.net badge (square)",
-            "title": "the Neuraldeep.net badge",
-            "suffix": "neuraldeep-badge",
+            "id": "neuraldeep-square",
+            "label": "NEURALDEEP.NET wordmark (square)",
+            "title": "the square NEURALDEEP.NET wordmark",
+            "suffix": "neuraldeep-square",
             "shape": "square",
             "size": [4, 4],
             "notice": BRAND_NOTICE,
             "noticeUrl": BRAND_NOTICE_URL,
-            "files": [
-                sample_file(BRAND_BADGE_2X2, Some([2, 2])),
-                sample_file(BRAND_BADGE_4X4, Some([4, 4])),
-            ],
+            "files": [sample_file(WORDMARK_4X4, Some([4, 4]))],
         },
         {
             "id": "sample",
@@ -311,11 +313,11 @@ mod tests {
     }
 
     #[test]
-    fn the_samples_bundle_the_brand_marks_with_their_notice() {
+    fn the_samples_bundle_the_wordmarks_with_their_notice() {
         let samples: Vec<Value> = serde_json::from_str(&artwork_samples_json()).unwrap();
         let ids: Vec<&str> = samples.iter().filter_map(|s| s["id"].as_str()).collect();
-        // The Neuraldeep.net mark is the playground's default.
-        assert_eq!(ids, ["neuraldeep-mark", "neuraldeep-badge", "sample"]);
+        // The NEURALDEEP.NET wordmark is the playground's default.
+        assert_eq!(ids, ["neuraldeep-wordmark", "neuraldeep-square", "sample"]);
         let notice = include_str!("../../../parts/assets/brand/NOTICE.md");
         // The line shown is where the owner's notice starts, word for word.
         assert!(
@@ -369,15 +371,21 @@ mod tests {
         let sample = &samples[2]["files"][0];
         assert_eq!(doc.params["logo"].default, sample["asset"]);
         assert_eq!(sample["svg"].as_str(), Some(sample_logo_svg().as_str()));
-        // The portrait mark and the badge set these tiles when chosen on a
-        // tile of another shape; the first is the logo tile's default size.
-        assert_eq!(samples[0]["size"], doc.params["size"].default);
+        // The wordmarks set these tiles when chosen on a tile of another
+        // shape or a smaller one: each sample's smallest drawing's tile. The
+        // whole text does not print on the logo tile's default 2x4, so the
+        // playground starts at the first sample's 2x6.
+        assert_eq!(samples[0]["size"], json!([2, 6]));
         assert_eq!(samples[1]["size"], json!([4, 4]));
+        assert_ne!(samples[0]["size"], doc.params["size"].default);
+        for s in samples.iter().filter(|s| s["notice"].is_string()) {
+            assert_eq!(s["size"], s["files"][0]["tile"], "{}", s["id"]);
+        }
     }
 
     #[test]
     fn every_brand_drawing_prints_on_the_playground_tile_it_was_drawn_for() {
-        // The playground's document (the logo tile) with each Neuraldeep.net
+        // The playground's document (the logo tile) with each NEURALDEEP.NET
         // drawing at its tile, the example fit and fdm-0.4: nothing to report,
         // so no FEATURE.MIN, and export allowed. The brand part documents are
         // checked in every relief by crates/openbrick-part/tests/brand.rs.

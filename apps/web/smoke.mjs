@@ -5,20 +5,21 @@
 // 1. Builds the core (`cargo xtask wasm`) and the app (vite build), unless --no-build.
 // 2. Gets the native values from `cargo run --release -p openbrick-wasm --example
 //    native_eval`, which calls the same Rust functions the worker calls: the logo
-//    tile with the playground's default artwork, the Neuraldeep.net mark (emboss,
-//    deboss, the swap and the parts inlay with the example fit profile, emboss
-//    without one, and with the fit profile the wizard records), the
-//    Neuraldeep.net badge on 4x4, the CC0 sample mark, the default coupon with
+//    tile with the playground's default artwork, the NEURALDEEP.NET wordmark on
+//    2x6 (emboss, deboss, the swap and the parts inlay with the example fit
+//    profile, emboss without one, and with the fit profile the wizard records),
+//    the square wordmark on 4x4, the CC0 sample mark, the default coupon with
 //    its cell labels, and the calibration record (the wizard's choices, the
 //    fit profile file and its offsets).
 // 3. Serves dist/ on 127.0.0.1 and opens it in headless Chromium with Playwright.
-//    The WebGL2 run: the first part (the Neuraldeep.net mark, emboss, example
-//    fit) has the native content hash, triangle count and per-object
-//    fingerprints and is drawn, with the mark's notice under the drop zone and
-//    nothing to report; the legend says how much artwork the red overlay marks;
+//    The WebGL2 run: the first part (the NEURALDEEP.NET wordmark on the 2x6
+//    tile the page starts with, emboss, example fit) has the native content
+//    hash, triangle count and per-object fingerprints and is drawn, with the
+//    mark's notice under the drop zone and nothing to report; the Neuraldeep.net
+//    logo shows unstretched in the header and the footer; the legend says how much artwork the red overlay marks;
 //    choosing the sample mark (CC0) in the sample chooser gives its native part,
 //    hides the notice, and the validation panel shows the FEATURE.MIN warning
-//    with rule id, values and fix; choosing the Neuraldeep.net mark after an
+//    with rule id, values and fix; choosing the wordmark after an
 //    uploaded SVG gives the native part back; a file over the core's
 //    limit is refused before it is sent; deboss and inlay change the meshes and
 //    equal native; the inlay style control is shown only for an inlay, labelled
@@ -32,13 +33,13 @@
 //    download (saved for scripts/validate-3mf.py) and every downloaded file is
 //    byte-identical to the one native_eval writes with the same functions (so
 //    the STL is the closed solid the openbrick-wasm tests check); choosing the
-//    Neuraldeep.net badge on the 2x4 tile sets 4x4 and says so, equals native
-//    and downloads byte-identical to native under its own name, and the mark
-//    chosen again on that square tile sets 2x4; a size that
+//    square wordmark on the 2x6 tile sets 4x4 and says so, equals native
+//    and downloads byte-identical to native under its own name, and the
+//    wordmark chosen again on that square tile sets 2x6; a size that
 //    turns invalid while a tile is being built keeps the downloads off and its
 //    message up when that build answers; a fit profile the core refuses empties
 //    the 3D view and the stats and says why; a 16x16 tile shows the elapsed
-//    seconds and going back to 2x4 cancels it (or, if it finished during the
+//    seconds and going back to 2x6 cancels it (or, if it finished during the
 //    debounce, drops its reply as stale); dragging up shows the
 //    underside; the coupon mode builds the native coupon, lists its cells and
 //    downloads its 3MF, a pocket layout the bed cannot take empties the view,
@@ -95,7 +96,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -700,15 +701,17 @@ async function fullRun(browser, origin, native) {
   check(statusText.includes(`${native.part.emboss.triangles.toLocaleString("en-US")} triangles`), `${label}: status line "${statusText}"`);
   const legend = await page.textContent("#legend");
   check(/Red: [\d.]+ % of the artwork does not print as drawn/.test(legend), `${label}: the legend lacks the removed-area entry: "${legend}"`);
-  // The default artwork is the Neuraldeep.net mark drawn for 2x4, with the
-  // first sentence of its notice (the owner's copyright line, word for word)
+  // The default artwork is the NEURALDEEP.NET wordmark drawn for 2x6, on the
+  // 2x6 tile the page starts with (the whole text does not print on the logo
+  // tile's default 2x4), with the first sentence of its notice (the owner's
+  // copyright line, word for word)
   // and a link to the whole notice under the drop zone, and it has nothing to
   // report.
   check(
-    w.artwork?.sample === "neuraldeep-mark" && w.part.params.logo === "assets/brand/neuraldeep-mark-2x4.svg" && w.artwork.notice,
+    w.artwork?.sample === "neuraldeep-wordmark" && w.part.params.logo === "assets/brand/neuraldeep-wordmark-2x6.svg" && w.artwork.notice && w.part.params.size.join("x") === "2x6",
     `${label}: the default artwork is ${JSON.stringify(w.artwork)}, logo ${w.part.params.logo}`,
   );
-  check((await page.inputValue("#sample")) === "neuraldeep-mark", `${label}: the sample chooser shows ${await page.inputValue("#sample")}`);
+  check((await page.inputValue("#sample")) === "neuraldeep-wordmark", `${label}: the sample chooser shows ${await page.inputValue("#sample")}`);
   const notice = await page.textContent("#art-notice");
   check(
     (await page.isVisible("#art-notice")) && notice === "Copyright Neural Deep Network Ltd. All rights reserved. Read the notice",
@@ -716,8 +719,22 @@ async function fullRun(browser, origin, native) {
   );
   const noticeLink = await page.getAttribute("#art-notice a", "href");
   check(noticeLink?.endsWith("/parts/assets/brand/NOTICE.md"), `${label}: the notice links ${noticeLink}`);
-  check(JSON.stringify(w.part.units) === "[]", `${label}: the Neuraldeep.net mark has findings ${JSON.stringify(w.part.units)}`);
-  check((await page.locator('#findings li[data-rule="FEATURE.MIN"]').count()) === 0, `${label}: FEATURE.MIN on the Neuraldeep.net mark`);
+  check(JSON.stringify(w.part.units) === "[]", `${label}: the NEURALDEEP.NET wordmark has findings ${JSON.stringify(w.part.units)}`);
+  check((await page.locator('#findings li[data-rule="FEATURE.MIN"]').count()) === 0, `${label}: FEATURE.MIN on the NEURALDEEP.NET wordmark`);
+  // Neural Deep Network Ltd's logo, as published, in the header and the
+  // footer: loaded, described, and never stretched (its own aspect ratio).
+  const logos = await page.evaluate(() =>
+    [...document.querySelectorAll('img[alt="Neuraldeep.net logo"]')].map((img) => {
+      const r = img.getBoundingClientRect();
+      return { where: img.closest("header, footer")?.localName, loaded: img.complete && img.naturalWidth > 0, natural: img.naturalWidth / img.naturalHeight, shown: r.width / r.height, height: r.height };
+    }),
+  );
+  check(
+    logos.length === 2 && logos[0].where === "header" && logos[1].where === "footer" && logos.every((l) => l.loaded && l.height > 0 && Math.abs(l.shown - l.natural) < 0.03),
+    `${label}: the Neuraldeep.net logo in the header and the footer is ${JSON.stringify(logos)}`,
+  );
+  const owner = await page.textContent("#owner");
+  check(owner.includes("Copyright Neural Deep Network Ltd. All rights reserved."), `${label}: the footer's copyright line is "${owner}"`);
   check(!(await page.isDisabled("#download-3mf")) && !(await page.isDisabled("#download-stl")), `${label}: downloads are disabled for the default tile`);
   const disclaimer = await page.textContent("footer");
   check(disclaimer.includes("not affiliated with") && disclaimer.includes("Source code on GitHub"), `${label}: footer "${disclaimer}"`);
@@ -773,7 +790,7 @@ async function fullRun(browser, origin, native) {
   );
   // The unit is the core's (openbrick_print::finding_unit), not read from the message.
   check(JSON.stringify(w.part.units) === JSON.stringify(["FEATURE.MIN %"]), `${label}: finding units ${JSON.stringify(w.part.units)}`);
-  // An uploaded SVG, then the Neuraldeep.net mark from the chooser: the native part again.
+  // An uploaded SVG, then the NEURALDEEP.NET wordmark from the chooser: the native part again.
   n = w.evaluations;
   await page.setInputFiles("#art-file", {
     name: "square.svg",
@@ -784,9 +801,9 @@ async function fullRun(browser, origin, native) {
   check(w.part.contentHash !== native.part.emboss.contentHash, `${label}: the uploaded square has the sample's content hash`);
   check(w.artwork?.sample === null && (await page.inputValue("#sample")) === "own" && (await page.isHidden("#art-notice")), `${label}: after an upload the chooser shows ${await page.inputValue("#sample")}`);
   n = w.evaluations;
-  await page.selectOption("#sample", "neuraldeep-mark");
-  w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-mark-2x4.svg" }, 60_000, `${label} sample`);
-  checkPart(w.part, native.part.emboss, `${label} Neuraldeep.net mark again`);
+  await page.selectOption("#sample", "neuraldeep-wordmark");
+  w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-wordmark-2x6.svg" }, 60_000, `${label} sample`);
+  checkPart(w.part, native.part.emboss, `${label} NEURALDEEP.NET wordmark again`);
   // Over the core's limit: refused in the page, nothing is evaluated.
   const before = w.evaluations;
   check(Number.isInteger(w.maxAssetBytes) && w.maxAssetBytes > 0, `${label}: the page has no asset limit (${w.maxAssetBytes})`);
@@ -796,7 +813,7 @@ async function fullRun(browser, origin, native) {
   w = await web(page);
   const limit = w.maxAssetBytes.toLocaleString("en-US");
   check(
-    note.includes(`“huge.svg” is`) && note.includes(`artwork can be at most`) && note.includes(`(${limit} bytes)`) && note.includes("The part keeps the Neuraldeep.net mark"),
+    note.includes(`“huge.svg” is`) && note.includes(`artwork can be at most`) && note.includes(`(${limit} bytes)`) && note.includes("The part keeps the NEURALDEEP.NET wordmark"),
     `${label}: the art note for a big file is "${note}"`,
   );
   check(w.evaluations === before && w.state === "ready", `${label}: a file over the limit was evaluated (${w.evaluations} vs ${before}, ${w.state})`);
@@ -895,18 +912,19 @@ async function fullRun(browser, origin, native) {
   check(stl.bytes.length === 84 + 50 * count && count === native.exports.embossStl.triangles, `${label}: the STL is ${stl.bytes.length} bytes for ${count} triangles, native ${native.exports.embossStl.triangles}`);
   checkFile(stl, native.exports.embossStl, `${label} STL`);
 
-  // The Neuraldeep.net badge is drawn for square tiles: chosen on the 2x4 it
-  // sets 4x4 and says so, equals native and downloads byte-identical to native
-  // under its own name. The portrait mark chosen on that square sets 2x4 again.
+  // The square NEURALDEEP.NET wordmark is drawn for square tiles: chosen on
+  // the 2x6 it sets 4x4 and says so, equals native and downloads
+  // byte-identical to native under its own name. The wordmark chosen on that
+  // square sets 2x6 again.
   let badge;
   {
     n = w.evaluations;
-    await page.selectOption("#sample", "neuraldeep-badge");
-    w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-badge-4x4.svg" }, 60_000, `${label} badge`);
+    await page.selectOption("#sample", "neuraldeep-square");
+    w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-wordmark-4x4.svg" }, 60_000, `${label} badge`);
     checkPart(w.part, native.part["badge-emboss"], `${label} badge 4x4`);
     check(w.part.params.size.join("x") === "4x4", `${label}: the badge is built at ${w.part.params.size.join("x")}`);
     check((await page.inputValue("#p-size-0")) === "4" && (await page.inputValue("#p-size-1")) === "4", `${label}: the size fields do not show 4 x 4`);
-    const said = "The Neuraldeep.net badge is drawn for square tiles, so the size is now 4 × 4.";
+    const said = "The square NEURALDEEP.NET wordmark is drawn for square tiles, so the size is now 4 × 4.";
     check((await page.textContent("#art-note")).includes(said), `${label}: the art note is "${await page.textContent("#art-note")}"`);
     check((await page.textContent("#status")).includes(said), `${label}: the status line is "${await page.textContent("#status")}"`);
     check(w.artwork?.notice && (await page.isVisible("#art-notice")), `${label}: the badge has no notice`);
@@ -920,10 +938,10 @@ async function fullRun(browser, origin, native) {
     checkLayout(badge, native.exports.badge3mf, native.part["badge-emboss"].meshes.length, `${label} badge 3MF`);
     check(![threemf.name, inlay.name, inlayParts.name].includes(badge.name), `${label}: the badge downloads as ${badge.name}, like another file`);
     n = w.evaluations;
-    await page.selectOption("#sample", "neuraldeep-mark");
-    w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-mark-2x4.svg" }, 60_000, `${label} mark after the badge`);
-    check(w.part.params.size.join("x") === "2x4", `${label}: the mark after the badge is built at ${w.part.params.size.join("x")}`);
-    check((await page.textContent("#art-note")).includes("so the size is now 2 × 4."), `${label}: the art note is "${await page.textContent("#art-note")}"`);
+    await page.selectOption("#sample", "neuraldeep-wordmark");
+    w = await waitFor(page, { after: n, want: (p) => p.params.logo === "assets/brand/neuraldeep-wordmark-2x6.svg" }, 60_000, `${label} mark after the badge`);
+    check(w.part.params.size.join("x") === "2x6", `${label}: the mark after the badge is built at ${w.part.params.size.join("x")}`);
+    check((await page.textContent("#art-note")).includes("so the size is now 2 × 6."), `${label}: the art note is "${await page.textContent("#art-note")}"`);
     checkPart(w.part, native.part.emboss, `${label} mark after the badge`);
   }
 
@@ -961,8 +979,8 @@ async function fullRun(browser, origin, native) {
     }
     n = now.evaluations;
     await page.fill("#p-size-0", "2");
-    await page.fill("#p-size-1", "4");
-    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x4" }, 60_000, `${label} after the race`);
+    await page.fill("#p-size-1", "6");
+    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x6" }, 60_000, `${label} after the race`);
     checkPart(w.part, native.part.emboss, `${label} after the race`);
   }
 
@@ -983,7 +1001,7 @@ async function fullRun(browser, origin, native) {
   checkPart(w.part, native.part.emboss, `${label} example fit after the broken one`);
 
   // A 16x16 tile takes seconds: the status line shows them, and going back to
-  // 2x4 cancels the build by replacing the worker.
+  // 2x6 cancels the build by replacing the worker.
   const restartsBefore = (await web(page)).restarts;
   n = (await web(page)).evaluations;
   await page.fill("#p-size-0", "16");
@@ -1008,29 +1026,29 @@ async function fullRun(browser, origin, native) {
     check(/Building “Logo tile”…\s*\d+ s/.test(slow) && slow.includes("Any change cancels this one."), `${label}: the 16x16 status line says "${slow}"`);
     const staleBefore = (await web(page)).staleReplies;
     await page.fill("#p-size-0", "2");
-    await page.fill("#p-size-1", "4");
-    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x4" }, 60_000, `${label} cancel`);
-    // Two outcomes are right. Usually the 2x4 request supersedes the running
+    await page.fill("#p-size-1", "6");
+    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x6" }, 60_000, `${label} cancel`);
+    // Two outcomes are right. Usually the 2x6 request supersedes the running
     // 16x16 build, which is old enough to be cancelled by replacing the worker.
     // On a fast machine the 16x16 build can finish inside the debounce between
-    // the edit and the 2x4 request; its reply is then dropped as stale (the
+    // the edit and the 2x6 request; its reply is then dropped as stale (the
     // controls changed while it was built), and there is nothing to cancel.
     // Anything else (no restart and no stale drop) means the 16x16 result was
     // neither cancelled nor dropped.
     const cancelled = w.restarts > restartsBefore;
     const dropped = w.staleReplies > staleBefore;
     check(cancelled || dropped, `${label}: the 16x16 evaluation was neither cancelled nor dropped as stale (restarts ${w.restarts}, stale replies ${w.staleReplies})`);
-    checkPart(w.part, native.part.emboss, `${label} 2x4 after the 16x16`);
+    checkPart(w.part, native.part.emboss, `${label} 2x6 after the 16x16`);
     cancelNote = cancelled
       ? `16x16 cancelled with ${w.restarts - restartsBefore} worker restart(s)`
       : "16x16 finished during the debounce and its reply was dropped as stale; the cancel was not exercised";
   }
   w = await web(page);
-  if (w.part.params.size.join("x") !== "2x4") {
+  if (w.part.params.size.join("x") !== "2x6") {
     n = w.evaluations;
     await page.fill("#p-size-0", "2");
-    await page.fill("#p-size-1", "4");
-    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x4" }, 60_000, `${label} back to 2x4`);
+    await page.fill("#p-size-1", "6");
+    w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x6" }, 60_000, `${label} back to 2x6`);
   }
   check(w.traps === 0, `${label}: ${w.traps} WebAssembly trap(s)`);
 
@@ -1195,7 +1213,7 @@ async function phoneRun(browser, origin, native) {
 
   const n = w.evaluations;
   await page.tap('button[aria-label="One stud wider"]');
-  w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "3x4" }, 60_000, `${label} tap`);
+  w = await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "3x6" }, 60_000, `${label} tap`);
 
   // One-finger drag on the canvas through the DevTools protocol, so Chromium makes
   // real touch pointers (OrbitControls captures them); the camera must move.
@@ -1214,7 +1232,7 @@ async function phoneRun(browser, origin, native) {
   const after = (await stats(page)).camera;
   const moved = Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]);
   check(moved > 1, `${label}: a touch drag moved the camera by ${moved.toFixed(3)} mm`);
-  if (shots) await page.screenshot({ path: join(shots, "phone-dark-3x4-orbited.png") });
+  if (shots) await page.screenshot({ path: join(shots, "phone-dark-3x6-orbited.png") });
 
   // The record step on a phone: the map fits the width, every cell inside it,
   // and a tap chooses a cell.
@@ -1267,7 +1285,7 @@ async function phoneRun(browser, origin, native) {
 
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
   console.log(
-    `# ${label}: no horizontal scroll at ${layout.innerWidth} px, dark background ${layout.background} (light ${light}), tap to 3x4, touch drag moved the camera ${moved.toFixed(1)} mm, ` +
+    `# ${label}: no horizontal scroll at ${layout.innerWidth} px, dark background ${layout.background} (light ${light}), tap to 3x6, touch drag moved the camera ${moved.toFixed(1)} mm, ` +
       `record step map ${legible.text}, a tap chose a stud (its twin in copy 1 marked); full set on 256 x 256 mm ${full.text}, ` +
       `the Neuraldeep.net tile's preset picker and part file controls fit the width`,
   );
@@ -1279,7 +1297,9 @@ function cliBuild(text, label) {
   const dir = mkdtempSync(join(tmpdir(), "openbrick-saved-"));
   try {
     mkdirSync(join(dir, "assets/brand"), { recursive: true });
-    copyFileSync(join(repo, "parts/assets/brand/neuraldeep-mark-2x4.svg"), join(dir, "assets/brand/neuraldeep-mark-2x4.svg"));
+    for (const f of readdirSync(join(repo, "parts/assets/brand")).filter((f) => f.endsWith(".svg"))) {
+      copyFileSync(join(repo, "parts/assets/brand", f), join(dir, "assets/brand", f));
+    }
     const part = join(dir, "ndn.brand-tile.obpart.json");
     writeFileSync(part, text);
     const out = run("cargo", ["run", "-q", "--release", "-p", "openbrick", "--", "build", part, "--fit", "example", "--json", "--out", join(dir, "saved.3mf")]);
@@ -1295,7 +1315,7 @@ function cliBuild(text, label) {
 /**
  * The part designer (docs/plan/06 sections 3 and 11): open, edit, preset,
  * save. The Neuraldeep.net tile is chosen from the bundled parts and then
- * opened from its file; made 2x6 and given its "Pressed-in mark" preset (the
+ * opened from its file; made 2x8 and given its "Pressed-in mark" preset (the
  * picker then names it); those values kept as a new preset; and the part
  * saved: the file is byte-identical to native_eval's (add_preset_json and
  * save_part_json), the page then builds the saved document, and the CLI
@@ -1335,7 +1355,8 @@ async function designerRun(browser, origin, native) {
   check((await page.textContent("#part-note")).startsWith("Opened “ndn.brand-tile.obpart.json”"), `${label}: part note "${await page.textContent("#part-note")}"`);
   check((await page.inputValue("#part-select")) === "file", `${label}: the part select shows ${await page.inputValue("#part-select")}`);
 
-  // Edit: two studs longer, then the Pressed-in mark preset (it keeps the size).
+  // Edit: two studs longer (2x8, so the page sends the wordmark drawn for
+  // 2x8), then the Pressed-in mark preset (it keeps the size).
   n = w.evaluations;
   await page.click('button[data-for="p-size-1"][data-step="1"]');
   await page.click('button[data-for="p-size-1"][data-step="1"]');
@@ -1343,7 +1364,7 @@ async function designerRun(browser, origin, native) {
   w = await waitFor(page, { after: n, want: (p) => p.contentHash === d.edited.contentHash }, 120_000, `${label} edited`);
   checkPart(w.part, d.edited, `${label} edited`);
   check(w.design.preset === "Pressed-in mark" && (await page.inputValue("#preset")) === "Pressed-in mark", `${label}: the picker shows ${w.design.preset}`);
-  check((await page.inputValue("#p-size-1")) === "6", `${label}: the length field shows ${await page.inputValue("#p-size-1")}`);
+  check((await page.inputValue("#p-size-1")) === "8", `${label}: the length field shows ${await page.inputValue("#p-size-1")}`);
   // A value no preset holds turns the picker to Custom values; emboss at
   // the preset's height is the "Raised mark" again.
   await page.fill("#p-reliefHeight", "0.8");
@@ -1436,7 +1457,7 @@ async function designerRun(browser, origin, native) {
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
   check(w.warnings.length === 0, `${label}: page warnings: ${w.warnings.join(" | ")}`);
   console.log(
-    `# ${label}: the Neuraldeep.net tile opened (bundled and from its file) equals native, 2x6 with "Pressed-in mark" equals native, ` +
+    `# ${label}: the Neuraldeep.net tile opened (bundled and from its file) equals native, 2x8 with "Pressed-in mark" equals native, ` +
       `a new preset and the saved part (${saved.bytes.length} bytes) are byte-identical to native, the CLI builds it with the page's hash ${d.savedPart.contentHash.slice(0, 12)}…, ` +
       `the saved part is checked on the Prusa MINI+ bed (SIZE.BED), the keychain names relief.text and loop.keyring and builds with studs on top and no ring, a fit profile is refused as a part`,
   );

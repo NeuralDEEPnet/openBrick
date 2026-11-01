@@ -194,8 +194,8 @@ openbrick build parts/ndn.logo-tile.obpart.json --param logo=./my-logo.svg \
   --param relief=inlay --param inlayStyle=parts --fit my-fit.json \
   --out tile-inlay-parts.3mf
 
-# The Neuraldeep.net demo tile: the same tile with the Neuraldeep.net mark
-# (parts/ndn.brand-badge.obpart.json is the square badge on 4x4).
+# The Neuraldeep.net demo tile: a 2x6 tile with the NEURALDEEP.NET wordmark
+# (parts/ndn.brand-badge.obpart.json is the wordmark in three lines on 4x4).
 openbrick build parts/ndn.brand-tile.obpart.json --fit my-fit.json \
   --params relief=inlay inlayStyle=parts --out brand-tile.3mf
 ```
@@ -203,8 +203,9 @@ openbrick build parts/ndn.brand-tile.obpart.json --fit my-fit.json \
 Leave out `--param logo=...` to use the sample mark. The Neuraldeep.net marks
 belong to Neural Deep Network Ltd and may be used for these demo tiles only
 ([notice](../../parts/assets/brand/NOTICE.md)). In the browser playground the
-sample chooser under the drop zone switches between the Neuraldeep.net mark
-(its default), the square badge and the CC0 sample mark. The part chooser at
+sample chooser under the drop zone switches between the NEURALDEEP.NET
+wordmark (its default, on a 2x6 tile: the whole text does not print smaller),
+the square wordmark on 4x4 and the CC0 sample mark. The part chooser at
 the top also offers the Neuraldeep.net tile with its presets (raised mark,
 pressed-in mark, two-colour inlay) and opens any part file; "Save part file"
 saves your values as the part's defaults, and `openbrick build` builds that

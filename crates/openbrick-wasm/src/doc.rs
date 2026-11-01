@@ -152,8 +152,8 @@ mod tests {
     const BRAND: &str = include_str!("../../../parts/ndn.brand-tile.obpart.json");
     const KEYCHAIN: &str = include_str!("../../../parts/ndn.nameplate-keychain.obpart.json");
     const MARK: (&str, &str) = (
-        "assets/brand/neuraldeep-mark-2x4.svg",
-        include_str!("../../../parts/assets/brand/neuraldeep-mark-2x4.svg"),
+        "assets/brand/neuraldeep-wordmark-2x6.svg",
+        include_str!("../../../parts/assets/brand/neuraldeep-wordmark-2x6.svg"),
     );
 
     fn mark() -> AssetSet {
@@ -249,12 +249,12 @@ mod tests {
     #[test]
     fn saved_values_become_defaults_and_build_the_same_part() {
         let fit = example_fit_profile_json();
-        let params = r#"{"relief":"deboss","reliefHeight":"0.8mm","size":[2,6]}"#;
+        let params = r#"{"relief":"deboss","reliefHeight":"0.8mm","size":[2,8]}"#;
         let saved = save_part_json(BRAND, params, "fdm-0.4").unwrap();
         let doc = PartDoc::parse(&saved).unwrap();
         assert_eq!(doc.params["relief"].default, json!("deboss"));
         assert_eq!(doc.params["reliefHeight"].default, json!(0.8), "normalised");
-        assert_eq!(doc.params["size"].default, json!([2, 6]));
+        assert_eq!(doc.params["size"].default, json!([2, 8]));
         // Parameter order is the document's, so the panel keeps its order.
         let order: Vec<&str> = doc.params.keys().map(String::as_str).collect();
         assert_eq!(

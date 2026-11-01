@@ -315,7 +315,7 @@ jobs:
     # Bambu Studio's import colour dialog, Q18) and a brick-height inlay as 3MF
     # in the part-designer layout (one object whose parts are the colour roles,
     # Q18), the fused tile as STL and as 3MF, the Neuraldeep.net demo tile as a
-    # parts inlay and the Neuraldeep.net badge (their artwork is in
+    # parts inlay and the Neuraldeep.net badge (their NEURALDEEP.NET wordmark is in
     # parts/assets/brand/, all rights reserved, see its NOTICE.md), the default
     # fdm-0.4 coupon with its manifest; records a fit profile and builds with
     # it; and checks that a blocked build exits 1 and writes nothing. lib3mf

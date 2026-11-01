@@ -645,12 +645,12 @@ fn builds_the_neuraldeep_demo_tiles() {
         (
             "parts/ndn.brand-tile.obpart.json",
             &["--params", "relief=inlay", "inlayStyle=parts"][..],
-            "assets/brand/neuraldeep-mark-2x4.svg",
+            "assets/brand/neuraldeep-wordmark-2x6.svg",
         ),
         (
             "parts/ndn.brand-badge.obpart.json",
             &[][..],
-            "assets/brand/neuraldeep-badge-4x4.svg",
+            "assets/brand/neuraldeep-wordmark-4x4.svg",
         ),
     ] {
         let out = dir.arg("brand.3mf");
