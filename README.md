@@ -28,7 +28,7 @@
 ```
 crates/        Rust workspace: units, geom, part, print, engine, catalog, io, openbrick (CLI), openbrick-wasm, xtask
 packages/      TypeScript packages: viewport (kernel-to-three.js frame so far); core-wasm, ui, state from M2
-apps/          web (the browser playground: logo tile designer and calibration coupon; Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (the desktop app alpha: the same playground in a Tauri 2 window with native open and save dialogs)
+apps/          web (the browser playground: part designer, which opens, edits and saves any part document with its presets, and calibration coupon; Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (the desktop app alpha: the same playground in a Tauri 2 window with native open and save dialogs)
 standards/     Dimensional Standard v1 (CC0) and measurement data
 profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla) and example fit profiles
 parts/         openBrick-native part documents (CC0; the Neuraldeep.net marks in parts/assets/brand/ are all rights reserved, see its NOTICE.md)

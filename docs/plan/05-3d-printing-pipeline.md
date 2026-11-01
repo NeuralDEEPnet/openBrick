@@ -239,6 +239,7 @@ All commands are scriptable (`--json` output, non-zero exit on blockers) so prin
 - Asset parameters on the command line are paths relative to the current directory; the evaluator sees them under their file name, so the content hash does not depend on the path typed. Asset names in a part document are relative to its folder and may not leave it, symbolic links included.
 - A 3MF uses the part-designer layout (section 7). An inlay is written face down with `openbrick_geom::turn_face_down`, the transform the playground uses, so both write the same meshes (`crates/openbrick/tests/export_parity.rs`). `--no-colour` writes it without display colours; `--fuse` and `--no-colour` are for 3MF output only.
 - Filament-change hints are given for FDM only, never for a `parts` inlay; a layer whose middle lies on an inlay's boundary prints the body colour.
+- A part saved by the designer (playground or desktop app, 2026-11-01) builds here with the content hash the designer showed for it: the saved values are the document's defaults, and the CLI and the designer read the same document (`crates/openbrick/tests/save_parity.rs`). The CLI reads part documents up to `openbrick_part::save::MAX_DOCUMENT_BYTES` (4 MiB), the designer's limit too.
 - The first print-test guide is [`docs/guides/print-test.md`](../guides/print-test.md).
 
 ## 10. Slicer guidance

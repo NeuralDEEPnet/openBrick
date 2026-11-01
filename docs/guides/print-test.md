@@ -204,7 +204,11 @@ Leave out `--param logo=...` to use the sample mark. The Neuraldeep.net marks
 belong to Neural Deep Network Ltd and may be used for these demo tiles only
 ([notice](../../parts/assets/brand/NOTICE.md)). In the browser playground the
 sample chooser under the drop zone switches between the Neuraldeep.net mark
-(its default), the square badge and the CC0 sample mark. Each build validates the
+(its default), the square badge and the CC0 sample mark. The part chooser at
+the top also offers the Neuraldeep.net tile with its presets (raised mark,
+pressed-in mark, two-colour inlay) and opens any part file; "Save part file"
+saves your values as the part's defaults, and `openbrick build` builds that
+file exactly as the playground showed it. Each build validates the
 part first: if something would not print or fit (for example no fit profile,
 rule `FIT.MISSING`), nothing is written and every problem is listed with its
 rule, measured value, threshold and a fix. Warnings never block. Each build
