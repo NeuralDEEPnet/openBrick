@@ -96,29 +96,127 @@ def problems(cargo_toml: str, desktop_cargo: str, tauri_conf: str, package_json:
     return out
 
 
+def code_lines(text: str) -> list[str]:
+    """The workflow's lines without the comment-only ones."""
+    return [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+
+
+def jobs(lines: list[str]) -> dict[str, list[str]]:
+    """Each job's lines (its body under `jobs:`), by job id. The workflow
+    indents by two spaces, as every workflow in .github does."""
+    out: dict[str, list[str]] = {}
+    current = None
+    inside = False
+    for line in lines:
+        if re.match(r"jobs:\s*$", line):
+            inside = True
+            continue
+        if not inside:
+            continue
+        if line and not line[0].isspace():
+            break
+        m = re.match(r"  ([\w-]+):\s*$", line)
+        if m:
+            current = m.group(1)
+            out[current] = []
+        elif current is not None:
+            out[current].append(line)
+    return out
+
+
+def permissions(lines: list[str], indent: str) -> dict[str, str] | None:
+    """The `permissions:` at this indent: {scope: access}, {"*": "write-all"}
+    for the short forms, or None when there is none."""
+    for i, line in enumerate(lines):
+        m = re.match(rf"{indent}permissions:\s*(\S*)\s*$", line)
+        if not m:
+            continue
+        if m.group(1):
+            return {"*": m.group(1)}
+        scopes = {}
+        for body in lines[i + 1 :]:
+            n = re.match(rf"{indent}\s+([\w-]+):\s*(\S+)", body)
+            if not n:
+                break
+            scopes[n.group(1)] = n.group(2)
+        return scopes
+    return None
+
+
 def workflow_problems(text: str) -> list[str]:
     """desktop-release.yml keeps the promises in apps/desktop/README.md: actions
-    pinned by commit, no AppImage, write access only where it uploads, and
-    never on a dry run. Text checks, so CI needs no YAML library."""
+    pinned by commit, no AppImage, the licence notices in every bundle, write
+    access only in the publish job, and publish never on a dry run. Comment
+    lines do not count. The checks read the YAML as text, scoped to each job,
+    so CI needs no YAML library."""
     out = []
-    for line in text.splitlines():
+    lines = code_lines(text)
+    code = "\n".join(lines)
+    for line in lines:
         m = re.match(r"\s*(?:-\s+)?uses:\s*([^\s#]+)", line)
         if m and not re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", m.group(1)):
-            out.append(f"WORKFLOW.PIN: `{m.group(1)}` is not pinned by a full commit SHA; pin it (tags can move).")
-    for m in re.finditer(r"--bundles\s+(\S+)", text):
+            out.append(
+                f"WORKFLOW.PIN: `{m.group(1)}` is not pinned; expected owner/repo@<40-hex commit>. "
+                "Pin it by full commit SHA with the tag in a comment (tags can move)."
+            )
+    for m in re.finditer(r"--bundles\s+(\S+)", code):
         if "appimage" in m.group(1).lower():
-            out.append("WORKFLOW.APPIMAGE: a row builds an AppImage, which waits for a licence decision (apps/desktop/README.md).")
-    if re.search(r"(?mi)^\s*bundles:.*appimage", text):
-        out.append("WORKFLOW.APPIMAGE: the matrix names an AppImage, which waits for a licence decision.")
-    if not re.search(r"(?m)^permissions:\s*\n\s+contents:\s*read\s*$", text):
-        out.append("WORKFLOW.PERMISSIONS: the workflow's default permissions must be `contents: read`.")
-    writes = re.findall(r"(?m)^\s+contents:\s*write\s*$", text)
-    if len(writes) != 1:
-        out.append(f"WORKFLOW.PERMISSIONS: {len(writes)} jobs ask for `contents: write`; only the publish job may.")
-    if "startsWith(github.ref, 'refs/tags/v')" not in text:
-        out.append("WORKFLOW.DRYRUN: the publish job must run on tag pushes only, so a manual run uploads nothing.")
-    if "desktop-version.py --check --tag" not in text:
-        out.append("WORKFLOW.VERSION: the workflow must check the tag against the workspace version.")
+            out.append(
+                f"WORKFLOW.APPIMAGE: a row builds `--bundles {m.group(1)}`; expected no AppImage, which waits for "
+                "a licence decision (apps/desktop/README.md). Remove appimage from the list."
+            )
+    for m in re.finditer(r"(?mi)^\s*(?:-\s+)?bundles:\s*(.*appimage.*)$", code):
+        out.append(
+            f"WORKFLOW.APPIMAGE: the matrix names `bundles: {m.group(1).strip()}`; expected no AppImage, which "
+            "waits for a licence decision (apps/desktop/README.md). Remove appimage from the row."
+        )
+    top = permissions(lines, "")
+    if top != {"contents": "read"}:
+        out.append(
+            f"WORKFLOW.PERMISSIONS: the workflow's default permissions are {top}; expected {{'contents': 'read'}}. "
+            "Set `permissions: contents: read` at the top and grant more only in the publish job."
+        )
+    by_job = jobs(lines)
+    for job, body in by_job.items():
+        scopes = permissions(body, "    ") or {}
+        writes = sorted(k for k, v in scopes.items() if v in ("write", "write-all"))
+        if job != "publish" and writes:
+            out.append(
+                f"WORKFLOW.PERMISSIONS: job `{job}` asks for write access ({', '.join(writes)}); expected read only. "
+                "Only the publish job may write; move the step there."
+            )
+        if scopes.get("*") == "write-all":
+            out.append(
+                f"WORKFLOW.PERMISSIONS: job `{job}` has `permissions: write-all`; expected named scopes. "
+                "List only contents, attestations and id-token."
+            )
+    publish = by_job.get("publish")
+    if publish is None:
+        out.append("WORKFLOW.DRYRUN: there is no job `publish`; expected the one job that uploads. Name it publish.")
+    else:
+        scopes = permissions(publish, "    ") or {}
+        if scopes.get("contents") != "write":
+            out.append(
+                f"WORKFLOW.PERMISSIONS: job `publish` has contents: {scopes.get('contents')}; expected write, "
+                "to upload to the release. Grant `contents: write` there."
+            )
+        cond = next((m.group(1) for line in publish if (m := re.match(r"    if:\s*(.*)$", line))), None)
+        if not cond or "github.event_name == 'push'" not in cond or "startsWith(github.ref, 'refs/tags/v')" not in cond:
+            out.append(
+                f"WORKFLOW.DRYRUN: the publish job's `if:` is {cond!r}; expected github.event_name == 'push' && "
+                "startsWith(github.ref, 'refs/tags/v'), so a manual run uploads nothing. Restore that condition."
+            )
+    if "desktop-version.py --check --tag" not in code:
+        out.append(
+            "WORKFLOW.VERSION: no step runs `desktop-version.py --check --tag`; expected one before the builds, "
+            "so a tag that differs from the workspace version stops the release. Add it to the version job."
+        )
+    if "third-party-licenses.py --desktop" not in code or "tauri.release.conf.json" not in code:
+        out.append(
+            "WORKFLOW.NOTICES: the bundles do not carry the licence notices; expected a step running "
+            "`third-party-licenses.py --desktop` and `tauri build --config src-tauri/tauri.release.conf.json`. "
+            "Add both, so THIRD-PARTY-LICENSES.txt ships in every installer."
+        )
     return out
 
 
@@ -148,20 +246,46 @@ def self_test() -> None:
     assert "'v0.1.9'" in msg and "'v0.2.0'" in msg and "Tag the commit" in msg
 
     good = (
-        "permissions:\n  contents: read\njobs:\n  a:\n    steps:\n"
+        "# A comment line: uses: x@v1, bundles: appimage, permissions: write-all.\n"
+        "on: push\npermissions:\n  contents: read\njobs:\n"
+        "  version:\n    runs-on: ubuntu-24.04\n    steps:\n"
         "      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0\n"
         "      - run: python3 -I scripts/desktop-version.py --check --tag x\n"
-        "      - run: pnpm tauri build --bundles deb,rpm\n"
-        "  publish:\n    if: startsWith(github.ref, 'refs/tags/v')\n    permissions:\n      contents: write\n"
+        "  bundle:\n    strategy:\n      matrix:\n        include:\n          - bundles: deb,rpm\n    steps:\n"
+        "      - run: python3 scripts/third-party-licenses.py --desktop target/desktop-notices/T.txt\n"
+        '      - run: pnpm tauri build --bundles "$BUNDLES" --config src-tauri/tauri.release.conf.json\n'
+        "  publish:\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n"
+        "    permissions:\n      attestations: write\n      contents: write\n      id-token: write\n"
     )
     assert workflow_problems(good) == [], workflow_problems(good)
-    assert ids(workflow_problems(good.replace("@d23441a48e516b6c34aea4fa41551a30e30af803", "@v6"))) == ["WORKFLOW.PIN"]
-    assert ids(workflow_problems(good.replace("deb,rpm", "deb,rpm,appimage"))) == ["WORKFLOW.APPIMAGE"]
-    assert ids(workflow_problems(good.replace("  contents: read\n", "  contents: write\n", 1))) == [
-        "WORKFLOW.PERMISSIONS",
-        "WORKFLOW.PERMISSIONS",
+
+    def bad(old, new, count=1):
+        assert old in good, old
+        return ids(workflow_problems(good.replace(old, new, count)))
+
+    assert bad("@d23441a48e516b6c34aea4fa41551a30e30af803", "@v6") == ["WORKFLOW.PIN"]
+    assert bad('--bundles "$BUNDLES"', "--bundles deb,appimage") == ["WORKFLOW.APPIMAGE"]
+    assert bad("bundles: deb,rpm", "bundles: deb,rpm,appimage") == ["WORKFLOW.APPIMAGE"]
+    assert bad("  contents: read\n", "  contents: write\n") == ["WORKFLOW.PERMISSIONS"]
+    assert bad("permissions:\n  contents: read\n", "permissions: write-all\n") == ["WORKFLOW.PERMISSIONS"]
+    assert bad("    runs-on: ubuntu-24.04\n", "    runs-on: ubuntu-24.04\n    permissions:\n      packages: write\n") == [
+        "WORKFLOW.PERMISSIONS"
     ]
-    assert ids(workflow_problems(good.replace("startsWith(github.ref, 'refs/tags/v')", "true"))) == ["WORKFLOW.DRYRUN"]
+    assert bad("    permissions:\n      attestations: write\n      contents: write\n      id-token: write\n",
+               "    permissions: write-all\n") == ["WORKFLOW.PERMISSIONS", "WORKFLOW.PERMISSIONS"]
+    assert bad("      contents: write\n", "      contents: read\n") == ["WORKFLOW.PERMISSIONS"]
+    # The condition only in a comment does not count: it must be publish's if.
+    assert bad(
+        "    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n",
+        "    # startsWith(github.ref, 'refs/tags/v')\n    if: always()\n",
+    ) == ["WORKFLOW.DRYRUN"]
+    assert bad("github.event_name == 'push' && ", "") == ["WORKFLOW.DRYRUN"]
+    assert bad("  publish:\n", "  upload:\n") == ["WORKFLOW.PERMISSIONS", "WORKFLOW.DRYRUN"]
+    assert bad("desktop-version.py --check --tag x", "desktop-version.py --check") == ["WORKFLOW.VERSION"]
+    assert bad(" --config src-tauri/tauri.release.conf.json", "") == ["WORKFLOW.NOTICES"]
+    assert bad("third-party-licenses.py --desktop", "third-party-licenses.py") == ["WORKFLOW.NOTICES"]
+    msg = workflow_problems(good.replace("  contents: read\n", "  contents: write\n", 1))[0]
+    assert "{'contents': 'write'}" in msg and "expected {'contents': 'read'}" in msg and "Set `permissions" in msg
     print("desktop-version: self-test ok")
 
 
