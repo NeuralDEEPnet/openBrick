@@ -14,9 +14,10 @@
 //   bundled        -                                        the bundled data (bundled() below)
 //   brick          width, length                            a mesh result (brick() below)
 //   checkPart      text                                     array of structural error messages
-//   evaluatePart   doc, params, process, fit, assets        a part result (evaluatePart() below)
+//   evaluatePart   doc, params, process, fit, assets,       a part result (evaluatePart() below)
+//                  printer?
 //   exportPart     format, doc, params, process, fit,       { format, bytes: Uint8Array, buildMs }
-//                  assets, colors
+//                  assets, colors, printer?
 //   resolveParams  doc, params, process                     { values, visible }
 //   buildCoupon    process, layout                          a coupon result (buildCoupon() below)
 //   couponLayout   process, layout                          { cells, summary }, without geometry
@@ -25,7 +26,9 @@
 //
 // `doc` is the part document as JSON text, `params` an object of parameter
 // overrides, `process` a bundled process profile id, `fit` a fit profile as JSON
-// text ("" for none), `assets` [{ name, bytes: Uint8Array }] by the names the
+// text ("" for none), `printer` a bundled printer id whose bed rule SIZE.BED
+// checks ("" or absent for none: the report then lists SIZE.BED as not
+// checked), `assets` [{ name, bytes: Uint8Array }] by the names the
 // document uses, `layout` the coupon options (CouponOptions in JSON form), and
 // `colors` an object of colour role to "#rrggbb" ({} for the core's colours),
 // and `input` the calibration wizard's choices (RecordFitInput in
@@ -143,7 +146,9 @@ export function brick(core, width, length, now = () => performance.now()) {
  * artwork samples, the default first: [{ id, label, title, suffix, shape,
  * size, notice, noticeUrl, files: [{ asset, tile, svg }] }], see
  * src/samples.js), disclaimer, roleColors (role -> "#rrggbb"), maxAssetBytes,
- * couponChoices ({ pocketSets, defaultPocketSet, defaults }) }.
+ * couponChoices ({ pocketSets, defaultPocketSet, defaults }), printers (the
+ * bundled printers: [{ id, name, maker, buildVolumeMm: [x, y, z], toolheads,
+ * filaments, source: { url, accessed, quote } }], sorted by id) }.
  */
 export function bundled(core) {
   return {
@@ -155,6 +160,7 @@ export function bundled(core) {
     roleColors: JSON.parse(core.role_colors_json()),
     maxAssetBytes: core.max_asset_bytes(),
     couponChoices: JSON.parse(core.coupon_choices_json()),
+    printers: typeof core.printers_json === "function" ? JSON.parse(core.printers_json()) : [],
   };
 }
 
@@ -162,15 +168,16 @@ const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
 
 /** The part fields of a request, checked, with the params as JSON text. */
 export function partFields(request) {
-  const { doc, params = {}, process, fit = "", assets = [] } = request ?? {};
+  const { doc, params = {}, process, fit = "", assets = [], printer = "" } = request ?? {};
   if (typeof doc !== "string") throw new TypeError(`${request?.type} needs the part document as JSON text (doc)`);
   if (!isObject(params)) throw new TypeError("params must be an object of parameter values");
   if (typeof process !== "string" || process === "") throw new TypeError("process must be the id of a bundled process profile");
   if (typeof fit !== "string") throw new TypeError("fit must be the fit profile as JSON text, or empty for none");
+  if (typeof printer !== "string") throw new TypeError("printer must be the id of a bundled printer, or empty for none");
   if (!Array.isArray(assets) || assets.some((a) => typeof a?.name !== "string" || !(a.bytes instanceof Uint8Array))) {
     throw new TypeError("assets must be a list of { name, bytes: Uint8Array }");
   }
-  return { doc, params: JSON.stringify(params), process, fit, assets };
+  return { doc, params: JSON.stringify(params), process, fit, assets, printer };
 }
 
 /** Colours as the core takes them: JSON text of role -> "#rrggbb", "" for its own. */
@@ -225,6 +232,7 @@ export function reportWithUnits(reportJson, unitsJson) {
   findings.forEach((f, i) => {
     f.unit = units[i];
   });
+  if (!Array.isArray(report.unchecked)) report.unchecked = [];
   return report;
 }
 
@@ -232,7 +240,8 @@ export function reportWithUnits(reportJson, unitsJson) {
  * Evaluate and validate a part with the core. Result: { meshes: [meshData()]
  * (one per colour role, body first), overlay: meshData() of the red region of
  * artwork that does not print as drawn, or null, report: { findings } (blockers
- * first; each finding with its `unit`, see reportWithUnits()), exportAllowed,
+ * first; each finding with its `unit`, see reportWithUnits(); and `unchecked`,
+ * the rules not checked with the reason, [] when every rule was), exportAllowed,
  * measurements, warnings, contentHash, kernel, artwork (summary or null),
  * params: { values, visible }, footprint: [x, y] studs, bounds, volumeMm3,
  * massGPla, triangles, faceOnBed, buildMs }.
@@ -240,7 +249,10 @@ export function reportWithUnits(reportJson, unitsJson) {
 export function evaluatePart(core, request, now = () => performance.now()) {
   const f = partFields(request);
   const t0 = now();
-  const out = withAssets(core, f.assets, (set) => core.evaluate_part(f.doc, f.params, f.process, f.fit, set));
+  // With a printer, rule SIZE.BED checks its bed; without, the plain call.
+  const out = withAssets(core, f.assets, (set) =>
+    f.printer ? core.evaluate_part_on_printer(f.doc, f.params, f.process, f.fit, set, f.printer) : core.evaluate_part(f.doc, f.params, f.process, f.fit, set),
+  );
   const buildMs = now() - t0;
   try {
     const meshes = [];
@@ -279,7 +291,11 @@ export function exportPart(core, request, now = () => performance.now()) {
   const f = partFields(request);
   const colors = colorsJson(request.colors);
   const t0 = now();
-  const bytes = withAssets(core, f.assets, (set) => core.export_part(format, f.doc, f.params, f.process, f.fit, set, colors));
+  const bytes = withAssets(core, f.assets, (set) =>
+    f.printer
+      ? core.export_part_on_printer(format, f.doc, f.params, f.process, f.fit, set, colors, f.printer)
+      : core.export_part(format, f.doc, f.params, f.process, f.fit, set, colors),
+  );
   return { format, bytes, buildMs: now() - t0 };
 }
 

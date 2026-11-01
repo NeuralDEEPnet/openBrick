@@ -32,7 +32,7 @@ Usage: openbrick <COMMAND>
 
 Commands:
   standard   Print the Dimensional Standard v1 (nominal mm, LDU, confidence)
-  profiles   List bundled process profiles
+  profiles   List bundled process profiles and printers
   check      Structurally check a part document (.obpart.json)
   about      Print the non-affiliation disclaimer and attribution
   build      Build a part into a printable 3MF or STL (validated first)
@@ -65,7 +65,7 @@ Options:
 ## `openbrick profiles`
 
 ```text
-List bundled process profiles
+List bundled process profiles and printers
 
 Usage: openbrick profiles
 
@@ -123,6 +123,12 @@ Options:
 
       --fit <PATH|example>
           Fit profile: a fit profile JSON written by `openbrick calibrate record`, or `example` for the bundled example (a starting point, not a calibration of your printer; use ./example for a file of that name). Fit-critical parts (studs, tubes) are blocked without one (FIT.MISSING)
+
+      --printer <ID>
+          Check that the part fits this printer's bed in its print orientation (rule SIZE.BED): a bundled printer id (see `openbrick profiles`, such as prusa-mini-plus). Without --printer or --bed, SIZE.BED is reported as not checked
+
+      --bed <WxDxH>
+          Check that the part fits a bed of this size in mm, WxDxH (such as 250x210x220; rule SIZE.BED)
 
       --json
           Print one JSON object on stdout (report per schemas/report.schema.json, measurements, content hash, outputs, timings); human text goes to stderr
@@ -195,6 +201,9 @@ Options:
 
       --bed <XxY>
           Bed size the coupon must fit, XxY in mm (default 180x180, a Prusa MINI+ or Bambu Lab A1 mini; 5 mm stay free at each edge)
+
+      --printer <ID>
+          Lay the coupon out for this printer's bed (a bundled printer id, see `openbrick profiles`; for example prusa-xl), instead of --bed
 
       --copies <N>
           Identical copies of the cell set, for repeatability (default 2)
@@ -331,6 +340,12 @@ Options:
 
       --fit <PATH|example>
           Fit profile: a fit profile JSON written by `openbrick calibrate record`, or `example` for the bundled example (a starting point, not a calibration of your printer; use ./example for a file of that name). Fit-critical parts (studs, tubes) are blocked without one (FIT.MISSING)
+
+      --printer <ID>
+          Check that the part fits this printer's bed in its print orientation (rule SIZE.BED): a bundled printer id (see `openbrick profiles`, such as prusa-mini-plus). Without --printer or --bed, SIZE.BED is reported as not checked
+
+      --bed <WxDxH>
+          Check that the part fits a bed of this size in mm, WxDxH (such as 250x210x220; rule SIZE.BED)
 
       --json
           Print one JSON object on stdout (report per schemas/report.schema.json, measurements, content hash, outputs, timings); human text goes to stderr

@@ -12,7 +12,7 @@
 |--------|--------------|----------------|
 | **Part designer** | Parametric, print-first parts that do not exist in any catalogue: logo tiles, nameplates, keychains, mosaics, adapters. Artwork from SVG, raster or text. Connectivity is derived from features, so designed parts snap in the assembler and in LDCad. | `crates/openbrick-part`, `parts/` |
 | **Assembler** | Snap bricks on an integer-LDU lattice with the 24 lattice rotations; 10k to 100k instances; open text formats with lossless LDraw round-trip. | `crates/openbrick-engine`, `crates/openbrick-catalog` |
-| **Print pipeline** | Per-printer fit profiles written by a calibration coupon, compensation baked into geometry, a validator that blocks unprintable fit-critical parts, vanilla 3MF with colours. | `crates/openbrick-print`, `profiles/`, `standards/` |
+| **Print pipeline** | Per-printer fit profiles written by a calibration coupon, compensation baked into geometry, a validator that blocks unprintable fit-critical parts (walls, roofs, bridges and overhangs, self-intersections, the face on the bed, and the bed size of your printer), vanilla 3MF with colours. | `crates/openbrick-print`, `profiles/`, `standards/` |
 
 ## Features (planned, see the roadmap for milestones)
 

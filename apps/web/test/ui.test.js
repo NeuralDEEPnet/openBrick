@@ -79,6 +79,9 @@ test("the unit is the core's, never read from the message", () => {
   // A count (the components of an empty mesh) has no unit.
   const empty = findingView({ ...wall, rule: "MESH.MANIFOLD", value: 0, threshold: 1, unit: "" });
   assert.deepEqual([empty.measured, empty.threshold], ["0", "1"]);
+  // An angle (OVERHANG.MAX) is written with the degree sign against it.
+  const steep = findingView({ ...wall, rule: "OVERHANG.MAX", value: 63.4349, threshold: 50, unit: "°" });
+  assert.deepEqual([steep.measured, steep.threshold], ["63.435°", "50°"]);
   // Without a unit from the core the numbers are shown bare.
   const { unit: _, ...bare } = removed;
   assert.deepEqual([findingView(bare).measured, findingView(bare).threshold], ["1.032", "1"]);

@@ -175,6 +175,8 @@
       .finding .head strong { margin-right: 6px; }
       .finding.blocker .head strong { color: var(--bad); }
       .finding.warning .head strong { color: var(--warn); }
+      .finding.unchecked { border-style: dashed; }
+      .finding.unchecked .head strong { color: var(--muted); }
       .finding .nums { color: var(--muted); font-size: 13px; }
       #summary.ok { color: var(--ok); font-weight: 600; }
       #notes { margin-top: 10px; font-size: 13px; }
@@ -308,6 +310,11 @@
               <select id="process" disabled></select>
             </div>
             <div class="field">
+              <label for="printer">Printer (bed size check)</label>
+              <select id="printer" aria-describedby="printer-note" disabled></select>
+              <p class="note" id="printer-note" aria-live="polite"></p>
+            </div>
+            <div class="field">
               <label for="fit">Fit profile</label>
               <select id="fit" disabled></select>
               <input type="file" id="fit-file" accept=".json,application/json" hidden />
@@ -360,6 +367,10 @@
             <div class="field">
               <label for="coupon-pockets">Pocket layout</label>
               <select id="coupon-pockets" disabled></select>
+            </div>
+            <div class="field">
+              <label for="coupon-printer">Printer</label>
+              <select id="coupon-printer" disabled></select>
             </div>
             <div class="row">
               <div class="field">

@@ -126,7 +126,7 @@ export function removedText(result) {
   return `Red: ${upToThree.format(pct)} % of the artwork does not print as drawn (lines thinner than the minimum feature, or face material too thin between cuts)`;
 }
 
-const num = (x, unit) => (typeof x === "number" ? `${upToThree.format(x)}${unit ? ` ${unit}` : ""}` : "not measured");
+const num = (x, unit) => (typeof x === "number" ? `${upToThree.format(x)}${unit ? (unit === "°" ? unit : ` ${unit}`) : ""}` : "not measured");
 
 /**
  * What the validation panel shows for one finding: severity in words and as an

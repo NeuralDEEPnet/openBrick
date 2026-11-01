@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   brick,
+  bundled,
   BUILD_TYPES,
   createHandler,
   EXPORT_TYPES,
@@ -133,6 +134,17 @@ function fakeCore({ throws = null } = {}) {
       fail();
       return new Uint8Array([0x50, 0x4b, 3, 4]);
     },
+    evaluate_part_on_printer(doc, params, process, fit, set, printer) {
+      const out = this.evaluate_part(doc, params, process, fit, set);
+      calls[calls.length - 1] = ["evaluate_part_on_printer", printer];
+      return out;
+    },
+    export_part_on_printer(format, doc, params, process, fit, set, colors, printer) {
+      calls.push(["export_part_on_printer", format, printer]);
+      fail();
+      return new Uint8Array([0x50, 0x4b, 3, 4]);
+    },
+    printers_json: () => '[{"id":"prusa-mini-plus","name":"Original Prusa MINI+","buildVolumeMm":[180,180,180]}]',
     resolve_params_json(doc, params, process) {
       calls.push(["resolve_params_json", params, process]);
       return '{"values":{},"visible":{"reliefHeight":false}}';
@@ -396,7 +408,7 @@ test("evaluatePart sends JSON text and the assets to the core and returns plain,
     ["accent", "#f4f1e8", 1],
   ]);
   assert.equal(r.overlay.role, "removed");
-  assert.deepEqual(r.report, { findings: [{ ...REMOVED_AREA, unit: "%" }] }, "each finding carries the core's unit");
+  assert.deepEqual(r.report, { findings: [{ ...REMOVED_AREA, unit: "%" }], unchecked: [] }, "each finding carries the core's unit");
   assert.equal(r.exportAllowed, true);
   assert.deepEqual(r.measurements, { process: "fdm-0.4" });
   assert.deepEqual(r.warnings, ["a note"]);
@@ -424,7 +436,10 @@ test("units come from the core, one per finding, in report order", () => {
       ["WALL.MIN", "mm"],
     ],
   );
-  assert.deepEqual(reportWithUnits('{"findings":[]}', "[]"), { findings: [] });
+  assert.deepEqual(reportWithUnits('{"findings":[]}', "[]"), { findings: [], unchecked: [] });
+  // The rules the core could not check travel as they are.
+  const unchecked = [{ rule: "SIZE.BED", reason: "no printer or bed was given" }];
+  assert.deepEqual(reportWithUnits(JSON.stringify({ findings: [], unchecked }), "[]").unchecked, unchecked);
   // A count that does not match is a core bug, not something to guess around.
   assert.throws(() => reportWithUnits(report, '["%"]'), /1 units for 2 findings/);
   assert.throws(() => reportWithUnits(report, "null"), /no units for 2 findings/);
@@ -437,6 +452,7 @@ test("part requests are checked before the core is called", () => {
     [{ ...PART, params: [1] }, /params must be an object/],
     [{ ...PART, process: "" }, /process must be the id/],
     [{ ...PART, fit: null }, /fit must be the fit profile as JSON text/],
+    [{ ...PART, printer: 3 }, /printer must be the id of a bundled printer/],
     [{ ...PART, assets: [{ name: "a.svg", bytes: [1, 2] }] }, /assets must be a list of \{ name, bytes: Uint8Array \}/],
   ];
   for (const [fields, message] of bad) {
@@ -463,6 +479,19 @@ test("exportPart returns the file bytes, transferred, and passes the colours", (
   dispatch(core, { ...request, colors: {} });
   assert.equal(core.calls[1][6], "", "no colours: the core's own");
   assert.ok(core.assetSets.every((s) => s.freed));
+});
+
+test("a printer goes to the core's printer calls; none keeps the plain ones", () => {
+  const core = fakeCore();
+  const request = { id: 7, type: "evaluatePart", ...PART, printer: "prusa-mini-plus", assets: [{ name: "a.svg", bytes: SVG }] };
+  assert.equal(dispatch(core, request).reply.ok, true);
+  assert.deepEqual(core.calls[0], ["evaluate_part_on_printer", "prusa-mini-plus"]);
+  assert.equal(dispatch(core, { ...request, printer: "" }).reply.ok, true);
+  assert.equal(core.calls[1][0], "evaluate_part");
+  const exported = dispatch(core, { ...request, type: "exportPart", format: "3mf" });
+  assert.equal(exported.reply.ok, true, exported.reply.error);
+  assert.deepEqual(core.calls[2], ["export_part_on_printer", "3mf", "prusa-mini-plus"]);
+  assert.deepEqual(bundled(core).printers.map((p) => p.id), ["prusa-mini-plus"]);
 });
 
 test("a refused export is an error reply with the core's message", () => {

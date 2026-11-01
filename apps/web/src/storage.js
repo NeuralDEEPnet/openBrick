@@ -69,3 +69,33 @@ export function forgetRecordedFit(getStorage = browserStorage) {
     return false;
   }
 }
+
+/** The storage key of the printer chosen last (a bundled printer id). */
+export const PRINTER_KEY = "openbrick.playground.printer.v1";
+
+/**
+ * The printer chosen last, if it is one of `ids` (the bundled printers); ""
+ * when none was kept, storage cannot be read, or the kept id is unknown.
+ */
+export function loadPrinter(ids, getStorage = browserStorage) {
+  try {
+    const storage = getStorage();
+    const id = storage ? storage.getItem(PRINTER_KEY) : null;
+    return typeof id === "string" && ids.includes(id) ? id : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Keep the printer chosen (an id, or "" for none). True when the browser kept it. */
+export function savePrinter(id, getStorage = browserStorage) {
+  try {
+    const storage = getStorage();
+    if (!storage) return false;
+    if (id) storage.setItem(PRINTER_KEY, id);
+    else storage.removeItem(PRINTER_KEY);
+    return (storage.getItem(PRINTER_KEY) ?? "") === id;
+  } catch {
+    return false;
+  }
+}

@@ -29,6 +29,8 @@
 
 Tier 1 means CI-built, signed, tested on every release. Tier 2 means CI-built and smoke-tested, store review cadence.
 
+Status 2026-11-01: the desktop app shows the playground's printer menu too (rule SIZE.BED), with the bundled printers of `profiles/printer/`; the choice stays in the webview's storage.
+
 Status 2026-10-31 (M2 desktop alpha, `apps/desktop`): the playground runs in Tauri 2.12.5 (dialog plugin 2.8.4, CLI 2.12.4) with native open and save dialogs and builds from source on all three desktop OSes. CI compiles, lints and tests the Tauri app on Linux x64, Windows x64 and macOS arm64 on every pull request, but runs it on Linux only: a WebDriver smoke test under Xvfb (tauri-driver 2.1.0, WebKitWebDriver from webkit2gtk-driver) drives the debug app, and main keeps an unsigned .deb. Bundles for macOS, Windows and the arm64 targets will come from the desktop jobs of the release workflow (section 7), which are not written yet (`release.yml` builds only the CLI so far, backlog item 15); until then those platforms are tested by hand. Nothing is signed yet, so no platform is tier 1 in the sense above.
 
 ## 2. Install matrix

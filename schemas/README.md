@@ -9,6 +9,7 @@ One JSON Schema (draft 2020-12) per document kind, published with each release a
 | `process-profile.schema.json` | `profiles/process/*.json` (`kind: "process"`); schema 1.1, which adds the optional `recommendedTubeWallMm` and `maxRemovedAreaPct` (validator rules `TUBE.WALL` and `FEATURE.MIN`) | `openbrick_print::ProcessProfile` |
 | `fit-profile.schema.json` | `profiles/fit/*.json` (`kind: "fit"`); schema 1.1, which adds the optional `calibration.pocketSet` (the pocket set of the printed coupon, which `openbrick calibrate record` writes with the pocket cells) | `openbrick_print::FitProfile` |
 | `part.schema.json` | `parts/*.obpart.json` (`openbrick/part@1`) | `openbrick_part::PartDoc` |
+| `printer-profile.schema.json` | `profiles/printer/*.json` (`kind: "printer"`): a printer and tool setup with the build volume its maker publishes and the page it was read from (validator rule `SIZE.BED`) | `openbrick_print::PrinterProfile` |
 | `report.schema.json` | validator reports, the output of `openbrick validate --json` (docs/plan/05 section 5); no data files, checked against the expected reports of the validator fixtures in `crates/openbrick-print/tests/fixtures/validator/` | `openbrick_print::Report` |
 
 Still to come, with their document kinds: `run.schema.json` (`.obrun.json`) and `model.schema.json` (`model.json` inside `.obrick`).

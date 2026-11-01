@@ -63,7 +63,7 @@ import {
   recordInput,
   todayLocal,
 } from "./calibration.js";
-import { forgetRecordedFit, loadRecordedFit, saveRecordedFit } from "./storage.js";
+import { forgetRecordedFit, loadPrinter, loadRecordedFit, savePrinter, saveRecordedFit } from "./storage.js";
 import { sampleFile, sampleLabel, sizeForSample, sizeNote } from "./samples.js";
 import { createViewer } from "./viewer.js";
 
@@ -272,6 +272,11 @@ async function main() {
     process: data.processProfiles.some((p) => p.id === exampleFit.process) ? exampleFit.process : data.processProfiles[0].id,
     fit: "example",
     /**
+     * The printer whose bed rule SIZE.BED checks (a bundled printer id), ""
+     * for none; the last choice is kept in this browser (src/storage.js).
+     */
+    printer: loadPrinter((data.printers ?? []).map((p) => p.id)),
+    /**
      * The fit profiles the select offers, as JSON text: the example, the one
      * recorded in the record step (kept in this browser), and a loaded file.
      */
@@ -290,6 +295,8 @@ async function main() {
       process: exampleFit.process,
       pockets: data.couponChoices.defaultPocketSet,
       bed: [...data.couponChoices.defaults.bedMm],
+      /** The printer the bed size came from, "" when it was typed. */
+      printer: "",
       key: null,
       request: null,
       result: null,
@@ -695,6 +702,44 @@ async function main() {
     changed();
   });
 
+  // The printer whose bed SIZE.BED checks; the same choice lays the coupon out.
+  const printers = data.printers ?? [];
+  const printerById = (id) => printers.find((p) => p.id === id) ?? null;
+  const volumeText = (p) => p.buildVolumeMm.join(" x ") + " mm";
+  const bedPrinter = $("printer");
+  const couponPrinter = $("coupon-printer");
+  bedPrinter.append(el("option", { value: "", text: "None: the bed size is not checked" }));
+  couponPrinter.append(el("option", { value: "", text: "Other: type the bed size below" }));
+  for (const select of [bedPrinter, couponPrinter]) {
+    for (const p of printers) select.append(el("option", { value: p.id, text: `${p.name} (${volumeText(p)})` }));
+    select.disabled = printers.length === 0;
+  }
+  function showPrinterNote() {
+    const p = printerById(state.printer);
+    $("printer-note").textContent = p
+      ? `SIZE.BED checks that the tile fits the ${volumeText(p)} build volume, as ${p.maker} publishes it.`
+      : "Choose your printer to check that the tile fits its bed (rule SIZE.BED); until then the report lists it as not checked.";
+  }
+  bedPrinter.value = state.printer;
+  showPrinterNote();
+  /** Choose a printer for both modes and keep the choice in this browser. */
+  function choosePrinter(id) {
+    state.printer = id;
+    savePrinter(id);
+    bedPrinter.value = id;
+    showPrinterNote();
+  }
+  bedPrinter.addEventListener("change", () => {
+    const id = bedPrinter.value;
+    choosePrinter(id);
+    if (id) {
+      // The coupon is laid out for the same bed.
+      usePrinterBed(id);
+      couponChanged();
+    }
+    changed();
+  });
+
   const fitSelect = $("fit");
   const fitFile = $("fit-file");
   const fitNote = $("fit-note");
@@ -905,6 +950,7 @@ async function main() {
       process: state.process,
       fit: state.fit === "none" ? "" : state.fits[state.fit] ?? "",
       assets: [{ name: state.artwork.name, bytes: state.artwork.bytes }],
+      printer: state.printer,
     };
   }
 
@@ -965,6 +1011,8 @@ async function main() {
       blockers: result.report.findings.filter((f) => f.severity === "blocker").map((f) => f.rule),
       warnings: result.report.findings.filter((f) => f.severity !== "blocker").map((f) => f.rule),
       units: result.report.findings.map((f) => `${f.rule} ${f.unit}`),
+      unchecked: (result.report.unchecked ?? []).map((u) => u.rule),
+      printer: request.printer ?? "",
       params: result.params.values,
       faceOnBed: result.faceOnBed,
       removedAreaPct: result.measurements.removedAreaPct ?? null,
@@ -1129,6 +1177,17 @@ async function main() {
         );
       }),
     );
+    // Rules the core could not check, with its reason: never a silent pass.
+    for (const u of r.report.unchecked ?? []) {
+      findingsList.append(
+        el(
+          "li",
+          { className: "finding unchecked", "data-rule": u.rule },
+          el("span", { className: "sev", "aria-hidden": "true", text: "ℹ️" }),
+          el("div", {}, el("p", { className: "head" }, el("strong", { text: "Not checked" }), el("code", { text: u.rule })), el("p", { text: u.reason })),
+        ),
+      );
+    }
     const warnings = r.warnings ?? [];
     notes.hidden = warnings.length === 0;
     notes.querySelector("summary").textContent = `Notes from the evaluator (${warnings.length})`;
@@ -1186,8 +1245,18 @@ async function main() {
   pocketsSelect.value = state.coupon.pockets;
   couponProcess.value = state.coupon.process;
   const bedInputs = [$("bed-x"), $("bed-y")];
-  bedInputs.forEach((input, i) => {
-    input.value = String(state.coupon.bed[i]);
+  /** Lay the coupon out for a printer's bed (x and y of its build volume). */
+  function usePrinterBed(id) {
+    const p = printerById(id);
+    state.coupon.printer = p ? id : "";
+    couponPrinter.value = state.coupon.printer;
+    if (p) state.coupon.bed = p.buildVolumeMm.slice(0, 2);
+    bedInputs.forEach((input, i) => {
+      input.value = String(state.coupon.bed[i]);
+    });
+  }
+  usePrinterBed(state.printer);
+  bedInputs.forEach((input) => {
     input.disabled = false;
   });
   pocketsSelect.disabled = false;
@@ -1220,7 +1289,24 @@ async function main() {
   }
   couponProcess.addEventListener("change", couponChanged);
   pocketsSelect.addEventListener("change", couponChanged);
-  for (const input of bedInputs) input.addEventListener("change", couponChanged);
+  for (const input of bedInputs) {
+    input.addEventListener("change", () => {
+      // A typed size is no longer the printer's bed.
+      state.coupon.printer = "";
+      couponPrinter.value = "";
+      couponChanged();
+    });
+  }
+  couponPrinter.addEventListener("change", () => {
+    const id = couponPrinter.value;
+    usePrinterBed(id);
+    if (id) {
+      // The tile checks the same printer from now on.
+      choosePrinter(id);
+      changed();
+    }
+    couponChanged();
+  });
   $("record-command").textContent = recordCommand(state.coupon.process, state.coupon.pockets, exampleFit.calibration?.chosenCells);
 
   const couponButtons = [$("download-coupon-3mf"), $("download-coupon-stl")];

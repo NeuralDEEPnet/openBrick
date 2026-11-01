@@ -716,6 +716,37 @@ async function fullRun(browser, origin, native) {
   check(disclaimer.includes("not affiliated with") && disclaimer.includes("Source code on GitHub"), `${label}: footer "${disclaimer}"`);
   const docsLink = await page.getAttribute('footer a:text-is("Documentation")', "href");
   check(docsLink === "https://neuraldeepnet.github.io/openBrick/docs/", `${label}: the footer links the documentation site at ${docsLink}`);
+  // The printer menu: none at first, so the report lists SIZE.BED as not
+  // checked; a printer checks its bed (the content hash stays: the bed is not
+  // part of the part), lays the coupon out for it and is kept for the next
+  // visit; none again forgets it.
+  check((await page.inputValue("#printer")) === "", `${label}: a printer is chosen at first`);
+  check(w.part.unchecked.includes("SIZE.BED"), `${label}: SIZE.BED is not listed as not checked: ${JSON.stringify(w.part.unchecked)}`);
+  check((await page.locator('#findings li.unchecked[data-rule="SIZE.BED"]').count()) === 1, `${label}: the panel does not say SIZE.BED was not checked`);
+  const beforePrinter = w.evaluations;
+  await page.selectOption("#printer", "prusa-xl");
+  w = await waitFor(page, { after: beforePrinter, want: (p) => p.printer === "prusa-xl" }, 60_000, `${label} printer`);
+  check(!w.part.unchecked.includes("SIZE.BED") && w.part.exportAllowed, `${label}: on the Prusa XL ${JSON.stringify(w.part)}`);
+  check(w.part.contentHash === native.part.emboss.contentHash, `${label}: the printer changed the content hash`);
+  check((await page.locator('#findings li.unchecked[data-rule="SIZE.BED"]').count()) === 0, `${label}: SIZE.BED still listed as not checked`);
+  check((await page.inputValue("#bed-x")) === "360" && (await page.inputValue("#bed-y")) === "360", `${label}: the coupon bed did not follow the printer`);
+  check((await page.inputValue("#coupon-printer")) === "prusa-xl", `${label}: the coupon printer did not follow`);
+  const kept = await page.evaluate(() => localStorage.getItem("openbrick.playground.printer.v1"));
+  check(kept === "prusa-xl", `${label}: the printer was not kept (${kept})`);
+  const beforeNone = w.evaluations;
+  await page.selectOption("#printer", "");
+  w = await waitFor(page, { after: beforeNone, want: (p) => p.printer === "" }, 60_000, `${label} no printer`);
+  check(w.part.unchecked.includes("SIZE.BED"), `${label}: without a printer SIZE.BED is checked`);
+  // The coupon steps below expect the default bed (its fields are hidden in
+  // the tile mode, so they are set as a typed value would be).
+  await page.evaluate(() => {
+    for (const id of ["bed-x", "bed-y"]) {
+      const input = document.getElementById(id);
+      input.value = "180";
+      input.dispatchEvent(new Event("change"));
+    }
+  });
+  check((await page.inputValue("#coupon-printer")) === "", `${label}: a typed bed size still names a printer`);
   if (shots) {
     await settle(page);
     await page.screenshot({ path: join(shots, "desktop-light-emboss.png") });
