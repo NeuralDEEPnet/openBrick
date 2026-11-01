@@ -23,6 +23,10 @@
 //   couponLayout   process, layout                          { cells, summary }, without geometry
 //   exportCoupon   format, process, layout, colors          { format, bytes: Uint8Array, buildMs }
 //   recordFit      input                                    the calibration record (recordFit() below)
+//   openPart       text, process                            { ok, id, name, version, license, credit,
+//                                                           presets, unsupported } or { ok: false, error }
+//   savePart       doc, params, process                     { text }: the document with params as defaults
+//   addPreset      doc, name, params, process               { text }: the document with a preset `name`
 //
 // `doc` is the part document as JSON text, `params` an object of parameter
 // overrides, `process` a bundled process profile id, `fit` a fit profile as JSON
@@ -45,7 +49,7 @@
 // exports of crates/openbrick-wasm, so the unit tests run it against a fake core
 // and, when it is built, the real one.
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Requests that build geometry: the client lets a newer one supersede an older one. */
 export const BUILD_TYPES = Object.freeze(["brick", "evaluatePart", "buildCoupon"]);
@@ -142,7 +146,9 @@ export function brick(core, width, length, now = () => performance.now()) {
 
 /**
  * The data the page builds its controls from, read once: { processProfiles,
- * exampleFitProfile (JSON text), logoTilePart (JSON text), samples (the
+ * exampleFitProfile (JSON text), logoTilePart (JSON text), parts (the bundled
+ * part documents, the default first: [{ id, label, file, text }]),
+ * maxPartBytes (the largest part document the core reads), samples (the
  * artwork samples, the default first: [{ id, label, title, suffix, shape,
  * size, notice, noticeUrl, files: [{ asset, tile, svg }] }], see
  * src/samples.js), disclaimer, roleColors (role -> "#rrggbb"), maxAssetBytes,
@@ -155,6 +161,8 @@ export function bundled(core) {
     processProfiles: JSON.parse(core.process_profiles_json()),
     exampleFitProfile: core.example_fit_profile_json(),
     logoTilePart: core.logo_tile_part_json(),
+    parts: JSON.parse(core.bundled_parts_json()),
+    maxPartBytes: core.max_part_bytes(),
     samples: JSON.parse(core.artwork_samples_json()),
     disclaimer: core.disclaimer(),
     roleColors: JSON.parse(core.role_colors_json()),
@@ -350,6 +358,34 @@ export function recordFit(core, request) {
   return JSON.parse(core.record_fit(JSON.stringify(input)));
 }
 
+/**
+ * Check a part document the user opened, with the core's open_part_json:
+ * { ok: true, id, name, version, license, credit, presets: [{ name, params,
+ * error }], unsupported: [{ feature, op, condition }] }, or { ok: false,
+ * error } for a file that is not a valid part document (an answer, not a
+ * failed request).
+ */
+export function openPart(core, request) {
+  if (typeof request?.text !== "string") throw new TypeError("openPart needs the document as text");
+  return JSON.parse(core.open_part_json(request.text, processId(request)));
+}
+
+/**
+ * The part document with the parameter values as its defaults (savePart), or
+ * with a preset `name` holding them (addPreset): { text }, in the core's saved
+ * layout. The core refuses values its evaluator refuses.
+ */
+export function savePart(core, request) {
+  const f = partFields(request);
+  return { text: core.save_part_json(f.doc, f.params, f.process) };
+}
+
+export function addPreset(core, request) {
+  const f = partFields(request);
+  if (typeof request.name !== "string") throw new TypeError("addPreset needs the preset's name");
+  return { text: core.add_preset_json(f.doc, request.name, f.params, f.process) };
+}
+
 /** The buffers of a result to transfer instead of copying: mesh arrays and file bytes. */
 export function transferables(result) {
   const out = [];
@@ -414,6 +450,15 @@ export function dispatch(core, request, now) {
         break;
       case "recordFit":
         result = recordFit(core, request);
+        break;
+      case "openPart":
+        result = openPart(core, request);
+        break;
+      case "savePart":
+        result = savePart(core, request);
+        break;
+      case "addPreset":
+        result = addPreset(core, request);
         break;
       default:
         throw new Error(`unknown request type ${JSON.stringify(request?.type)}`);

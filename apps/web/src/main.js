@@ -10,15 +10,18 @@ import wasmUrl from "./wasm/openbrick_wasm_bg.wasm?url";
 import { CoreClient } from "./client.js";
 import { createFileAccess, desktopBridge, errorText, savedText } from "./files.js";
 import {
+  applyPreset,
   assetSizeError,
   controlsFor,
   couponDownloadName,
   defaultValues,
   downloadName,
   looksLikeSvg,
+  matchingPreset,
   paramOverrides,
   visibility,
 } from "./params.js";
+import { buildErrorText, isPartFile, partFileName, sampleForAsset, unsupportedNote } from "./part.js";
 import {
   couponRows,
   couponStats,
@@ -129,6 +132,15 @@ const page = {
   artwork: null,
   /** The core's artwork size limit (max_asset_bytes()), once loaded. */
   maxAssetBytes: null,
+  /**
+   * The part being designed: { id, name, source ("bundled" or "file"), file
+   * (its file name), presets (names), preset (the one the values match, or
+   * ""), unsupported (feature ids this version cannot build), missingArtwork
+   * (the drawing it names that the page lacks, or null) }, and `saves`: the
+   * part files saved, { name, bytes }.
+   */
+  design: null,
+  saves: [],
   /** The coupon mode's step: print or record. */
   step: "print",
   /**
@@ -245,11 +257,19 @@ async function main() {
 
   // ------------------------------------------------------------------ state
 
-  const doc = JSON.parse(data.logoTilePart);
-  const spec = controlsFor(doc, { maxStuds: info.maxStuds });
-  const fileControl = spec.controls.find((c) => c.kind === "file");
-  /** The stud grid a sample's tile shape applies to (the logo tile's size). */
-  const gridControl = spec.controls.find((c) => c.kind === "grid2");
+  /**
+   * The part being designed: its document as JSON text (what the core gets;
+   * saving and adding a preset replace it with the core's answer) and parsed,
+   * where it came from, and what the core said when it was opened
+   * (open_part_json: presets and features it cannot build yet). The controls
+   * (`spec`), the artwork control and the stud grid follow the document.
+   */
+  let part = null;
+  let doc = null;
+  let spec = { controls: [], groups: [] };
+  let fileControl = null;
+  /** The stud grid a sample's tile shape applies to (the tile's size). */
+  let gridControl = null;
   const exampleFit = JSON.parse(data.exampleFitProfile);
   /**
    * The artwork samples, the Neuraldeep.net mark first: the playground is
@@ -264,10 +284,15 @@ async function main() {
     const file = sampleFile(sample, size);
     return { name: file.asset, bytes: encoder.encode(file.svg), label: sampleLabel(sample, file), sample };
   };
-  const defaults = defaultValues(spec);
   const state = {
-    values: defaults,
-    artwork: sampleArtwork(samples[0], gridControl ? defaults[gridControl.name] : null),
+    /** Parameter values by name; set from the part's defaults when it loads. */
+    values: {},
+    /**
+     * The drawing sent for the artwork control: { name, bytes, label, sample },
+     * or null when the part has no artwork control or names a drawing the page
+     * does not have (then the drop zone asks for it).
+     */
+    artwork: null,
     /** A note for the status line after the next build (a sample changed the size). */
     statusNote: null,
     process: data.processProfiles.some((p) => p.id === exampleFit.process) ? exampleFit.process : data.processProfiles[0].id,
@@ -342,6 +367,8 @@ async function main() {
 
   // ------------------------------------------------------------------ tile controls
 
+  /** The artwork the page sends for the part's file control, if any. */
+  const artworkName = () => state.artwork?.name ?? null;
   const form = $("tile-form");
   /** Wrappers by parameter name, to show or hide them. */
   const wrappers = new Map();
@@ -440,10 +467,11 @@ async function main() {
                 el("input", {
                   type: "radio",
                   name: id,
-                  value: o.value,
+                  value: String(o.value),
                   checked: state.values[c.name] === o.value,
-                  onchange: (e) => {
-                    state.values[c.name] = e.target.value;
+                  // The option's own value, so a number stays a number.
+                  onchange: () => {
+                    state.values[c.name] = o.value;
                     changed();
                   },
                 }),
@@ -456,7 +484,9 @@ async function main() {
       case "range": {
         const out = el("output", { for: id, id: `${id}-out` });
         const show = () => {
-          out.textContent = `${Number(state.values[c.name]).toFixed(2)} ${c.unit}`.trim();
+          // As many decimals as the step has (none for whole studs), at least two for millimetres.
+          const places = Math.max(c.unit === "mm" ? 2 : 0, (String(c.step).split(".")[1] ?? "").length);
+          out.textContent = `${Number(state.values[c.name]).toFixed(places)} ${c.unit}`.trim();
         };
         show();
         return el(
@@ -556,19 +586,99 @@ async function main() {
           artNote,
         );
       }
+      case "checkbox":
+        return el(
+          "div",
+          { className: "field check" },
+          el(
+            "label",
+            { for: id },
+            el("input", {
+              id,
+              type: "checkbox",
+              checked: state.values[c.name] === true,
+              "aria-describedby": c.help ? `${id}-help` : null,
+              onchange: (e) => {
+                state.values[c.name] = e.target.checked;
+                changed();
+              },
+            }),
+            ` ${c.label}`,
+          ),
+          describe(c, id),
+        );
+      case "text": {
+        const limit = c.maxLength ? `At most ${c.maxLength} characters.` : "";
+        return el(
+          "div",
+          { className: "field" },
+          el("label", { for: id, text: c.label }),
+          el("input", {
+            id,
+            type: "text",
+            autocomplete: "off",
+            value: state.values[c.name] ?? "",
+            "aria-describedby": `${id}-help`,
+            oninput: (e) => {
+              const text = e.target.value;
+              if (c.maxLength && [...text].length > c.maxLength) {
+                e.target.setAttribute("aria-invalid", "true");
+                invalid.set(id, `${c.label} can be at most ${c.maxLength} characters; it has ${[...text].length}.`);
+              } else {
+                e.target.removeAttribute("aria-invalid");
+                invalid.delete(id);
+                state.values[c.name] = text;
+              }
+              changed();
+            },
+          }),
+          el("p", { className: "help", id: `${id}-help`, text: [limit, c.help].filter(Boolean).join(" ") }),
+        );
+      }
+      case "color":
+        return el(
+          "div",
+          { className: "field" },
+          el("label", { for: id, text: c.label }),
+          el("input", {
+            id,
+            type: "color",
+            value: state.values[c.name],
+            "aria-describedby": c.help ? `${id}-help` : null,
+            oninput: (e) => {
+              state.values[c.name] = e.target.value;
+              changed();
+            },
+          }),
+          describe(c, id),
+        );
       default:
-        return el("p", { className: "note", text: `${c.label}: this parameter type (${c.kind}) has no control here yet; its default is used.` });
+        // A type the panel cannot edit: say so kindly, and what the part keeps.
+        return el(
+          "div",
+          { className: "field" },
+          el("span", { className: "label", text: c.label }),
+          el("p", { className: "note", id: `${id}-note`, text: c.note ?? `${c.label} cannot be edited here yet, so the part keeps its default.` }),
+        );
     }
   }
 
-  for (const g of spec.groups) {
-    const fieldset = el("fieldset", {}, el("legend", { text: g.name }));
-    for (const c of g.controls) {
-      const wrap = el("div", { "data-param": c.name }, control(c));
-      wrappers.set(c.name, wrap);
-      fieldset.append(wrap);
+  /** Build the panel from the part's parameters, with the current values. */
+  function buildForm() {
+    for (const id of [...invalid.keys()]) if (id.startsWith("p-")) invalid.delete(id);
+    wrappers.clear();
+    gridInputs.clear();
+    form.replaceChildren();
+    for (const g of spec.groups) {
+      const fieldset = el("fieldset", {}, el("legend", { text: g.name }));
+      for (const c of g.controls) {
+        const wrap = el("div", { "data-param": c.name }, control(c));
+        wrappers.set(c.name, wrap);
+        fieldset.append(wrap);
+      }
+      form.append(fieldset);
     }
-    form.append(fieldset);
+    if (spec.controls.length === 0) form.append(el("p", { className: "note", text: "This part has no parameters to change." }));
   }
   form.addEventListener("submit", (e) => e.preventDefault());
 
@@ -579,7 +689,7 @@ async function main() {
 
   /** The chooser, the notice line and the page summary follow the artwork in use. */
   function renderArtwork() {
-    const sample = state.artwork.sample ?? null;
+    const sample = state.artwork?.sample ?? null;
     sampleSelect.value = sample?.id ?? "own";
     if (sample?.notice) {
       artNotice.replaceChildren(`${sample.notice} `, el("a", { href: sample.noticeUrl, target: "_blank", rel: "noopener" }, "Read the notice"));
@@ -588,10 +698,20 @@ async function main() {
       artNotice.replaceChildren();
       artNotice.hidden = true;
     }
-    page.artwork = { sample: sample?.id ?? null, asset: state.artwork.name, notice: !artNotice.hidden };
+    page.artwork = { sample: sample?.id ?? null, asset: artworkName(), notice: !artNotice.hidden };
   }
-  renderArtwork();
-  showArtNote(`Using ${state.artwork.label}.`);
+
+  /** The invalid-field entry that stands while the part's drawing is missing. */
+  const MISSING_ARTWORK = "artwork";
+  /**
+   * Note the drawing the part names when the page does not have it: the
+   * drop zone asks for it and nothing is built until it is given.
+   */
+  function askForArtwork(wanted) {
+    const message = `This part's drawing “${wanted}” is not bundled with the designer: drop that SVG on the drop zone, or choose it or a sample.`;
+    invalid.set(MISSING_ARTWORK, message);
+    showArtNote(message, true);
+  }
 
   /** Put `size` in the stud grid's fields, as if typed, and clear their messages. */
   function setGrid(size) {
@@ -621,6 +741,7 @@ async function main() {
       state.statusNote = note;
     }
     state.artwork = sampleArtwork(sample, gridControl ? state.values[gridControl.name] : null);
+    invalid.delete(MISSING_ARTWORK);
     renderArtwork();
     showArtNote(`Using ${state.artwork.label}.${note ? ` ${note}` : ""}`);
     changed();
@@ -631,7 +752,7 @@ async function main() {
    * Neuraldeep.net mark has one for 2x4 and one for 4x6). Called on every change.
    */
   function followSample() {
-    const sample = state.artwork.sample;
+    const sample = state.artwork?.sample;
     if (!sample || !gridControl) return;
     const next = sampleArtwork(sample, state.values[gridControl.name]);
     if (next.name === state.artwork.name) return;
@@ -642,7 +763,16 @@ async function main() {
 
   async function useFile(file) {
     if (!file) return;
-    const still = ` The tile keeps ${state.artwork.label}.`;
+    // A part document dropped or chosen here opens as the part.
+    if (isPartFile(file.name)) {
+      openPartFile(file);
+      return;
+    }
+    if (!fileControl) {
+      showPartNote(`“${file.name}” is a drawing, and ${doc.name} takes none. To open a part, choose a .obpart.json file.`, true);
+      return;
+    }
+    const still = state.artwork ? ` The part keeps ${state.artwork.label}.` : "";
     const tooBig = assetSizeError(file.name, file.size, data.maxAssetBytes);
     if (tooBig) {
       showArtNote(tooBig + still, true);
@@ -654,6 +784,7 @@ async function main() {
       return;
     }
     state.artwork = { name: file.name, bytes, label: `“${file.name}” (${kb(bytes.length)})` };
+    invalid.delete(MISSING_ARTWORK);
     renderArtwork();
     showArtNote(`Using ${state.artwork.label}.`);
     changed();
@@ -672,7 +803,7 @@ async function main() {
     files
       .open("svg", data.maxAssetBytes)
       .then(useFile)
-      .catch((err) => showArtNote(`The file could not be opened: ${errorText(err)}. The tile keeps ${state.artwork.label}.`, true));
+      .catch((err) => showArtNote(`The file could not be opened: ${errorText(err)}.${state.artwork ? ` The part keeps ${state.artwork.label}.` : ""}`, true));
   }
   // Dropping a file anywhere on the 3D view works too.
   const stage = $("stage");
@@ -687,7 +818,293 @@ async function main() {
 
   function applyVisibility(visible) {
     for (const [name, wrap] of wrappers) wrap.hidden = visible[name] === false;
+    // A group whose every parameter is hidden hides its heading too.
+    for (const fieldset of form.querySelectorAll("fieldset")) {
+      fieldset.hidden = [...fieldset.querySelectorAll(":scope > [data-param]")].every((w) => w.hidden);
+    }
   }
+
+  // ------------------------------------------------------------------ part file
+
+  const partSelect = $("part-select");
+  const partFile = $("part-file");
+  const partNote = $("part-note");
+  const presetRow = $("preset-row");
+  const presetSelect = $("preset");
+  const presetName = $("preset-name");
+  const saveNote = $("save-note");
+  /** The bundled part documents, the logo tile first. */
+  const bundledParts = data.parts;
+  const encoderJson = new TextEncoder();
+
+  function showPartNote(text, bad = false) {
+    partNote.textContent = text;
+    partNote.className = bad ? "note bad" : "note";
+  }
+  function showSaveNote(text, bad = false) {
+    saveNote.textContent = text;
+    saveNote.className = bad ? "note bad" : "note";
+  }
+
+  /** The part select: the bundled parts, the part opened from a file, and "Open a part file…". */
+  function renderPartSelect() {
+    const options = bundledParts.map((p) => el("option", { value: `bundled:${p.id}`, text: p.label }));
+    if (part?.source === "file") options.push(el("option", { value: "file", text: `“${part.file}” (opened)` }));
+    options.push(el("option", { value: "open", text: "Open a part file…" }));
+    partSelect.replaceChildren(...options);
+    partSelect.value = part?.source === "file" ? "file" : `bundled:${part?.id}`;
+  }
+
+  /** The preset picker: "Custom values" and the part's presets; hidden when it has none. */
+  function renderPresets() {
+    const presets = part.opened.presets ?? [];
+    presetRow.hidden = presets.length === 0;
+    presetSelect.replaceChildren(
+      el("option", { value: "", text: "Custom values" }),
+      ...presets.map((p) => el("option", { value: p.name, disabled: p.error ? true : null, text: p.error ? `${p.name} (does not fit this part)` : p.name })),
+    );
+    syncPreset();
+  }
+
+  /** Show the preset the values match, or "Custom values". */
+  function syncPreset() {
+    if (!part) return;
+    const fitting = (part.opened.presets ?? []).filter((p) => !p.error);
+    const name = matchingPreset(spec, fitting, state.values, artworkName());
+    presetSelect.value = name;
+    if (page.design) page.design.preset = name;
+  }
+
+  /**
+   * Load a part document: its controls with its defaults, its drawing (a
+   * bundled sample when the document names one; the logo tile starts with
+   * the playground's default, the Neuraldeep.net mark), its presets and a
+   * note on the features this version cannot build yet. `opened` is the core's
+   * open_part_json answer for `text`.
+   */
+  function loadPart(text, opened, source) {
+    const parsed = JSON.parse(text);
+    part = { text, opened, source: source.kind, id: parsed.id, file: source.file };
+    doc = parsed;
+    spec = controlsFor(doc, { maxStuds: info.maxStuds });
+    fileControl = spec.controls.find((c) => c.kind === "file") ?? null;
+    gridControl = spec.controls.find((c) => c.kind === "grid2") ?? null;
+    state.values = defaultValues(spec);
+    state.result = null;
+    state.request = null;
+    state.error = null;
+    state.reframe = true;
+    invalid.delete(MISSING_ARTWORK);
+    const size = gridControl ? state.values[gridControl.name] : null;
+    let missing = null;
+    if (!fileControl) state.artwork = null;
+    else if (source.kind === "bundled" && source.index === 0) state.artwork = sampleArtwork(samples[0], size);
+    else {
+      const found = sampleForAsset(samples, fileControl.default);
+      if (found) state.artwork = sampleArtwork(found.sample, size);
+      else {
+        state.artwork = null;
+        missing = String(fileControl.default ?? "");
+      }
+    }
+    $("part-heading").textContent = doc.name;
+    buildForm();
+    renderArtwork();
+    if (missing !== null) askForArtwork(missing);
+    else if (state.artwork) showArtNote(`Using ${state.artwork.label}.`);
+    renderPartSelect();
+    renderPresets();
+    const unsupported = unsupportedNote(opened.unsupported);
+    showPartNote(source.kind === "file" ? [`Opened “${source.file}”: ${doc.name} ${doc.version}.`, unsupported].filter(Boolean).join(" ") : unsupported, false);
+    showSaveNote("");
+    page.design = {
+      id: doc.id,
+      name: doc.name,
+      source: source.kind,
+      file: source.file,
+      presets: (opened.presets ?? []).map((p) => p.name),
+      preset: "",
+      unsupported: (opened.unsupported ?? []).map((u) => u.feature),
+      missingArtwork: missing,
+    };
+    syncPreset();
+  }
+
+  /** Open a part document the user chose or dropped (a browser File or one from the desktop dialog). */
+  async function openPartFile(file) {
+    if (!file) return;
+    const keeps = ` The designer keeps ${doc?.name ?? "the current part"}.`;
+    if (file.size > data.maxPartBytes) {
+      showPartNote(`“${file.name}” is ${kb(file.size)}, and a part document can be at most ${kb(data.maxPartBytes)}. Choose the part's .obpart.json file.${keeps}`, true);
+      return;
+    }
+    let text;
+    try {
+      text = await file.text();
+    } catch (err) {
+      showPartNote(`“${file.name}” could not be read: ${errorText(err)}.${keeps}`, true);
+      return;
+    }
+    let opened;
+    try {
+      opened = await client.openPart(text, state.process);
+    } catch (err) {
+      showPartNote(`“${file.name}” could not be checked: ${errorText(err)}.${keeps}`, true);
+      return;
+    }
+    if (!opened.ok) {
+      showPartNote(`“${file.name}” could not be opened: ${opened.error}.${keeps}`, true);
+      renderPartSelect();
+      return;
+    }
+    loadPart(text, opened, { kind: "file", file: file.name });
+    changed();
+  }
+
+  /** Open one of the bundled parts. */
+  async function openBundled(index) {
+    const p = bundledParts[index];
+    const opened = await client.openPart(p.text, state.process);
+    if (!opened.ok) throw new Error(opened.error);
+    loadPart(p.text, opened, { kind: "bundled", file: p.file, index });
+  }
+
+  partSelect.addEventListener("change", () => {
+    const value = partSelect.value;
+    if (value === "open") {
+      renderPartSelect(); // shows the part in use until a file is read
+      if (files.desktop) {
+        files
+          .open("part", data.maxPartBytes)
+          .then(openPartFile)
+          .catch((err) => showPartNote(`The file could not be opened: ${errorText(err)}.`, true));
+      } else partFile.click();
+      return;
+    }
+    if (value === "file") return;
+    const index = bundledParts.findIndex((p) => `bundled:${p.id}` === value);
+    if (index < 0) return;
+    openBundled(index)
+      .then(() => changed())
+      .catch((err) => showPartNote(`The part could not be opened: ${errorText(err)}.`, true));
+  });
+  partFile.addEventListener("change", () => {
+    const file = partFile.files?.[0];
+    partFile.value = "";
+    openPartFile(file);
+  });
+  // A part document dropped on the part chooser opens too.
+  const partRow = $("part-row");
+  partRow.addEventListener("dragover", (e) => e.preventDefault());
+  partRow.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file && !isPartFile(file.name)) {
+      showPartNote(`“${file.name}” is not a part document; choose a .obpart.json file. Drawings go on the drop zone below.`, true);
+      return;
+    }
+    openPartFile(file);
+  });
+
+  presetSelect.addEventListener("change", () => {
+    const preset = (part.opened.presets ?? []).find((p) => p.name === presetSelect.value);
+    if (!preset) {
+      syncPreset();
+      return;
+    }
+    const { values, artwork, kept } = applyPreset(spec, state.values, preset);
+    state.values = values;
+    let note = `Preset “${preset.name}”.`;
+    if (artwork !== null && artwork !== artworkName()) {
+      const found = sampleForAsset(samples, artwork);
+      if (found) state.artwork = sampleArtwork(found.sample, gridControl ? state.values[gridControl.name] : null);
+      else note += ` Its drawing “${artwork}” is not bundled, so the part keeps ${state.artwork?.label ?? "no drawing"}.`;
+    }
+    if (kept.length) note += ` ${kept.join(", ")} cannot be changed here, so ${kept.length === 1 ? "it keeps its value" : "they keep their values"}.`;
+    buildForm();
+    renderArtwork();
+    state.statusNote = note;
+    changed();
+    presetSelect.focus();
+  });
+
+  /** The values the core gets for the current controls (and the drawing's name). */
+  function currentParams() {
+    const { visible } = visibility(spec, state.values);
+    const params = paramOverrides(spec, state.values, visible);
+    if (fileControl && state.artwork) params[fileControl.name] = state.artwork.name;
+    return params;
+  }
+
+  /** Why the part file cannot be saved now, or null. */
+  function saveBlocked() {
+    const fields = [...invalid.entries()].filter(([id]) => id !== MISSING_ARTWORK);
+    if (fields.length > 0) return `Saving is off while a field is invalid: ${fields[0][1]}`;
+    return null;
+  }
+
+  $("add-preset").addEventListener("click", async () => {
+    const name = presetName.value.trim();
+    if (!name) {
+      showSaveNote("Give the preset a name first, for example “My tile”.", true);
+      presetName.focus();
+      return;
+    }
+    const why = saveBlocked();
+    if (why) {
+      showSaveNote(why, true);
+      return;
+    }
+    try {
+      const { text } = await client.addPreset({ doc: part.text, name, params: currentParams(), process: state.process });
+      const opened = await client.openPart(text, state.process);
+      if (!opened.ok) throw new Error(opened.error);
+      const replaced = (part.opened.presets ?? []).some((p) => p.name === name);
+      part.text = text;
+      part.opened = opened;
+      doc = JSON.parse(text);
+      page.design.presets = opened.presets.map((p) => p.name);
+      renderPresets();
+      presetName.value = "";
+      showSaveNote(`${replaced ? "Replaced" : "Added"} the preset “${name}” with the current values. Save the part file to keep it.`);
+      changed();
+    } catch (err) {
+      showSaveNote(`The preset could not be added: ${errorText(err)}`, true);
+    }
+  });
+
+  $("save-part").addEventListener("click", async () => {
+    const why = saveBlocked();
+    if (why) {
+      showSaveNote(why, true);
+      return;
+    }
+    const button = $("save-part");
+    button.disabled = true;
+    try {
+      const params = currentParams();
+      const { text } = await client.savePart({ doc: part.text, params, process: state.process });
+      const bytes = encoderJson.encode(text);
+      const name = partFileName(doc.id);
+      const saved = await save(bytes, name, "json");
+      if (!saved.saved) {
+        showSaveNote(savedText(saved, "").join(" "));
+        return;
+      }
+      // The saved document is the one designed from now on, so the content
+      // hash shown is the one the CLI gives for the saved file.
+      part.text = text;
+      doc = JSON.parse(text);
+      page.saves.push({ name: saved.name, bytes: bytes.byteLength });
+      const own = fileControl && state.artwork && !state.artwork.sample ? ` The drawing is saved by name: keep “${state.artwork.name}” next to the part file.` : "";
+      showSaveNote(`${savedText(saved, kb(bytes.byteLength)).join(", ")}. Its values are the part's defaults now.${own}`);
+      changed();
+    } catch (err) {
+      showSaveNote(`The part could not be saved: ${errorText(err)}`, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   // ------------------------------------------------------------------ printer
 
@@ -924,6 +1341,7 @@ async function main() {
     state.dirty = true;
     renderDownloads();
     followSample();
+    syncPreset();
     if (invalid.size > 0) {
       clearTimeout(timer);
       timer = null;
@@ -942,15 +1360,12 @@ async function main() {
   }
 
   function currentRequest() {
-    const { visible } = visibility(spec, state.values);
-    const params = paramOverrides(spec, state.values, visible);
-    if (fileControl) params[fileControl.name] = state.artwork.name;
     return {
-      doc: data.logoTilePart,
-      params,
+      doc: part.text,
+      params: currentParams(),
       process: state.process,
       fit: state.fit === "none" ? "" : state.fits[state.fit] ?? "",
-      assets: [{ name: state.artwork.name, bytes: state.artwork.bytes }],
+      assets: state.artwork ? [{ name: state.artwork.name, bytes: state.artwork.bytes }] : [],
       printer: state.printer,
     };
   }
@@ -962,7 +1377,7 @@ async function main() {
     const artwork = state.artwork;
     const started = edits;
     setState("evaluating");
-    showBuilding("Building the logo tile", performance.now());
+    showBuilding(`Building “${doc.name}”`, performance.now());
     let result;
     try {
       result = await client.evaluatePart(request);
@@ -1000,7 +1415,9 @@ async function main() {
         page.warnings.push(`visibleWhen of ${name}: the page read ${visible[name]}, the core ${shown}`);
       }
     }
-    const keepView = page.evaluations > 0;
+    // A part just opened is framed afresh; later builds keep the camera.
+    const keepView = page.evaluations > 0 && !state.reframe;
+    state.reframe = false;
     page.evaluations++;
     page.part = {
       contentHash: result.contentHash,
@@ -1037,7 +1454,7 @@ async function main() {
     state.statusNote = null;
     showStatus([
       ...(note ? [note] : []),
-      `Logo tile ${v.size?.join(" × ") ?? ""}${v.relief ? `, ${v.relief}` : ""}`,
+      `${doc.name}${gridControl && Array.isArray(v[gridControl.name]) ? ` ${v[gridControl.name].join(" × ")}` : ""}${v.relief ? `, ${v.relief}` : ""}`,
       `${result.triangles.toLocaleString("en-US")} triangles`,
       `content hash ${result.contentHash.slice(0, 12)}…`,
       `built in ${Math.round(result.buildMs)} ms by ${result.kernel}`,
@@ -1057,7 +1474,7 @@ async function main() {
     stopTicker();
     viewer.clear();
     setState("part-error");
-    showStatus([`The tile could not be built: ${state.error}`], "bad");
+    showStatus([`The part could not be built: ${buildErrorText(state.error, part.opened.unsupported)}`], "bad");
     renderLegend();
     renderStats();
     renderValidation();
@@ -1088,14 +1505,16 @@ async function main() {
     if (page.mode !== "tile") return;
     const r = state.result;
     if (!r) {
-      legend.replaceChildren(...(state.error ? [emptyNote("tile")] : []));
+      legend.replaceChildren(...(state.error ? [emptyNote("part")] : []));
       return;
     }
     const relief = r.params.values.relief;
     // What the accent part holds: the face slab of a filament-swap inlay, the
     // logo fill of a multi-material (parts) inlay, the logo otherwise.
     const accent =
-      relief !== "inlay"
+      relief === undefined
+        ? "Accent"
+        : relief !== "inlay"
         ? "Logo"
         : r.params.values.inlayStyle === "parts"
           ? "Logo fill (its own part, face down)"
@@ -1132,13 +1551,13 @@ async function main() {
     const notes = $("notes");
     if (state.error) {
       summary.className = "error";
-      summary.textContent = "The tile could not be built, so it was not checked.";
+      summary.textContent = "The part could not be built, so it was not checked.";
       findingsList.replaceChildren(
         el(
           "li",
           { className: "finding blocker" },
           el("span", { className: "sev", "aria-hidden": "true", text: "⛔" }),
-          el("div", {}, el("p", { className: "head" }, el("strong", { text: "Error" })), el("p", { text: state.error })),
+          el("div", {}, el("p", { className: "head" }, el("strong", { text: "Error" })), el("p", { text: buildErrorText(state.error, part.opened.unsupported) })),
         ),
       );
       notes.hidden = true;
@@ -1202,7 +1621,7 @@ async function main() {
     let why = null;
     if (state.exporting) why = "Preparing the file…";
     else if (invalid.size > 0) why = `Download is off while a field is invalid: ${[...invalid.values()][0]}`;
-    else if (state.error) why = "Download is off until the tile builds (see Validation).";
+    else if (state.error) why = "Download is off until the part builds (see Validation).";
     else if (!state.result) why = "Waiting for the first build…";
     else if (state.dirty) why = "Updating the preview…";
     else why = downloadBlockedReason(state.result.report);
@@ -1967,6 +2386,8 @@ async function main() {
     });
   }
 
+  // The first bundled part (the logo tile) is the one designed first.
+  await openBundled(0);
   setMode(firstMode);
 }
 

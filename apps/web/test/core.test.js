@@ -223,3 +223,41 @@ test("the WebAssembly core lays out the coupon and refuses artwork over its limi
   assert.equal(r.ok, false);
   assert.match(r.error, /limit for artwork is \d+ bytes/);
 });
+
+test("the WebAssembly core opens, presets and saves the parts in parts/ as the page sends them", { skip }, async () => {
+  const core = await loadCore();
+  const read = (name) => readFileSync(new URL(`../../../parts/${name}`, import.meta.url), "utf8");
+  const brand = read("ndn.brand-tile.obpart.json");
+  const opened = dispatch(core, { id: 1, type: "openPart", text: brand, process: "fdm-0.4" }).reply.result;
+  assert.equal(opened.ok, true, opened.error);
+  assert.deepEqual(
+    opened.presets.map((p) => [p.name, p.error]),
+    JSON.parse(brand).presets.map((p) => [p.name, null]),
+  );
+  assert.deepEqual(opened.unsupported, []);
+  // Every part in parts/ opens, and the values the page's controls send save.
+  for (const name of ["ndn.logo-tile.obpart.json", "ndn.brand-tile.obpart.json", "ndn.brand-badge.obpart.json", "ndn.nameplate-keychain.obpart.json"]) {
+    const text = read(name);
+    assert.equal(dispatch(core, { id: 2, type: "openPart", text, process: "fdm-0.4" }).reply.result.ok, true, name);
+    const spec = controlsFor(JSON.parse(text), { maxStuds: core.max_studs() });
+    const values = defaultValues(spec);
+    const params = paramOverrides(spec, values, visibility(spec, values).visible);
+    const saved = dispatch(core, { id: 3, type: "savePart", doc: text, params, process: "fdm-0.4" }).reply;
+    assert.equal(saved.ok, true, `${name}: ${saved.error}`);
+    // Saving the same values again changes nothing.
+    const again = dispatch(core, { id: 4, type: "savePart", doc: saved.result.text, params: {}, process: "fdm-0.4" }).reply.result.text;
+    assert.equal(again, saved.result.text, name);
+  }
+  const keychain = dispatch(core, { id: 5, type: "openPart", text: read("ndn.nameplate-keychain.obpart.json"), process: "fdm-0.4" }).reply.result;
+  assert.deepEqual(
+    keychain.unsupported.map((u) => u.op),
+    ["relief.text", "loop.keyring"],
+  );
+  // A preset added through the protocol reads back as the page sent it.
+  const params = { size: [2, 6], relief: "deboss", reliefHeight: 0.6 };
+  const withPreset = dispatch(core, { id: 6, type: "addPreset", doc: brand, name: "Long", params, process: "fdm-0.4" }).reply.result.text;
+  assert.deepEqual(JSON.parse(withPreset).presets.at(-1), { name: "Long", params });
+  const refused = dispatch(core, { id: 7, type: "savePart", doc: brand, params: { reliefHeight: 9 }, process: "fdm-0.4" }).reply;
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /reliefHeight/);
+});

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  applyPreset,
   assetSizeError,
   controlFor,
   controlsFor,
@@ -14,11 +15,15 @@ import {
   humanLabel,
   isVisible,
   looksLikeSvg,
+  matchingPreset,
+  PARAM_TYPES,
   paramOverrides,
+  sameValue,
   visibility,
 } from "../src/params.js";
 
 const LOGO_TILE = JSON.parse(readFileSync(new URL("../../../parts/ndn.logo-tile.obpart.json", import.meta.url), "utf8"));
+const BRAND_TILE = JSON.parse(readFileSync(new URL("../../../parts/ndn.brand-tile.obpart.json", import.meta.url), "utf8"));
 const KEYCHAIN = JSON.parse(readFileSync(new URL("../../../parts/ndn.nameplate-keychain.obpart.json", import.meta.url), "utf8"));
 const P = LOGO_TILE.params;
 
@@ -121,9 +126,82 @@ test("other parameter types map to plain controls", () => {
   // A grid in millimetres is not capped by the stud limit.
   const g = controlFor("box", { type: "grid2", unit: "mm", default: [10, 20], min: [1, 1], max: [100, 200] }, { maxStuds: 16 });
   assert.deepEqual(g.axes.map((a) => a.max), [100, 200]);
+  assert.equal(controlFor("turn", { type: "angle", unit: "deg", default: 0 }).kind, "number");
   const keychain = controlsFor(KEYCHAIN, { maxStuds: 16 });
   assert.ok(keychain.controls.length > 0);
   for (const c of keychain.controls) assert.ok(c.kind && c.label, c.name);
+});
+
+test("every parameter type of the evaluator gets a control or a kind note", () => {
+  const spec = controlsFor(KEYCHAIN, { maxStuds: 16 });
+  const kinds = Object.fromEntries(spec.controls.map((c) => [c.name, c.kind]));
+  assert.deepEqual(kinds, {
+    text: "text",
+    font: "unsupported",
+    length: "range",
+    // An int with options is a choice whose values stay numbers.
+    width: "choice",
+    studsOnTop: "checkbox",
+    loop: "choice",
+    ringHole: "range",
+  });
+  const byName = Object.fromEntries(spec.controls.map((c) => [c.name, c]));
+  assert.equal(byName.text.maxLength, KEYCHAIN.params.text.maxLength);
+  assert.deepEqual(byName.width.options, [
+    { value: 1, label: "1" },
+    { value: 2, label: "2" },
+  ]);
+  // The font is not offered yet: the note says so, and what the part keeps.
+  assert.match(byName.font.note, /font is not possible here yet, so the part keeps “Inter:Bold”/);
+  // Unsupported parameters are never sent, so the core uses their defaults.
+  const sent = paramOverrides(spec, defaultValues(spec));
+  assert.equal("font" in sent, false);
+  assert.equal(sent.width, 2);
+  for (const [type, pattern] of [
+    ["image", /pictures cannot be used here yet/],
+    ["list", /Lists cannot be edited here yet/],
+    ["vector", /“vector” is not a parameter type this designer knows/],
+  ]) {
+    const c = controlFor("x", { type, default: type === "list" ? [1] : "a" });
+    assert.equal(c.kind, "unsupported", type);
+    assert.match(c.note, pattern, type);
+  }
+  assert.equal(controlFor("e", { type: "enum", default: "a" }).kind, "unsupported", "an enum without options");
+  for (const type of PARAM_TYPES) assert.ok(controlFor("x", { type, default: null, options: type === "enum" ? ["a"] : undefined }).kind, type);
+  // Only one drawing is chosen in the page; a second keeps its default.
+  const two = controlsFor({ params: { a: { type: "svg", default: "a.svg" }, b: { type: "svg", default: "b.svg" } } });
+  assert.deepEqual(two.controls.map((c) => c.kind), ["file", "unsupported"]);
+  assert.match(two.controls[1].note, /keeps “b\.svg”/);
+});
+
+test("presets set the values they name and keep the others", () => {
+  const spec = controlsFor(BRAND_TILE, { maxStuds: 16 });
+  const values = { ...defaultValues(spec), size: [2, 6] };
+  const [raised, pressed, inlay] = BRAND_TILE.presets;
+  const applied = applyPreset(spec, values, pressed);
+  assert.equal(applied.values.relief, "deboss");
+  assert.deepEqual(applied.values.size, [2, 6], "the size is not in the preset");
+  assert.equal(applied.artwork, null);
+  assert.deepEqual(applied.kept, []);
+  assert.equal(values.relief, "emboss", "the values given are not changed");
+  // The picker shows the preset the values match, else Custom ("").
+  const art = BRAND_TILE.params.logo.default;
+  assert.equal(matchingPreset(spec, BRAND_TILE.presets, values, art), raised.name);
+  assert.equal(matchingPreset(spec, BRAND_TILE.presets, applied.values, art), pressed.name);
+  assert.equal(matchingPreset(spec, BRAND_TILE.presets, applyPreset(spec, values, inlay).values, art), inlay.name);
+  assert.equal(matchingPreset(spec, BRAND_TILE.presets, { ...values, reliefHeight: 1.2 }, art), "");
+  assert.equal(matchingPreset(spec, [], values, art), "");
+  // Numbers compare by value, arrays item by item; the artwork by its name.
+  const mine = { name: "Mine", params: { size: [2, 6], margin: 1, logo: "mine.svg", font: "x", nope: 1 } };
+  const m = applyPreset(spec, values, mine);
+  assert.equal(m.artwork, "mine.svg");
+  assert.deepEqual(m.kept, ["font", "nope"]);
+  assert.equal(matchingPreset(spec, [mine], values, "mine.svg"), "Mine");
+  assert.equal(matchingPreset(spec, [mine], values, art), "");
+  assert.equal(sameValue(1, 1.0), true);
+  assert.equal(sameValue([2, 4], [2, 4]), true);
+  assert.equal(sameValue([2, 4], [4, 2]), false);
+  assert.equal(sameValue("2", 2), false);
 });
 
 test("visibleWhen reads the core's comparisons and logic", () => {

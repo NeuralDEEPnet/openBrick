@@ -132,6 +132,21 @@ export class CoreClient {
     return this.#send({ type: "recordFit", input });
   }
 
+  /** A part document the user opened, checked: { ok, ... } (protocol.js openPart). */
+  openPart(text, process) {
+    return this.#send({ type: "openPart", text, process });
+  }
+
+  /** The part document with the values as defaults: { text }. */
+  savePart(fields) {
+    return this.#send({ ...fields, type: "savePart" });
+  }
+
+  /** The part document with a preset `name` holding the values: { text }. */
+  addPreset(fields) {
+    return this.#send({ ...fields, type: "addPreset" });
+  }
+
   /**
    * Build a nominal brick. Resolves with the mesh result of src/protocol.js, or with
    * null when a newer build superseded this one.

@@ -83,6 +83,22 @@ function fakeCore({ throws = null } = {}) {
     process_profiles_json: () => JSON.stringify([{ id: "fdm-0.4" }]),
     example_fit_profile_json: () => '{"kind":"fit","id":"example"}',
     logo_tile_part_json: () => '{"id":"ndn.logo-tile"}',
+    bundled_parts_json: () => '[{"id":"ndn.logo-tile","label":"Logo tile","file":"ndn.logo-tile.obpart.json","text":"{}"}]',
+    max_part_bytes: () => 4194304,
+    open_part_json(text, process) {
+      calls.push(["open_part_json", text, process]);
+      return text.startsWith("{") ? JSON.stringify({ ok: true, id: "t", presets: [], unsupported: [] }) : JSON.stringify({ ok: false, error: "the file is not JSON" });
+    },
+    save_part_json(doc, params, process) {
+      calls.push(["save_part_json", doc, params, process]);
+      fail();
+      return `${doc}\n`;
+    },
+    add_preset_json(doc, name, params, process) {
+      calls.push(["add_preset_json", doc, name, params, process]);
+      if (!name.trim()) throw new Error("a preset needs a name");
+      return `${doc} ${name}\n`;
+    },
     artwork_samples_json: () => '[{"id":"neuraldeep-mark","files":[{"asset":"assets/brand/neuraldeep-mark-2x4.svg","tile":[2,4],"svg":"<svg/>"}]}]',
     disclaimer: () => "not affiliated",
     role_colors_json: () => '{"body":"#2f6db5","accent":"#f4f1e8"}',
@@ -512,9 +528,35 @@ test("bundled and resolveParams read the core's data", () => {
   assert.deepEqual(b.roleColors, { body: "#2f6db5", accent: "#f4f1e8" });
   assert.equal(b.maxAssetBytes, 4194304);
   assert.equal(b.couponChoices.defaultPocketSet, "cross");
+  assert.deepEqual(b.parts.map((p) => [p.id, p.file]), [["ndn.logo-tile", "ndn.logo-tile.obpart.json"]], "parsed");
+  assert.equal(b.maxPartBytes, 4194304);
   const r = dispatch(core, { id: 2, type: "resolveParams", ...PART, params: { relief: "inlay" } }).reply.result;
   assert.deepEqual(r.visible, { reliefHeight: false });
   assert.deepEqual(core.calls[0], ["resolve_params_json", '{"relief":"inlay"}', "fdm-0.4"]);
+});
+
+test("openPart, savePart and addPreset pass the document through the core", () => {
+  const core = fakeCore();
+  const opened = dispatch(core, { id: 1, type: "openPart", text: '{"a":1}', process: "fdm-0.4" }).reply;
+  assert.equal(opened.ok, true);
+  assert.deepEqual(opened.result, { ok: true, id: "t", presets: [], unsupported: [] });
+  // A file that is not a part is an answer, not a failed request.
+  const refused = dispatch(core, { id: 2, type: "openPart", text: "nope", process: "fdm-0.4" }).reply;
+  assert.deepEqual([refused.ok, refused.result.ok, refused.result.error], [true, false, "the file is not JSON"]);
+  assert.match(dispatch(core, { id: 3, type: "openPart", process: "fdm-0.4" }).reply.error, /needs the document as text/);
+  assert.match(dispatch(core, { id: 4, type: "openPart", text: "{}" }).reply.error, /process/);
+
+  const saved = dispatch(core, { id: 5, type: "savePart", ...PART, params: { relief: "deboss" } }).reply;
+  assert.deepEqual(saved.result, { text: `${PART.doc}\n` });
+  assert.deepEqual(core.calls.at(-1), ["save_part_json", PART.doc, '{"relief":"deboss"}', "fdm-0.4"]);
+  const preset = dispatch(core, { id: 6, type: "addPreset", ...PART, name: "Mine", params: {} }).reply;
+  assert.deepEqual(preset.result, { text: `${PART.doc} Mine\n` });
+  assert.deepEqual(core.calls.at(-1), ["add_preset_json", PART.doc, "Mine", "{}", "fdm-0.4"]);
+  // The core's refusals come back as errors with its message.
+  assert.match(dispatch(core, { id: 7, type: "addPreset", ...PART, name: " ", params: {} }).reply.error, /needs a name/);
+  assert.match(dispatch(core, { id: 8, type: "addPreset", ...PART, params: {} }).reply.error, /preset's name/);
+  const failing = fakeCore({ throws: "parameter `reliefHeight`: 9 is above the maximum 1.5" });
+  assert.match(dispatch(failing, { id: 9, type: "savePart", ...PART, params: {} }).reply.error, /reliefHeight/);
 });
 
 // ------------------------------------------------------------ calibration coupon

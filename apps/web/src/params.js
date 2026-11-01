@@ -34,13 +34,43 @@ function pick(v, index, fallback) {
   return typeof x === "number" && Number.isFinite(x) ? x : fallback;
 }
 
+/** The parameter types the core's evaluator reads (crates/openbrick-part src/eval/params.rs). */
+export const PARAM_TYPES = ["int", "length", "angle", "bool", "string", "enum", "grid2", "svg", "image", "font", "color", "list"];
+
+/** A short value for a sentence: text in quotes, anything else as JSON. */
+function shownValue(v) {
+  return typeof v === "string" ? `“${v}”` : JSON.stringify(v);
+}
+
+/**
+ * Why a parameter has no control here, in a sentence that also says what the
+ * part uses instead (its default), or null when it has one.
+ */
+export function unsupportedNote(name, p) {
+  const uses = p?.default === undefined || p?.default === null ? "its default" : shownValue(p.default);
+  switch (p?.type) {
+    case "font":
+      return `Choosing a font is not possible here yet, so the part keeps ${uses}.`;
+    case "image":
+      return `Photos and other pictures cannot be used here yet (tracing them is planned), so the part keeps ${uses}. Use an SVG drawing instead where the part offers one.`;
+    case "list":
+      return `Lists cannot be edited here yet, so the part keeps ${uses}.`;
+    default:
+      if (PARAM_TYPES.includes(p?.type)) return null;
+      return `“${p?.type}” is not a parameter type this designer knows (it knows ${PARAM_TYPES.join(", ")}), so the part keeps ${uses}.`;
+  }
+}
+
 /**
  * The control for one parameter: { name, kind, label, help, visibleWhen, group,
  * default, ... }. Kinds: `grid2` (two whole-number inputs with axes [{ label,
- * min, max }]), `choice` (options [{ value, label }]), `range` (a slider: min,
- * max, step, unit), `number` (min, max, step or "any", unit), `file` (an SVG
- * asset; default is the asset name), `checkbox`, `text`, `color`. `maxStuds`
- * caps a grid in studs at the core's footprint limit (`capped` says so).
+ * min, max }]), `choice` (options [{ value, label }]; any type with `options`,
+ * whose values keep their type), `range` (a slider: min, max, step, unit),
+ * `number` (min, max, step or "any", unit), `file` (an SVG asset; default is
+ * the asset name), `checkbox`, `text` (maxLength), `color`, and `unsupported`
+ * (font, image and list, and unknown types: `note` says why and what the part
+ * keeps; nothing is sent, so the core uses the default). `maxStuds` caps a
+ * grid in studs at the core's footprint limit (`capped` says so).
  */
 export function controlFor(name, p, { maxStuds = Infinity } = {}) {
   const unit = p.unit ?? "";
@@ -53,6 +83,11 @@ export function controlFor(name, p, { maxStuds = Infinity } = {}) {
     group: p.group ?? UNGROUPED,
     default: p.default,
   };
+  const note = unsupportedNote(name, p);
+  if (note) return { ...base, kind: "unsupported", note };
+  if (Array.isArray(p.options) && p.options.length > 0 && ["enum", "int", "length", "angle", "string"].includes(p.type)) {
+    return { ...base, kind: "choice", options: p.options.map(option) };
+  }
   switch (p.type) {
     case "grid2": {
       const studs = unit === "stud";
@@ -65,9 +100,10 @@ export function controlFor(name, p, { maxStuds = Infinity } = {}) {
       return { ...base, kind: "grid2", axes, default: [0, 1].map((i) => pick(p.default, i, axes[i].min)) };
     }
     case "enum":
-      return { ...base, kind: "choice", options: (p.options ?? []).map(option) };
+      // An enum without options cannot be chosen; the core refuses it too.
+      return { ...base, kind: "unsupported", note: `${humanLabel(name)} has no options in the part document, so it cannot be chosen.` };
     case "length":
-    case "number":
+    case "angle":
     case "int": {
       const min = pick(p.min, 0, undefined);
       const max = pick(p.max, 0, undefined);
@@ -82,17 +118,29 @@ export function controlFor(name, p, { maxStuds = Infinity } = {}) {
       return { ...base, kind: "checkbox" };
     case "color":
       return { ...base, kind: "color" };
-    default:
-      return { ...base, kind: "text" };
+    default: {
+      const max = p.maxLength;
+      return { ...base, kind: "text", maxLength: Number.isInteger(max) && max > 0 ? max : null };
+    }
   }
 }
 
 /**
  * Every control of a part document, grouped in document order of first use:
- * { controls: [...], groups: [{ name, controls }] }.
+ * { controls: [...], groups: [{ name, controls }] }. The page offers one
+ * artwork file, the first `svg` parameter; any other keeps its default.
  */
 export function controlsFor(doc, options = {}) {
-  const controls = Object.entries(doc?.params ?? {}).map(([name, p]) => controlFor(name, p, options));
+  let artwork = false;
+  const controls = Object.entries(doc?.params ?? {}).map(([name, p]) => {
+    const c = controlFor(name, p, options);
+    if (c.kind !== "file") return c;
+    if (!artwork) {
+      artwork = true;
+      return c;
+    }
+    return { ...c, kind: "unsupported", note: `Only one drawing can be chosen here, so ${c.label.toLowerCase()} keeps ${shownValue(c.default)}.` };
+  });
   const groups = [];
   for (const c of controls) {
     let g = groups.find((x) => x.name === c.group);
@@ -241,10 +289,57 @@ export function visibility({ controls }, values) {
 export function paramOverrides(spec, values, visible = visibility(spec, values).visible) {
   const out = {};
   for (const c of spec.controls) {
-    if (visible[c.name] === false) continue;
+    if (visible[c.name] === false || c.kind === "unsupported") continue;
     if (values[c.name] !== undefined) out[c.name] = values[c.name];
   }
   return out;
+}
+
+// ---------------------------------------------------------------- presets
+
+/** Same value: numbers by value, arrays item by item (as the core compares them). */
+export function sameValue(a, b) {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameValue(x, b[i]));
+  }
+  return a === b;
+}
+
+/**
+ * Choosing `preset` ({ name, params }): the values with the preset's set over
+ * them (a preset sets the parameters it names and leaves the others), the
+ * artwork it names (the asset name of the file control, or null when it names
+ * none), and the parameters it names that have no control here (`kept`, which
+ * keep their value).
+ */
+export function applyPreset(spec, values, preset) {
+  const next = { ...values };
+  let artwork = null;
+  const kept = [];
+  for (const [name, value] of Object.entries(preset?.params ?? {})) {
+    const c = spec.controls.find((x) => x.name === name);
+    if (!c || c.kind === "unsupported") kept.push(name);
+    else if (c.kind === "file") artwork = value;
+    else next[name] = Array.isArray(value) ? [...value] : value;
+  }
+  return { values: next, artwork, kept };
+}
+
+/**
+ * The name of the first preset whose every value the controls hold (the
+ * artwork compared by its asset name), or "" when none matches: the preset
+ * picker then shows "Custom".
+ */
+export function matchingPreset(spec, presets, values, artworkName) {
+  for (const p of presets ?? []) {
+    const all = Object.entries(p.params ?? {}).every(([name, v]) => {
+      const c = spec.controls.find((x) => x.name === name);
+      if (!c || c.kind === "unsupported") return true;
+      return c.kind === "file" ? v === artworkName : sameValue(values[name], v);
+    });
+    if (all) return p.name;
+  }
+  return "";
 }
 
 // ---------------------------------------------------------------- downloads
