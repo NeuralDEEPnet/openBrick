@@ -2651,6 +2651,7 @@ dependencies = [
 name = "openbrick-part"
 version = "0.1.0"
 dependencies = [
+ "indexmap 2.14.2",
  "openbrick-geom",
  "openbrick-io",
  "openbrick-print",

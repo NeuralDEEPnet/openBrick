@@ -268,6 +268,8 @@ pub enum EvalError {
     UnknownParam(String),
     #[error("parameter `{name}`: {message}")]
     Param { name: String, message: String },
+    #[error("preset `{name}`: {message}")]
+    Preset { name: String, message: String },
     #[error("feature `{feature}`, field `{field}`: {message}")]
     Field {
         feature: String,

@@ -1,5 +1,6 @@
 //! Bundled data for the page: the process profiles, the example fit profile, the
-//! logo tile part document, the artwork samples (the Neuraldeep.net marks and
+//! bundled part documents (the logo tile and the Neuraldeep.net tile) and their
+//! size limit, the artwork samples (the Neuraldeep.net marks and
 //! the CC0 sample mark), the disclaimer, the display colours of the colour roles
 //! and the asset size limit. The page builds its controls from these, so nothing
 //! here is repeated in JavaScript.
@@ -14,8 +15,12 @@ use serde_json::{json, Value};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
-/// `parts/ndn.logo-tile.obpart.json`, the part the playground designs.
+/// `parts/ndn.logo-tile.obpart.json`, the part the playground designs first.
 const LOGO_TILE_PART: &str = include_str!("../../../parts/ndn.logo-tile.obpart.json");
+/// `parts/ndn.brand-tile.obpart.json`, the Neuraldeep.net tile with its
+/// presets, the playground's second bundled part. Its default artwork is the
+/// Neuraldeep.net mark (see the brand drawings below).
+const BRAND_TILE_PART: &str = include_str!("../../../parts/ndn.brand-tile.obpart.json");
 /// `parts/assets/mark.svg` (CC0), the default `logo` of the logo tile. Asset paths
 /// in a part document are relative to the part file, so the document names it
 /// `assets/mark.svg`.
@@ -107,6 +112,36 @@ pub fn example_fit_profile_json() -> String {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn logo_tile_part_json() -> String {
     LOGO_TILE_PART.to_string()
+}
+
+/// The part documents the playground offers before any is opened, as a JSON
+/// array of `{ id, label, file, text }`, the default first: the logo tile and
+/// the Neuraldeep.net tile with its presets. `file` is the name under
+/// `parts/`, which the save dialog suggests; `text` the document as committed.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn bundled_parts_json() -> String {
+    json!([
+        {
+            "id": "ndn.logo-tile",
+            "label": "Logo tile",
+            "file": "ndn.logo-tile.obpart.json",
+            "text": LOGO_TILE_PART,
+        },
+        {
+            "id": "ndn.brand-tile",
+            "label": "Neuraldeep.net tile (with presets)",
+            "file": "ndn.brand-tile.obpart.json",
+            "text": BRAND_TILE_PART,
+        },
+    ])
+    .to_string()
+}
+
+/// The largest part document, in bytes, the page opens: the CLI's limit
+/// (`openbrick_part::save::MAX_DOCUMENT_BYTES`, 4 MiB).
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn max_part_bytes() -> u32 {
+    u32::try_from(openbrick_part::save::MAX_DOCUMENT_BYTES).expect("the limit fits u32")
 }
 
 /// The sample artwork, `parts/assets/mark.svg` (CC0): the logo tile's default
@@ -248,6 +283,29 @@ mod tests {
         let doc = PartDoc::parse(&logo_tile_part_json()).unwrap();
         // The sample logo is the document's default artwork.
         assert_eq!(doc.params["logo"].default, json!("assets/mark.svg"));
+        // The bundled parts: the logo tile first, then the brand tile, whose
+        // default artwork is a bundled sample drawing and which has presets.
+        let parts: Vec<Value> = serde_json::from_str(&bundled_parts_json()).unwrap();
+        let ids: Vec<&str> = parts.iter().filter_map(|p| p["id"].as_str()).collect();
+        assert_eq!(ids, ["ndn.logo-tile", "ndn.brand-tile"]);
+        assert_eq!(parts[0]["text"], json!(logo_tile_part_json()));
+        let samples: Vec<Value> = serde_json::from_str(&artwork_samples_json()).unwrap();
+        let assets: Vec<&str> = samples
+            .iter()
+            .flat_map(|s| s["files"].as_array().unwrap())
+            .filter_map(|f| f["asset"].as_str())
+            .collect();
+        for p in &parts {
+            let text = p["text"].as_str().unwrap();
+            let doc = PartDoc::parse(text).unwrap();
+            assert_eq!(p["id"], json!(doc.id));
+            assert_eq!(p["file"], json!(format!("{}.obpart.json", doc.id)));
+            let logo = doc.params["logo"].default.as_str().unwrap();
+            assert!(assets.contains(&logo), "{logo} is a bundled drawing");
+            assert!(text.len() < max_part_bytes() as usize);
+        }
+        let brand = PartDoc::parse(parts[1]["text"].as_str().unwrap()).unwrap();
+        assert!(brand.presets.len() >= 2, "the brand tile has presets");
         assert!(sample_logo_svg().contains("<svg"));
         assert!(sample_logo_svg().len() < max_asset_bytes() as usize);
     }

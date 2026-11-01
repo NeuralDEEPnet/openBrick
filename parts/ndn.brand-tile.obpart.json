@@ -1,7 +1,7 @@
 {
   "openbrick": "1.0",
   "id": "ndn.brand-tile",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Neuraldeep.net tile",
   "license": "CC0-1.0",
   "credit": { "author": "Neural Deep Network Ltd; default artwork: the Neuraldeep.net mark, all rights reserved (parts/assets/brand/NOTICE.md)", "url": "https://neuraldeep.net" },
@@ -9,7 +9,8 @@
     "source": "parts/ndn.logo-tile.obpart.json 1.3.0",
     "modified": true,
     "history": [
-      "1.0.0: the logo tile with the Neuraldeep.net mark (assets/brand/neuraldeep-mark-2x4.svg) as its default logo. This document is CC0-1.0; the mark is not: it is Copyright Neural Deep Network Ltd, all rights reserved, and its use is limited to the OpenBrick3D demo tiles (parts/assets/brand/NOTICE.md)."
+      "1.0.0: the logo tile with the Neuraldeep.net mark (assets/brand/neuraldeep-mark-2x4.svg) as its default logo. This document is CC0-1.0; the mark is not: it is Copyright Neural Deep Network Ltd, all rights reserved, and its use is limited to the OpenBrick3D demo tiles (parts/assets/brand/NOTICE.md).",
+      "1.1.0: presets for the three ways to print the mark (raised, pressed in, two-colour inlay); the geometry for every parameter value is unchanged."
     ]
   },
   "params": {
@@ -21,6 +22,11 @@
     "reliefHeight": { "type": "length", "unit": "mm", "default": 0.6, "min": 0.2, "max": 1.5, "step": 0.1, "visibleWhen": "relief != 'inlay'", "help": "Deboss is clamped so 1.8 mm of cavity remains (0.4 mm on plates)" },
     "margin": { "type": "length", "unit": "mm", "default": 1.0, "min": 0.4, "max": 4 }
   },
+  "presets": [
+    { "name": "Raised mark", "params": { "relief": "emboss", "reliefHeight": 0.6 } },
+    { "name": "Pressed-in mark", "params": { "relief": "deboss", "reliefHeight": 0.6 } },
+    { "name": "Two-colour inlay", "params": { "relief": "inlay", "inlayStyle": "swap" } }
+  ],
   "features": [
     { "id": "body",   "op": "body.tile",  "size": "$size", "height": "$height", "round": { "tier": "chamfer", "radius": "0.3mm" } },
     { "id": "bottom", "op": "tube.field", "on": "body.bottom", "grid": "auto", "fitCritical": true },

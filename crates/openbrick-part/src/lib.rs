@@ -3,10 +3,15 @@
 //! against the print rules ([`validate()`], docs/plan/05 section 5). See
 //! docs/plan/06. The calibration coupon ([`coupon`], docs/plan/05 section 4) is
 //! built here too, from the same stud, tube and rib code as the evaluator.
+//! Saving a document ([`save`]: edited parameter values as its defaults, named
+//! presets) writes the one text layout of [`format`], so every front end
+//! writes the same bytes.
 
 pub mod coupon;
 pub mod eval;
+pub mod format;
 mod print_checks;
+pub mod save;
 mod validate;
 
 pub use coupon::{
@@ -17,9 +22,13 @@ pub use eval::{
     MemoryAssets, MeshChecks, ParamValues, ResolvedParams, RoleMesh, SectionShape,
     PREVIEW_MESH_CHECK_TRIANGLES,
 };
+pub use format::to_saved_text;
+pub use save::{saved_text, unsupported_features, UnsupportedFeature};
 pub use validate::{validate, validate_on_bed};
 
 use std::collections::BTreeMap;
+
+use indexmap::IndexMap;
 
 use serde_json::Value;
 
@@ -31,6 +40,13 @@ pub use openbrick_units::Credit;
 pub struct Provenance {
     #[serde(default)]
     pub source: String,
+    /// Author, licence and link of the upstream source; omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     #[serde(default)]
     pub modified: bool,
     #[serde(default)]
@@ -91,10 +107,25 @@ pub struct Feature {
     pub fields: BTreeMap<String, Value>,
 }
 
-/// The part document.
+/// A named set of parameter values (docs/plan/06 section 3), like an OpenSCAD
+/// customizer `parameterSets` entry. Choosing it sets the parameters it names
+/// and leaves the others as they are.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Preset {
+    pub name: String,
+    /// Values by parameter name, in the order written.
+    pub params: IndexMap<String, Value>,
+}
+
+/// The part document. Fields are written in the order of
+/// `schemas/part.schema.json`; absent optional ones are left out, so what
+/// [`to_saved_text`] writes is the document that was read.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PartDoc {
     pub openbrick: String,
+    /// Optional; `part` when present (docs/plan/08 section 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     pub id: String,
     pub version: String,
     pub name: String,
@@ -103,8 +134,12 @@ pub struct PartDoc {
     pub credit: Credit,
     #[serde(default)]
     pub provenance: Provenance,
+    /// Parameters in document order, which is the order of the designer's
+    /// panel; saving keeps it.
     #[serde(default)]
-    pub params: BTreeMap<String, Param>,
+    pub params: IndexMap<String, Param>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presets: Vec<Preset>,
     pub features: Vec<Feature>,
     #[serde(default = "derived")]
     pub snap: Value,
@@ -112,6 +147,9 @@ pub struct PartDoc {
     pub print: Value,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub export: Value,
+    /// Reproducibility record (docs/plan/06 section 10); kept as written.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub lock: Value,
 }
 
 fn derived() -> Value {
@@ -158,6 +196,12 @@ pub enum PartError {
     DuplicateId(String),
     #[error("feature `{id}` anchors on `{on}`, which is not defined before it")]
     DanglingAnchor { id: String, on: String },
+    #[error("a preset needs a name; give each preset in `presets` a short name such as \"Two-colour inlay\"")]
+    PresetName,
+    #[error("two presets are named `{0}`; give each preset its own name")]
+    DuplicatePreset(String),
+    #[error("preset `{preset}` sets `{param}`, which is not a parameter of this part; remove it from the preset or add the parameter")]
+    PresetParam { preset: String, param: String },
 }
 
 impl PartDoc {
@@ -195,7 +239,29 @@ impl PartDoc {
             }
             seen.push(&f.id);
         }
+        let mut names: Vec<&str> = Vec::new();
+        for p in &self.presets {
+            let name = p.name.trim();
+            if name.is_empty() {
+                return Err(PartError::PresetName);
+            }
+            if names.contains(&name) {
+                return Err(PartError::DuplicatePreset(name.to_string()));
+            }
+            names.push(name);
+            if let Some(param) = p.params.keys().find(|k| !self.params.contains_key(*k)) {
+                return Err(PartError::PresetParam {
+                    preset: p.name.clone(),
+                    param: param.clone(),
+                });
+            }
+        }
         Ok(())
+    }
+
+    /// The preset named `name`, if the document has one.
+    pub fn preset(&self, name: &str) -> Option<&Preset> {
+        self.presets.iter().find(|p| p.name == name)
     }
 
     /// Ids of features marked fit-critical, plus those listed in `print.fitCritical`.
@@ -231,6 +297,60 @@ mod tests {
         ] {
             let doc = PartDoc::parse(src).expect("example part parses");
             assert!(doc.fit_critical_features().contains(&"bottom".to_string()));
+        }
+    }
+
+    /// A minimal plate with a `size` parameter and the given presets.
+    fn with_presets(presets: &str) -> Result<PartDoc, PartError> {
+        PartDoc::parse(&format!(
+            r#"{{"openbrick":"1.0","id":"t","version":"0.1.0","name":"t","license":"CC0-1.0",
+            "params":{{"size":{{"type":"grid2","default":[2,2]}}}},"presets":{presets},
+            "features":[{{"id":"body","op":"body.plate","size":"$size"}}]}}"#
+        ))
+    }
+
+    #[test]
+    fn presets_are_read_and_checked() {
+        let doc = with_presets(r#"[{"name":"Big","params":{"size":[4,4]}}]"#).expect("valid");
+        assert_eq!(
+            doc.preset("Big").unwrap().params["size"],
+            serde_json::json!([4, 4])
+        );
+        assert!(doc.preset("big").is_none(), "names are exact");
+        assert!(matches!(
+            with_presets(r#"[{"name":" ","params":{}}]"#),
+            Err(PartError::PresetName)
+        ));
+        assert!(matches!(
+            with_presets(r#"[{"name":"A","params":{}},{"name":"A ","params":{}}]"#),
+            Err(PartError::DuplicatePreset(n)) if n == "A"
+        ));
+        let e = with_presets(r#"[{"name":"A","params":{"colour":"red"}}]"#).unwrap_err();
+        assert!(
+            matches!(&e, PartError::PresetParam { preset, param } if preset == "A" && param == "colour")
+        );
+        assert!(
+            e.to_string().contains("not a parameter of this part"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn the_brand_tile_presets_fit_its_parameters() {
+        let doc = PartDoc::parse(include_str!("../../../parts/ndn.brand-tile.obpart.json"))
+            .expect("parses");
+        let process = openbrick_print::default_process_profiles().remove(0);
+        let names: Vec<&str> = doc.presets.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Raised mark", "Pressed-in mark", "Two-colour inlay"]
+        );
+        for p in &doc.presets {
+            let values = doc.preset_values(&p.name, &process).expect("fits");
+            assert_eq!(
+                values.values["relief"],
+                doc.preset(&p.name).unwrap().params["relief"]
+            );
         }
     }
 

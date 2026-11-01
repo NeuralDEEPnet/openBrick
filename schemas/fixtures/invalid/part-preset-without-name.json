@@ -1,0 +1,19 @@
+{
+  "openbrick": "1.0",
+  "id": "fixture.preset-without-name",
+  "version": "0.1.0",
+  "name": "Plate with a preset that has no name",
+  "license": "CC0-1.0",
+  "credit": {
+    "author": "OpenBrick3D contributors"
+  },
+  "params": {
+    "size": { "type": "grid2", "unit": "stud", "default": [2, 2], "min": [1, 1], "max": [8, 8] }
+  },
+  "presets": [
+    { "params": { "size": [4, 4] } }
+  ],
+  "features": [
+    { "id": "body", "op": "body.plate", "size": "$size" }
+  ]
+}

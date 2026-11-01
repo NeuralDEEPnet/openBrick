@@ -13,6 +13,8 @@ publish = false
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# Parameters and presets in document order (PartDoc::params, Preset::params).
+indexmap = { workspace = true }
 sha2 = { workspace = true }
 openbrick-units = { workspace = true }
 openbrick-geom = { workspace = true }
