@@ -101,7 +101,26 @@ pub fn saved_text(original: &str, edited: &PartDoc) -> Result<String, PartError>
         }
     }
     edited.check()?;
-    Ok(format::layout(&root))
+    let text = format::layout(&root);
+    // The rewrite edits the text as written, so a key spelled with an escape,
+    // or written twice (serde keeps the last, the rewrite finds the first),
+    // would leave the old value in place. Read the result back and refuse to
+    // report a save that did not take.
+    let after = PartDoc::parse(&text)?;
+    for (name, p) in &edited.params {
+        let written = after.params.get(name).map(|a| &a.default);
+        if !p.default.is_null() && !written.is_some_and(|w| same_value(w, &p.default)) {
+            return Err(PartError::SaveMismatch {
+                what: format!("default of `{name}`"),
+            });
+        }
+    }
+    if after.presets != edited.presets {
+        return Err(PartError::SaveMismatch {
+            what: "presets".to_string(),
+        });
+    }
+    Ok(text)
 }
 
 impl PartDoc {
@@ -170,7 +189,9 @@ impl PartDoc {
     }
 
     /// The values of preset `name` as parameter overrides, checked against the
-    /// document (an error names the preset and the parameter).
+    /// document (an error names the preset and the parameter) and normalised
+    /// as the evaluator reads them (`"0.8mm"` becomes `0.8`), so a front end
+    /// can compare them with its controls' values.
     pub fn preset_values(
         &self,
         name: &str,
@@ -187,10 +208,96 @@ impl PartDoc {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
         };
-        resolve_params(self, &values, process).map_err(|e| EvalError::Preset {
+        let resolved = resolve_params(self, &values, process).map_err(|e| EvalError::Preset {
             name: name.to_string(),
             message: format!("{e}; change the value in the preset or remove it"),
         })?;
-        Ok(values)
+        Ok(ParamValues {
+            values: values
+                .values
+                .keys()
+                .filter_map(|k| resolved.values.get(k).map(|v| (k.clone(), v.clone())))
+                .collect(),
+        })
+    }
+
+    /// Every parameter's default, checked and normalised as the evaluator
+    /// reads it (`"0.6mm"` becomes `0.6`, an int a whole number), so a front
+    /// end shows and compares the values the core builds with.
+    pub fn default_values(&self, process: &ProcessProfile) -> Result<ParamValues, EvalError> {
+        let resolved = resolve_params(self, &ParamValues::new(), process)?;
+        Ok(ParamValues {
+            values: resolved.values,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const DOC: &str = r#"{"openbrick":"1.0","id":"t","version":"0.1.0","name":"t","license":"CC0-1.0",
+        "params":{"size":{"type":"int","default":2,"min":1,"max":8}},
+        "features":[{"id":"body","op":"body.tile","size":[2,"$size"],"height":"plate"}]}"#;
+
+    fn process() -> ProcessProfile {
+        openbrick_print::default_process_profiles().remove(0)
+    }
+
+    fn edit(text: &str, size: i64) -> Result<String, PartError> {
+        let doc = PartDoc::parse(text)?;
+        let edited = doc
+            .with_values(&ParamValues::new().with("size", json!(size)), &process())
+            .expect("fits");
+        saved_text(text, &edited)
+    }
+
+    #[test]
+    fn an_edited_default_is_saved() {
+        let saved = edit(DOC, 4).expect("saves");
+        assert_eq!(
+            PartDoc::parse(&saved).unwrap().params["size"].default,
+            json!(4)
+        );
+    }
+
+    #[test]
+    fn an_escaped_parameter_key_is_refused_instead_of_dropping_the_edit() {
+        let escaped = DOC.replace(r#""size":{"#, r#""\u0073ize":{"#);
+        assert!(PartDoc::parse(&escaped).is_ok(), "serde reads the escape");
+        let e = edit(&escaped, 4).unwrap_err();
+        assert!(matches!(e, PartError::SaveMismatch { .. }), "{e}");
+        assert!(e.to_string().contains("`size`"), "{e}");
+    }
+
+    #[test]
+    fn a_parameter_written_twice_is_refused_instead_of_dropping_the_edit() {
+        let twice = DOC.replace(
+            r#""params":{"#,
+            r#""params":{"size":{"type":"int","default":3,"min":1,"max":8},"#,
+        );
+        assert!(PartDoc::parse(&twice).is_ok(), "serde keeps the last");
+        let e = edit(&twice, 4).unwrap_err();
+        assert!(matches!(e, PartError::SaveMismatch { .. }), "{e}");
+    }
+
+    #[test]
+    fn defaults_and_presets_are_normalised_for_the_panel() {
+        let text = DOC
+            .replace(
+                r#""params":{"#,
+                r#""params":{"h":{"type":"length","default":"0.6mm","min":0.2,"max":1.2},"#,
+            )
+            .replace(
+                r#""features""#,
+                r#""presets":[{"name":"High","params":{"h":"0.8mm"}}],"features""#,
+            );
+        let doc = PartDoc::parse(&text).unwrap();
+        let defaults = doc.default_values(&process()).unwrap();
+        assert_eq!(defaults.values["h"], json!(0.6));
+        assert_eq!(defaults.values["size"], json!(2));
+        let preset = doc.preset_values("High", &process()).unwrap();
+        assert_eq!(preset.values, [("h".to_string(), json!(0.8))].into());
     }
 }

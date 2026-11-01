@@ -59,12 +59,16 @@ fn parse(doc_json: &str) -> Result<PartDoc, CoreError> {
 
 /// Check a part document the user opened, without building it. Never fails:
 /// the answer is JSON, either `{ ok: true, id, name, version, license,
-/// credit, presets, unsupported }` or `{ ok: false, error }`.
+/// credit, defaults, presets, unsupported }` or `{ ok: false, error }`.
 ///
+/// - `defaults`: every parameter's default, normalised as the evaluator reads
+///   it (`"0.6mm"` becomes `0.6`), or null when one does not fit the part.
 /// - `presets`: `[{ name, params, error }]`, where `error` is null or why the
 ///   preset does not fit the part (a value out of range, an option it lacks),
 ///   as the evaluator's parameter rules say with `process_id` (a bundled
-///   process profile, for `profile.` names in `visibleWhen`).
+///   process profile, for `profile.` names in `visibleWhen`). A preset that
+///   fits has its `params` normalised the same way; one that does not keeps
+///   them as written.
 /// - `unsupported`: `[{ feature, op, condition }]`, the features whose op this
 ///   evaluator does not build yet (`openbrick_part::unsupported_features`):
 ///   the part builds only while each one's `if` (`condition`) is false.
@@ -76,15 +80,15 @@ pub fn open_part_json(doc_json: &str, process_id: &str) -> String {
         let presets: Vec<Value> = doc
             .presets
             .iter()
-            .map(|p| {
-                let error = doc.preset_values(&p.name, &process).err();
-                json!({
-                    "name": p.name,
-                    "params": p.params,
-                    "error": error.map(|e| e.to_string()),
-                })
+            .map(|p| match doc.preset_values(&p.name, &process) {
+                Ok(values) => json!({ "name": p.name, "params": values.values, "error": null }),
+                Err(e) => json!({ "name": p.name, "params": p.params, "error": e.to_string() }),
             })
             .collect();
+        // Normalised as the evaluator reads them, so the panel shows and
+        // compares numbers (`"0.6mm"` is 0.6); null when a default does not
+        // fit, and the first build then says why.
+        let defaults = doc.default_values(&process).ok().map(|v| v.values);
         Ok(json!({
             "ok": true,
             "id": doc.id,
@@ -92,6 +96,7 @@ pub fn open_part_json(doc_json: &str, process_id: &str) -> String {
             "version": doc.version,
             "license": doc.license,
             "credit": doc.credit,
+            "defaults": defaults,
             "presets": presets,
             "unsupported": unsupported_features(&doc),
         }))
@@ -183,6 +188,19 @@ mod tests {
             ])
         );
         assert_eq!(keychain["presets"], json!([]));
+    }
+
+    #[test]
+    fn opening_normalises_defaults_and_presets_written_with_units() {
+        let mut doc: Value = serde_json::from_str(BRAND).unwrap();
+        doc["params"]["reliefHeight"]["default"] = json!("0.6mm");
+        doc["presets"] = json!([{ "name": "Higher", "params": { "reliefHeight": "0.8mm" } }]);
+        let v = open(&doc.to_string());
+        assert_eq!(v["ok"], json!(true), "{v}");
+        assert_eq!(v["defaults"]["reliefHeight"], json!(0.6));
+        assert_eq!(v["defaults"]["size"], doc["params"]["size"]["default"]);
+        assert_eq!(v["presets"][0]["params"], json!({ "reliefHeight": 0.8 }));
+        assert!(v["presets"][0]["error"].is_null());
     }
 
     #[test]

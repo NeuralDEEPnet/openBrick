@@ -202,6 +202,8 @@ pub enum PartError {
     DuplicatePreset(String),
     #[error("preset `{preset}` sets `{param}`, which is not a parameter of this part; remove it from the preset or add the parameter")]
     PresetParam { preset: String, param: String },
+    #[error("the new {what} could not be written into the file, so it was not saved: the opened file writes a key twice or with an escape (such as \\u0073). Save it once with the key written plainly and only once, then try again")]
+    SaveMismatch { what: String },
 }
 
 impl PartDoc {
