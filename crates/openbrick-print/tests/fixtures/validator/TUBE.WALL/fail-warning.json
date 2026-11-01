@@ -30,9 +30,12 @@
     "minBodyWallMm": 1.2,
     "minTubeWallAtBedMm": 0.35,
     "minTubeWallMm": 0.75,
+    "overhangs": [],
     "process": "fdm-0.4",
     "ribDepthMm": 0.3,
     "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 0,
     "triangleCount": 2640,
     "volumeMm3": 848.418
   },
@@ -46,6 +49,12 @@
         "severity": "warning",
         "threshold": 0.8,
         "value": 0.75
+      }
+    ],
+    "unchecked": [
+      {
+        "reason": "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)",
+        "rule": "SIZE.BED"
       }
     ]
   }

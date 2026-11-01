@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 pub use openbrick_units::Credit;
 
 mod coupon;
+mod printer;
 mod record;
 mod validate;
 
@@ -15,13 +16,14 @@ pub use coupon::{
     coupon_v1, CouponCell, CouponLabel, CouponSpec, DEFAULT_POCKET_SET, GRID_TOLERANCE_MM,
     POCKET_CELLS, POCKET_SETS,
 };
+pub use printer::{default_printers, printer, Bed, PrinterProfile, PrinterSource};
 pub use record::{
     fit_profile_text, is_profile_id, offset_rows, record, record_with, slug_id, OffsetRow,
     RecordError, RecordInput, ANONYMOUS_AUTHOR, DEFAULT_NOZZLE_MM, FIT_INTENTS, RECORD_DECIMALS,
 };
 pub use validate::{
-    finding_unit, validate, validate_with, FeatureNames, IMPLEMENTED_RULES, LENGTH_TOLERANCE_MM,
-    MESH_VOLUME_TOLERANCE_PCT, PLANNED_RULES,
+    finding_unit, validate, validate_on_bed, validate_with, FeatureNames, IMPLEMENTED_RULES,
+    LENGTH_TOLERANCE_MM, MESH_VOLUME_TOLERANCE_PCT, PLANNED_RULES,
 };
 
 /// What a manufacturing process can resolve.
@@ -391,6 +393,72 @@ pub struct Measurements {
     /// blocks where it would otherwise warn.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fit_critical_artwork: bool,
+    /// Pairs of triangles that pass through each other, summed over the
+    /// exported objects and the fused single-colour mesh
+    /// (`openbrick_geom::self_intersections`; rule `MESH.SELF_INTERSECT`).
+    /// `None` when it was not measured (measurements written before the
+    /// field, or a mesh outside the test's range); the report then lists the
+    /// rule as not checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_intersections: Option<usize>,
+    /// The part prints face down, its top face on the bed: exporters turn it
+    /// over with `openbrick_geom::turn_face_down` (an inlay). Every other part
+    /// prints as designed, bottom down.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub face_down: bool,
+    /// The face the part document declares up for this build (`print.up`,
+    /// resolved for the relief mode when it names one per mode); `None` when
+    /// the document declares none (rule `ORIENT.FACE`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print_up: Option<String>,
+    /// The relief mode of the part's artwork (`emboss`, `deboss`, `inlay`),
+    /// when it has artwork.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relief_mode: Option<String>,
+    /// When the print orientation (`face_down`, or `print_up` naming the
+    /// bottom) puts the top face on the bed: the studs standing on it (rule
+    /// `ORIENT.FACE`). `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bed_face_studs: Option<u32>,
+    /// When the print orientation puts the top face on the bed: how far the
+    /// highest point of the part stands above that face, mm (0 for a flat
+    /// face; rule `ORIENT.FACE`). `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bed_face_relief_mm: Option<f64>,
+    /// The longest bridge of the roof in print orientation, mm: the largest
+    /// span (`openbrick_geom::DownRegion::span_mm`) of the downward regions in
+    /// the plane of the cavity ceiling, between walls, tubes, pins and ribs
+    /// (rule `ROOF.BRIDGE`). `None` when the roof does not hang down (the part
+    /// prints face down, or has no cavity) or when it was not measured
+    /// (`overhangs` is `None` too).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roof_span_mm: Option<f64>,
+    /// Regions of downward faces outside the roof that hang steeper than the
+    /// process's `maxOverhangDeg` in print orientation (rules `OVERHANG.MAX`
+    /// and `OVERHANG.BRIDGED`); empty for none, `None` when not measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overhangs: Option<Vec<Overhang>>,
+}
+
+/// One region of steep downward faces outside the roof, in print orientation
+/// (`openbrick_geom::DownRegion`).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Overhang {
+    /// The steepest face, degrees from vertical (90 for a ceiling).
+    pub angle_deg: f64,
+    /// The bridge span, mm: twice the farthest distance from a point of the
+    /// region to an edge with material below; `None` when no edge has (the
+    /// region floats).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span_mm: Option<f64>,
+    /// Height of its lowest point above the bed, mm.
+    pub height_mm: f64,
+    /// Area of its faces, mm².
+    pub area_mm2: f64,
+    /// Where it is seen from above (x, y in mm, print orientation): the point
+    /// farthest from material below.
+    pub centre_mm: [f64; 2],
 }
 
 /// The calibration record written by the coupon wizard.
@@ -502,11 +570,25 @@ pub struct Finding {
     pub feature: Option<String>,
 }
 
+/// A rule the validator could not check for this report, and why (an input
+/// was not given or a measurement is missing). It neither blocks nor warns.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Unchecked {
+    /// Rule id from docs/plan/05 section 5.
+    pub rule: String,
+    /// Why, and what would let it be checked.
+    pub reason: String,
+}
+
 /// What [`validate()`] found; the JSON form is `schemas/report.schema.json`,
 /// the contract of `openbrick validate --json`.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Report {
     pub findings: Vec<Finding>,
+    /// Rules not checked for this report, in the order of the rule table;
+    /// empty (and left out of the JSON) when every rule could be checked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unchecked: Vec<Unchecked>,
 }
 
 impl Report {

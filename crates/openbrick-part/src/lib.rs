@@ -6,6 +6,7 @@
 
 pub mod coupon;
 pub mod eval;
+mod print_checks;
 mod validate;
 
 pub use coupon::{
@@ -15,7 +16,7 @@ pub use eval::{
     evaluate, Artwork, AssetResolver, Built, Connector, ConnectorSection, EvalError, EvalInput,
     MemoryAssets, ParamValues, ResolvedParams, RoleMesh, SectionShape,
 };
-pub use validate::validate;
+pub use validate::{validate, validate_on_bed};
 
 use std::collections::BTreeMap;
 

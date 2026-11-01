@@ -60,10 +60,14 @@
       "type": "object",
       "properties": {
         "up": {
-          "description": "The face that faces up, either one face or one per relief mode.",
+          "description": "The face that faces up when printed, either one face or one per relief mode: the print orientation rule ORIENT.FACE checks (docs/plan/05 sections 5 and 6). top: as designed, bottom on the bed; bottom: face down, the top face on the bed, as an inlay prints (that face must then be flat and stud-free).",
           "anyOf": [
-            { "type": "string", "minLength": 1 },
-            { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } }
+            { "enum": ["top", "bottom"] },
+            {
+              "type": "object",
+              "propertyNames": { "enum": ["emboss", "deboss", "inlay"] },
+              "additionalProperties": { "enum": ["top", "bottom"] }
+            }
           ]
         },
         "profiles": {

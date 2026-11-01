@@ -1,0 +1,75 @@
+{
+  "description": "A face-down part whose face has something standing 0.6 mm proud of it (as an emboss would): blocker, the height against 0 mm.",
+  "rule": "ORIENT.FACE",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bedFaceReliefMm": 0.6,
+    "bedFaceStuds": 0,
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "faceDown": true,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.4,
+    "minBodyWallMm": 0.8,
+    "minStrokeMm": 1.27,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "overhangs": [],
+    "printUp": "bottom",
+    "process": "fdm-0.4",
+    "reliefHeightMm": 0.4,
+    "reliefMode": "inlay",
+    "removedAreaPct": 0.5,
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "use relief mode inlay or deboss for a face-down part, which keep the face flat",
+        "message": "the part prints face down, but something stands 0.6 mm proud of that face (a flat face stands 0 mm): it would rest on that and not on the face",
+        "rule": "ORIENT.FACE",
+        "severity": "blocker",
+        "threshold": 0.0,
+        "value": 0.6
+      }
+    ],
+    "unchecked": [
+      {
+        "reason": "the artwork is not compared with the blocklist of protected marks yet: that needs the artwork matcher of the Q16 spike (docs/plan/12); please make sure you may use the artwork",
+        "rule": "TRADEMARK.LOGO"
+      },
+      {
+        "reason": "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)",
+        "rule": "SIZE.BED"
+      }
+    ]
+  }
+}

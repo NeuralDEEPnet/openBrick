@@ -2,17 +2,32 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbrick3d.org/schemas/1.0/report.schema.json",
   "title": "OpenBrick3D validator report",
-  "description": "What the validator found on a built part (openbrick_print::Report, written by serde_json): the contract of `openbrick validate --json` (docs/plan/05 sections 5 and 9). Findings are sorted blockers first, then by rule id, feature and message. A part may be exported when no finding is a blocker; warnings never block. cargo xtask data checks the expected reports of the validator fixtures (crates/openbrick-print/tests/fixtures/validator/) against this schema.",
+  "description": "What the validator found on a built part (openbrick_print::Report, written by serde_json): the contract of `openbrick validate --json` (docs/plan/05 sections 5 and 9). Findings are sorted blockers first, then by rule id, feature and message. A part may be exported when no finding is a blocker; warnings never block. Rules the validator could not check (an input was not given, such as a bed for SIZE.BED, or a measurement is missing) are listed under unchecked with the reason; they neither block nor warn. cargo xtask data checks the expected reports of the validator fixtures (crates/openbrick-print/tests/fixtures/validator/) against this schema.",
   "type": "object",
   "required": ["findings"],
   "properties": {
     "findings": {
       "type": "array",
       "items": { "$ref": "#/$defs/finding" }
+    },
+    "unchecked": {
+      "description": "Rules not checked for this report, in the order of the rule table (openbrick_print::Unchecked). Absent when every rule was checked.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/unchecked" }
     }
   },
   "additionalProperties": false,
   "$defs": {
+    "unchecked": {
+      "description": "A rule the validator could not check, and why (what to give so it can).",
+      "type": "object",
+      "required": ["rule", "reason"],
+      "properties": {
+        "rule": { "$ref": "#/$defs/finding/properties/rule" },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "finding": {
       "description": "One validator message (openbrick_print::Finding). Every message carries the rule id, the measured value, the threshold and a fix hint (CLAUDE.md).",
       "type": "object",
@@ -52,7 +67,7 @@
           "minLength": 1
         },
         "value": {
-          "description": "The measured value, in the frame the rule compares: millimetres, with lengths in the bed plane as drawn plus fit offsets (the mesh length divided by the fit profile's xyScale); except MESH.VOLUME (deviation in percent; the volume in mm3 when it is not positive), FEATURE.MIN on the removed area (percent of the artwork area) and MESH.MANIFOLD on an empty mesh (component count). Null when the rule measures no number (FIT.PROCESS, FIT.MISSING, a non-manifold mesh, a volume that is not a finite number, an artwork stroke that was not measured).",
+          "description": "The measured value, in the frame the rule compares: millimetres, with lengths in the bed plane as drawn plus fit offsets (the mesh length divided by the fit profile's xyScale; SIZE.BED compares the mesh as exported); except MESH.VOLUME (deviation in percent; the volume in mm3 when it is not positive), FEATURE.MIN on the removed area (percent of the artwork area), MESH.MANIFOLD on an empty mesh (component count), MESH.SELF_INTERSECT (pairs of triangles), OVERHANG.MAX (degrees from vertical) and ORIENT.FACE on studs (a count). Null when the rule measures no number (FIT.PROCESS, FIT.MISSING, a non-manifold mesh, a volume that is not a finite number, an artwork stroke that was not measured, an ORIENT.FACE disagreement between print.up and the print orientation).",
           "type": ["number", "null"]
         },
         "threshold": {

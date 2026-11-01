@@ -87,6 +87,15 @@ pub fn process_profiles_json() -> String {
     serde_json::to_string(&default_process_profiles()).expect("process profiles serialise")
 }
 
+/// The bundled printers (`profiles/printer/*.json`: id, name, maker, build
+/// volume in mm, toolheads, filaments and the source of the volume) as a JSON
+/// array sorted by id, for the printer menus of the playground (rule
+/// `SIZE.BED`, and the coupon's bed).
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn printers_json() -> String {
+    serde_json::to_string(&openbrick_print::default_printers()).expect("printers serialise")
+}
+
 /// The example fit profile (Prusa MK4S, PETG, fdm-0.4) as committed. Its values
 /// are illustrative, not measured; its notes say so.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]

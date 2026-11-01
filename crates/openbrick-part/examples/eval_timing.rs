@@ -9,13 +9,17 @@
 //! ```
 //!
 //! Each argument is `<x>x<y>:<tile|plate|brick>`, or
+//! `brand[:<emboss|deboss|inlay>]` for the brand tile
+//! (parts/ndn.brand-tile.obpart.json), or
 //! `logo[:<emboss|deboss|inlay|inlay-parts>]` for the example 2x4 logo tile
 //! (parts/ndn.logo-tile.obpart.json) with its artwork parts/assets/mark.svg
 //! (relief.svg, backlog item 9; `inlay-parts` is the inlay with inlayStyle
 //! `parts`, the artwork fill as its own part). Every brick or
 //! plate is built with studs (except tiles) and a tube field on the nominal
 //! fdm-0.4 process with the example fit profile, three times; the table shows
-//! the fastest run.
+//! the fastest run. A second line times the print checks of the final meshes
+//! (self-intersection and overhang analysis, rules MESH.SELF_INTERSECT,
+//! ROOF.BRIDGE and OVERHANG.*) on their own; the evaluation time includes them.
 
 use std::time::Instant;
 
@@ -25,6 +29,8 @@ use serde_json::json;
 
 const LOGO_TILE: &str = include_str!("../../../parts/ndn.logo-tile.obpart.json");
 const MARK_SVG: &[u8] = include_bytes!("../../../parts/assets/mark.svg");
+const BRAND_TILE: &str = include_str!("../../../parts/ndn.brand-tile.obpart.json");
+const BRAND_SVG: &[u8] = include_bytes!("../../../parts/assets/brand/neuraldeep-mark-2x4.svg");
 use openbrick_print::{default_process_profiles, example_fit_profile};
 
 fn doc(x: u32, y: u32, kind: &str) -> PartDoc {
@@ -61,6 +67,8 @@ fn main() {
             "logo:deboss",
             "logo:inlay",
             "logo:inlay-parts",
+            "brand",
+            "16x16:plate",
         ]
         .map(String::from)
         .to_vec();
@@ -79,8 +87,15 @@ fn main() {
     for arg in args {
         let (size, kind) = arg.split_once(':').unwrap_or((arg.as_str(), ""));
         let mut params = ParamValues::new();
-        let assets = MemoryAssets::new().with("assets/mark.svg", MARK_SVG.to_vec());
-        let d = if size == "logo" {
+        let assets = MemoryAssets::new()
+            .with("assets/mark.svg", MARK_SVG.to_vec())
+            .with("assets/brand/neuraldeep-mark-2x4.svg", BRAND_SVG.to_vec());
+        let d = if size == "brand" {
+            if !kind.is_empty() {
+                params = params.with("relief", json!(kind));
+            }
+            PartDoc::parse(BRAND_TILE).expect("the brand tile parses")
+        } else if size == "logo" {
             if let Some(mode) = kind.strip_suffix("-parts") {
                 params = params
                     .with("relief", json!(mode))
@@ -121,6 +136,35 @@ fn main() {
             m.genus,
             m.components,
             b.connectors.len()
+        );
+        // The print checks of the final meshes (rules MESH.SELF_INTERSECT,
+        // ROOF.BRIDGE, OVERHANG.*), which the evaluation above includes,
+        // timed again on their own.
+        let meshes: Vec<&openbrick_geom::Mesh> = b
+            .objects
+            .iter()
+            .map(|o| &o.mesh)
+            .chain(b.fused.as_ref().map(|f| &f.mesh))
+            .collect();
+        let t = Instant::now();
+        for mesh in &meshes {
+            openbrick_geom::self_intersections(mesh);
+        }
+        let selfx = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let solid = b.fused.as_ref().map_or(&b.objects[0].mesh, |f| &f.mesh);
+        openbrick_geom::downward_regions(
+            solid,
+            process.max_overhang_deg,
+            process.first_layer_chamfer_mm,
+        );
+        let over = t.elapsed().as_secs_f64() * 1e3;
+        println!(
+            "{:<17} checks: self-intersection {selfx:.1} ms ({} pairs), overhangs {over:.1} ms (roof span {} mm, {} other regions)",
+            "",
+            m.self_intersections.map_or("not measured".into(), |n| n.to_string()),
+            m.roof_span_mm.map_or("none".into(), |s| format!("{s:.3}")),
+            m.overhangs.as_ref().map_or(0, Vec::len)
         );
         if let (Some(pct), Some(h)) = (m.removed_area_pct, m.relief_height_mm) {
             println!(

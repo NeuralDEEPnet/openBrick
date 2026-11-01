@@ -11,9 +11,10 @@ use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_io::ExportMeta;
 use openbrick_part::coupon::PLA_DENSITY_G_CM3;
 use openbrick_part::eval::resolve_params;
-use openbrick_part::{evaluate, validate, Built, EvalError, EvalInput, PartDoc};
+use openbrick_part::{evaluate, validate_on_bed, Built, EvalError, EvalInput, PartDoc};
 use openbrick_print::{
-    default_process_profiles, example_fit_profile, FitProfile, ProcessProfile, Report,
+    default_printers, default_process_profiles, example_fit_profile, printer, Bed, FitProfile,
+    ProcessProfile, Report,
 };
 use serde_json::{json, Value};
 
@@ -52,6 +53,16 @@ pub struct PartArgs {
     /// Fit-critical parts (studs, tubes) are blocked without one (FIT.MISSING).
     #[arg(long, value_name = "PATH|example")]
     pub fit: Option<String>,
+    /// Check that the part fits this printer's bed in its print orientation
+    /// (rule SIZE.BED): a bundled printer id (see `openbrick profiles`, such
+    /// as prusa-mini-plus). Without --printer or --bed, SIZE.BED is reported
+    /// as not checked.
+    #[arg(long, value_name = "ID", conflicts_with = "bed")]
+    pub printer: Option<String>,
+    /// Check that the part fits a bed of this size in mm, WxDxH (such as
+    /// 250x210x220; rule SIZE.BED).
+    #[arg(long, value_name = "WxDxH", value_parser = parse_bed)]
+    pub bed: Option<Bed>,
     /// Print one JSON object on stdout (report per schemas/report.schema.json,
     /// measurements, content hash, outputs, timings); human text goes to stderr.
     #[arg(long)]
@@ -80,6 +91,24 @@ pub struct BuildArgs {
     /// has nothing to read (docs/spikes/q18-slicer-multimaterial-import.md).
     #[arg(long = "no-colour", visible_alias = "no-color")]
     pub no_colour: bool,
+}
+
+fn parse_bed(s: &str) -> Result<Bed, String> {
+    Bed::parse(s)
+}
+
+/// The bed of `--printer` or `--bed`, if either is given.
+pub fn choose_bed(printer_id: Option<&str>, bed: Option<&Bed>) -> Result<Option<Bed>, Fail> {
+    if let Some(id) = printer_id {
+        return printer(id).map(|p| Some(p.bed())).ok_or_else(|| {
+            let ids: Vec<String> = default_printers().into_iter().map(|p| p.id).collect();
+            Fail::Input(format!(
+                "`{id}` is not a bundled printer; use one of {} (openbrick profiles lists them), or give the bed size with --bed WxDxH",
+                ids.join(", ")
+            ))
+        });
+    }
+    Ok(bed.cloned())
 }
 
 /// Where the fit profile came from.
@@ -190,6 +219,8 @@ struct Evaluated {
     doc: PartDoc,
     process: ProcessProfile,
     fit: Option<FitChoice>,
+    /// The bed of rule SIZE.BED, when one was given.
+    bed: Option<Bed>,
     built: Built,
     report: Report,
     params: Value,
@@ -226,6 +257,7 @@ fn evaluate_part(args: &PartArgs) -> Result<Evaluated, Fail> {
         cli.values.values.insert(param.clone(), Value::String(name));
     }
     let fit = args.fit.as_deref().map(load_fit).transpose()?;
+    let bed = choose_bed(args.printer.as_deref(), args.bed.as_ref())?;
     let process = choose_process(
         args.process.as_deref(),
         Some(&doc),
@@ -249,7 +281,12 @@ fn evaluate_part(args: &PartArgs) -> Result<Evaluated, Fail> {
     timings.insert("evaluateMs".into(), json!(ms(t)));
 
     let t = Instant::now();
-    let mut report = validate(&built, &process, fit.as_ref().map(|f| &f.profile));
+    let mut report = validate_on_bed(
+        &built,
+        &process,
+        fit.as_ref().map(|f| &f.profile),
+        bed.as_ref(),
+    );
     report.sort();
     timings.insert("validateMs".into(), json!(ms(t)));
     let params = resolve_params(&doc, &cli.values, &process)
@@ -259,6 +296,7 @@ fn evaluate_part(args: &PartArgs) -> Result<Evaluated, Fail> {
         doc,
         process,
         fit,
+        bed,
         built,
         report,
         params,
@@ -459,6 +497,13 @@ fn base_json(command: &str, code: u8, ev: &Evaluated) -> serde_json::Map<String,
         "fitProfile".into(),
         ev.fit.as_ref().map(FitChoice::json).unwrap_or(Value::Null),
     );
+    out.insert(
+        "bed".into(),
+        ev.bed
+            .as_ref()
+            .and_then(|b| serde_json::to_value(b).ok())
+            .unwrap_or(Value::Null),
+    );
     out.insert("contentHash".into(), json!(ev.built.content_hash));
     out.insert("kernel".into(), json!(ev.built.kernel_id));
     out.insert("exportAllowed".into(), json!(ev.report.export_allowed()));
@@ -531,6 +576,9 @@ pub fn validate_cmd(args: &PartArgs, ui: Ui) -> Result<Outcome, Fail> {
     print_findings(&ev.report, |t| {
         ui.say(format!("  {}", t.replace('\n', "\n  ")))
     });
+    for u in &ev.report.unchecked {
+        ui.say(format!("  not checked {}: {}", u.rule, u.reason));
+    }
     if !ev.built.warnings.is_empty() {
         ui.say(format!("Evaluator notes ({}):", ev.built.warnings.len()));
         for w in &ev.built.warnings {

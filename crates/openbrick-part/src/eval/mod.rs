@@ -1307,6 +1307,49 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         .unwrap_or_default();
     let tube_plan = tubes.as_ref().map(|(_, p)| p);
     let flc = body.geom.first_layer_chamfer;
+
+    // Print orientation (rules ORIENT.FACE, ROOF.BRIDGE, OVERHANG.*): an inlay
+    // prints face down, everything else bottom down as designed. The part
+    // document states it in print.up, one face or one per relief mode.
+    let relief_mode = relief.as_ref().map(|r| r.info.mode.clone());
+    let face_down = relief.as_ref().is_some_and(|r| r.info.face_on_bed == "top");
+    let print_up = match doc.print.get("up") {
+        Some(Value::String(face)) => Some(face.clone()),
+        Some(Value::Object(by_mode)) => relief_mode
+            .as_deref()
+            .and_then(|m| by_mode.get(m))
+            .and_then(Value::as_str)
+            .map(String::from),
+        _ => None,
+    };
+    let top_on_bed = face_down || print_up.as_deref() == Some("bottom");
+    let stud_count = studs
+        .as_ref()
+        .map_or(0, |(_, p)| p.geom.centres.len() as u32);
+    // How far anything stands above the top face (studs, an emboss), f32
+    // residue of a flat face read as 0.
+    let proud = hi[2] - body.geom.height;
+    let proud = if proud > MIN_LENGTH_MM / 1000.0 {
+        proud
+    } else {
+        0.0
+    };
+    // The meshes the exporters write, and the single-colour solid.
+    let exported: Vec<&Mesh> = objects
+        .iter()
+        .map(|o| &o.mesh)
+        .chain(fused.as_ref().map(|f| &f.mesh))
+        .collect();
+    let solid = fused.as_ref().map_or(&objects[0].mesh, |f| &f.mesh);
+    let checks = crate::print_checks::measure(
+        &exported,
+        solid,
+        face_down,
+        Some(body.geom.cavity_depth()),
+        process,
+        flc,
+    );
+
     let measurements = Measurements {
         process: process.id.clone(),
         fit_profile: input.fit.map(|f| f.id.clone()),
@@ -1349,6 +1392,14 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         min_stroke_mm: relief.as_ref().and_then(|r| r.min_stroke).map(|s| s * xy),
         removed_area_pct: relief.as_ref().map(|r| r.removed_pct),
         relief_height_mm: relief.as_ref().map(|r| r.height),
+        self_intersections: checks.self_intersections,
+        face_down,
+        print_up,
+        relief_mode,
+        bed_face_studs: top_on_bed.then_some(stud_count),
+        bed_face_relief_mm: top_on_bed.then_some(proud),
+        roof_span_mm: checks.roof_span_mm,
+        overhangs: Some(checks.overhangs),
     };
 
     let content = json!({

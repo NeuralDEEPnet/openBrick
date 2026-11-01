@@ -24,6 +24,9 @@
     "part-missing-credit.json": { "pointer": "", "keyword": "required", "message": "\"credit\"" },
     "part-bad-version.json": { "pointer": "/version", "keyword": "pattern", "message": "\"1.2\"" },
     "part-unknown-param-type.json": { "pointer": "/params/size/type", "keyword": "enum", "message": "\"vector\"" },
-    "part-dotted-feature-id.json": { "pointer": "/features/0/id", "keyword": "pattern", "message": "\"body.main\"" }
+    "part-dotted-feature-id.json": { "pointer": "/features/0/id", "keyword": "pattern", "message": "\"body.main\"" },
+    "part-unknown-up-face.json": { "pointer": "/print/up", "keyword": "anyOf", "message": "\"upside\"" },
+    "printer-zero-height.json": { "pointer": "/buildVolumeMm/2", "keyword": "exclusiveMinimum", "message": "0 is less than or equal to the minimum of 0" },
+    "printer-missing-source.json": { "pointer": "", "keyword": "required", "message": "\"source\"" }
   }
 }

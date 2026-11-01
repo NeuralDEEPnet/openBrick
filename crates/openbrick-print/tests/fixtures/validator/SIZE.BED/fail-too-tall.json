@@ -1,0 +1,58 @@
+{
+  "description": "A part 190 mm tall on a Prusa MINI+, whose build height is 180 mm. Blocker.",
+  "rule": "SIZE.BED",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "printer": "prusa-mini-plus",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      190.0
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.4,
+    "minBodyWallMm": 0.8,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "overhangs": [],
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "make the part lower, or print it on a printer with a taller build volume",
+        "message": "the part is 15.8 x 31.8 x 190 mm in print orientation, and its height of 190 mm is more than the 180 mm build height of the Original Prusa MINI+ (180 x 180 x 180 mm)",
+        "rule": "SIZE.BED",
+        "severity": "blocker",
+        "threshold": 180.0,
+        "value": 190.0
+      }
+    ]
+  }
+}

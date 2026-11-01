@@ -13,8 +13,10 @@
 //! Units: `value` and `threshold` are millimetres, except `MESH.VOLUME` (percent
 //! deviation and percent tolerance; on a volume that is not positive, the volume
 //! in mm3 against 0, and on one that is not a finite number, both null),
-//! `FEATURE.MIN` on the removed area (percent of the artwork area) and
-//! `MESH.MANIFOLD` on an empty mesh (component count). A rule that measured
+//! `FEATURE.MIN` on the removed area (percent of the artwork area),
+//! `MESH.MANIFOLD` on an empty mesh (component count), `MESH.SELF_INTERSECT`
+//! (pairs of triangles against 0), `OVERHANG.MAX` (degrees from vertical) and
+//! `ORIENT.FACE` on studs (a count against 0). A rule that measured
 //! no number has a null value; its threshold is null too, except on an artwork
 //! stroke that was not measured, which carries the `minFeatureMm` it could not
 //! be compared with.
@@ -34,10 +36,50 @@
 //! mesh length too when `xyScale` is not 1. Heights (`ROOF.MIN`,
 //! `CAVITY.DEPTH`, `RELIEF.HEIGHT`) are not scaled.
 //!
-//! Implemented rules ([`IMPLEMENTED_RULES`]): `MESH.MANIFOLD`, `MESH.VOLUME`,
-//! `WALL.MIN`, `TUBE.WALL`, `CAVITY.DEPTH`, `WALL.QUANTISED`, `ROOF.MIN`,
-//! `FEATURE.MIN`, `RELIEF.HEIGHT`, `FIT.PROCESS`, `FIT.MISSING` and
-//! `CLUTCH.RISK`. Decisions the table leaves open:
+//! **Not checked.** A rule whose input is missing is listed in
+//! [`Report::unchecked`] with the reason, never silently passed: `SIZE.BED`
+//! without a bed ([`validate_on_bed`]), `MESH.SELF_INTERSECT`, `ROOF.BRIDGE`
+//! and `OVERHANG.*` on measurements written before those analyses existed, and
+//! `TRADEMARK.LOGO` (still planned) on every part with artwork.
+//!
+//! Implemented rules ([`IMPLEMENTED_RULES`]): every rule of the table but
+//! `TRADEMARK.LOGO`. Decisions the table leaves open:
+//!
+//! - `MESH.SELF_INTERSECT` blocks when any pair of triangles of the exported
+//!   objects or of the fused single-colour mesh pass through each other
+//!   ([`Measurements::self_intersections`]; the definition, its exact
+//!   predicates and its 10 nm dead band are in `openbrick_geom::intersect`).
+//! - `ROOF.BRIDGE` warns when the roof's longest bridge in print orientation
+//!   ([`Measurements::roof_span_mm`]: the farthest any point of the cavity
+//!   ceiling lies from the walls, tubes, pins and ribs that hold it, twice) is
+//!   longer than `maxUnsupportedBridgeMm`. A part printed face down has no
+//!   hanging roof.
+//! - `OVERHANG.MAX` and `OVERHANG.BRIDGED` read the regions of downward faces
+//!   outside the roof steeper than `maxOverhangDeg` from vertical
+//!   ([`Measurements::overhangs`], print orientation). A region whose span
+//!   (twice its farthest distance from an edge with material below) is at
+//!   most `maxUnsupportedBridgeMm` prints as a bridge: one `OVERHANG.BRIDGED`
+//!   warning names the longest. The others (longer, or held nowhere) make one
+//!   `OVERHANG.MAX` finding with the steepest angle: a blocker when the process
+//!   has `supportsAllowed` false, a warning telling to turn on supports
+//!   otherwise. Faces no higher than the first-layer chamfer above the bed are
+//!   not overhangs: the evaluator starts the wall ribs there so the chamfer
+//!   stays clear, and the squashed first layer carries them.
+//! - `ORIENT.FACE` ("the declared up face is flat and has no studs when inlay
+//!   mode") reads the declared up face as the print orientation the part
+//!   document states (`print.up`, per relief mode), and the face that must be
+//!   flat and stud-free as the one that orientation puts on the bed: the top
+//!   face of an inlay (`print.up` `bottom`), as docs/plan/05 section 6 says.
+//!   It blocks when the document's `print.up` disagrees with how the
+//!   exporters lay the part (an inlay face down, everything else bottom down;
+//!   no numbers), and, for a face-down print, when studs stand on the face
+//!   (a count against 0) or anything stands proud of it (mm against 0).
+//! - `SIZE.BED` blocks when the part's box in print orientation (the mesh as
+//!   exported, after `xyScale`, which the printer prints as it is) does not fit
+//!   the bed: its footprint may turn a quarter (longer side against the bed's
+//!   longer side), not diagonally, and its height must fit the build height.
+//!   The bed's full published build volume counts; the slicer keeps its own
+//!   margins.
 //!
 //! - `MESH.MANIFOLD` blocks a mesh the kernel reports as not manifold, and an
 //!   empty mesh (zero components). More than one component is **not** a
@@ -93,18 +135,15 @@
 //!   [`Measurements::rib_depth_mm`] is the built depth, which a check against
 //!   the `pocketRib` sweep would first have to bring into the coupon's frame.
 //!
-//! Not implemented yet, because they need mesh analysis or data the evaluator
-//! does not provide: `MESH.SELF_INTERSECT` (needs a self-intersection test of
-//! the mesh), `ROOF.BRIDGE` and `OVERHANG.MAX` / `OVERHANG.BRIDGED` (need span
-//! and face-angle analysis), `ORIENT.FACE` (needs the declared up face and
-//! inlay mode), `TRADEMARK.LOGO` (needs the Q16 artwork matcher) and `SIZE.BED`
-//! (process profiles carry no bed size yet).
+//! Not implemented yet: `TRADEMARK.LOGO`, which needs the Q16 artwork matcher
+//! ([`PLANNED_RULES`]).
 
 use openbrick_units::STANDARD;
 
 use crate::coupon::coupon_v1;
 use crate::{
-    check_fit_missing, Finding, FitProfile, Measurements, Offsets, ProcessProfile, Report, Severity,
+    check_fit_missing, Bed, Finding, FitProfile, Measurements, Offsets, ProcessProfile, Report,
+    Severity, Unchecked,
 };
 
 /// `MESH.VOLUME` tolerance: "matches expected within 5 percent of the nominal
@@ -120,30 +159,29 @@ pub const LENGTH_TOLERANCE_MM: f64 = 1e-6;
 /// section 5.
 pub const IMPLEMENTED_RULES: &[&str] = &[
     "MESH.MANIFOLD",
+    "MESH.SELF_INTERSECT",
     "MESH.VOLUME",
     "WALL.MIN",
     "TUBE.WALL",
     "CAVITY.DEPTH",
     "WALL.QUANTISED",
     "ROOF.MIN",
+    "ROOF.BRIDGE",
+    "OVERHANG.MAX",
+    "OVERHANG.BRIDGED",
     "FEATURE.MIN",
     "RELIEF.HEIGHT",
     "FIT.PROCESS",
     "FIT.MISSING",
     "CLUTCH.RISK",
+    "ORIENT.FACE",
+    "SIZE.BED",
 ];
 
 /// Rules of the table in docs/plan/05 section 5 that [`validate`] does not
-/// check yet (see the module documentation for why).
-pub const PLANNED_RULES: &[&str] = &[
-    "MESH.SELF_INTERSECT",
-    "ROOF.BRIDGE",
-    "OVERHANG.MAX",
-    "OVERHANG.BRIDGED",
-    "ORIENT.FACE",
-    "TRADEMARK.LOGO",
-    "SIZE.BED",
-];
+/// check yet: `TRADEMARK.LOGO` needs the Q16 artwork matcher (see the module
+/// documentation).
+pub const PLANNED_RULES: &[&str] = &["TRADEMARK.LOGO"];
 
 /// Ids of the part features the measurements come from, when the caller knows
 /// them, so findings can name them (`Finding::feature`).
@@ -159,6 +197,7 @@ pub struct FeatureNames {
 
 /// Check the measurements of a built part. Findings are sorted blockers first,
 /// then by rule id, feature and message, so equal inputs give equal reports.
+/// Without a bed, `SIZE.BED` is not checked (see [`validate_on_bed`]).
 pub fn validate(m: &Measurements, process: &ProcessProfile, fit: Option<&FitProfile>) -> Report {
     validate_with(m, process, fit, &FeatureNames::default())
 }
@@ -170,26 +209,48 @@ pub fn validate_with(
     fit: Option<&FitProfile>,
     names: &FeatureNames,
 ) -> Report {
+    validate_on_bed(m, process, fit, names, None)
+}
+
+/// [`validate_with`], and rule `SIZE.BED` against `bed` when one is given;
+/// without one the report lists `SIZE.BED` as not checked.
+pub fn validate_on_bed(
+    m: &Measurements,
+    process: &ProcessProfile,
+    fit: Option<&FitProfile>,
+    names: &FeatureNames,
+    bed: Option<&Bed>,
+) -> Report {
     let mut v = Validator {
         m,
         p: process,
         fit,
         names,
         out: Vec::new(),
+        unchecked: Vec::new(),
     };
     v.mesh_manifold();
+    v.mesh_self_intersect();
     v.mesh_volume();
     v.wall_min();
     v.tube_wall();
     v.cavity_depth();
     v.wall_quantised();
     v.roof_min();
+    v.roof_bridge();
+    v.overhang();
     v.feature_min();
     v.relief_height();
     v.fit_process();
     v.fit_missing();
     v.clutch_risk();
-    let mut report = Report { findings: v.out };
+    v.orient_face();
+    v.trademark_logo();
+    v.size_bed(bed);
+    let mut report = Report {
+        findings: v.out,
+        unchecked: v.unchecked,
+    };
     report.sort();
     report
 }
@@ -234,6 +295,13 @@ pub fn finding_unit(f: &Finding, m: &Measurements, process: &ProcessProfile) -> 
     match f.rule.as_str() {
         // The empty-mesh finding: 0 components against at least 1.
         "MESH.MANIFOLD" => "",
+        // Pairs of triangles against 0.
+        "MESH.SELF_INTERSECT" => "",
+        // The steepest face against maxOverhangDeg.
+        "OVERHANG.MAX" => "°",
+        // Studs on the face on the bed against 0; with none there, the
+        // finding is the height something stands above that face.
+        "ORIENT.FACE" if m.bed_face_studs.unwrap_or(0) > 0 => "",
         "MESH.VOLUME" if f.threshold == Some(MESH_VOLUME_TOLERANCE_PCT) => "%",
         "MESH.VOLUME" => "mm³",
         "FEATURE.MIN"
@@ -249,7 +317,7 @@ pub fn finding_unit(f: &Finding, m: &Measurements, process: &ProcessProfile) -> 
 
 /// A length for messages: at most three decimals, trailing zeros dropped
 /// (0.8, 0.857, 4.95).
-fn mm(x: f64) -> String {
+pub(crate) fn mm(x: f64) -> String {
     decimals(x, 3)
 }
 
@@ -290,6 +358,13 @@ fn count(n: usize, noun: &str) -> String {
     }
 }
 
+/// The longest span of these regions, if any has one.
+fn longest_span<'a>(regions: impl Iterator<Item = &'a crate::Overhang>) -> Option<f64> {
+    regions
+        .filter_map(|r| r.span_mm)
+        .fold(None, |m: Option<f64>, s| Some(m.map_or(s, |m| m.max(s))))
+}
+
 /// `a`, `a or b`, `a, b or c`.
 fn either(items: &[String]) -> String {
     match items {
@@ -323,6 +398,7 @@ struct Validator<'a> {
     fit: Option<&'a FitProfile>,
     names: &'a FeatureNames,
     out: Vec<Finding>,
+    unchecked: Vec<Unchecked>,
 }
 
 impl Validator<'_> {
@@ -1042,6 +1118,320 @@ impl Validator<'_> {
             fix,
         )
         .feature = feature;
+    }
+
+    /// Record a rule this report could not check.
+    fn not_checked(&mut self, rule: &str, reason: String) {
+        self.unchecked.push(Unchecked {
+            rule: rule.into(),
+            reason,
+        });
+    }
+
+    fn mesh_self_intersect(&mut self) {
+        let Some(pairs) = self.m.self_intersections else {
+            self.not_checked(
+                "MESH.SELF_INTERSECT",
+                "the measurements hold no self-intersection count (they were written before the test existed, or the mesh lies outside its +-1024 mm range); build the part again to check it".into(),
+            );
+            return;
+        };
+        if pairs == 0 {
+            return;
+        }
+        self.push(
+            "MESH.SELF_INTERSECT",
+            Severity::Blocker,
+            format!(
+                "the mesh passes through itself: {pairs} {} of triangles cross (a printable part has 0), so a slicer cannot tell inside from outside there",
+                if pairs == 1 { "pair" } else { "pairs" }
+            ),
+            Some(pairs as f64),
+            Some(0.0),
+            "this is a bug in the evaluator or the kernel, not in your part: please report it with the part file and its parameters; other parameter values may avoid it meanwhile".into(),
+        );
+    }
+
+    fn roof_bridge(&mut self) {
+        if self.m.overhangs.is_none() {
+            self.not_checked(
+                "ROOF.BRIDGE",
+                "the measurements hold no overhang analysis (they were written before it existed); build the part again to check it".into(),
+            );
+            return;
+        }
+        let Some(span) = self.m.roof_span_mm else {
+            return;
+        };
+        let max = self.p.max_unsupported_bridge_mm;
+        if span > max + LENGTH_TOLERANCE_MM {
+            let msg = format!(
+                "the roof bridges {} mm between walls and tubes, longer than the {} mm maxUnsupportedBridgeMm {}: the middle of the span may sag",
+                mm(span),
+                mm(max),
+                self.of_process()
+            );
+            self.push(
+                "ROOF.BRIDGE",
+                Severity::Warning,
+                msg,
+                Some(span),
+                Some(max),
+                "print a bridging test first, or keep the part's cavity spans shorter (tubes or pins under the roof hold it); you may export as it is".into(),
+            );
+        }
+    }
+
+    fn overhang(&mut self) {
+        let Some(regions) = &self.m.overhangs else {
+            for rule in ["OVERHANG.MAX", "OVERHANG.BRIDGED"] {
+                self.not_checked(
+                    rule,
+                    "the measurements hold no overhang analysis (they were written before it existed); build the part again to check it".into(),
+                );
+            }
+            return;
+        };
+        let (deg, max_bridge) = (self.p.max_overhang_deg, self.p.max_unsupported_bridge_mm);
+        let steep: Vec<_> = regions
+            .iter()
+            .filter(|r| r.angle_deg > deg + 1e-9)
+            .collect();
+        let bridged = |r: &&crate::Overhang| {
+            r.span_mm
+                .is_some_and(|s| s <= max_bridge + LENGTH_TOLERANCE_MM)
+        };
+        let (short, unsupported): (Vec<_>, Vec<_>) = steep.into_iter().partition(bridged);
+        if let Some(worst) = unsupported
+            .iter()
+            .max_by(|a, b| a.angle_deg.total_cmp(&b.angle_deg))
+        {
+            let n = unsupported.len();
+            let floating = unsupported.iter().filter(|r| r.span_mm.is_none()).count();
+            let long = longest_span(unsupported.iter().copied());
+            let mut why = Vec::new();
+            if floating > 0 {
+                why.push(match (n, floating) {
+                    (1, _) => "it has no material below any edge".to_string(),
+                    (_, 1) => "1 has no material below any edge".to_string(),
+                    (_, f) => format!("{f} have no material below any edge"),
+                });
+            }
+            if let Some(s) = long {
+                why.push(format!(
+                    "{} would bridge {} mm, more than the {} mm maxUnsupportedBridgeMm",
+                    if n == 1 { "it" } else { "the longest" },
+                    mm(s),
+                    mm(max_bridge)
+                ));
+            }
+            let [x, y] = worst.centre_mm;
+            let msg = format!(
+                "{} of downward faces {} up to {}° from vertical, beyond the {}° maxOverhangDeg {}, without a short bridge ({}); the steepest is {} mm above the bed near x {} mm, y {} mm in print orientation",
+                count(n, "region"),
+                if n == 1 { "hangs" } else { "hang" },
+                mm(worst.angle_deg),
+                mm(deg),
+                self.of_process(),
+                either(&why),
+                mm(worst.height_mm),
+                mm(x),
+                mm(y)
+            );
+            let (severity, fix) = if self.p.supports_allowed {
+                (
+                    Severity::Warning,
+                    "turn on supports in the slicer for this part, or chamfer the overhang at 45 degrees so it needs none".to_string(),
+                )
+            } else {
+                (
+                    Severity::Blocker,
+                    format!(
+                        "chamfer the overhang at 45 degrees or less from vertical, hold it from below, or keep a bridge between two supports within {} mm; process `{}` prints without supports",
+                        mm(max_bridge),
+                        self.p.id
+                    ),
+                )
+            };
+            self.push(
+                "OVERHANG.MAX",
+                severity,
+                msg,
+                Some(worst.angle_deg),
+                Some(deg),
+                fix,
+            );
+        }
+        if let Some(longest) = longest_span(short.iter().copied()) {
+            let n = short.len();
+            let msg = format!(
+                "{} of downward faces steeper than the {}° maxOverhangDeg {} {}, the longest {} mm, within the {} mm maxUnsupportedBridgeMm: {} may come out a little rough",
+                count(n, "region"),
+                mm(deg),
+                self.of_process(),
+                if n == 1 { "prints as a short bridge" } else { "print as short bridges" },
+                mm(longest),
+                mm(max_bridge),
+                if n == 1 { "its underside" } else { "their undersides" }
+            );
+            self.push(
+                "OVERHANG.BRIDGED",
+                Severity::Warning,
+                msg,
+                Some(longest),
+                Some(max_bridge),
+                "nothing to change for most parts; for a cleaner underside, turn on the slicer's bridge detection (PrusaSlicer: detect bridging perimeters)".into(),
+            );
+        }
+    }
+
+    fn orient_face(&mut self) {
+        let m = self.m;
+        let declared_bottom = m.print_up.as_deref() == Some("bottom");
+        if let Some(up) = &m.print_up {
+            let mode = m
+                .relief_mode
+                .as_deref()
+                .map(|r| format!(" for relief mode `{r}`"))
+                .unwrap_or_default();
+            if m.face_down && up != "bottom" {
+                self.push(
+                    "ORIENT.FACE",
+                    Severity::Blocker,
+                    format!(
+                        "the part document declares the `{up}` face up{mode}, but the part prints face down, its top face on the bed (an inlay), as the exporters turn it"
+                    ),
+                    None,
+                    None,
+                    format!("set print.up{} to \"bottom\" in the part document", if mode.is_empty() { String::new() } else { format!(" for `{}`", m.relief_mode.as_deref().unwrap_or("")) }),
+                );
+            } else if !m.face_down && up != "top" {
+                self.push(
+                    "ORIENT.FACE",
+                    Severity::Blocker,
+                    format!(
+                        "the part document declares the `{up}` face up{mode}, but the exporters lay the part bottom down as designed; only an inlay prints face down"
+                    ),
+                    None,
+                    None,
+                    format!("set print.up{} to \"top\" in the part document, or use relief mode inlay for a face-down print", if mode.is_empty() { String::new() } else { format!(" for `{}`", m.relief_mode.as_deref().unwrap_or("")) }),
+                );
+            }
+        }
+        if !(m.face_down || declared_bottom) {
+            return;
+        }
+        let studs = m.bed_face_studs.unwrap_or(0);
+        if studs > 0 {
+            self.push(
+                "ORIENT.FACE",
+                Severity::Blocker,
+                format!(
+                    "the part prints face down, but {} stand on that face (a face on the bed has 0): the face must be flat and stud-free",
+                    count(studs as usize, "stud")
+                ),
+                Some(f64::from(studs)),
+                Some(0.0),
+                "use body.tile (a smooth top) for a face-down part, or turn the stud field off with its `if`".into(),
+            );
+        } else if let Some(h) = m.bed_face_relief_mm.filter(|h| *h > LENGTH_TOLERANCE_MM) {
+            self.push(
+                "ORIENT.FACE",
+                Severity::Blocker,
+                format!(
+                    "the part prints face down, but something stands {} mm proud of that face (a flat face stands 0 mm): it would rest on that and not on the face",
+                    mm(h)
+                ),
+                Some(h),
+                Some(0.0),
+                "use relief mode inlay or deboss for a face-down part, which keep the face flat".into(),
+            );
+        }
+    }
+
+    /// `TRADEMARK.LOGO` is planned: say so on parts with uploaded artwork (a
+    /// relief mode; the coupon's own labels have none).
+    fn trademark_logo(&mut self) {
+        if self.m.relief_mode.is_some() {
+            self.not_checked(
+                "TRADEMARK.LOGO",
+                "the artwork is not compared with the blocklist of protected marks yet: that needs the artwork matcher of the Q16 spike (docs/plan/12); please make sure you may use the artwork".into(),
+            );
+        }
+    }
+
+    fn size_bed(&mut self, bed: Option<&Bed>) {
+        let Some(bed) = bed else {
+            self.not_checked(
+                "SIZE.BED",
+                "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)".into(),
+            );
+            return;
+        };
+        let m = self.m;
+        let size: Vec<f64> = (0..3)
+            .map(|k| m.bounds_max_mm[k] - m.bounds_min_mm[k])
+            .collect();
+        if !size.iter().all(|s| s.is_finite() && *s >= 0.0) {
+            self.not_checked(
+                "SIZE.BED",
+                "the part's bounds are not finite numbers, so its size could not be measured"
+                    .into(),
+            );
+            return;
+        }
+        let [bx, by, bz] = bed.size_mm;
+        let dims = format!("{} x {} x {} mm", mm(bx), mm(by), mm(bz));
+        let of = if bed.printer.is_some() {
+            format!("the {} ({dims})", bed.name)
+        } else {
+            format!("the given {dims} build volume")
+        };
+        let shown = format!("{} x {} x {} mm", mm(size[0]), mm(size[1]), mm(size[2]));
+        // The footprint may turn a quarter on the bed: its longer side against
+        // the bed's longer side, its shorter against the shorter.
+        let (short, long) = (size[0].min(size[1]), size[0].max(size[1]));
+        let (bed_short, bed_long) = (bx.min(by), bx.max(by));
+        let over = |v: f64, t: f64| v > t + LENGTH_TOLERANCE_MM;
+        let too_big = if over(long, bed_long) {
+            Some(("longer side", long, bed_long))
+        } else if over(short, bed_short) {
+            Some(("shorter side", short, bed_short))
+        } else {
+            None
+        };
+        if let Some((side, v, t)) = too_big {
+            self.push(
+                "SIZE.BED",
+                Severity::Blocker,
+                format!(
+                    "the part is {shown} in print orientation, and its {side} of {} mm is longer than the {} mm bed side of {of}, even turned a quarter",
+                    mm(v),
+                    mm(t)
+                ),
+                Some(v),
+                Some(t),
+                format!(
+                    "make the part smaller, or print it on a printer with a larger bed (the part needs at least {} x {} mm)",
+                    mm(long),
+                    mm(short)
+                ),
+            );
+        }
+        if over(size[2], bz) {
+            self.push(
+                "SIZE.BED",
+                Severity::Blocker,
+                format!(
+                    "the part is {shown} in print orientation, and its height of {} mm is more than the {} mm build height of {of}",
+                    mm(size[2]),
+                    mm(bz)
+                ),
+                Some(size[2]),
+                Some(bz),
+                "make the part lower, or print it on a printer with a taller build volume".into(),
+            );
+        }
     }
 }
 

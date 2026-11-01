@@ -1,0 +1,17 @@
+{
+  "openbrick": "1.0",
+  "kind": "printer",
+  "id": "prusa-mini-plus",
+  "credit": { "author": "OpenBrick3D contributors" },
+  "name": "Original Prusa MINI+",
+  "maker": "Prusa Research",
+  "buildVolumeMm": [180, 180, 180],
+  "toolheads": 1,
+  "filaments": 1,
+  "source": {
+    "url": "https://www.prusa3d.com/product/original-prusa-mini-3/",
+    "accessed": "2026-11-01",
+    "quote": "180 x 180 x 180 mm | 7 x 7 x 7 in"
+  },
+  "notes": "From the technical parameters of the product page. Prusa's help-centre FAQ (https://help.prusa3d.com/article/faq-frequently-asked-questions_1932, read the same day) gives 180x210x220 mm instead; the smaller product-page volume is used until Prusa resolves the difference."
+}

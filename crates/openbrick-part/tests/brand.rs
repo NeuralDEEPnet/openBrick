@@ -263,7 +263,11 @@ fn check_mark(mark: &Mark) {
         };
         assert_eq!(roles, want, "{what}");
 
-        // The validator: export allowed, and nothing to report at all.
+        // The validator: export allowed, and nothing to report but, for the
+        // swap inlay, the short bridges over the artwork's recesses: printed
+        // face down, the face slab leaves the artwork open for the first
+        // layers and the body closes it over at the slab's depth
+        // (OVERHANG.BRIDGED, a warning).
         let report = validate(&b, &p, Some(&fit));
         assert!(report.export_allowed(), "{what}: {:#?}", report.findings);
         assert!(
@@ -271,7 +275,16 @@ fn check_mark(mark: &Mark) {
             "{what}: {:#?}",
             report.findings
         );
-        assert!(report.findings.is_empty(), "{what}: {:#?}", report.findings);
+        if mode == ("inlay", "swap") {
+            assert!(!report.findings.is_empty(), "{what}");
+            assert!(
+                report.findings.iter().all(|f| f.rule == "OVERHANG.BRIDGED"),
+                "{what}: {:#?}",
+                report.findings
+            );
+        } else {
+            assert!(report.findings.is_empty(), "{what}: {:#?}", report.findings);
+        }
         let pct = m.removed_area_pct.expect("measured");
         eprintln!(
             "{what}: removed {pct:.3} %, thinnest stroke {:?} mm",

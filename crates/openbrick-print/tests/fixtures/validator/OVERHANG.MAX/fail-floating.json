@@ -1,0 +1,73 @@
+{
+  "description": "A ledge 63.435 degrees from vertical with no material below any of its edges (no span): blocker on fdm-0.4.",
+  "rule": "OVERHANG.MAX",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.4,
+    "minBodyWallMm": 0.8,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "overhangs": [
+      {
+        "angleDeg": 63.435,
+        "areaMm2": 4.0,
+        "centreMm": [
+          2.0,
+          30.0
+        ],
+        "heightMm": 1.5
+      }
+    ],
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "chamfer the overhang at 45 degrees or less from vertical, hold it from below, or keep a bridge between two supports within 12 mm; process `fdm-0.4` prints without supports",
+        "message": "1 region of downward faces hangs up to 63.435° from vertical, beyond the 50° maxOverhangDeg of process `fdm-0.4`, without a short bridge (it has no material below any edge); the steepest is 1.5 mm above the bed near x 2 mm, y 30 mm in print orientation",
+        "rule": "OVERHANG.MAX",
+        "severity": "blocker",
+        "threshold": 50.0,
+        "value": 63.435
+      }
+    ],
+    "unchecked": [
+      {
+        "reason": "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)",
+        "rule": "SIZE.BED"
+      }
+    ]
+  }
+}

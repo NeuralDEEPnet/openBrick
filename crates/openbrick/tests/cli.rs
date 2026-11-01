@@ -1082,6 +1082,71 @@ fn record_writes_a_fit_profile_that_builds() {
 }
 
 #[test]
+fn a_printer_or_a_bed_checks_the_build_volume() {
+    // Without either, SIZE.BED is listed as not checked, in the report and in
+    // the text.
+    let o = openbrick(&["validate", LOGO_TILE, "--fit", "example", "--json"]);
+    let j = json_of(&o);
+    assert!(j["bed"].is_null());
+    let unchecked: Vec<&str> = j["report"]["unchecked"]
+        .as_array()
+        .expect("unchecked")
+        .iter()
+        .filter_map(|u| u["rule"].as_str())
+        .collect();
+    assert!(unchecked.contains(&"SIZE.BED"), "{unchecked:?}");
+    let o = openbrick(&["validate", LOGO_TILE, "--fit", "example"]);
+    assert!(
+        stdout(&o).contains("not checked SIZE.BED"),
+        "{}",
+        stdout(&o)
+    );
+
+    // A bundled printer: the 2x4 tile fits, and the bed is in the JSON.
+    let o = openbrick(&[
+        "validate",
+        LOGO_TILE,
+        "--fit",
+        "example",
+        "--printer",
+        "prusa-mini-plus",
+        "--json",
+    ]);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let j = json_of(&o);
+    assert_valid(&schema("report.schema.json"), &j["report"], "the report");
+    assert_eq!(j["bed"]["printer"], "prusa-mini-plus");
+    assert_eq!(j["bed"]["sizeMm"], serde_json::json!([180.0, 180.0, 180.0]));
+    assert!(j["report"]["unchecked"]
+        .as_array()
+        .is_none_or(|u| u.iter().all(|u| u["rule"] != "SIZE.BED")));
+
+    // A bed too small for it blocks, and build writes nothing.
+    let dir = Scratch::new("bed");
+    let out = dir.arg("tile.stl");
+    let o = openbrick(&[
+        "build", LOGO_TILE, "--fit", "example", "--bed", "30x12x10", "--out", &out, "--json",
+    ]);
+    assert_eq!(code(&o), 1, "{}", stderr(&o));
+    let j = json_of(&o);
+    assert!(j["report"]["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .any(|f| f["rule"] == "SIZE.BED" && f["severity"] == "blocker"));
+    assert!(!std::path::Path::new(&out).exists());
+
+    // Unknown printers and malformed beds are usage errors.
+    let o = openbrick(&["validate", LOGO_TILE, "--printer", "ender-3"]);
+    assert_eq!(code(&o), 2);
+    assert!(stderr(&o).contains("prusa-xl"), "{}", stderr(&o));
+    let o = openbrick(&["validate", LOGO_TILE, "--bed", "180x180"]);
+    assert_eq!(code(&o), 2);
+    let o = openbrick(&["profiles"]);
+    assert!(stdout(&o).contains("bambu-a1-ams-lite"));
+}
+
+#[test]
 fn existing_commands_are_unchanged() {
     let o = openbrick(&["about"]);
     assert_eq!(code(&o), 0);

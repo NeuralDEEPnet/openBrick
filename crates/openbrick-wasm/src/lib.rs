@@ -57,12 +57,12 @@ pub mod record;
 pub use coupon::{build_coupon, coupon_layout_json, export_coupon, CouponOut};
 pub use data::{
     artwork_samples_json, coupon_choices_json, disclaimer, example_fit_profile_json,
-    logo_tile_part_json, max_asset_bytes, process_profiles_json, role_colors_json, sample_logo_svg,
-    BRAND_NOTICE, BRAND_NOTICE_URL,
+    logo_tile_part_json, max_asset_bytes, printers_json, process_profiles_json, role_colors_json,
+    sample_logo_svg, BRAND_NOTICE, BRAND_NOTICE_URL,
 };
 pub use part::{
-    evaluate_part, export_part, export_solids, resolve_params_json, AssetSet, ExportSolid,
-    PartExport, PartOut,
+    evaluate_part, evaluate_part_on_printer, export_part, export_part_on_printer, export_solids,
+    export_solids_on_printer, resolve_params_json, AssetSet, ExportSolid, PartExport, PartOut,
 };
 pub use record::{record_fit, RecordFitInput};
 

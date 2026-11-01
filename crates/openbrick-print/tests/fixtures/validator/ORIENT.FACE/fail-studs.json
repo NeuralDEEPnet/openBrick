@@ -1,0 +1,76 @@
+{
+  "description": "A plate with 8 studs whose document declares the `bottom` face up: the studs would stand on the bed, and the exporters lay it bottom down anyway. Two blockers.",
+  "rule": "ORIENT.FACE",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bedFaceReliefMm": 1.7,
+    "bedFaceStuds": 8,
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.4,
+    "minBodyWallMm": 0.8,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "overhangs": [],
+    "printUp": "bottom",
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 0,
+    "studDiameterMm": 4.8,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "set print.up to \"top\" in the part document, or use relief mode inlay for a face-down print",
+        "message": "the part document declares the `bottom` face up, but the exporters lay the part bottom down as designed; only an inlay prints face down",
+        "rule": "ORIENT.FACE",
+        "severity": "blocker",
+        "threshold": null,
+        "value": null
+      },
+      {
+        "feature": null,
+        "fix": "use body.tile (a smooth top) for a face-down part, or turn the stud field off with its `if`",
+        "message": "the part prints face down, but 8 studs stand on that face (a face on the bed has 0): the face must be flat and stud-free",
+        "rule": "ORIENT.FACE",
+        "severity": "blocker",
+        "threshold": 0.0,
+        "value": 8.0
+      }
+    ],
+    "unchecked": [
+      {
+        "reason": "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)",
+        "rule": "SIZE.BED"
+      }
+    ]
+  }
+}

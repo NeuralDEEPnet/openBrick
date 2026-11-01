@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/printer-profile.schema.json",
+  "title": "OpenBrick3D printer profile",
+  "description": "One printer and tool setup and the build volume its maker publishes (profiles/printer/*.json). Read by openbrick-print as PrinterProfile with camelCase fields; rule SIZE.BED checks a part against the build volume (docs/plan/05 section 5). Hardware facts only: the fit of a printer and material lives in a fit profile. Every volume cites the page it was read from.",
+  "type": "object",
+  "required": ["openbrick", "kind", "id", "credit", "name", "maker", "buildVolumeMm", "toolheads", "filaments", "source"],
+  "properties": {
+    "openbrick": { "$ref": "#/$defs/pragma" },
+    "kind": { "const": "printer" },
+    "id": { "$ref": "#/$defs/profileId" },
+    "name": { "type": "string", "minLength": 1 },
+    "credit": { "$ref": "#/$defs/credit" },
+    "maker": { "type": "string", "minLength": 1 },
+    "buildVolumeMm": {
+      "description": "Build volume x (width) by y (depth) by z (height) in millimetres, as the maker publishes it.",
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000 }
+    },
+    "toolheads": {
+      "description": "Toolheads (nozzles) the setup prints with.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "filaments": {
+      "description": "Filaments one job prints without a manual change: toolheads times the filaments each is fed (an AMS lite feeds four into one nozzle). At least toolheads.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 256
+    },
+    "source": {
+      "description": "Where the build volume was published: the maker's page or specification sheet, when it was read and the words on it.",
+      "type": "object",
+      "required": ["url", "accessed", "quote"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https://\\S+$" },
+        "accessed": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "quote": { "type": "string", "minLength": 1 }
+      }
+    },
+    "notes": { "description": "Free text. Not read by openbrick-print.", "type": "string" }
+  },
+  "if": { "$ref": "#/$defs/atThisMinor" },
+  "then": { "$ref": "#/$defs/knownFields" },
+  "$defs": {
+    "knownFields": {
+      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error: serde would drop it silently. cargo xtask data checks that these lists match the properties the schema declares.",
+      "properties": {
+        "openbrick": true,
+        "kind": true,
+        "id": true,
+        "name": true,
+        "credit": { "properties": { "author": true, "url": true }, "additionalProperties": false },
+        "maker": true,
+        "buildVolumeMm": true,
+        "toolheads": true,
+        "filaments": true,
+        "source": { "properties": { "url": true, "accessed": true, "quote": true }, "additionalProperties": false },
+        "notes": true
+      },
+      "additionalProperties": false
+    },
+    "atThisMinor": {
+      "description": "Matches a document whose pragma names a minor version this schema knows, 1.0 (or a patch of it). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9). Unlike the other shared definitions this one follows the schema's own minor version (cargo xtask data checks it against $id).",
+      "required": ["openbrick"],
+      "properties": { "openbrick": { "type": "string", "pattern": "^1\\.0(\\.|$)" } }
+    },
+    "pragma": {
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Every 1.x is accepted: readers ignore fields from minors newer than they know, and this schema checks only the fields it names in documents newer than 1.0 (see atThisMinor).",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
+    },
+    "credit": {
+      "description": "Who made the document. Keeping it is a community norm, not a legal condition (LICENSE-POLICY.md).",
+      "type": "object",
+      "required": ["author"],
+      "properties": {
+        "author": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https?://\\S+$" }
+      }
+    },
+    "profileId": {
+      "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+(\\.[a-z0-9]+)*)*$"
+    }
+  }
+}

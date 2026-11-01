@@ -1,0 +1,58 @@
+{
+  "description": "A 200 x 31.8 mm part on a Prusa MINI+: its longer side does not fit the 180 mm bed, turned or not. Blocker.",
+  "rule": "SIZE.BED",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "printer": "prusa-mini-plus",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      200.0,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.4,
+    "minBodyWallMm": 0.8,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "overhangs": [],
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "make the part smaller, or print it on a printer with a larger bed (the part needs at least 200 x 31.8 mm)",
+        "message": "the part is 200 x 31.8 x 3.2 mm in print orientation, and its longer side of 200 mm is longer than the 180 mm bed side of the Original Prusa MINI+ (180 x 180 x 180 mm), even turned a quarter",
+        "rule": "SIZE.BED",
+        "severity": "blocker",
+        "threshold": 180.0,
+        "value": 200.0
+      }
+    ]
+  }
+}

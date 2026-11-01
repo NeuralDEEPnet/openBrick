@@ -1,0 +1,17 @@
+{
+  "openbrick": "1.0",
+  "kind": "printer",
+  "id": "prusa-xl-5t",
+  "credit": { "author": "OpenBrick3D contributors" },
+  "name": "Original Prusa XL, five toolheads",
+  "maker": "Prusa Research",
+  "buildVolumeMm": [360, 360, 360],
+  "toolheads": 5,
+  "filaments": 5,
+  "source": {
+    "url": "https://www.prusa3d.com/product/original-prusa-xl-5-toolhead-3d-printer/",
+    "accessed": "2026-11-01",
+    "quote": "Build volume 360 × 360 × 360 mm (46.7 l); Up to 5 independent toolheads, automatic tool changing"
+  },
+  "notes": "Prusa publishes no smaller volume for multi-tool prints; in practice the wipe tower takes some of the bed, which the slicer accounts for."
+}
