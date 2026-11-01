@@ -24,7 +24,7 @@
 //   exportCoupon   format, process, layout, colors          { format, bytes: Uint8Array, buildMs }
 //   recordFit      input                                    the calibration record (recordFit() below)
 //   openPart       text, process                            { ok, id, name, version, license, credit,
-//                                                           presets, unsupported } or { ok: false, error }
+//                                                           defaults, presets, unsupported } or { ok: false, error }
 //   savePart       doc, params, process                     { text }: the document with params as defaults
 //   addPreset      doc, name, params, process               { text }: the document with a preset `name`
 //
@@ -360,10 +360,11 @@ export function recordFit(core, request) {
 
 /**
  * Check a part document the user opened, with the core's open_part_json:
- * { ok: true, id, name, version, license, credit, presets: [{ name, params,
- * error }], unsupported: [{ feature, op, condition }] }, or { ok: false,
+ * { ok: true, id, name, version, license, credit, defaults, presets: [{ name,
+ * params, error }], unsupported: [{ feature, op, condition }] }, or { ok: false,
  * error } for a file that is not a valid part document (an answer, not a
- * failed request).
+ * failed request). `defaults` and the `params` of a preset that fits are
+ * normalised as the evaluator reads them ("0.6mm" is 0.6).
  */
 export function openPart(core, request) {
   if (typeof request?.text !== "string") throw new TypeError("openPart needs the document as text");

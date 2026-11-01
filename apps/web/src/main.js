@@ -21,7 +21,7 @@ import {
   paramOverrides,
   visibility,
 } from "./params.js";
-import { buildErrorText, isPartFile, partFileName, sampleForAsset, unsupportedNote } from "./part.js";
+import { buildErrorText, isPartFile, partFileName, sampleForAsset, unsupportedNote, withCoreDefaults } from "./part.js";
 import {
   couponRows,
   couponStats,
@@ -885,7 +885,9 @@ async function main() {
   function loadPart(text, opened, source) {
     const parsed = JSON.parse(text);
     part = { text, opened, source: source.kind, id: parsed.id, file: source.file };
-    doc = parsed;
+    // The core's normalised defaults ("0.6mm" is 0.6), so the panel shows and
+    // compares numbers; the saved file is written from `text`, as opened.
+    doc = withCoreDefaults(parsed, opened.defaults);
     spec = controlsFor(doc, { maxStuds: info.maxStuds });
     fileControl = spec.controls.find((c) => c.kind === "file") ?? null;
     gridControl = spec.controls.find((c) => c.kind === "grid2") ?? null;
@@ -914,7 +916,7 @@ async function main() {
     else if (state.artwork) showArtNote(`Using ${state.artwork.label}.`);
     renderPartSelect();
     renderPresets();
-    const unsupported = unsupportedNote(opened.unsupported);
+    const unsupported = unsupportedNote(opened.unsupported, spec);
     showPartNote(source.kind === "file" ? [`Opened “${source.file}”: ${doc.name} ${doc.version}.`, unsupported].filter(Boolean).join(" ") : unsupported, false);
     showSaveNote("");
     page.design = {
@@ -1474,7 +1476,7 @@ async function main() {
     stopTicker();
     viewer.clear();
     setState("part-error");
-    showStatus([`The part could not be built: ${buildErrorText(state.error, part.opened.unsupported)}`], "bad");
+    showStatus([`The part could not be built: ${buildErrorText(state.error, part.opened.unsupported, spec)}`], "bad");
     renderLegend();
     renderStats();
     renderValidation();
@@ -1557,7 +1559,7 @@ async function main() {
           "li",
           { className: "finding blocker" },
           el("span", { className: "sev", "aria-hidden": "true", text: "⛔" }),
-          el("div", {}, el("p", { className: "head" }, el("strong", { text: "Error" })), el("p", { text: buildErrorText(state.error, part.opened.unsupported) })),
+          el("div", {}, el("p", { className: "head" }, el("strong", { text: "Error" })), el("p", { text: buildErrorText(state.error, part.opened.unsupported, spec) })),
         ),
       );
       notes.hidden = true;

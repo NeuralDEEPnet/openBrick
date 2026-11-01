@@ -1391,7 +1391,7 @@ async function designerRun(browser, origin, native) {
     `${label}: the keychain opened as ${JSON.stringify(w.design)}`,
   );
   const partNote = await page.textContent("#part-note");
-  check(partNote.includes("“label” (relief.text)") && partNote.includes("“ring” (loop.keyring)") && partNote.includes("!$studsOnTop"), `${label}: the part note says "${partNote}"`);
+  check(partNote.includes("“label” (relief.text)") && partNote.includes("“ring” (loop.keyring)") && partNote.includes("turn on Studs on top and set Loop to None"), `${label}: the part note says "${partNote}"`);
   const status = await page.textContent("#status");
   check(status.includes("“label” uses relief.text, which this version cannot build yet") && !status.includes("skip_unsupported"), `${label}: the status line says "${status}"`);
   check(await page.isHidden("#preset-row"), `${label}: the keychain has no presets, yet the picker shows`);

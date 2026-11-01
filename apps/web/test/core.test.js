@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { cellMap, choose, chosenCells, labelText, offsetRows, recordInput, signedMm } from "../src/calibration.js";
 import { controlsFor, defaultValues, paramOverrides, visibility } from "../src/params.js";
+import { withCoreDefaults } from "../src/part.js";
 import { dispatch } from "../src/protocol.js";
 import { sampleFile, sizeForSample } from "../src/samples.js";
 import { findingView } from "../src/ui.js";
@@ -238,8 +239,9 @@ test("the WebAssembly core opens, presets and saves the parts in parts/ as the p
   // Every part in parts/ opens, and the values the page's controls send save.
   for (const name of ["ndn.logo-tile.obpart.json", "ndn.brand-tile.obpart.json", "ndn.brand-badge.obpart.json", "ndn.nameplate-keychain.obpart.json"]) {
     const text = read(name);
-    assert.equal(dispatch(core, { id: 2, type: "openPart", text, process: "fdm-0.4" }).reply.result.ok, true, name);
-    const spec = controlsFor(JSON.parse(text), { maxStuds: core.max_studs() });
+    const answer = dispatch(core, { id: 2, type: "openPart", text, process: "fdm-0.4" }).reply.result;
+    assert.equal(answer.ok, true, name);
+    const spec = controlsFor(withCoreDefaults(JSON.parse(text), answer.defaults), { maxStuds: core.max_studs() });
     const values = defaultValues(spec);
     const params = paramOverrides(spec, values, visibility(spec, values).visible);
     const saved = dispatch(core, { id: 3, type: "savePart", doc: text, params, process: "fdm-0.4" }).reply;
@@ -257,6 +259,13 @@ test("the WebAssembly core opens, presets and saves the parts in parts/ as the p
   const params = { size: [2, 6], relief: "deboss", reliefHeight: 0.6 };
   const withPreset = dispatch(core, { id: 6, type: "addPreset", doc: brand, name: "Long", params, process: "fdm-0.4" }).reply.result.text;
   assert.deepEqual(JSON.parse(withPreset).presets.at(-1), { name: "Long", params });
+  // Values written with units come back as the numbers the panel shows.
+  const doc = JSON.parse(brand);
+  doc.params.reliefHeight.default = "0.6mm";
+  doc.presets = [{ name: "Higher", params: { reliefHeight: "0.8mm" } }];
+  const units = dispatch(core, { id: 8, type: "openPart", text: JSON.stringify(doc), process: "fdm-0.4" }).reply.result;
+  assert.equal(units.defaults.reliefHeight, 0.6);
+  assert.deepEqual(units.presets, [{ name: "Higher", params: { reliefHeight: 0.8 }, error: null }]);
   const refused = dispatch(core, { id: 7, type: "savePart", doc: brand, params: { reliefHeight: 9 }, process: "fdm-0.4" }).reply;
   assert.equal(refused.ok, false);
   assert.match(refused.error, /reliefHeight/);
