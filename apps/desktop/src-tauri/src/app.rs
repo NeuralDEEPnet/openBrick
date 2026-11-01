@@ -1,8 +1,8 @@
 //! The Tauri application: the main window and the three commands the page's
 //! desktop adapter (apps/web/src/files.js) calls.
 //!
-//! - `pick_file(kind)` shows the native open dialog for an SVG drawing or a
-//!   fit profile and answers with the chosen file's name and size, or `null`
+//! - `pick_file(kind)` shows the native open dialog for an SVG drawing, a
+//!   fit profile or a part document and answers with the chosen file's name and size, or `null`
 //!   when the user cancelled. The path stays here.
 //! - `read_picked_file(kind, maxBytes)` reads that file once, at most
 //!   `maxBytes` (and never more than [`MAX_READ_BYTES`]), and answers with its
@@ -33,7 +33,9 @@ use crate::shell;
 
 /// Debug builds only: when this variable names a folder, the dialogs are not
 /// shown. A save writes `<folder>/<suggested name>`; an open picks
-/// `<folder>/open.svg` or `<folder>/open.json` (a cancel when it is missing).
+/// `<folder>/open.svg`, `<folder>/open.json` (a fit profile) or
+/// `<folder>/open.obpart.json` (a part) by kind (`OpenKind::test_file_name`;
+/// a cancel when it is missing).
 /// The desktop smoke test (apps/desktop/smoke.mjs) drives the app this way,
 /// because WebDriver cannot reach a native dialog. Release builds do not
 /// contain this code.
@@ -133,9 +135,7 @@ async fn pick_file(
 ) -> Result<Option<PickedFile>, String> {
     let kind = OpenKind::parse(&kind)?;
     let chosen = match scripted_dialogs() {
-        Some(dir) => {
-            Some(dir.join(format!("open.{}", kind.extensions()[0]))).filter(|p| p.exists())
-        }
+        Some(dir) => Some(dir.join(kind.test_file_name())).filter(|p| p.exists()),
         None => {
             let mut dialog = window
                 .dialog()

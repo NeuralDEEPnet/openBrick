@@ -14,11 +14,14 @@
 // also over Tauri's postMessage fallback, which carries the bytes as a JSON
 // array of numbers), an SVG and a fit profile open from the open dialog, a
 // file over the core's limit is refused before it is read, a cancelled open
-// changes nothing, and a project link does not navigate the window away.
+// changes nothing, a part document opens from the open dialog and, given a
+// preset and saved through the save dialog, is byte-identical to what
+// `native_eval` saves, and a project link does not navigate the window away.
 //
 // WebDriver cannot reach a native dialog, so the debug app is started with
 // OPENBRICK_DESKTOP_TEST_DIALOGS set to a temporary folder: saves land there
-// under the suggested name, and an open picks open.svg or open.json from it
+// under the suggested name, and an open picks open.svg, open.json (a fit
+// profile) or open.obpart.json (a part) from it
 // (src-tauri/src/app.rs; release builds do not contain this). The native file
 // dialogs themselves are checked by hand on each OS (README.md).
 //
@@ -402,6 +405,46 @@ async function main() {
     await session.exec("const s = document.getElementById('fit'); s.value = 'load'; s.dispatchEvent(new Event('change'));");
     const fit = await session.waitFor("const s = document.getElementById('fit'); return s.value === 'mine' ? s.selectedOptions[0].textContent : null;", `${label} fit profile`, 30_000);
     check(fit.startsWith("My fit profile"), `${label}: the fit chooser shows "${fit}"`);
+
+    // The part designer through the native dialogs: open a part document
+    // (scripted: open.obpart.json), give it the "Pressed-in mark" preset on a
+    // 2x6 tile, keep those values as a preset and save the part file, which
+    // must be byte-identical to native_eval's (the same file the playground
+    // saves, and the CLI builds with the hash the page then shows).
+    const d = native.designer;
+    copyFileSync(join(repo, "parts", "ndn.brand-tile.obpart.json"), join(dialogs, "open.obpart.json"));
+    await session.exec("const s = document.getElementById('part-select'); s.value = 'open'; s.dispatchEvent(new Event('change'));");
+    w = await session.waitFor(
+      `const w = window.__web; return w.state === "ready" && w.design?.source === "file" && w.part?.contentHash === arguments[0] ? JSON.parse(JSON.stringify({ ...w, stats: null })) : null;`,
+      `${label} opened part`,
+      120_000,
+      d.opened.contentHash,
+    );
+    check(w.design.id === "ndn.brand-tile" && w.design.file === "open.obpart.json", `${label}: opened ${JSON.stringify(w.design)}`);
+    await session.click('button[data-for="p-size-1"][data-step="1"]');
+    await session.click('button[data-for="p-size-1"][data-step="1"]');
+    await session.exec("const s = document.getElementById('preset'); s.value = 'Pressed-in mark'; s.dispatchEvent(new Event('change'));");
+    w = await session.waitFor(
+      `const w = window.__web; return w.state === "ready" && w.part?.contentHash === arguments[0] ? JSON.parse(JSON.stringify({ ...w, stats: null })) : null;`,
+      `${label} edited part`,
+      120_000,
+      d.edited.contentHash,
+    );
+    await session.exec("document.getElementById('preset-name').value = arguments[0];", d.presetName);
+    await session.click("#add-preset");
+    await session.waitFor("return window.__web.design?.presets?.includes(arguments[0]) && window.__web.state === 'ready';", `${label} preset added`, 60_000, d.presetName);
+    await session.click("#save-part");
+    w = await session.waitFor(
+      `const w = window.__web; return w.saves.length > 0 && w.state === "ready" && w.part?.contentHash === arguments[0] ? JSON.parse(JSON.stringify({ ...w, stats: null })) : null;`,
+      `${label} saved part`,
+      120_000,
+      d.savedPart.contentHash,
+    );
+    check(w.saves.at(-1).name === d.saved.name, `${label}: the part saved as ${w.saves.at(-1).name}, native ${d.saved.name}`);
+    const savedNote = await session.exec("return document.getElementById('save-note').textContent;");
+    check(savedNote.includes(join(dialogs, d.saved.name)), `${label}: the save note does not name the saved path: "${savedNote}"`);
+    checkFile(fileOf(dialogs, d.saved.name), d.saved, `${label} saved part`);
+    console.log(`# ${label}: opened a part from the open dialog, gave it a preset and saved it byte-identical to native (${d.saved.bytes} bytes)`);
 
     // A project link opens outside (the system browser, if there is one); the window stays on the app.
     await session.exec("document.querySelector('footer a[href^=\"https://github.com/\"]').click();");

@@ -36,7 +36,8 @@ pub enum SaveFormat {
     ThreeMf,
     /// A binary STL mesh (`openbrick_io::write_stl_binary`).
     Stl,
-    /// A JSON document, such as a fit profile written by the calibration wizard.
+    /// A JSON document: a fit profile written by the calibration wizard, or a
+    /// part document saved by the designer (`.obpart.json`).
     Json,
 }
 
@@ -81,13 +82,17 @@ impl SaveFormat {
     }
 }
 
-/// What the page opens: an SVG drawing for the artwork or a fit profile.
+/// What the page opens: an SVG drawing for the artwork, a fit profile or a
+/// part document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenKind {
-    /// The artwork of the logo tile (relief.svg).
+    /// The artwork of a part (relief.svg).
     Svg,
     /// A fit profile, the JSON file `openbrick calibrate record` writes.
     FitProfile,
+    /// A part document (`openbrick/part@1`, `.obpart.json`), opened in the
+    /// designer.
+    Part,
 }
 
 impl OpenKind {
@@ -96,8 +101,9 @@ impl OpenKind {
         match name {
             "svg" => Ok(Self::Svg),
             "fit" => Ok(Self::FitProfile),
+            "part" => Ok(Self::Part),
             other => Err(format!(
-                "cannot open a file of kind {other:?}; the desktop app opens svg or fit"
+                "cannot open a file of kind {other:?}; the desktop app opens svg, fit or part"
             )),
         }
     }
@@ -106,7 +112,18 @@ impl OpenKind {
     pub fn extensions(self) -> &'static [&'static str] {
         match self {
             Self::Svg => &["svg"],
-            Self::FitProfile => &["json"],
+            // A part is `name.obpart.json`; dialogs filter on the last extension.
+            Self::FitProfile | Self::Part => &["json"],
+        }
+    }
+
+    /// The file the scripted dialogs of the debug build pick for this kind
+    /// (`TEST_DIALOGS_ENV` in src/app.rs), in the folder they are given.
+    pub fn test_file_name(self) -> &'static str {
+        match self {
+            Self::Svg => "open.svg",
+            Self::FitProfile => "open.json",
+            Self::Part => "open.obpart.json",
         }
     }
 
@@ -115,6 +132,7 @@ impl OpenKind {
         match self {
             Self::Svg => "SVG drawing",
             Self::FitProfile => "Fit profile (JSON)",
+            Self::Part => "Part document (.obpart.json)",
         }
     }
 
@@ -123,6 +141,7 @@ impl OpenKind {
         match self {
             Self::Svg => "Choose an SVG drawing",
             Self::FitProfile => "Choose a fit profile",
+            Self::Part => "Open a part document",
         }
     }
 }
@@ -330,11 +349,17 @@ mod tests {
         }
         assert_eq!(OpenKind::parse("svg"), Ok(OpenKind::Svg));
         assert_eq!(OpenKind::parse("fit"), Ok(OpenKind::FitProfile));
-        for bad in ["", "json", "SVG", "any"] {
+        assert_eq!(OpenKind::parse("part"), Ok(OpenKind::Part));
+        for bad in ["", "json", "SVG", "any", "obpart"] {
             assert!(OpenKind::parse(bad).is_err(), "{bad:?} parsed");
         }
         assert_eq!(OpenKind::Svg.extensions(), ["svg"]);
         assert_eq!(OpenKind::FitProfile.extensions(), ["json"]);
+        assert_eq!(OpenKind::Part.extensions(), ["json"]);
+        // Each kind has its own scripted file, so a test folder can hold all three.
+        let names =
+            [OpenKind::Svg, OpenKind::FitProfile, OpenKind::Part].map(OpenKind::test_file_name);
+        assert_eq!(names, ["open.svg", "open.json", "open.obpart.json"]);
     }
 
     #[test]

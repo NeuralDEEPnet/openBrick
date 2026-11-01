@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window may call only the app's three file commands: show the native open dialog for one SVG drawing or fit profile and read that file once (pick_file, read_picked_file), and show the native save dialog and write one 3MF, STL or JSON file where the user chose (save_file). No dialog, file system, shell, opener or window permission is granted to the webview, and no remote origin is listed.",
+  "description": "The main window may call only the app's three file commands: show the native open dialog for one SVG drawing, fit profile or part document and read that file once (pick_file, read_picked_file), and show the native save dialog and write one 3MF, STL or JSON file (a fit profile or a part document) where the user chose (save_file). No dialog, file system, shell, opener or window permission is granted to the webview, and no remote origin is listed.",
   "windows": ["main"],
   "platforms": ["linux", "macOS", "windows"],
   "permissions": ["allow-pick-file", "allow-read-picked-file", "allow-save-file"]
