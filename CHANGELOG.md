@@ -7,6 +7,7 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 ### Added
 - Desktop installers on release tags: `.github/workflows/desktop-release.yml` builds the desktop app alpha for every tag `vX.Y.Z` (unsigned .deb and .rpm on Linux x86-64, NSIS and MSI on Windows x86-64, a universal DMG and `.app.tar.gz` on macOS, ad-hoc signed only) and adds them to the release with SHA-256 checksums and GitHub artifact attestations; a manual run is a dry run. No AppImage until the licence decision. docs/guides/install.md gains a "Desktop app (alpha)" section on opening an unsigned app on macOS and Windows.
 - The desktop app's version is the workspace version: tauri.conf.json sets none, `apps/desktop/package.json` says 0.1.0 (was 0.0.1), and `scripts/desktop-version.py` checks them, and each release tag, in CI.
+- Every desktop installer carries the app's `LICENSE` and `THIRD-PARTY-LICENSES.txt` (the licence texts of its crates, its WebAssembly core's crates and three.js; `scripts/third-party-licenses.py --desktop`), and the .deb and .rpm declare the glibc they need (2.39), so older systems refuse them instead of the app failing at its first start.
 
 ## 0.1.0 - 2026-11-01
 

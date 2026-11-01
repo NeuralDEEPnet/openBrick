@@ -1,4 +1,4 @@
-# Install the openbrick command line
+# Install OpenBrick3D: the command line and the desktop app
 
 The `openbrick` CLI builds brick-compatible parts into printable 3MF and STL
 files, validates them and prints the calibration coupon
@@ -131,8 +131,10 @@ attestation is how you check them meanwhile.
 | `openbrick-installer.sh`, `openbrick-installer.ps1` | the installers above |
 | `openbrick.cdx.xml` | a [CycloneDX](https://cyclonedx.org) software bill of materials: the Rust crates that go into the CLI, with versions and licences. It errs on the side of listing too much: it is resolved for x86-64 Linux (the other builds differ in a few platform crates), it includes build-time helpers, and cargo-cyclonedx resolves features for the whole workspace, so it can name a crate or two that the CLI does not compile. `THIRD-PARTY-LICENSES.txt` follows the CLI's own dependency tree, for every platform |
 | `sha256.sum`, `*.sha256` | checksums |
+| `OpenBrick3D_<version>_universal.dmg`, `…_universal.app.tar.gz`, `…_x64-setup.exe`, `…_x64_en-US.msi`, `openbrick3d_<version>_amd64.deb`, `openbrick3d-<version>-1.x86_64.rpm` | the desktop app's installers, from the release after v0.1.0 on ([below](#desktop-app-alpha)); each carries the app's `LICENSE` and `THIRD-PARTY-LICENSES.txt` (the licence texts of the crates and of three.js compiled into the app) |
+| `desktop-sha256.sum`, the installers' `*.sha256` | the desktop installers' checksums ([verify a desktop installer](#verify-a-desktop-installer)) |
 | `source.tar.gz` | the repository at the release tag |
-| `dist-manifest.json` | a machine-readable list of all of the above |
+| `dist-manifest.json` | a machine-readable list of the CLI files above (not the desktop installers) |
 
 The `<target>` names are `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
 `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`,
@@ -175,9 +177,13 @@ From the release after v0.1.0 on, every release also carries its installers
 | Linux x86-64 with glibc 2.39 or newer and WebKitGTK 4.1 (Ubuntu 24.04 or newer, Debian 13, Fedora 40 or newer) | `openbrick3d_<version>_amd64.deb` | `sudo apt install ./openbrick3d_<version>_amd64.deb` |
 | | `openbrick3d-<version>-1.x86_64.rpm` | `sudo dnf install ./openbrick3d-<version>-1.x86_64.rpm` |
 
-The Linux packages bring only the app (about 3.6 MiB); the package manager adds
-the webview libraries from your distribution. There is no AppImage yet: it
-would copy those libraries into the file, which needs a licence decision first
+The Linux packages bring only the app and its licence texts (about 3.7 MiB);
+the package manager adds the webview libraries from your distribution. They
+need glibc 2.39 and say so (`libc6 (>= 2.39)`), so on an older system, such
+as Ubuntu 22.04 or Debian 12, apt and dnf refuse to install them;
+[build it from source](../../apps/desktop/README.md#build-and-run) there.
+There is no AppImage yet: it would copy those libraries into the file, which
+needs a licence decision first
 (apps/desktop/README.md). On Linux, if the window stays blank (seen with some
 NVIDIA drivers), start it with `openbrick-desktop --safe-rendering`.
 
@@ -230,7 +236,7 @@ sha256sum -c desktop-sha256.sum --ignore-missing      # macOS: shasum -a 256 -c 
 gh attestation verify OpenBrick3D_0.2.0_universal.dmg --repo NeuralDEEPnet/openBrick
 ```
 
-### Update and uninstall
+### Update and uninstall the desktop app
 
 There is no updater yet (M4): to update, install the new release over the old
 one. To uninstall, drag OpenBrick3D from Applications to the Bin on macOS; on
