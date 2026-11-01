@@ -119,8 +119,8 @@ test("the Neuraldeep.net samples are the default and print on their tiles with n
   const b = dispatch(core, { id: 1, type: "bundled" }).reply.result;
   assert.deepEqual(
     b.samples.map((s) => s.id),
-    ["neuraldeep-mark", "neuraldeep-badge", "sample"],
-    "the Neuraldeep.net mark first: the playground's default",
+    ["neuraldeep-wordmark", "neuraldeep-square", "sample"],
+    "the NEURALDEEP.NET wordmark first: the playground's default",
   );
   const doc = JSON.parse(b.logoTilePart);
   const spec = controlsFor(doc, { maxStuds: core.max_studs() });

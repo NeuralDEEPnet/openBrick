@@ -16,7 +16,7 @@ use openbrick_wasm::{
 use serde_json::Value;
 
 const BRAND_TILE: &str = include_str!("../../../parts/ndn.brand-tile.obpart.json");
-const MARK: &str = "assets/brand/neuraldeep-mark-2x4.svg";
+const MARK: &str = "assets/brand/neuraldeep-wordmark-2x6.svg";
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -78,7 +78,7 @@ fn designer_hash(doc: &str, params: &str) -> String {
 fn open_edit_preset_save_then_build_gives_the_designers_hash() {
     let folder = PartFolder::new("edited");
     // Edited in the panel: a longer tile, then the "Pressed-in mark" preset.
-    let params = r#"{"size":[2,6],"relief":"deboss","reliefHeight":0.6,"logo":"assets/brand/neuraldeep-mark-2x4.svg"}"#;
+    let params = r#"{"size":[2,8],"relief":"deboss","reliefHeight":0.6,"logo":"assets/brand/neuraldeep-wordmark-2x6.svg"}"#;
     let with_preset = add_preset_json(BRAND_TILE, "Long and pressed in", params, "fdm-0.4")
         .expect("the values are a valid preset");
     let saved = save_part_json(&with_preset, params, "fdm-0.4").expect("the values save");
@@ -94,7 +94,7 @@ fn open_edit_preset_save_then_build_gives_the_designers_hash() {
         Some(designer_hash(&saved, params).as_str())
     );
     assert_eq!(cli["params"]["relief"], "deboss");
-    assert_eq!(cli["params"]["size"], serde_json::json!([2, 6]));
+    assert_eq!(cli["params"]["size"], serde_json::json!([2, 8]));
     // The saved file carries the preset, and the CLI reads it back unchanged.
     assert!(
         saved.contains("\"name\": \"Long and pressed in\""),

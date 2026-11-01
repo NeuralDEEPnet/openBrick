@@ -275,10 +275,10 @@ test("download names end with the sample's suffix, and the user's own SVG adds n
   const visible = { inlayStyle: true };
   const values = { size: [2, 4], relief: "inlay", inlayStyle: "parts" };
   assert.equal(downloadName(LOGO_TILE, values, "3mf", visible, "neuraldeep"), "ndn.logo-tile-2x4-inlay-parts-neuraldeep.3mf");
-  assert.equal(downloadName(LOGO_TILE, { size: [4, 4], relief: "emboss" }, "stl", null, "neuraldeep-badge"), "ndn.logo-tile-4x4-emboss-neuraldeep-badge.stl");
+  assert.equal(downloadName(LOGO_TILE, { size: [4, 4], relief: "emboss" }, "stl", null, "neuraldeep-square"), "ndn.logo-tile-4x4-emboss-neuraldeep-square.stl");
   assert.equal(downloadName(LOGO_TILE, values, "3mf", visible, null), "ndn.logo-tile-2x4-inlay-parts.3mf", "an uploaded SVG");
   assert.equal(downloadName(LOGO_TILE, values, "3mf", visible, ""), "ndn.logo-tile-2x4-inlay-parts.3mf");
-  const names = ["neuraldeep", "neuraldeep-badge", "sample", null].map((s) => downloadName(LOGO_TILE, { size: [2, 4], relief: "emboss" }, "3mf", null, s));
+  const names = ["neuraldeep", "neuraldeep-square", "sample", null].map((s) => downloadName(LOGO_TILE, { size: [2, 4], relief: "emboss" }, "3mf", null, s));
   assert.equal(new Set(names).size, names.length, `unique: ${names}`);
   assert.equal(downloadName(LOGO_TILE, { size: [2, 4], relief: "emboss" }, "3mf", null, "a b/c"), "ndn.logo-tile-2x4-emboss-a-b-c.3mf", "made safe");
 });

@@ -272,7 +272,7 @@ async function main() {
   let gridControl = null;
   const exampleFit = JSON.parse(data.exampleFitProfile);
   /**
-   * The artwork samples, the Neuraldeep.net mark first: the playground is
+   * The artwork samples, the NEURALDEEP.NET wordmark first: the playground is
    * Neural Deep Network's public demo, so it is the default. A sample's
    * drawing is sent under its asset name in parts/ (src/samples.js picks the
    * drawing for the tile), so the native tools give the same content hash.
@@ -385,7 +385,7 @@ async function main() {
     el("option", { value: "own", disabled: true, text: "Your SVG (drop or choose it above)" }),
   );
   sampleSelect.addEventListener("change", () => useSample(sampleSelect.value));
-  /** The notice of a Neuraldeep.net mark, under the drop zone while one is in use. */
+  /** The notice of a Neuraldeep.net drawing, under the drop zone while one is in use. */
   const artNotice = el("p", { className: "help", id: "art-notice", hidden: true });
   /** The number inputs of each stud grid, by parameter name, so a sample can set the size. */
   const gridInputs = new Map();
@@ -725,19 +725,21 @@ async function main() {
   }
 
   /**
-   * Use a bundled sample. Choosing the badge on a tile that is not square sets
-   * the tile to 4x4, and the portrait mark on a tile that is not longer than
-   * wide sets 2x4; the art note and the next status line say so. Later size
-   * changes are the user's own; only the drawing follows them (sampleFile).
+   * Use a bundled sample. Choosing the square wordmark on a tile that is not
+   * square (or on 2x2) sets the tile to 4x4, and the wordmark on a tile that
+   * is not longer than wide (or on 2x4) sets 2x6; the art note and the next
+   * status line say so. Later size changes are the user's own; only the
+   * drawing follows them (sampleFile).
    */
   function useSample(id) {
     const sample = samples.find((s) => s.id === id);
     if (!sample) return;
-    const size = sizeForSample(sample, gridControl ? state.values[gridControl.name] : null);
+    const before = gridControl ? state.values[gridControl.name] : null;
+    const size = sizeForSample(sample, before);
     let note = "";
     if (size) {
       setGrid(size);
-      note = sizeNote(sample, size);
+      note = sizeNote(sample, size, before);
       state.statusNote = note;
     }
     state.artwork = sampleArtwork(sample, gridControl ? state.values[gridControl.name] : null);
@@ -749,7 +751,7 @@ async function main() {
 
   /**
    * While a sample is in use, send the drawing made for the current tile (the
-   * Neuraldeep.net mark has one for 2x4 and one for 4x6). Called on every change.
+   * NEURALDEEP.NET wordmark has one for 2x6, 2x8 and 2x10). Called on every change.
    */
   function followSample() {
     const sample = state.artwork?.sample;
@@ -878,7 +880,8 @@ async function main() {
   /**
    * Load a part document: its controls with its defaults, its drawing (a
    * bundled sample when the document names one; the logo tile starts with
-   * the playground's default, the Neuraldeep.net mark), its presets and a
+   * the playground's default, the NEURALDEEP.NET wordmark, at that sample's
+   * size, the smallest tile its whole text prints on), its presets and a
    * note on the features this version cannot build yet. `opened` is the core's
    * open_part_json answer for `text`.
    */
@@ -897,10 +900,17 @@ async function main() {
     state.error = null;
     state.reframe = true;
     invalid.delete(MISSING_ARTWORK);
-    const size = gridControl ? state.values[gridControl.name] : null;
+    let size = gridControl ? state.values[gridControl.name] : null;
     let missing = null;
     if (!fileControl) state.artwork = null;
-    else if (source.kind === "bundled" && source.index === 0) state.artwork = sampleArtwork(samples[0], size);
+    else if (source.kind === "bundled" && source.index === 0) {
+      const start = sizeForSample(samples[0], size);
+      if (start) {
+        state.values[gridControl.name] = [...start];
+        size = start;
+      }
+      state.artwork = sampleArtwork(samples[0], size);
+    }
     else {
       const found = sampleForAsset(samples, fileControl.default);
       if (found) state.artwork = sampleArtwork(found.sample, size);

@@ -1,13 +1,14 @@
 //! The Neuraldeep.net demo tiles: `parts/ndn.brand-tile.obpart.json` (the
-//! portrait mark on a 2x4 tile) and `parts/ndn.brand-badge.obpart.json` (the
-//! hexagon badge on a 4x4 tile), with the four drawings in
-//! `parts/assets/brand/`. Those drawings are Neural Deep Network Ltd's
-//! trademarks, all rights reserved, and not under this repository's licences
-//! (`parts/assets/brand/NOTICE.md`); the part documents are CC0.
+//! NEURALDEEP.NET wordmark on a 2x6 tile) and `parts/ndn.brand-badge.obpart.json`
+//! (the wordmark in three lines on a 4x4 tile), with the four wordmark
+//! drawings in `parts/assets/brand/` (made by `scripts/brand-text.py` from
+//! Inter, SIL Open Font License 1.1). Those drawings are Neural Deep Network
+//! Ltd's trademarks, all rights reserved, and not under this repository's
+//! licences (`parts/assets/brand/NOTICE.md`); the part documents are CC0.
 //!
-//! Each drawing is built at the tile it was drawn for (the portrait mark at
-//! 2x4 and 4x6, the badge at 4x4 and 2x2; the 2x4 mark and the 4x4 badge are
-//! the documents' defaults, built with no parameters but the relief) in every
+//! Each drawing is built at the tile it was drawn for (2x6, 2x8, 2x10 and
+//! 4x4; the 2x6 and the 4x4 drawings are the documents' defaults, built with
+//! no parameters but the relief) in every
 //! relief: emboss, deboss, the filament-swap inlay and the multi-material
 //! (parts) inlay, on fdm-0.4 with the example fit profile. Every build may be
 //! exported with no finding at all, so no FEATURE.MIN: the opening removes at
@@ -68,67 +69,67 @@ struct Mark {
     emboss_accent: u64,
 }
 
-const MARK_2X4: Mark = Mark {
-    asset: "assets/brand/neuraldeep-mark-2x4.svg",
-    svg: include_str!("../../../parts/assets/brand/neuraldeep-mark-2x4.svg"),
+const WORDMARK_2X6: Mark = Mark {
+    asset: "assets/brand/neuraldeep-wordmark-2x6.svg",
+    svg: include_str!("../../../parts/assets/brand/neuraldeep-wordmark-2x6.svg"),
     doc: BRAND_TILE,
-    size: [2, 4],
+    size: [2, 6],
     hashes: [
-        "64cabfe45bb3e3ec122c75bbc68294b8b1d4eb733dc2de405b266ccbafa11f25",
-        "af063b2b6193cbcce0035f5b40043a804790da6731de49e6ad988e8739019490",
-        "f4d89eba597824247e129a76f1489794bf362d8ed8eeea4fdbf1d3a56e0fa31c",
-        "eb13322818dc568d200e6e4223f4ba28a8416f6422f28809f89b23aab45e8908",
+        "be192d1b14200df74eac6cfdd38791cd28ef243240b3d8d74c1722ff1a7c77f0",
+        "04a3a1f0045694dbbdb03ef9a757be949fe6e9a9fce96e6e99ebdc7375b893be",
+        "33187fd7815a0c52e946a8e5071cb7baeb6a55c4909752c2f4d37f14a75b814f",
+        "a62202076ec9a9a78bc946c17fe3d7b8646daefff7893a22bec9aef49ea9784f",
     ],
-    emboss_components: 9,
-    emboss_accent: 0x5e64_74d0_3786_9a4d,
+    emboss_components: 15,
+    emboss_accent: 0xc700_15f4_d59c_f72d,
 };
 
-const MARK_4X6: Mark = Mark {
-    asset: "assets/brand/neuraldeep-mark-4x6.svg",
-    svg: include_str!("../../../parts/assets/brand/neuraldeep-mark-4x6.svg"),
+const WORDMARK_2X8: Mark = Mark {
+    asset: "assets/brand/neuraldeep-wordmark-2x8.svg",
+    svg: include_str!("../../../parts/assets/brand/neuraldeep-wordmark-2x8.svg"),
     doc: BRAND_TILE,
-    size: [4, 6],
+    size: [2, 8],
     hashes: [
-        "2c440d110ce81f634008b5b718831c4e74314febd49b94030931dbe34dec8926",
-        "cac97025fe1bd339fc05e9d73f8aee4cafe1f466833c1187a38967b3777cccfd",
-        "c1b6f4fb22ebb8a770696cd77b30c349cbebcc65a3784ebccd3281fc8eb1047a",
-        "c9014d5fb214cba9b16ec87bef938f989e15631d7344af030328ce6da1381298",
+        "5b48f995ba067e83ca3fade91dbd2e2c360e88c3833737af741480344963eb77",
+        "793274c7d001cd83c87dae39632d70b9d462dce505693f8a63ce49efbdf56b44",
+        "fa7fa2e8fdbdcde7dd8a30b5d9701dd7d91a76650b70f0dcdc639882d424284e",
+        "7d5471fc25f613590c184c43f3bac5debab8994dfd4bccc822aec142f185e6b9",
     ],
-    emboss_components: 11,
-    emboss_accent: 0xc1ea_78cb_fc36_16a5,
+    emboss_components: 15,
+    emboss_accent: 0x6941_fbf7_b601_61ed,
 };
 
-const BADGE_4X4: Mark = Mark {
-    asset: "assets/brand/neuraldeep-badge-4x4.svg",
-    svg: include_str!("../../../parts/assets/brand/neuraldeep-badge-4x4.svg"),
+const WORDMARK_2X10: Mark = Mark {
+    asset: "assets/brand/neuraldeep-wordmark-2x10.svg",
+    svg: include_str!("../../../parts/assets/brand/neuraldeep-wordmark-2x10.svg"),
+    doc: BRAND_TILE,
+    size: [2, 10],
+    hashes: [
+        "210e3177e855a0f52b31d56dd9b5d023215ba8bd9c2bd1d0faf8ea73e4f75e60",
+        "f5ab53658b15c8601ac8383ea9e3428688423b53813e226663e47bca8ec43d9d",
+        "3d56b3407c77c1173eef1130c059fb68e9a5d237e461d4488188e43481225017",
+        "297b2919312f6a398b7e77dba1315efd80648a0cdddc4e7ce1cd6d28c65bce82",
+    ],
+    emboss_components: 15,
+    emboss_accent: 0x2094_75a8_7858_0999,
+};
+
+const WORDMARK_4X4: Mark = Mark {
+    asset: "assets/brand/neuraldeep-wordmark-4x4.svg",
+    svg: include_str!("../../../parts/assets/brand/neuraldeep-wordmark-4x4.svg"),
     doc: BRAND_BADGE,
     size: [4, 4],
     hashes: [
-        "cb914b448292c6c655969c86a220a76fadc939004d8074c03815ddda651a0726",
-        "34540f282624ba2c591448abb984819b93d9eac8a30e4d87dd3c93fe4678175b",
-        "170b8a92ac414a19970ac502cc9c9c4e790ee865c8451df689b7036f6d92f9b2",
-        "112cb9d611ddd7fac23acc62d42a9ad2e7a0c1a5ddc769feedacb2d95d0b9c0d",
+        "cf93bc5d6ed9c39e4b592f47ad3890089db7360eb7a24ee303c4efff2d637aec",
+        "29be6e4ec3351ab47064eee9dd7ad8ddfcddc8e1cc255e86e1f91759659ab582",
+        "5940ce139e776bffe4ea8c8db2a391f260c387bce67398f25de993c0b43ab039",
+        "ed9ad771d1682c840699cebaa81f371dbd5317baa40fdf026ca30ae2656bbe06",
     ],
-    emboss_components: 8,
-    emboss_accent: 0xbff6_ffa7_2b50_6e91,
+    emboss_components: 15,
+    emboss_accent: 0xf52a_0bab_8571_7dd1,
 };
 
-const BADGE_2X2: Mark = Mark {
-    asset: "assets/brand/neuraldeep-badge-2x2.svg",
-    svg: include_str!("../../../parts/assets/brand/neuraldeep-badge-2x2.svg"),
-    doc: BRAND_BADGE,
-    size: [2, 2],
-    hashes: [
-        "eb9c71abf3d2ef9c81a2c754f2208444feaa890f74fa74cf4e2546434e6201a8",
-        "428de2283b122b28799229f4e1c4a7d8872aeebec2daafc9f9b175f191fae519",
-        "fa40ec7e2b3a90bea1aa2134ebc1f652162aa28921154c695d2b8e08a9e7ea6d",
-        "2cfb0d38246fac3f295251416768f6da55dd521e2c5bb6ebb3da8bc948206ccd",
-    ],
-    emboss_components: 5,
-    emboss_accent: 0xab64_f406_9e9b_6d55,
-};
-
-const MARKS: [&Mark; 4] = [&MARK_2X4, &MARK_4X6, &BADGE_4X4, &BADGE_2X2];
+const MARKS: [&Mark; 4] = [&WORDMARK_2X6, &WORDMARK_2X8, &WORDMARK_2X10, &WORDMARK_4X4];
 
 /// The relief modes, as (relief, inlayStyle), in the order of `Mark::hashes`.
 const MODES: [(&str, &str); 4] = [
@@ -412,25 +413,25 @@ fn check_emboss(mark: &Mark, b: &Built, offsets: &Offsets, what: &str) {
 }
 
 #[test]
-fn the_brand_tile_builds_its_default_mark_at_2x4() {
-    assert!(is_default(&MARK_2X4), "the brand tile's default");
-    check_mark(&MARK_2X4);
+fn the_brand_tile_builds_its_default_wordmark_at_2x6() {
+    assert!(is_default(&WORDMARK_2X6), "the brand tile's default");
+    check_mark(&WORDMARK_2X6);
 }
 
 #[test]
-fn the_portrait_mark_for_4x6_builds_at_4x6() {
-    check_mark(&MARK_4X6);
+fn the_two_line_wordmark_builds_at_2x8() {
+    check_mark(&WORDMARK_2X8);
 }
 
 #[test]
-fn the_brand_badge_builds_its_default_badge_at_4x4() {
-    assert!(is_default(&BADGE_4X4), "the brand badge's default");
-    check_mark(&BADGE_4X4);
+fn the_one_line_wordmark_builds_at_2x10() {
+    check_mark(&WORDMARK_2X10);
 }
 
 #[test]
-fn the_badge_for_2x2_builds_at_2x2() {
-    check_mark(&BADGE_2X2);
+fn the_brand_badge_builds_its_default_wordmark_at_4x4() {
+    assert!(is_default(&WORDMARK_4X4), "the brand badge's default");
+    check_mark(&WORDMARK_4X4);
 }
 
 #[test]
@@ -465,16 +466,21 @@ fn the_marks_carry_their_notice_and_stay_fill_only() {
             "NOTICE.md lacks {file}"
         );
 
-        // The header comment: the copyright line, the drawing, its target
-        // tile and where it comes from.
+        // The header comment: the copyright line, the text, its target
+        // tile, the typeface and its licence, and the script that made it.
         let svg = mark.svg;
         assert!(svg.starts_with("<?xml"), "{file}");
         let header = &svg[..svg.find("<svg").expect("an svg element")];
         assert!(header.contains(&format!("<!--\n  {COPYRIGHT}\n")), "{file}");
         let target = format!("Target tile: {}x{}.", mark.size[0], mark.size[1]);
         assert!(header.contains(&target), "{file}: {target}");
+        assert!(header.contains("The NEURALDEEP.NET wordmark: "), "{file}");
         assert!(
-            header.contains("Derived from the Neural Deep Network Ltd website illustration."),
+            header.contains("Letterforms: Inter (") && header.contains("SIL Open Font License 1.1"),
+            "{file}"
+        );
+        assert!(
+            header.contains("Generated by scripts/brand-text.py"),
             "{file}"
         );
         assert!(header.contains("NOTICE.md"), "{file}");
@@ -510,14 +516,14 @@ fn the_marks_carry_their_notice_and_stay_fill_only() {
             BRAND_TILE,
             "ndn.brand-tile",
             "Neuraldeep.net tile",
-            MARK_2X4.asset,
-            [2, 4],
+            WORDMARK_2X6.asset,
+            [2, 6],
         ),
         (
             BRAND_BADGE,
             "ndn.brand-badge",
             "Neuraldeep.net badge",
-            BADGE_4X4.asset,
+            WORDMARK_4X4.asset,
             [4, 4],
         ),
     ] {

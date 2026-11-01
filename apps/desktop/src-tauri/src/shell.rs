@@ -5,11 +5,14 @@
 use std::ffi::OsStr;
 
 /// The web places the page links to: the repository (source, the print test
-/// guide, the notice of the Neuraldeep.net marks) and the published
-/// playground. Each is `(host, path prefix)`; only `https` links qualify.
+/// guide, the notice of the Neuraldeep.net marks), the published playground
+/// and the website of Neural Deep Network Ltd, which the logo in the header
+/// and the footer links. Each is `(host, path prefix)`; only `https` links
+/// qualify.
 const EXTERNAL_LINKS: &[(&str, &str)] = &[
     ("github.com", "/NeuralDEEPnet/openBrick"),
     ("neuraldeepnet.github.io", "/openBrick"),
+    ("www.neuraldeep.net", ""),
 ];
 
 /// Whether a link the user clicked opens in the system browser. The app's
@@ -76,6 +79,7 @@ mod tests {
             Some("neuraldeepnet.github.io"),
             "/openBrick/"
         ));
+        assert!(opens_in_browser("https", Some("www.neuraldeep.net"), "/"));
         // Another repository, another host, plain HTTP, a look-alike host or path.
         assert!(!opens_in_browser("https", gh, "/NeuralDEEPnet/other"));
         assert!(!opens_in_browser(
@@ -91,6 +95,12 @@ mod tests {
             "/NeuralDEEPnet/openBrick"
         ));
         assert!(!opens_in_browser("https", None, "/NeuralDEEPnet/openBrick"));
+        assert!(!opens_in_browser("http", Some("www.neuraldeep.net"), "/"));
+        assert!(!opens_in_browser(
+            "https",
+            Some("www.neuraldeep.net.example.org"),
+            "/"
+        ));
         assert!(!opens_in_browser("file", None, "/etc/passwd"));
         assert!(!opens_in_browser("javascript", None, "alert(1)"));
     }

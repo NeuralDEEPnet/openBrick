@@ -99,7 +99,7 @@ function fakeCore({ throws = null } = {}) {
       if (!name.trim()) throw new Error("a preset needs a name");
       return `${doc} ${name}\n`;
     },
-    artwork_samples_json: () => '[{"id":"neuraldeep-mark","files":[{"asset":"assets/brand/neuraldeep-mark-2x4.svg","tile":[2,4],"svg":"<svg/>"}]}]',
+    artwork_samples_json: () => '[{"id":"neuraldeep-wordmark","files":[{"asset":"assets/brand/neuraldeep-wordmark-2x6.svg","tile":[2,6],"svg":"<svg/>"}]}]',
     disclaimer: () => "not affiliated",
     role_colors_json: () => '{"body":"#2f6db5","accent":"#f4f1e8"}',
     max_asset_bytes: () => 4194304,
@@ -523,7 +523,7 @@ test("bundled and resolveParams read the core's data", () => {
   assert.deepEqual(b.processProfiles, [{ id: "fdm-0.4" }]);
   assert.equal(b.exampleFitProfile, '{"kind":"fit","id":"example"}', "kept as text: it is sent back as the fit");
   assert.equal(b.logoTilePart, '{"id":"ndn.logo-tile"}');
-  assert.deepEqual(b.samples.map((s) => [s.id, s.files[0].asset]), [["neuraldeep-mark", "assets/brand/neuraldeep-mark-2x4.svg"]], "parsed");
+  assert.deepEqual(b.samples.map((s) => [s.id, s.files[0].asset]), [["neuraldeep-wordmark", "assets/brand/neuraldeep-wordmark-2x6.svg"]], "parsed");
   assert.equal(b.disclaimer, "not affiliated");
   assert.deepEqual(b.roleColors, { body: "#2f6db5", accent: "#f4f1e8" });
   assert.equal(b.maxAssetBytes, 4194304);

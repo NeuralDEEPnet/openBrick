@@ -10,11 +10,12 @@
 //! fdm-0.4 the parameter overrides, the content hash, the triangle count, each
 //! object's role, triangles and fingerprint, and the blocking rules; then the
 //! default coupon's content hash, triangles, fingerprint and cell labels. The
-//! cases are the playground's default artwork, the Neuraldeep.net mark drawn
-//! for 2x4 (emboss, deboss, the filament-swap inlay and the multi-material
-//! parts inlay with the example fit profile, emboss without a fit profile and
-//! emboss with the fit profile the wizard records), the Neuraldeep.net badge
-//! on a 4x4 tile and the CC0 sample mark (both emboss with the example fit).
+//! cases are the playground's default artwork, the NEURALDEEP.NET wordmark
+//! drawn for 2x6 on the 2x6 tile the page starts with (emboss, deboss, the
+//! filament-swap inlay and the multi-material parts inlay with the example fit
+//! profile, emboss without a fit profile and emboss with the fit profile the
+//! wizard records), the square wordmark on a 4x4 tile (`badge-emboss`) and
+//! the CC0 sample mark on the 2x6 tile (both emboss with the example fit).
 //! The artwork is the core's own bundle (`artwork_samples_json`), under the
 //! asset names the page sends, so the content hashes agree. Under `exports`:
 //! the files `export_part` and `export_coupon` write for the downloads the
@@ -132,7 +133,8 @@ fn part_case(doc: &str, params: &Value, fit: &str, assets: &AssetSet) -> Value {
 }
 
 /// The part designer as the smoke test drives it (example fit, fdm-0.4):
-/// `parts/ndn.brand-tile.obpart.json` opened (`opened`), made 2x6 and given
+/// `parts/ndn.brand-tile.obpart.json` opened (`opened`), made 2x8 (so the
+/// page sends the wordmark drawn for 2x8) and given
 /// its "Pressed-in mark" preset (`edited`, with the values the page sends:
 /// every shown parameter and the drawing), those values kept as the preset
 /// "Smoke preset" and the part saved (`saved`: the file's name, size, SHA-256
@@ -141,7 +143,7 @@ fn part_case(doc: &str, params: &Value, fit: &str, assets: &AssetSet) -> Value {
 /// for the saved file). Then the nameplate keychain, whose text label and key
 /// ring are not built yet, with studs on top and no ring (`keychain`), and
 /// what opening it reports.
-fn designer_values(mark: &str, fit: &str, assets: &AssetSet) -> Value {
+fn designer_values(mark: &str, longer: &str, fit: &str, assets: &AssetSet) -> Value {
     let parts: Vec<Value> = serde_json::from_str(&bundled_parts_json()).expect("the bundled parts");
     let brand = parts
         .iter()
@@ -150,8 +152,8 @@ fn designer_values(mark: &str, fit: &str, assets: &AssetSet) -> Value {
         .expect("the brand tile is bundled")
         .to_string();
     let keychain = include_str!("../../../parts/ndn.nameplate-keychain.obpart.json");
-    let opened = json!({ "size": [2, 4], "height": "plate", "logo": mark, "relief": "emboss", "reliefHeight": 0.6, "margin": 1.0 });
-    let edited = json!({ "size": [2, 6], "height": "plate", "logo": mark, "relief": "deboss", "reliefHeight": 0.6, "margin": 1.0 });
+    let opened = json!({ "size": [2, 6], "height": "plate", "logo": mark, "relief": "emboss", "reliefHeight": 0.6, "margin": 1.0 });
+    let edited = json!({ "size": [2, 8], "height": "plate", "logo": longer, "relief": "deboss", "reliefHeight": 0.6, "margin": 1.0 });
     let preset_name = "Smoke preset";
     let with_preset = add_preset_json(&brand, preset_name, &edited.to_string(), "fdm-0.4")
         .expect("the edited values are a valid preset");
@@ -189,10 +191,13 @@ fn main() {
             .add(asset.expect("asset"), svg.expect("svg").as_bytes().to_vec())
             .expect("the samples fit the limit");
     }
-    // The playground's default: the Neuraldeep.net mark drawn for 2x4, on the
-    // logo tile's default 2x4.
-    let mark = sample_asset(&samples, "neuraldeep-mark", Some([2, 4]));
-    let badge = sample_asset(&samples, "neuraldeep-badge", Some([4, 4]));
+    // The playground's default: the NEURALDEEP.NET wordmark drawn for 2x6, on
+    // the 2x6 tile the page starts with (the whole text does not print on the
+    // logo tile's default 2x4, so the page sets the wordmark's size).
+    let size = json!([2, 6]);
+    let mark = sample_asset(&samples, "neuraldeep-wordmark", Some([2, 6]));
+    let longer = sample_asset(&samples, "neuraldeep-wordmark", Some([2, 8]));
+    let badge = sample_asset(&samples, "neuraldeep-square", Some([4, 4]));
     let cc0 = sample_asset(&samples, "sample", None);
 
     // The calibration wizard's record step as the smoke test drives it: the
@@ -227,30 +232,42 @@ fn main() {
     let recorded_fit = recorded["text"].as_str().expect("the file").to_string();
 
     let cases = [
-        ("emboss", json!({ "logo": mark }), "example"),
+        ("emboss", json!({ "logo": mark, "size": size }), "example"),
         (
             "deboss",
-            json!({ "logo": mark, "relief": "deboss" }),
+            json!({ "logo": mark, "size": size, "relief": "deboss" }),
             "example",
         ),
         (
             "inlay",
-            json!({ "logo": mark, "relief": "inlay" }),
+            json!({ "logo": mark, "size": size, "relief": "inlay" }),
             "example",
         ),
         (
             "inlay-parts",
-            json!({ "logo": mark, "relief": "inlay", "inlayStyle": "parts" }),
+            json!({ "logo": mark, "size": size, "relief": "inlay", "inlayStyle": "parts" }),
             "example",
         ),
-        ("emboss-no-fit", json!({ "logo": mark }), "none"),
+        (
+            "emboss-no-fit",
+            json!({ "logo": mark, "size": size }),
+            "none",
+        ),
         (
             "badge-emboss",
             json!({ "logo": badge, "size": [4, 4] }),
             "example",
         ),
-        ("sample-emboss", json!({ "logo": cc0 }), "example"),
-        ("emboss-recorded-fit", json!({ "logo": mark }), "recorded"),
+        (
+            "sample-emboss",
+            json!({ "logo": cc0, "size": size }),
+            "example",
+        ),
+        (
+            "emboss-recorded-fit",
+            json!({ "logo": mark, "size": size }),
+            "recorded",
+        ),
     ];
     let fit_text = |which: &str| -> String {
         match which {
@@ -323,7 +340,7 @@ fn main() {
         ["emboss", "inlay", "inlay-parts", "badge-emboss"].map(params);
     let stl = export("stl", &emboss);
     let stl_triangles = u32::from_le_bytes(stl[80..84].try_into().expect("an STL header"));
-    let mut stl_file = file("ndn.logo-tile-2x4-emboss-neuraldeep.stl", &stl);
+    let mut stl_file = file("ndn.logo-tile-2x6-emboss-neuraldeep.stl", &stl);
     stl_file["triangles"] = json!(stl_triangles);
 
     let started = Instant::now();
@@ -342,16 +359,16 @@ fn main() {
     let recorded_3mf = export_part("3mf", &doc, &emboss, "fdm-0.4", &recorded_fit, &assets, "")
         .unwrap_or_else(|e| panic!("3mf with the recorded fit: {e}"));
     let exports = json!({
-        "emboss3mf": threemf("ndn.logo-tile-2x4-emboss-neuraldeep.3mf", &emboss),
+        "emboss3mf": threemf("ndn.logo-tile-2x6-emboss-neuraldeep.3mf", &emboss),
         "embossStl": stl_file,
-        "inlay3mf": threemf("ndn.logo-tile-2x4-inlay-swap-neuraldeep.3mf", &inlay),
-        "inlayParts3mf": threemf("ndn.logo-tile-2x4-inlay-parts-neuraldeep.3mf", &inlay_parts),
-        "badge3mf": threemf("ndn.logo-tile-4x4-emboss-neuraldeep-badge.3mf", &badge),
+        "inlay3mf": threemf("ndn.logo-tile-2x6-inlay-swap-neuraldeep.3mf", &inlay),
+        "inlayParts3mf": threemf("ndn.logo-tile-2x6-inlay-parts-neuraldeep.3mf", &inlay_parts),
+        "badge3mf": threemf("ndn.logo-tile-4x4-emboss-neuraldeep-square.3mf", &badge),
         "coupon3mf": file(&format!("{}.3mf", coupon.file_stem()), &coupon_3mf),
         "fitProfile": fit_file,
-        "recorded3mf": file("ndn.logo-tile-2x4-emboss-neuraldeep.3mf", &recorded_3mf),
+        "recorded3mf": file("ndn.logo-tile-2x6-emboss-neuraldeep.3mf", &recorded_3mf),
     });
-    let designer = designer_values(&mark, &fit, &assets);
+    let designer = designer_values(&mark, &longer, &fit, &assets);
     let result = json!({
         "kernel": openbrick_wasm::kernel_id(),
         "designer": designer,

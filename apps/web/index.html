@@ -82,6 +82,12 @@
         border-bottom: 1px solid var(--line);
       }
       h1 { margin: 0 auto 0 0; font-size: 16px; font-weight: 650; white-space: nowrap; }
+      /* Neural Deep Network Ltd's logo, as published (parts/assets/brand/NOTICE.md): never stretched. */
+      .brand { display: flex; align-items: center; gap: 10px; margin-right: auto; min-width: 0; color: inherit; text-decoration: none; }
+      .brand h1 { margin: 0; }
+      .brand-logo { display: block; flex: none; width: auto; height: 48px; object-fit: contain; }
+      .owner { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+      .owner img { display: block; flex: none; width: auto; height: 36px; object-fit: contain; }
       h1 span { color: var(--muted); font-weight: 400; }
       h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; text-transform: none; }
       a { color: var(--accent); }
@@ -292,13 +298,17 @@
         :root { font-size: 14px; }
         header { gap: 6px 12px; }
         h1 { font-size: 15px; }
+        .brand-logo { height: 40px; }
         [role="tab"] { padding: 0 10px; }
       }
     </style>
   </head>
   <body data-state="loading" data-mode="tile">
     <header>
-      <h1>OpenBrick3D <span>playground</span></h1>
+      <div class="brand">
+        <a href="https://www.neuraldeep.net/" target="_blank" rel="noopener"><img class="brand-logo" src="./src/brand/ndn-logo-96.webp" srcset="./src/brand/ndn-logo-96.webp 2x, ./src/brand/ndn-logo-192.webp 4x" width="61" height="96" alt="Neuraldeep.net logo" /></a>
+        <h1>OpenBrick3D <span>playground</span></h1>
+      </div>
       <div role="tablist" aria-label="What to make">
         <button type="button" role="tab" id="tab-tile" aria-controls="panel-tile" aria-selected="true">Part</button>
         <button type="button" role="tab" id="tab-coupon" aria-controls="panel-coupon" aria-selected="false" tabindex="-1">Calibration coupon</button>
@@ -529,6 +539,7 @@
     </div>
     <footer>
       <output id="status" role="status" aria-live="polite"></output>
+      <p class="owner" id="owner"><img src="./src/brand/ndn-logo-96.webp" srcset="./src/brand/ndn-logo-96.webp 2x, ./src/brand/ndn-logo-192.webp 4x" width="61" height="96" alt="Neuraldeep.net logo" /><span>An open demo by Neural Deep Network Ltd (<a href="https://www.neuraldeep.net/" target="_blank" rel="noopener">neuraldeep.net</a>). The Neuraldeep.net logo and the NEURALDEEP.NET wordmark: Copyright Neural Deep Network Ltd. All rights reserved. <a href="https://github.com/NeuralDEEPnet/openBrick/blob/main/parts/assets/brand/NOTICE.md" target="_blank" rel="noopener">Notice</a></span></p>
       <p class="disclaimer"><span id="disclaimer"><!--openbrick:disclaimer--></span> <a href="https://neuraldeepnet.github.io/openBrick/docs/" target="_blank" rel="noopener">Documentation</a> · <a href="https://github.com/NeuralDEEPnet/openBrick" target="_blank" rel="noopener">Source code on GitHub</a></p>
     </footer>
     <script type="module" src="/src/main.js"></script>
