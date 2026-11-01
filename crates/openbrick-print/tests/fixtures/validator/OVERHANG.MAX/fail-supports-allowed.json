@@ -53,7 +53,7 @@
     "findings": [
       {
         "feature": null,
-        "fix": "turn on supports in the slicer for this part, or chamfer the overhang at 45 degrees so it needs none",
+        "fix": "turn on supports in the slicer for this part, or chamfer the overhang at 60° or less from vertical (maxOverhangDeg) so it needs none",
         "message": "1 region of downward faces hangs up to 90° from vertical, beyond the 60° maxOverhangDeg of process `resin-msla`, without a short bridge (it has no material below any edge); the steepest is 2 mm above the bed near x 8 mm, y 16 mm in print orientation",
         "rule": "OVERHANG.MAX",
         "severity": "warning",

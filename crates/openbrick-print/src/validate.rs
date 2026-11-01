@@ -155,6 +155,16 @@ pub const MESH_VOLUME_TOLERANCE_PCT: f64 = 5.0;
 /// floating-point residue of the evaluator's arithmetic.
 pub const LENGTH_TOLERANCE_MM: f64 = 1e-6;
 
+/// Why the overhang rules were not checked on measurements without the
+/// analysis.
+const NO_OVERHANG_ANALYSIS: &str = "the measurements hold no overhang analysis (they were written before it existed); build the part again to check it";
+
+/// A downward region of a face-down inlay lies at the depth of the face slab
+/// (the artwork's openings, rule `OVERHANG.MAX`) when its lowest point is
+/// this close to `relief_height_mm`, in millimetres: far below a layer, far
+/// above the f32 rounding of the meshes it was measured on.
+const ARTWORK_RECESS_TOLERANCE_MM: f64 = 1e-4;
+
 /// The rules [`validate`] checks, in the order of the table in docs/plan/05
 /// section 5.
 pub const IMPLEMENTED_RULES: &[&str] = &[
@@ -1128,12 +1138,24 @@ impl Validator<'_> {
         });
     }
 
+    /// Why the print checks of the final meshes were not measured: left out
+    /// of a live preview, or `otherwise`.
+    fn mesh_checks_missing(&self, otherwise: &str) -> String {
+        match self.m.mesh_checks_deferred {
+            Some(d) => format!(
+                "the live preview leaves the mesh checks out on parts over {} triangles to stay responsive, and this one has {}; exporting runs them (and refuses the export if they find a blocker), and so does openbrick validate",
+                d.preview_limit, d.triangles
+            ),
+            None => otherwise.into(),
+        }
+    }
+
     fn mesh_self_intersect(&mut self) {
         let Some(pairs) = self.m.self_intersections else {
-            self.not_checked(
-                "MESH.SELF_INTERSECT",
-                "the measurements hold no self-intersection count (they were written before the test existed, or the mesh lies outside its +-1024 mm range); build the part again to check it".into(),
+            let reason = self.mesh_checks_missing(
+                "the measurements hold no self-intersection count (they were written before the test existed, or the mesh lies outside its +-1024 mm range); build the part again to check it",
             );
+            self.not_checked("MESH.SELF_INTERSECT", reason);
             return;
         };
         if pairs == 0 {
@@ -1154,10 +1176,8 @@ impl Validator<'_> {
 
     fn roof_bridge(&mut self) {
         if self.m.overhangs.is_none() {
-            self.not_checked(
-                "ROOF.BRIDGE",
-                "the measurements hold no overhang analysis (they were written before it existed); build the part again to check it".into(),
-            );
+            let reason = self.mesh_checks_missing(NO_OVERHANG_ANALYSIS);
+            self.not_checked("ROOF.BRIDGE", reason);
             return;
         }
         let Some(span) = self.m.roof_span_mm else {
@@ -1185,10 +1205,8 @@ impl Validator<'_> {
     fn overhang(&mut self) {
         let Some(regions) = &self.m.overhangs else {
             for rule in ["OVERHANG.MAX", "OVERHANG.BRIDGED"] {
-                self.not_checked(
-                    rule,
-                    "the measurements hold no overhang analysis (they were written before it existed); build the part again to check it".into(),
-                );
+                let reason = self.mesh_checks_missing(NO_OVERHANG_ANALYSIS);
+                self.not_checked(rule, reason);
             }
             return;
         };
@@ -1202,6 +1220,23 @@ impl Validator<'_> {
                 .is_some_and(|s| s <= max_bridge + LENGTH_TOLERANCE_MM)
         };
         let (short, unsupported): (Vec<_>, Vec<_>) = steep.into_iter().partition(bridged);
+        // A face-down inlay leaves its artwork open through the face slab, and
+        // the body bridges over each opening at the slab's depth. Too wide a
+        // bridge there sags into the opening, which shows on the artwork but
+        // leaves the part whole: a warning with a hint about the artwork, not
+        // the blocker below (docs/plan/05 section 5).
+        let recess_depth = if self.m.face_down && self.m.relief_mode.as_deref() == Some("inlay") {
+            self.m.relief_height_mm
+        } else {
+            None
+        };
+        let in_recess = |r: &&crate::Overhang| {
+            r.span_mm.is_some()
+                && recess_depth
+                    .is_some_and(|d| (r.height_mm - d).abs() <= ARTWORK_RECESS_TOLERANCE_MM)
+        };
+        let (recesses, unsupported): (Vec<_>, Vec<_>) =
+            unsupported.into_iter().partition(in_recess);
         if let Some(worst) = unsupported
             .iter()
             .max_by(|a, b| a.angle_deg.total_cmp(&b.angle_deg))
@@ -1241,13 +1276,17 @@ impl Validator<'_> {
             let (severity, fix) = if self.p.supports_allowed {
                 (
                     Severity::Warning,
-                    "turn on supports in the slicer for this part, or chamfer the overhang at 45 degrees so it needs none".to_string(),
+                    format!(
+                        "turn on supports in the slicer for this part, or chamfer the overhang at {}° or less from vertical (maxOverhangDeg) so it needs none",
+                        mm(deg)
+                    ),
                 )
             } else {
                 (
                     Severity::Blocker,
                     format!(
-                        "chamfer the overhang at 45 degrees or less from vertical, hold it from below, or keep a bridge between two supports within {} mm; process `{}` prints without supports",
+                        "chamfer the overhang at {}° or less from vertical (maxOverhangDeg), hold it from below, or keep a bridge between two supports within {} mm; process `{}` prints without supports",
+                        mm(deg),
                         mm(max_bridge),
                         self.p.id
                     ),
@@ -1260,6 +1299,34 @@ impl Validator<'_> {
                 Some(worst.angle_deg),
                 Some(deg),
                 fix,
+            );
+        }
+        if let Some(worst) = recesses
+            .iter()
+            .max_by(|a, b| a.angle_deg.total_cmp(&b.angle_deg))
+        {
+            let n = recesses.len();
+            let long = longest_span(recesses.iter().copied()).unwrap_or(max_bridge);
+            let msg = format!(
+                "the inlay prints face down, and the body bridges {} of the artwork in the face slab {} mm above the bed, hanging up to {}° from vertical (beyond the {}° maxOverhangDeg), the widest {} mm across, more than the {} mm maxUnsupportedBridgeMm {}: the bridge may sag into the artwork, so it may come out rough or shallower there",
+                count(n, "opening"),
+                mm(recess_depth.unwrap_or(worst.height_mm)),
+                mm(worst.angle_deg),
+                mm(deg),
+                mm(long),
+                mm(max_bridge),
+                self.of_process()
+            );
+            self.push(
+                "OVERHANG.MAX",
+                Severity::Warning,
+                msg,
+                Some(worst.angle_deg),
+                Some(deg),
+                format!(
+                    "use inlay style `parts` (the artwork prints as its own part, so nothing bridges), relief mode deboss (it prints face up), or artwork whose filled areas are at most {} mm wide (a smaller logo, or an outline); you may export as it is",
+                    mm(max_bridge)
+                ),
             );
         }
         if let Some(longest) = longest_span(short.iter().copied()) {
@@ -1344,7 +1411,7 @@ impl Validator<'_> {
                 ),
                 Some(h),
                 Some(0.0),
-                "use relief mode inlay or deboss for a face-down part, which keep the face flat".into(),
+                "use relief mode inlay, which prints face down and keeps the face flat, or set print.up to \"top\" in the part document to print the part bottom down as designed".into(),
             );
         }
     }
@@ -1445,6 +1512,41 @@ mod tests {
             .into_iter()
             .find(|p| p.id == "fdm-0.4")
             .expect("bundled")
+    }
+
+    #[test]
+    fn mesh_checks_left_out_of_a_preview_are_listed_as_not_checked() {
+        let m = Measurements {
+            process: "fdm-0.4".into(),
+            components: 1,
+            is_manifold: true,
+            volume_mm3: 100.0,
+            feature_volume_sum_mm3: 100.0,
+            mesh_checks_deferred: Some(crate::DeferredMeshChecks {
+                triangles: 95_692,
+                preview_limit: 20_000,
+            }),
+            ..Measurements::default()
+        };
+        let r = validate(&m, &fdm04(), None);
+        assert!(r.export_allowed(), "{:#?}", r.findings);
+        let rules: Vec<&str> = r.unchecked.iter().map(|u| u.rule.as_str()).collect();
+        for rule in [
+            "MESH.SELF_INTERSECT",
+            "ROOF.BRIDGE",
+            "OVERHANG.MAX",
+            "OVERHANG.BRIDGED",
+        ] {
+            assert!(rules.contains(&rule), "{rule}: {rules:?}");
+            let u = r.unchecked.iter().find(|u| u.rule == rule).expect("listed");
+            assert!(
+                u.reason.contains("live preview")
+                    && u.reason.contains("95692")
+                    && u.reason.contains("20000"),
+                "{rule}: {}",
+                u.reason
+            );
+        }
     }
 
     #[test]

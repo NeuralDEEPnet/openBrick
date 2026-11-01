@@ -20,11 +20,17 @@
 //! the fastest run. A second line times the print checks of the final meshes
 //! (self-intersection and overhang analysis, rules MESH.SELF_INTERSECT,
 //! ROOF.BRIDGE and OVERHANG.*) on their own; the evaluation time includes them.
+//! It also says whether a live preview (`MeshChecks::Preview`, the playground)
+//! runs them: only up to `PREVIEW_MESH_CHECK_TRIANGLES` triangles, whose
+//! budget is a few tens of milliseconds native (docs/plan/05 section 5).
 
 use std::time::Instant;
 
 use openbrick_geom::manifold_rust::ManifoldRust;
-use openbrick_part::{evaluate, EvalInput, MemoryAssets, ParamValues, PartDoc};
+use openbrick_part::{
+    evaluate, EvalInput, MemoryAssets, MeshChecks, ParamValues, PartDoc,
+    PREVIEW_MESH_CHECK_TRIANGLES,
+};
 use serde_json::json;
 
 const LOGO_TILE: &str = include_str!("../../../parts/ndn.logo-tile.obpart.json");
@@ -116,6 +122,7 @@ fn main() {
             fit: Some(&fit),
             assets: &assets,
             skip_unsupported: false,
+            mesh_checks: MeshChecks::Always,
         };
         let mut best = f64::INFINITY;
         let mut last = None;
@@ -159,8 +166,14 @@ fn main() {
             process.first_layer_chamfer_mm,
         );
         let over = t.elapsed().as_secs_f64() * 1e3;
+        let triangles: usize = meshes.iter().map(|m| m.triangle_count()).sum();
+        let preview = if triangles <= PREVIEW_MESH_CHECK_TRIANGLES {
+            "run in a preview"
+        } else {
+            "left out of a preview"
+        };
         println!(
-            "{:<17} checks: self-intersection {selfx:.1} ms ({} pairs), overhangs {over:.1} ms (roof span {} mm, {} other regions)",
+            "{:<17} checks ({triangles} triangles, {preview}): self-intersection {selfx:.1} ms ({} pairs), overhangs {over:.1} ms (roof span {} mm, {} other regions)",
             "",
             m.self_intersections.map_or("not measured".into(), |n| n.to_string()),
             m.roof_span_mm.map_or("none".into(), |s| format!("{s:.3}")),

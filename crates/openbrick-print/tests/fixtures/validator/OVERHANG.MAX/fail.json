@@ -56,7 +56,7 @@
     "findings": [
       {
         "feature": null,
-        "fix": "chamfer the overhang at 45 degrees or less from vertical, hold it from below, or keep a bridge between two supports within 12 mm; process `fdm-0.4` prints without supports",
+        "fix": "chamfer the overhang at 50° or less from vertical (maxOverhangDeg), hold it from below, or keep a bridge between two supports within 12 mm; process `fdm-0.4` prints without supports",
         "message": "1 region of downward faces hangs up to 90° from vertical, beyond the 50° maxOverhangDeg of process `fdm-0.4`, without a short bridge (it would bridge 14 mm, more than the 12 mm maxUnsupportedBridgeMm); the steepest is 2 mm above the bed near x 8 mm, y 16 mm in print orientation",
         "rule": "OVERHANG.MAX",
         "severity": "blocker",

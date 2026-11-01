@@ -14,7 +14,8 @@ pub use coupon::{
 };
 pub use eval::{
     evaluate, Artwork, AssetResolver, Built, Connector, ConnectorSection, EvalError, EvalInput,
-    MemoryAssets, ParamValues, ResolvedParams, RoleMesh, SectionShape,
+    MemoryAssets, MeshChecks, ParamValues, ResolvedParams, RoleMesh, SectionShape,
+    PREVIEW_MESH_CHECK_TRIANGLES,
 };
 pub use validate::{validate, validate_on_bed};
 

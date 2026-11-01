@@ -18,7 +18,7 @@ use openbrick_io::{
 use openbrick_part::coupon::PLA_DENSITY_G_CM3;
 use openbrick_part::eval::resolve_params;
 use openbrick_part::{
-    evaluate, validate_on_bed, Artwork, Built, EvalInput, MemoryAssets, ParamValues,
+    evaluate, validate_on_bed, Artwork, Built, EvalInput, MemoryAssets, MeshChecks, ParamValues,
 };
 use openbrick_part::{PartDoc, RoleMesh};
 use openbrick_print::{
@@ -178,7 +178,13 @@ fn part_inputs(
 }
 
 /// Evaluate with the default kernel; every op must be built (no skipping).
-fn build(inputs: &PartInputs, assets: &AssetSet) -> Result<Built, CoreError> {
+/// `mesh_checks` is [`MeshChecks::Preview`] for the live preview
+/// ([`evaluate_part`]) and [`MeshChecks::Always`] for an export.
+fn build(
+    inputs: &PartInputs,
+    assets: &AssetSet,
+    mesh_checks: MeshChecks,
+) -> Result<Built, CoreError> {
     let input = EvalInput {
         doc: &inputs.doc,
         params: &inputs.params,
@@ -186,6 +192,7 @@ fn build(inputs: &PartInputs, assets: &AssetSet) -> Result<Built, CoreError> {
         fit: inputs.fit.as_ref(),
         assets: &assets.assets,
         skip_unsupported: false,
+        mesh_checks,
     };
     evaluate(&ManifoldRust, &input).map_err(|e| CoreError(e.to_string()))
 }
@@ -469,7 +476,7 @@ pub fn evaluate_part_on_printer(
 ) -> Result<PartOut, CoreError> {
     let bed = printer_bed(printer_id)?;
     let inputs = part_inputs(doc_json, params_json, process_id, fit_json)?;
-    let built = build(&inputs, assets)?;
+    let built = build(&inputs, assets, MeshChecks::Preview)?;
     part_out(&inputs, built, bed.as_ref())
 }
 
@@ -585,7 +592,7 @@ pub fn export_solids_on_printer(
     let colors = role_colors(colors_json)?;
     let bed = printer_bed(printer_id)?;
     let inputs = part_inputs(doc_json, params_json, process_id, fit_json)?;
-    let built = build(&inputs, assets)?;
+    let built = build(&inputs, assets, MeshChecks::Always)?;
     let report = validate_on_bed(&built, &inputs.process, inputs.fit.as_ref(), bed.as_ref());
     if !report.export_allowed() {
         return Err(blocked(&report));
@@ -733,6 +740,7 @@ mod tests {
                 fit: fit.as_ref(),
                 assets: &assets,
                 skip_unsupported: false,
+                mesh_checks: MeshChecks::Always,
             },
         )
         .unwrap()
@@ -1241,6 +1249,53 @@ mod tests {
         );
         assert_eq!(big.count(), 1);
         assert!(AssetSet::new().add(" ", vec![]).is_err());
+    }
+
+    #[test]
+    fn the_preview_leaves_the_mesh_checks_out_on_large_parts_and_export_runs_them() {
+        let doc = logo_tile_part_json();
+        let fit = example_fit_profile_json();
+        let mesh_rules = [
+            "MESH.SELF_INTERSECT",
+            "ROOF.BRIDGE",
+            "OVERHANG.MAX",
+            "OVERHANG.BRIDGED",
+        ];
+        let unchecked = |out: &PartOut| -> Vec<String> {
+            out.report
+                .unchecked
+                .iter()
+                .map(|u| u.rule.clone())
+                .collect()
+        };
+        // The 2x4 tile is checked live.
+        let small = evaluate_part(&doc, "", "fdm-0.4", &fit, &sample()).unwrap();
+        assert!(mesh_rules
+            .iter()
+            .all(|r| !unchecked(&small).contains(&r.to_string())));
+        // A large tile is not, and the report says why.
+        let large = r#"{"size":[6,8]}"#;
+        let out = evaluate_part(&doc, large, "fdm-0.4", &fit, &sample()).unwrap();
+        let m: Value = serde_json::from_str(&out.measurements_json()).unwrap();
+        assert!(
+            m["meshChecksDeferred"]["triangles"].as_u64()
+                > Some(openbrick_part::PREVIEW_MESH_CHECK_TRIANGLES as u64),
+            "{}",
+            m["meshChecksDeferred"]
+        );
+        for rule in mesh_rules {
+            let u = out
+                .report
+                .unchecked
+                .iter()
+                .find(|u| u.rule == rule)
+                .expect(rule);
+            assert!(u.reason.contains("live preview"), "{rule}: {}", u.reason);
+        }
+        assert!(out.export_allowed(), "{:#?}", out.report);
+        // The export evaluates again with every check, and writes the part.
+        let stl = export_part("stl", &doc, large, "fdm-0.4", &fit, &sample(), "").unwrap();
+        assert!(stl.len() > 84);
     }
 
     #[test]

@@ -438,6 +438,24 @@ pub struct Measurements {
     /// and `OVERHANG.BRIDGED`); empty for none, `None` when not measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overhangs: Option<Vec<Overhang>>,
+    /// The print checks of the final meshes (`self_intersections`,
+    /// `roof_span_mm`, `overhangs`) were left out of a live preview because
+    /// the meshes are larger than the preview checks; exporting and the
+    /// command line run them. `None` when they ran, or were not measured for
+    /// another reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_checks_deferred: Option<DeferredMeshChecks>,
+}
+
+/// Why a live preview left out the print checks of the final meshes
+/// ([`Measurements::mesh_checks_deferred`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferredMeshChecks {
+    /// Triangles of the meshes the exporters write, in all.
+    pub triangles: u64,
+    /// The most triangles a live preview checks.
+    pub preview_limit: u64,
 }
 
 /// One region of steep downward faces outside the roof, in print orientation

@@ -154,7 +154,33 @@ pub struct EvalInput<'a> {
     /// Skip features whose op is not implemented yet (with a warning) instead of
     /// failing. Meant for previews; what was skipped is part of the content hash.
     pub skip_unsupported: bool,
+    /// When to run the print checks of the final meshes (rules
+    /// `MESH.SELF_INTERSECT`, `ROOF.BRIDGE`, `OVERHANG.*`). They do not change
+    /// the meshes or the content hash.
+    pub mesh_checks: MeshChecks,
 }
+
+/// When the evaluator runs the print checks of the final meshes: the
+/// self-intersection test costs about 2.5 microseconds per triangle native
+/// (docs/plan/05 section 5), too slow for every edit of a large part.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MeshChecks {
+    /// Always: validation, export and the command line.
+    #[default]
+    Always,
+    /// A live preview: only when the exported meshes hold at most
+    /// [`PREVIEW_MESH_CHECK_TRIANGLES`] triangles in all. Larger parts get
+    /// `Measurements::mesh_checks_deferred` instead, and the report lists
+    /// the rules as not checked; their export runs the checks.
+    Preview,
+}
+
+/// The most triangles (of every exported mesh, in all) a live preview runs
+/// the print checks on: about 50 ms native, 20,000 triangles at about 2.5
+/// microseconds each, the "few tens of milliseconds" a preview edit may
+/// spend on them (docs/plan/05 section 5). A 4x4 plate has 13,504 triangles,
+/// the brand tile 6,132.
+pub const PREVIEW_MESH_CHECK_TRIANGLES: usize = 20_000;
 
 /// One printable object: all geometry of one colour role, unioned.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -1341,14 +1367,25 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         .chain(fused.as_ref().map(|f| &f.mesh))
         .collect();
     let solid = fused.as_ref().map_or(&objects[0].mesh, |f| &f.mesh);
-    let checks = crate::print_checks::measure(
-        &exported,
-        solid,
-        face_down,
-        Some(body.geom.cavity_depth()),
-        process,
-        flc,
-    );
+    let exported_triangles: usize = exported.iter().map(|m| m.triangle_count()).sum();
+    let mesh_checks_deferred = (input.mesh_checks == MeshChecks::Preview
+        && exported_triangles > PREVIEW_MESH_CHECK_TRIANGLES)
+        .then_some(openbrick_print::DeferredMeshChecks {
+            triangles: exported_triangles as u64,
+            preview_limit: PREVIEW_MESH_CHECK_TRIANGLES as u64,
+        });
+    let checks = if mesh_checks_deferred.is_none() {
+        Some(crate::print_checks::measure(
+            &exported,
+            solid,
+            face_down,
+            Some(body.geom.cavity_depth()),
+            process,
+            flc,
+        ))
+    } else {
+        None
+    };
 
     let measurements = Measurements {
         process: process.id.clone(),
@@ -1392,14 +1429,15 @@ pub fn evaluate<K: Kernel>(kernel: &K, input: &EvalInput) -> Result<Built, EvalE
         min_stroke_mm: relief.as_ref().and_then(|r| r.min_stroke).map(|s| s * xy),
         removed_area_pct: relief.as_ref().map(|r| r.removed_pct),
         relief_height_mm: relief.as_ref().map(|r| r.height),
-        self_intersections: checks.self_intersections,
+        self_intersections: checks.as_ref().and_then(|c| c.self_intersections),
         face_down,
         print_up,
         relief_mode,
         bed_face_studs: top_on_bed.then_some(stud_count),
         bed_face_relief_mm: top_on_bed.then_some(proud),
-        roof_span_mm: checks.roof_span_mm,
-        overhangs: Some(checks.overhangs),
+        roof_span_mm: checks.as_ref().and_then(|c| c.roof_span_mm),
+        overhangs: checks.map(|c| c.overhangs),
+        mesh_checks_deferred,
     };
 
     let content = json!({

@@ -11,7 +11,7 @@ use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_io::ExportMeta;
 use openbrick_part::coupon::PLA_DENSITY_G_CM3;
 use openbrick_part::eval::resolve_params;
-use openbrick_part::{evaluate, validate_on_bed, Built, EvalError, EvalInput, PartDoc};
+use openbrick_part::{evaluate, validate_on_bed, Built, EvalError, EvalInput, MeshChecks, PartDoc};
 use openbrick_print::{
     default_printers, default_process_profiles, example_fit_profile, printer, Bed, FitProfile,
     ProcessProfile, Report,
@@ -275,6 +275,7 @@ fn evaluate_part(args: &PartArgs) -> Result<Evaluated, Fail> {
             fit: fit.as_ref().map(|f| &f.profile),
             assets: &assets,
             skip_unsupported: false,
+            mesh_checks: MeshChecks::Always,
         },
     )
     .map_err(eval_fail)?;

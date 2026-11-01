@@ -53,7 +53,7 @@
     "findings": [
       {
         "feature": null,
-        "fix": "use relief mode inlay or deboss for a face-down part, which keep the face flat",
+        "fix": "use relief mode inlay, which prints face down and keeps the face flat, or set print.up to \"top\" in the part document to print the part bottom down as designed",
         "message": "the part prints face down, but something stands 0.6 mm proud of that face (a flat face stands 0 mm): it would rest on that and not on the face",
         "rule": "ORIENT.FACE",
         "severity": "blocker",

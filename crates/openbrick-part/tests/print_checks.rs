@@ -145,6 +145,145 @@ fn the_logo_tile_prints_in_the_orientation_its_document_declares() {
     }
 }
 
+#[test]
+fn a_live_preview_leaves_the_mesh_checks_out_on_large_parts_only() {
+    use openbrick_part::{
+        evaluate, EvalInput, MemoryAssets, MeshChecks, PREVIEW_MESH_CHECK_TRIANGLES,
+    };
+    let p = process("fdm-0.4");
+    let fit = example_fit_profile();
+    let eval = |size: [u32; 2], mesh_checks: MeshChecks| {
+        evaluate(
+            &openbrick_geom::manifold_rust::ManifoldRust,
+            &EvalInput {
+                doc: &part("body.plate", size, None, true, true),
+                params: &ParamValues::new(),
+                process: &p,
+                fit: Some(&fit),
+                assets: &MemoryAssets::new(),
+                skip_unsupported: false,
+                mesh_checks,
+            },
+        )
+        .expect("the plate builds")
+    };
+    // A 2x4 plate is well under the limit: the preview checks it.
+    let small = eval([2, 4], MeshChecks::Preview);
+    let m = &small.measurements;
+    assert!(m.triangle_count <= PREVIEW_MESH_CHECK_TRIANGLES);
+    assert_eq!(m.mesh_checks_deferred, None);
+    assert_eq!(m.self_intersections, Some(0));
+    assert!(m.overhangs.is_some() && m.roof_span_mm.is_some());
+    assert!(validate(&small, &p, Some(&fit)).findings.is_empty());
+    // A 4x8 plate is over it: the preview leaves the checks out and says so,
+    // with the same meshes and content hash as a full evaluation, which runs
+    // them.
+    let preview = eval([4, 8], MeshChecks::Preview);
+    let full = eval([4, 8], MeshChecks::Always);
+    let m = &preview.measurements;
+    let deferred = m.mesh_checks_deferred.expect("left out");
+    assert_eq!(deferred.triangles, m.triangle_count as u64);
+    assert!(deferred.triangles > deferred.preview_limit);
+    assert_eq!(
+        deferred.preview_limit as usize,
+        PREVIEW_MESH_CHECK_TRIANGLES
+    );
+    assert_eq!(
+        (m.self_intersections, &m.overhangs, m.roof_span_mm),
+        (None, &None, None)
+    );
+    assert_eq!(preview.content_hash, full.content_hash);
+    assert_eq!(
+        preview.objects[0].mesh.indices,
+        full.objects[0].mesh.indices
+    );
+    let report = validate(&preview, &p, Some(&fit));
+    assert!(report.findings.is_empty(), "{:#?}", report.findings);
+    let unchecked: Vec<&str> = report.unchecked.iter().map(|u| u.rule.as_str()).collect();
+    for rule in [
+        "MESH.SELF_INTERSECT",
+        "ROOF.BRIDGE",
+        "OVERHANG.MAX",
+        "OVERHANG.BRIDGED",
+    ] {
+        assert!(unchecked.contains(&rule), "{rule}: {unchecked:?}");
+    }
+    let m = &full.measurements;
+    assert_eq!(m.mesh_checks_deferred, None);
+    assert_eq!(m.self_intersections, Some(0));
+    assert!(validate(&full, &p, Some(&fit)).findings.is_empty());
+}
+
+/// A filled disc as the logo: scaled to the face, a solid area far wider than
+/// any bridge.
+const DISC_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50"/></svg>"#;
+
+#[test]
+fn a_swap_inlay_with_wide_filled_artwork_warns_with_a_hint_about_the_artwork() {
+    let p = process("fdm-0.4");
+    let fit = example_fit_profile();
+    let doc = PartDoc::parse(LOGO_TILE).expect("the logo tile parses");
+    let assets =
+        openbrick_part::MemoryAssets::new().with("assets/disc.svg", DISC_SVG.as_bytes().to_vec());
+    let built = |style: &str| {
+        run_with_assets(
+            &doc,
+            &ParamValues::new()
+                .with("size", json!([4, 4]))
+                .with("logo", json!("assets/disc.svg"))
+                .with("relief", json!("inlay"))
+                .with("inlayStyle", json!(style)),
+            &p,
+            Some(&fit),
+            &assets,
+            false,
+        )
+        .expect("the tile builds")
+    };
+    // Swap: the disc's opening in the face slab is bridged by the body above,
+    // about 30 mm across on a 4x4 tile, beyond fdm-0.4's 12 mm.
+    let swap = built("swap");
+    let m = &swap.measurements;
+    let depth = m.relief_height_mm.expect("an inlay depth");
+    let overhangs = m.overhangs.as_ref().expect("measured");
+    let widest = overhangs
+        .iter()
+        .filter(|o| (o.height_mm - depth).abs() < 1e-4)
+        .filter_map(|o| o.span_mm)
+        .fold(0.0, f64::max);
+    assert!(widest > p.max_unsupported_bridge_mm, "{overhangs:?}");
+    let report = validate(&swap, &p, Some(&fit));
+    let over: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.rule == "OVERHANG.MAX")
+        .collect();
+    assert_eq!(over.len(), 1, "{:#?}", report.findings);
+    assert_eq!(over[0].severity, Severity::Warning, "{:#?}", over[0]);
+    assert!(
+        over[0].message.contains("opening of the artwork"),
+        "{}",
+        over[0].message
+    );
+    assert!(
+        over[0].fix.contains("inlay style `parts`"),
+        "{}",
+        over[0].fix
+    );
+    assert!(report.export_allowed(), "{:#?}", report.findings);
+    // Parts: the artwork fill prints as its own part, so nothing bridges.
+    let parts = built("parts");
+    let report = validate(&parts, &p, Some(&fit));
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| !f.rule.starts_with("OVERHANG.")),
+        "{:#?}",
+        report.findings
+    );
+}
+
 /// Two copies of a mesh in one, the second moved by `by`.
 fn with_copy(mesh: &Mesh, by: [f32; 3]) -> Mesh {
     let mut m = mesh.clone();
