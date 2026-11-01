@@ -101,22 +101,35 @@ pub struct SelfIntersections {
 }
 
 /// Merge vertices closer than [`WELD_MM`] in every coordinate: for each vertex
-/// of `positions`, the index of its representative in the returned list of
-/// positions (the first vertex of its cluster, in order, so the result is
-/// deterministic). A chain of near-twins each within the distance of the next
-/// joins one cluster.
+/// of `positions`, the index of its cluster in the returned list of positions.
+/// Clusters are transitive: a chain of near-twins, each within the distance
+/// of the next, joins one cluster even where its ends lie farther apart, so no
+/// two returned positions are closer than [`WELD_MM`] in every coordinate.
+/// A cluster's position is its first vertex, and clusters are numbered in the
+/// order of their first vertex, so the result is deterministic.
 pub fn weld(positions: &[[f32; 3]]) -> (Vec<u32>, Vec<[f64; 3]>) {
-    // Cells four welding distances wide: a cluster can only reach into the
+    // Cells four welding distances wide: a near-twin can only lie in the
     // neighbouring cell across a face the point is within the distance of.
-    // Each cell holds its first representative; `next` chains the others.
+    // Every vertex goes into its cell (`head` holds the last, `next` chains
+    // the earlier ones); `parent` is a union-find forest over the vertices
+    // whose roots are the first vertex of each cluster.
     let size = 4.0 * WELD_MM;
-    let mut head: HashMap<[i64; 3], u32, CellHash> =
-        HashMap::with_capacity_and_hasher(positions.len(), CellHash);
-    let mut next: Vec<u32> = Vec::new();
-    let mut reps: Vec<[f64; 3]> = Vec::new();
-    let mut map = Vec::with_capacity(positions.len());
-    for p in positions {
-        let q = p.map(f64::from);
+    let n = positions.len();
+    let mut head: HashMap<[i64; 3], u32, CellHash> = HashMap::with_capacity_and_hasher(n, CellHash);
+    let mut next: Vec<u32> = Vec::with_capacity(n);
+    let mut parent: Vec<u32> = Vec::with_capacity(n);
+    let points: Vec<[f64; 3]> = positions.iter().map(|p| p.map(f64::from)).collect();
+    fn root(parent: &mut [u32], mut i: u32) -> u32 {
+        while parent[i as usize] != i {
+            let up = parent[parent[i as usize] as usize];
+            parent[i as usize] = up;
+            i = up;
+        }
+        i
+    }
+    for (id, q) in points.iter().enumerate() {
+        let id = id as u32;
+        parent.push(id);
         let c = q.map(|x| (x / size).floor() as i64);
         // Per axis: this cell, and the neighbour across a near face (0: none).
         let reach = |k: usize| -> i64 {
@@ -130,35 +143,42 @@ pub fn weld(positions: &[[f32; 3]]) -> (Vec<u32>, Vec<[f64; 3]>) {
             }
         };
         let r = [reach(0), reach(1), reach(2)];
-        let mut found = None;
-        'search: for mask in 0..8u8 {
+        'cells: for mask in 0..8u8 {
             let mut cell = c;
             for k in 0..3 {
                 if mask & (1 << k) != 0 {
                     if r[k] == 0 {
-                        continue 'search;
+                        continue 'cells;
                     }
                     cell[k] += r[k];
                 }
             }
             let mut at = head.get(&cell).copied();
-            while let Some(i) = at {
-                let o = reps[i as usize];
+            while let Some(j) = at {
+                let o = points[j as usize];
                 if (0..3).all(|k| (o[k] - q[k]).abs() < WELD_MM) {
-                    found = Some(i);
-                    break 'search;
+                    // Join the clusters under the earlier root.
+                    let (a, b) = (root(&mut parent, j), root(&mut parent, id));
+                    let (lo, hi) = (a.min(b), a.max(b));
+                    parent[hi as usize] = lo;
                 }
-                at = (next[i as usize] != u32::MAX).then_some(next[i as usize]);
+                at = (next[j as usize] != u32::MAX).then_some(next[j as usize]);
             }
         }
-        let id = found.unwrap_or_else(|| {
-            let id = reps.len() as u32;
-            reps.push(q);
-            let prev = head.insert(c, id);
-            next.push(prev.unwrap_or(u32::MAX));
-            id
-        });
-        map.push(id);
+        let prev = head.insert(c, id);
+        next.push(prev.unwrap_or(u32::MAX));
+    }
+    // Number the clusters in the order of their first vertex (their root).
+    let mut cluster = vec![u32::MAX; n];
+    let mut reps: Vec<[f64; 3]> = Vec::new();
+    let mut map = Vec::with_capacity(n);
+    for id in 0..n as u32 {
+        let r = root(&mut parent, id) as usize;
+        if cluster[r] == u32::MAX {
+            cluster[r] = reps.len() as u32;
+            reps.push(points[r]);
+        }
+        map.push(cluster[r]);
     }
     (map, reps)
 }
@@ -912,6 +932,34 @@ pub fn self_intersections(mesh: &Mesh) -> SelfIntersections {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chain_of_near_twins_welds_into_one_vertex() {
+        // A, B and C 8 nm apart in x: A to C is 16 nm, beyond WELD_MM, but the
+        // chain joins them, in whatever order they come. D is far away.
+        let (a, b, c) = (1.0f32, 1.0 + 8e-6, 1.0 + 16e-6);
+        let d = [2.0f32, 1.0, 1.0];
+        for (order, first) in [
+            ([a, b, c], a),
+            ([a, c, b], a),
+            ([c, a, b], c),
+            ([b, c, a], b),
+        ] {
+            let mut pts: Vec<[f32; 3]> = order.iter().map(|&x| [x, 1.0, 1.0]).collect();
+            pts.push(d);
+            let (map, reps) = weld(&pts);
+            assert_eq!(map, vec![0, 0, 0, 1], "{order:?}");
+            assert_eq!(
+                reps,
+                vec![[f64::from(first), 1.0, 1.0], d.map(f64::from)],
+                "{order:?}"
+            );
+        }
+        // A long chain, 273 nm end to end, is still one vertex.
+        let pts: Vec<[f32; 3]> = (0..40).map(|i| [1.0 + i as f32 * 7e-6, 1.0, 1.0]).collect();
+        let (map, reps) = weld(&pts);
+        assert!(map.iter().all(|&m| m == 0) && reps.len() == 1, "{map:?}");
+    }
 
     /// An axis-aligned box as a closed mesh (12 triangles, outward winding).
     fn cube(min: [f32; 3], size: f32) -> Mesh {
