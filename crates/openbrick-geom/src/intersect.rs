@@ -888,7 +888,7 @@ pub fn self_intersections(mesh: &Mesh) -> SelfIntersections {
         snapped.push([x, y, z]);
     }
     let mut tris = Vec::with_capacity(mesh.triangle_count());
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0.iter() {
         let ids = [t[0], t[1], t[2]].map(|i| map.get(i as usize).copied());
         let [Some(i0), Some(i1), Some(i2)] = ids else {
             out.degenerate += 1;
@@ -1333,7 +1333,9 @@ mod tests {
         let mut rev = m.clone();
         let tris: Vec<[u32; 3]> = m
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .rev()
             .map(|t| [t[0], t[1], t[2]])
             .collect();

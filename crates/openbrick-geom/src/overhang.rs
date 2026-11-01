@@ -610,7 +610,9 @@ mod tests {
         let m = arch(12.0);
         let v: f64 = m
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| {
                 let [a, b, c] = [t[0], t[1], t[2]].map(|i| m.positions[i as usize].map(f64::from));
                 (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
