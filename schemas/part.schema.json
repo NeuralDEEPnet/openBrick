@@ -31,7 +31,7 @@
       "additionalProperties": { "$ref": "#/$defs/param" }
     },
     "presets": {
-      "description": "Named parameter sets, importable from OpenSCAD parameterSets JSON (docs/plan/06 section 3). Not read by openbrick-part yet.",
+      "description": "Named parameter sets, importable from OpenSCAD parameterSets JSON (docs/plan/06 section 3). Read by openbrick-part as PartDoc::presets; choosing one in the designer sets the parameters it names and leaves the others. PartDoc::check also requires each name to be unique and not blank and each parameter it names to be one of params; the designer checks each value against its parameter when the part is opened.",
       "type": "array",
       "items": {
         "type": "object",
@@ -60,10 +60,14 @@
       "type": "object",
       "properties": {
         "up": {
-          "description": "The face that faces up, either one face or one per relief mode.",
+          "description": "The face that faces up when printed, either one face or one per relief mode: the print orientation rule ORIENT.FACE checks (docs/plan/05 sections 5 and 6). top: as designed, bottom on the bed; bottom: face down, the top face on the bed, as an inlay prints (that face must then be flat and stud-free).",
           "anyOf": [
-            { "type": "string", "minLength": 1 },
-            { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } }
+            { "enum": ["top", "bottom"] },
+            {
+              "type": "object",
+              "propertyNames": { "enum": ["emboss", "deboss", "inlay"] },
+              "additionalProperties": { "enum": ["top", "bottom"] }
+            }
           ]
         },
         "profiles": {
@@ -110,7 +114,7 @@
       "additionalProperties": true
     },
     "lock": {
-      "description": "Reproducibility record: font hashes, process profile id, kernel version (docs/plan/06 section 10). Not read by openbrick-part yet.",
+      "description": "Reproducibility record: font hashes, process profile id, kernel version (docs/plan/06 section 10). Kept as written by openbrick-part (PartDoc::lock), not interpreted yet.",
       "type": "object"
     }
   },

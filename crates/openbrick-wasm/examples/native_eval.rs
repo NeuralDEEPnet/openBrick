@@ -34,6 +34,8 @@
 //! `emboss-recorded-fit` is the default tile with that profile. Content
 //! hashes are the same on every target; triangle counts, fingerprints and file
 //! hashes are bit-exact on x86-64 Linux, where CI runs the smoke test.
+//! Under `designer`: the part designer's open, edit, preset and save steps on
+//! the Neuraldeep.net tile and the nameplate keychain (`designer_values`).
 
 use std::time::Instant;
 
@@ -42,8 +44,9 @@ use openbrick_io::ExportObject;
 use openbrick_print::coupon_v1;
 use openbrick_wasm::part::PART_EXPORT_LAYOUT;
 use openbrick_wasm::{
-    artwork_samples_json, build_coupon, evaluate_part, example_fit_profile_json, export_coupon,
-    export_part, export_solids, logo_tile_part_json, record_fit, AssetSet,
+    add_preset_json, artwork_samples_json, build_coupon, bundled_parts_json, evaluate_part,
+    example_fit_profile_json, export_coupon, export_part, export_solids, logo_tile_part_json,
+    open_part_json, record_fit, save_part_json, AssetSet,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -90,6 +93,83 @@ fn sample_asset(samples: &[Value], id: &str, tile: Option<[u32; 2]>) -> String {
         .and_then(|f| f["asset"].as_str())
         .unwrap_or_else(|| panic!("{id} has no drawing for {tile:?}"))
         .to_string()
+}
+
+/// One evaluated part as the smoke test compares it (see `checkPart` there).
+fn part_case(doc: &str, params: &Value, fit: &str, assets: &AssetSet) -> Value {
+    let mut part = evaluate_part(doc, &params.to_string(), "fdm-0.4", fit, assets)
+        .unwrap_or_else(|e| panic!("{params}: {e}"));
+    let meshes: Vec<Value> = (0..part.mesh_count())
+        .filter_map(|i| part.take_mesh(i))
+        .map(|m| {
+            json!({
+                "role": m.role(),
+                "triangles": m.triangle_count(),
+                "fingerprint": m.fingerprint(),
+                "canonicalFingerprint": m.canonical_fingerprint(),
+            })
+        })
+        .collect();
+    let report: Value = serde_json::from_str(&part.report_json()).expect("report");
+    let findings = report["findings"].as_array().expect("findings");
+    let rules = |blocker: bool| -> Vec<Value> {
+        findings
+            .iter()
+            .filter(|f| (f["severity"] == "blocker") == blocker)
+            .map(|f| f["rule"].clone())
+            .collect()
+    };
+    json!({
+        "params": params,
+        "contentHash": part.content_hash(),
+        "triangles": part.triangle_count(),
+        "meshes": meshes,
+        "exportAllowed": part.export_allowed(),
+        "blockers": rules(true),
+        "warnings": rules(false),
+        "removedOverlay": part.take_removed().is_some(),
+    })
+}
+
+/// The part designer as the smoke test drives it (example fit, fdm-0.4):
+/// `parts/ndn.brand-tile.obpart.json` opened (`opened`), made 2x6 and given
+/// its "Pressed-in mark" preset (`edited`, with the values the page sends:
+/// every shown parameter and the drawing), those values kept as the preset
+/// "Smoke preset" and the part saved (`saved`: the file's name, size, SHA-256
+/// and text, written by `add_preset_json` and `save_part_json`), and the
+/// saved document built again (`savedPart`, the content hash the CLI gives
+/// for the saved file). Then the nameplate keychain, whose text label and key
+/// ring are not built yet, with studs on top and no ring (`keychain`), and
+/// what opening it reports.
+fn designer_values(mark: &str, fit: &str, assets: &AssetSet) -> Value {
+    let parts: Vec<Value> = serde_json::from_str(&bundled_parts_json()).expect("the bundled parts");
+    let brand = parts
+        .iter()
+        .find(|p| p["id"] == "ndn.brand-tile")
+        .and_then(|p| p["text"].as_str())
+        .expect("the brand tile is bundled")
+        .to_string();
+    let keychain = include_str!("../../../parts/ndn.nameplate-keychain.obpart.json");
+    let opened = json!({ "size": [2, 4], "height": "plate", "logo": mark, "relief": "emboss", "reliefHeight": 0.6, "margin": 1.0 });
+    let edited = json!({ "size": [2, 6], "height": "plate", "logo": mark, "relief": "deboss", "reliefHeight": 0.6, "margin": 1.0 });
+    let preset_name = "Smoke preset";
+    let with_preset = add_preset_json(&brand, preset_name, &edited.to_string(), "fdm-0.4")
+        .expect("the edited values are a valid preset");
+    let saved = save_part_json(&with_preset, &edited.to_string(), "fdm-0.4").expect("saves");
+    let mut saved_file = file("ndn.brand-tile.obpart.json", saved.as_bytes());
+    saved_file["text"] = json!(saved);
+    let keychain_params = json!({ "studsOnTop": true, "loop": "none" });
+    let keychain_open: Value =
+        serde_json::from_str(&open_part_json(keychain, "fdm-0.4")).expect("JSON");
+    json!({
+        "presetName": preset_name,
+        "opened": part_case(&brand, &opened, fit, assets),
+        "edited": part_case(&brand, &edited, fit, assets),
+        "saved": saved_file,
+        "savedPart": part_case(&saved, &edited, fit, assets),
+        "keychain": part_case(keychain, &keychain_params, fit, &AssetSet::new()),
+        "keychainUnsupported": keychain_open["unsupported"],
+    })
 }
 
 fn main() {
@@ -271,8 +351,10 @@ fn main() {
         "fitProfile": fit_file,
         "recorded3mf": file("ndn.logo-tile-2x4-emboss-neuraldeep.3mf", &recorded_3mf),
     });
+    let designer = designer_values(&mark, &fit, &assets);
     let result = json!({
         "kernel": openbrick_wasm::kernel_id(),
+        "designer": designer,
         "part": out,
         "coupon": {
             "process": "fdm-0.4",

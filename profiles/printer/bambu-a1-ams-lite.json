@@ -1,0 +1,17 @@
+{
+  "openbrick": "1.0",
+  "kind": "printer",
+  "id": "bambu-a1-ams-lite",
+  "credit": { "author": "OpenBrick3D contributors" },
+  "name": "Bambu Lab A1 with AMS lite",
+  "maker": "Bambu Lab",
+  "buildVolumeMm": [256, 256, 256],
+  "toolheads": 1,
+  "filaments": 4,
+  "source": {
+    "url": "https://cdn.shopify.com/s/files/1/0635/8247/0318/files/A1_Spec_EN_1.pdf",
+    "accessed": "2026-11-01",
+    "quote": "Bambu Lab A1 Technical Specification. Build Volume: 256*256*256 mm³"
+  },
+  "notes": "The AMS lite feeds up to four spools into the one nozzle (Bambu Lab's AMS lite store page, https://us.store.bambulab.com/products/ams-lite, which allows one AMS lite per A1); it does not change the build volume."
+}

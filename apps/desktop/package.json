@@ -1,7 +1,7 @@
 {
   "name": "@openbrick3d/desktop",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Desktop app alpha: the playground (apps/web) in a Tauri 2 window with native open and save dialogs (docs/plan/09 sections 1 to 4, decision D13)",
   "license": "MIT",
   "type": "module",

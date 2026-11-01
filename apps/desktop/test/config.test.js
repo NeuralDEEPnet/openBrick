@@ -117,3 +117,45 @@ test("every icon the bundle names exists, and so does its source", () => {
   const svg = read(here, "icon.svg");
   assert.doesNotMatch(svg, /<text|<image|href=/, "the icon is plain shapes: no text, no embedded images");
 });
+
+test("the app carries the workspace version, and macOS bundles are ad-hoc signed only", () => {
+  // No version of its own: the Tauri CLI then reads the crate's, which is the
+  // workspace's (scripts/desktop-version.py checks the same in CI).
+  assert.equal(conf.version, undefined, "tauri.conf.json must not set a version");
+  assert.match(cargo, /^version\.workspace = true$/m);
+  const workspace = read(repo, "Cargo.toml").match(/^\[workspace\.package\]\nversion = "([^"]+)"$/m)[1];
+  assert.equal(pkg.version, workspace, "apps/desktop/package.json repeats the workspace version");
+  // "-" is Tauri's ad-hoc signature (no identity, no notarisation): Apple
+  // silicon runs no unsigned program. Real signing comes in M4.
+  assert.equal(conf.bundle.macOS.signingIdentity, "-");
+  for (const key of ["providerShortName", "entitlements"]) assert.equal(conf.bundle.macOS[key], undefined, key);
+});
+
+test("the release workflow builds no AppImage and uploads only from tags", () => {
+  const wf = read(repo, ".github", "workflows", "desktop-release.yml");
+  const bundles = [...wf.matchAll(/^\s+bundles: (\S+)$/gm)].map((m) => m[1]);
+  assert.deepEqual(bundles, ["deb,rpm", "nsis,msi", "app,dmg"]);
+  assert.match(wf, /if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)/);
+  assert.equal(conf.bundle.targets, "all", "the workflow picks the bundles; local builds may make all of them");
+});
+
+test("release bundles carry the licence notices, and the Linux packages declare their glibc", () => {
+  // .github/workflows/desktop-release.yml builds with --config
+  // src-tauri/tauri.release.conf.json after scripts/third-party-licenses.py
+  // --desktop has written target/desktop-notices/THIRD-PARTY-LICENSES.txt.
+  const release = JSON.parse(read(here, "src-tauri", "tauri.release.conf.json"));
+  assert.deepEqual(Object.keys(release), ["$schema", "bundle"]);
+  assert.deepEqual(Object.values(release.bundle.resources).sort(), ["LICENSE", "THIRD-PARTY-LICENSES.txt"]);
+  assert.equal(conf.bundle.resources, undefined, "local builds need no generated file");
+  // The binary built on ubuntu-24.04 needs glibc 2.39; deb and rpm say so, so
+  // older systems refuse the package instead of the app failing at its start.
+  const linux = JSON.parse(read(here, "src-tauri", "tauri.linux.conf.json")).bundle.linux;
+  const deb = linux.deb.depends.map((d) => d.match(/^libc6 \(>= ([\d.]+)\)$/)?.[1]).filter(Boolean);
+  const rpm = linux.rpm.depends.map((d) => d.match(/^libc\.so\.6\(GLIBC_([\d.]+)\)\(64bit\)$/)?.[1]).filter(Boolean);
+  assert.equal(deb.length, 1);
+  assert.deepEqual(rpm, deb, "deb and rpm declare the same glibc");
+  const wf = read(repo, ".github", "workflows", "desktop-release.yml");
+  assert.match(wf, /third-party-licenses\.py --desktop target\/desktop-notices\/THIRD-PARTY-LICENSES\.txt/);
+  assert.match(wf, /--config src-tauri\/tauri\.release\.conf\.json/);
+  assert.match(wf, /os: ubuntu-24\.04\n/, "glibc 2.39 is Ubuntu 24.04's; another build OS needs another version");
+});

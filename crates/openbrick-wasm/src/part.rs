@@ -17,9 +17,14 @@ use openbrick_io::{
 };
 use openbrick_part::coupon::PLA_DENSITY_G_CM3;
 use openbrick_part::eval::resolve_params;
-use openbrick_part::{evaluate, validate, Artwork, Built, EvalInput, MemoryAssets, ParamValues};
+use openbrick_part::{
+    evaluate, validate_on_bed, Artwork, Built, EvalInput, MemoryAssets, MeshChecks, ParamValues,
+};
 use openbrick_part::{PartDoc, RoleMesh};
-use openbrick_print::{default_process_profiles, finding_unit, FitProfile, ProcessProfile, Report};
+use openbrick_print::{
+    default_printers, default_process_profiles, finding_unit, printer, Bed, FitProfile,
+    ProcessProfile, Report,
+};
 use openbrick_units::STANDARD;
 use serde_json::{json, Value};
 
@@ -131,6 +136,22 @@ fn fit_profile(text: &str) -> Result<Option<FitProfile>, CoreError> {
         .map_err(|e| CoreError(format!("the fit profile cannot be read: {e}; {hint}")))
 }
 
+/// The bed of a bundled printer by id (rule `SIZE.BED`); `None` for an empty
+/// id, which leaves the rule not checked.
+fn printer_bed(printer_id: &str) -> Result<Option<Bed>, CoreError> {
+    let id = printer_id.trim();
+    if id.is_empty() {
+        return Ok(None);
+    }
+    printer(id).map(|p| Some(p.bed())).ok_or_else(|| {
+        let ids: Vec<String> = default_printers().into_iter().map(|p| p.id).collect();
+        CoreError(format!(
+            "there is no bundled printer `{id}`; choose one of {}, or none",
+            ids.join(", ")
+        ))
+    })
+}
+
 fn part_inputs(
     doc_json: &str,
     params_json: &str,
@@ -157,7 +178,13 @@ fn part_inputs(
 }
 
 /// Evaluate with the default kernel; every op must be built (no skipping).
-fn build(inputs: &PartInputs, assets: &AssetSet) -> Result<Built, CoreError> {
+/// `mesh_checks` is [`MeshChecks::Preview`] for the live preview
+/// ([`evaluate_part`]) and [`MeshChecks::Always`] for an export.
+fn build(
+    inputs: &PartInputs,
+    assets: &AssetSet,
+    mesh_checks: MeshChecks,
+) -> Result<Built, CoreError> {
     let input = EvalInput {
         doc: &inputs.doc,
         params: &inputs.params,
@@ -165,6 +192,7 @@ fn build(inputs: &PartInputs, assets: &AssetSet) -> Result<Built, CoreError> {
         fit: inputs.fit.as_ref(),
         assets: &assets.assets,
         skip_unsupported: false,
+        mesh_checks,
     };
     evaluate(&ManifoldRust, &input).map_err(|e| CoreError(e.to_string()))
 }
@@ -339,9 +367,9 @@ fn printed_volume(built: &Built) -> f64 {
         .unwrap_or_else(|| built.objects.iter().map(|o| o.volume_mm3).sum())
 }
 
-fn part_out(inputs: &PartInputs, built: Built) -> Result<PartOut, CoreError> {
+fn part_out(inputs: &PartInputs, built: Built, bed: Option<&Bed>) -> Result<PartOut, CoreError> {
     let k = ManifoldRust;
-    let report = validate(&built, &inputs.process, inputs.fit.as_ref());
+    let report = validate_on_bed(&built, &inputs.process, inputs.fit.as_ref(), bed);
     let units = report
         .findings
         .iter()
@@ -422,6 +450,8 @@ fn part_out(inputs: &PartInputs, built: Built) -> Result<PartOut, CoreError> {
 /// Evaluate a part document and validate it (see the module documentation for
 /// the inputs). Errors are what the page shows: an invalid document or value,
 /// an asset the evaluator refused (with the reason), an unknown process.
+/// Rule `SIZE.BED` is listed as not checked; [`evaluate_part_on_printer`]
+/// checks it.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn evaluate_part(
     doc_json: &str,
@@ -430,9 +460,24 @@ pub fn evaluate_part(
     fit_json: &str,
     assets: &AssetSet,
 ) -> Result<PartOut, CoreError> {
+    evaluate_part_on_printer(doc_json, params_json, process_id, fit_json, assets, "")
+}
+
+/// [`evaluate_part`], and rule `SIZE.BED` against the bed of the bundled
+/// printer `printer_id` (`printers_json` lists them); empty for none.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn evaluate_part_on_printer(
+    doc_json: &str,
+    params_json: &str,
+    process_id: &str,
+    fit_json: &str,
+    assets: &AssetSet,
+    printer_id: &str,
+) -> Result<PartOut, CoreError> {
+    let bed = printer_bed(printer_id)?;
     let inputs = part_inputs(doc_json, params_json, process_id, fit_json)?;
-    let built = build(&inputs, assets)?;
-    part_out(&inputs, built)
+    let built = build(&inputs, assets, MeshChecks::Preview)?;
+    part_out(&inputs, built, bed.as_ref())
 }
 
 /// The parameters after defaults and checks, without building anything:
@@ -514,15 +559,41 @@ pub fn export_solids(
     assets: &AssetSet,
     colors_json: &str,
 ) -> Result<PartExport, CoreError> {
+    export_solids_on_printer(
+        format,
+        doc_json,
+        params_json,
+        process_id,
+        fit_json,
+        assets,
+        colors_json,
+        "",
+    )
+}
+
+/// [`export_solids`], refusing a part that does not fit the bed of the bundled
+/// printer `printer_id` (rule `SIZE.BED`; empty for none).
+#[allow(clippy::too_many_arguments)]
+pub fn export_solids_on_printer(
+    format: &str,
+    doc_json: &str,
+    params_json: &str,
+    process_id: &str,
+    fit_json: &str,
+    assets: &AssetSet,
+    colors_json: &str,
+    printer_id: &str,
+) -> Result<PartExport, CoreError> {
     if format != "3mf" && format != "stl" {
         return Err(CoreError(format!(
             "unknown export format {format:?}; use \"3mf\" or \"stl\""
         )));
     }
     let colors = role_colors(colors_json)?;
+    let bed = printer_bed(printer_id)?;
     let inputs = part_inputs(doc_json, params_json, process_id, fit_json)?;
-    let built = build(&inputs, assets)?;
-    let report = validate(&built, &inputs.process, inputs.fit.as_ref());
+    let built = build(&inputs, assets, MeshChecks::Always)?;
+    let report = validate_on_bed(&built, &inputs.process, inputs.fit.as_ref(), bed.as_ref());
     if !report.export_allowed() {
         return Err(blocked(&report));
     }
@@ -588,7 +659,7 @@ pub fn export_part(
     assets: &AssetSet,
     colors_json: &str,
 ) -> Result<Vec<u8>, CoreError> {
-    let export = export_solids(
+    export_part_on_printer(
         format,
         doc_json,
         params_json,
@@ -596,6 +667,33 @@ pub fn export_part(
         fit_json,
         assets,
         colors_json,
+        "",
+    )
+}
+
+/// [`export_part`], refusing a part that does not fit the bed of the bundled
+/// printer `printer_id` (rule `SIZE.BED`; empty for none).
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[allow(clippy::too_many_arguments)]
+pub fn export_part_on_printer(
+    format: &str,
+    doc_json: &str,
+    params_json: &str,
+    process_id: &str,
+    fit_json: &str,
+    assets: &AssetSet,
+    colors_json: &str,
+    printer_id: &str,
+) -> Result<Vec<u8>, CoreError> {
+    let export = export_solids_on_printer(
+        format,
+        doc_json,
+        params_json,
+        process_id,
+        fit_json,
+        assets,
+        colors_json,
+        printer_id,
     )?;
     let objects = export.objects();
     let bytes = if format == "3mf" {
@@ -610,7 +708,7 @@ pub fn export_part(
 mod tests {
     use super::*;
     use crate::data::{example_fit_profile_json, logo_tile_part_json, sample_logo_svg};
-    use openbrick_part::MemoryAssets;
+    use openbrick_part::{validate, MemoryAssets};
 
     fn sample() -> AssetSet {
         let mut a = AssetSet::new();
@@ -642,6 +740,7 @@ mod tests {
                 fit: fit.as_ref(),
                 assets: &assets,
                 skip_unsupported: false,
+                mesh_checks: MeshChecks::Always,
             },
         )
         .unwrap()
@@ -1150,5 +1249,121 @@ mod tests {
         );
         assert_eq!(big.count(), 1);
         assert!(AssetSet::new().add(" ", vec![]).is_err());
+    }
+
+    #[test]
+    fn the_preview_leaves_the_mesh_checks_out_on_large_parts_and_export_runs_them() {
+        let doc = logo_tile_part_json();
+        let fit = example_fit_profile_json();
+        let mesh_rules = [
+            "MESH.SELF_INTERSECT",
+            "ROOF.BRIDGE",
+            "OVERHANG.MAX",
+            "OVERHANG.BRIDGED",
+        ];
+        let unchecked = |out: &PartOut| -> Vec<String> {
+            out.report
+                .unchecked
+                .iter()
+                .map(|u| u.rule.clone())
+                .collect()
+        };
+        // The 2x4 tile is checked live.
+        let small = evaluate_part(&doc, "", "fdm-0.4", &fit, &sample()).unwrap();
+        assert!(mesh_rules
+            .iter()
+            .all(|r| !unchecked(&small).contains(&r.to_string())));
+        // A large tile is not, and the report says why.
+        let large = r#"{"size":[6,8]}"#;
+        let out = evaluate_part(&doc, large, "fdm-0.4", &fit, &sample()).unwrap();
+        let m: Value = serde_json::from_str(&out.measurements_json()).unwrap();
+        assert!(
+            m["meshChecksDeferred"]["triangles"].as_u64()
+                > Some(openbrick_part::PREVIEW_MESH_CHECK_TRIANGLES as u64),
+            "{}",
+            m["meshChecksDeferred"]
+        );
+        for rule in mesh_rules {
+            let u = out
+                .report
+                .unchecked
+                .iter()
+                .find(|u| u.rule == rule)
+                .expect(rule);
+            assert!(u.reason.contains("live preview"), "{rule}: {}", u.reason);
+        }
+        assert!(out.export_allowed(), "{:#?}", out.report);
+        // The export evaluates again with every check, and writes the part.
+        let stl = export_part("stl", &doc, large, "fdm-0.4", &fit, &sample(), "").unwrap();
+        assert!(stl.len() > 84);
+    }
+
+    #[test]
+    fn a_printer_checks_the_bed_and_none_leaves_it_unchecked() {
+        let doc = logo_tile_part_json();
+        let fit = example_fit_profile_json();
+        let unchecked = |out: &PartOut| -> Vec<String> {
+            out.report
+                .unchecked
+                .iter()
+                .map(|u| u.rule.clone())
+                .collect()
+        };
+        // Without a printer, SIZE.BED is listed as not checked.
+        let none = evaluate_part(&doc, "", "fdm-0.4", &fit, &sample()).unwrap();
+        assert!(unchecked(&none).contains(&"SIZE.BED".to_string()));
+        let report: Value = serde_json::from_str(&none.report_json()).unwrap();
+        assert_eq!(report["unchecked"].as_array().map(Vec::len), Some(2));
+        // On a MINI+ the 2x4 tile fits; a 1x23 tile (183.8 mm) does not.
+        let mini =
+            evaluate_part_on_printer(&doc, "", "fdm-0.4", &fit, &sample(), "prusa-mini-plus")
+                .unwrap();
+        assert!(!unchecked(&mini).contains(&"SIZE.BED".to_string()));
+        assert!(mini.export_allowed());
+        let long = r#"{"size":[1,23]}"#;
+        let out =
+            evaluate_part_on_printer(&doc, long, "fdm-0.4", &fit, &sample(), "prusa-mini-plus")
+                .unwrap();
+        let size: Vec<_> = out
+            .report
+            .findings
+            .iter()
+            .filter(|f| f.rule == "SIZE.BED")
+            .collect();
+        assert_eq!(size.len(), 1, "{:#?}", out.report);
+        assert!(!out.export_allowed());
+        let e = export_part_on_printer(
+            "stl",
+            &doc,
+            long,
+            "fdm-0.4",
+            &fit,
+            &sample(),
+            "",
+            "prusa-mini-plus",
+        )
+        .unwrap_err()
+        .0;
+        assert!(e.contains("SIZE.BED"), "{e}");
+        // The same tile on an XL fits and exports.
+        assert!(export_part_on_printer(
+            "stl",
+            &doc,
+            long,
+            "fdm-0.4",
+            &fit,
+            &sample(),
+            "",
+            "prusa-xl"
+        )
+        .is_ok());
+        // An unknown printer is an error that lists the bundled ones.
+        let e = match evaluate_part_on_printer(&doc, "", "fdm-0.4", &fit, &sample(), "ender") {
+            Err(e) => e.0,
+            Ok(_) => panic!("an unknown printer is refused"),
+        };
+        assert!(e.contains("prusa-mini-plus"), "{e}");
+        let printers: Value = serde_json::from_str(&crate::printers_json()).unwrap();
+        assert_eq!(printers.as_array().map(Vec::len), Some(5));
     }
 }

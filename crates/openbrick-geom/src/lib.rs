@@ -22,8 +22,13 @@ pub mod manifold_rust;
 #[cfg(feature = "manifold-csg")]
 pub mod manifold_csg;
 
+pub mod intersect;
 pub mod nominal;
+pub mod overhang;
 pub mod region;
+
+pub use intersect::{self_intersections, SelfIntersections};
+pub use overhang::{downward_regions, DownRegion};
 
 /// A closed polygon in millimetres (counter-clockwise outer, clockwise holes).
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]

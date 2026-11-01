@@ -228,6 +228,11 @@ fn default_coupon_is_one_manifold_body_with_the_analytic_volume() {
     let p = process("fdm-0.4");
     let b = &c.built;
     let m = &b.measurements;
+    // Every cell opens upward and the coupon prints flat (docs/plan/05
+    // section 4): no face hangs, nothing crosses itself.
+    assert_eq!(m.self_intersections, Some(0));
+    assert_eq!(m.overhangs, Some(Vec::new()));
+    assert_eq!(m.roof_span_mm, None);
     let mesh = mesh();
     let expected = analytic_volume(c, &p);
     eprintln!(

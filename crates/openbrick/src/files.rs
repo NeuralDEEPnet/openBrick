@@ -29,9 +29,10 @@ use openbrick_part::AssetResolver;
 /// Largest asset file the CLI reads: the evaluator's SVG limit (4 MiB).
 pub const MAX_ASSET_BYTES: usize = MAX_SVG_BYTES;
 
-/// Largest part document the CLI reads. Part documents are a few kilobytes;
-/// the cap keeps a wrong path (a disk image, a device) from being read whole.
-pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+/// Largest part document the CLI reads, the designer's limit too. Part
+/// documents are a few kilobytes; the cap keeps a wrong path (a disk image, a
+/// device) from being read whole.
+pub const MAX_DOCUMENT_BYTES: usize = openbrick_part::save::MAX_DOCUMENT_BYTES;
 
 /// Largest fit profile the CLI reads (they are about 1 KB).
 pub const MAX_PROFILE_BYTES: usize = 1024 * 1024;

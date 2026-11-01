@@ -465,6 +465,14 @@ jobs:
         run: dist plan
       - name: release.yml is what dist generates from dist-workspace.toml
         run: python3 scripts/release-workflow.py --check
+      - name: The desktop app carries the workspace version; desktop-release.yml keeps its promises
+        # tauri.conf.json sets no version, so the installers take the
+        # workspace's; desktop-release.yml pins its actions by commit, builds
+        # no AppImage and writes to the release only on tag pushes.
+        run: |
+          python3 -I scripts/desktop-version.py --self-test
+          python3 -I scripts/desktop-version.py --check
+          python3 -I scripts/desktop-version.py --check-workflow
       - name: The README that every archive ships has the install commands
         run: |
           set -euo pipefail
@@ -582,8 +590,8 @@ jobs:
     # yet: it would copy system libraries under the LGPL (WebKitGTK, GTK, GLib)
     # into the file, which needs their notices and a source offer and is a
     # licence decision for a maintainer (apps/desktop/README.md). The macOS and
-    # Windows compile checks are in desktop-cross; their bundles come with the
-    # release workflow (docs/plan/09 section 7).
+    # Windows compile checks are in desktop-cross; their bundles come from
+    # desktop-release.yml on release tags (docs/plan/09 section 7).
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -665,8 +673,8 @@ jobs:
     # packages either (WebView2 and WKWebView come with the OS; the WebView2
     # loader is linked statically on MSVC). The tests are the navigation guard
     # and the save body checks; the file rules also run in test-cross. Linux is
-    # covered by the desktop job. Bundles for these OSes come from the release
-    # workflow (docs/plan/09 section 7); tauri-action builds on pull requests
+    # covered by the desktop job. Bundles for these OSes come from
+    # desktop-release.yml on tags (docs/plan/09 section 7); bundle builds on pull requests
     # (docs/plan/10 section 5, desktop-bundles) can replace this job later.
     strategy:
       fail-fast: false
@@ -686,38 +694,13 @@ jobs:
       - name: Tests of the desktop crate with the Tauri app
         run: cargo test -p openbrick-desktop --features app
 
-# Note for release.yml (docs/plan/09 section 7; not written here): on tags
-# vX.Y.Z add a `desktop` matrix job next to the dist jobs, unsigned until M4.
-# Matrix, one row per tier-1 desktop target of plan 09 section 1:
-#   - ubuntu-22.04 (Linux x64; the oldest glibc and WebKitGTK 4.1 for the
-#     packages): `--bundles deb,rpm`; same apt packages as the desktop job,
-#     without webkit2gtk-driver and xvfb.
-#   - ubuntu-22.04-arm (Linux arm64, native runner; cross-compiling
-#     against WebKitGTK would need an arm64 sysroot): `--bundles deb,rpm`,
-#     same packages.
-#     No AppImage on either Linux row until a maintainer has made the licence
-#     decision in apps/desktop/README.md (notices and a source offer for the
-#     LGPL libraries it copies in); plan 09 lists AppImage, so this is a
-#     deferral, not a removal.
-#   - windows-2025 (Windows x64): NSIS and MSI.
-#   - windows-11-arm (Windows arm64, native runner, or windows-2025 with
-#     `--target aarch64-pc-windows-msvc` and the MSVC arm64 build tools):
-#     NSIS; check whether tauri-bundler's WiX path supports arm64 MSI before
-#     adding `msi` to that row.
-#   - macos-26 with `--target aarch64-apple-darwin` and
-#     `--target x86_64-apple-darwin` (DMG; or one universal-apple-darwin
-#     build).
-# Steps: checkout; Rust stable with wasm32-unknown-unknown (plus the row's
-# target); the pinned wasm-bindgen CLI; pnpm install --frozen-lockfile;
-# cargo xtask wasm (scripts/frontend.mjs refuses to build without
-# apps/web/src/wasm/); then tauri-apps/tauri-action (pin it by commit SHA)
-# with `projectPath: apps/desktop`, `tauriScript: pnpm tauri`, `args:` the
-# row's `--target` and `--bundles`, `tagName: ${{ github.ref_name }}`,
-# `releaseDraft: true`, `includeUpdaterJson: false`, and no APPLE_*,
-# TAURI_SIGNING_* or Windows signing secrets (unsigned; the updater plugin
-# and its key come in M4 with signing, docs/plan/09 sections 3 and 4).
-# Permissions: contents: write for that job only. The release notes say the
-# desktop builds are unsigned and how to open them (README of apps/desktop).
+# Desktop installers on release tags: .github/workflows/desktop-release.yml
+# (docs/plan/09 section 7): deb and rpm on ubuntu-24.04, NSIS and MSI on
+# windows-2025, a universal DMG on macos-26, unsigned, attested and uploaded to
+# the release that release.yml creates. The release job below checks its
+# version and its promises (scripts/desktop-version.py). Not yet: the arm64
+# rows (ubuntu-24.04-arm, windows-11-arm) and the AppImage, which waits for
+# the licence decision in apps/desktop/README.md.
 
   docs:
     # Plan links, then the documentation site (docs/site, backlog item 16,

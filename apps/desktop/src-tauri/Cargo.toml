@@ -49,7 +49,7 @@ tauri-build = { version = "=2.7.4", optional = true, features = [] }
 [lints]
 workspace = true
 
-# The desktop app is released by tauri-action (docs/plan/09 section 7), not by
+# The desktop app is released by .github/workflows/desktop-release.yml (docs/plan/09 section 7), not by
 # dist, which releases the CLI.
 [package.metadata.dist]
 dist = false

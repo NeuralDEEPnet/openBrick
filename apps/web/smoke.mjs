@@ -64,6 +64,12 @@
 //    core's cells, legible (targets of 24 px or more, labels inside their
 //    cells) and tappable; and a layout answer that comes back after the
 //    coupon settings changed again is dropped, never shown for other settings.
+//    A designer run (designerRun) opens the Neuraldeep.net tile (bundled, then
+//    from its file), edits it, chooses a preset, adds one and saves the part:
+//    the saved file is byte-identical to native_eval's, and `openbrick build`
+//    gives it the content hash the page then shows; the nameplate keychain,
+//    dropped on the 3D view, names the features this version cannot build and
+//    builds with studs on top and no ring.
 //    Unless --no-webgpu, a WebGPU run checks the first part again.
 // 4. A phone-sized run (390 x 844, touch, dark theme): no horizontal scrolling,
 //    every control inside the width, a different background from the light
@@ -89,7 +95,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -138,6 +144,7 @@ function nativeValues() {
   for (const c of ["emboss", "deboss", "inlay", "inlay-parts", "emboss-no-fit", "badge-emboss", "sample-emboss"]) if (!native.part[c]) throw new Error(`native_eval printed no ${c} case:\n${out}`);
   for (const f of ["emboss3mf", "embossStl", "inlay3mf", "inlayParts3mf", "badge3mf", "coupon3mf", "fitProfile", "recorded3mf"]) if (!native.exports?.[f]) throw new Error(`native_eval printed no ${f} export:\n${out}`);
   if (!native.part["emboss-recorded-fit"] || !native.record?.input || !Array.isArray(native.coupon?.labels)) throw new Error(`native_eval printed no calibration record:\n${out}`);
+  for (const c of ["opened", "edited", "saved", "savedPart", "keychain"]) if (!native.designer?.[c]) throw new Error(`native_eval printed no designer ${c}:\n${out}`);
   return native;
 }
 
@@ -716,6 +723,37 @@ async function fullRun(browser, origin, native) {
   check(disclaimer.includes("not affiliated with") && disclaimer.includes("Source code on GitHub"), `${label}: footer "${disclaimer}"`);
   const docsLink = await page.getAttribute('footer a:text-is("Documentation")', "href");
   check(docsLink === "https://neuraldeepnet.github.io/openBrick/docs/", `${label}: the footer links the documentation site at ${docsLink}`);
+  // The printer menu: none at first, so the report lists SIZE.BED as not
+  // checked; a printer checks its bed (the content hash stays: the bed is not
+  // part of the part), lays the coupon out for it and is kept for the next
+  // visit; none again forgets it.
+  check((await page.inputValue("#printer")) === "", `${label}: a printer is chosen at first`);
+  check(w.part.unchecked.includes("SIZE.BED"), `${label}: SIZE.BED is not listed as not checked: ${JSON.stringify(w.part.unchecked)}`);
+  check((await page.locator('#findings li.unchecked[data-rule="SIZE.BED"]').count()) === 1, `${label}: the panel does not say SIZE.BED was not checked`);
+  const beforePrinter = w.evaluations;
+  await page.selectOption("#printer", "prusa-xl");
+  w = await waitFor(page, { after: beforePrinter, want: (p) => p.printer === "prusa-xl" }, 60_000, `${label} printer`);
+  check(!w.part.unchecked.includes("SIZE.BED") && w.part.exportAllowed, `${label}: on the Prusa XL ${JSON.stringify(w.part)}`);
+  check(w.part.contentHash === native.part.emboss.contentHash, `${label}: the printer changed the content hash`);
+  check((await page.locator('#findings li.unchecked[data-rule="SIZE.BED"]').count()) === 0, `${label}: SIZE.BED still listed as not checked`);
+  check((await page.inputValue("#bed-x")) === "360" && (await page.inputValue("#bed-y")) === "360", `${label}: the coupon bed did not follow the printer`);
+  check((await page.inputValue("#coupon-printer")) === "prusa-xl", `${label}: the coupon printer did not follow`);
+  const kept = await page.evaluate(() => localStorage.getItem("openbrick.playground.printer.v1"));
+  check(kept === "prusa-xl", `${label}: the printer was not kept (${kept})`);
+  const beforeNone = w.evaluations;
+  await page.selectOption("#printer", "");
+  w = await waitFor(page, { after: beforeNone, want: (p) => p.printer === "" }, 60_000, `${label} no printer`);
+  check(w.part.unchecked.includes("SIZE.BED"), `${label}: without a printer SIZE.BED is checked`);
+  // The coupon steps below expect the default bed (its fields are hidden in
+  // the tile mode, so they are set as a typed value would be).
+  await page.evaluate(() => {
+    for (const id of ["bed-x", "bed-y"]) {
+      const input = document.getElementById(id);
+      input.value = "180";
+      input.dispatchEvent(new Event("change"));
+    }
+  });
+  check((await page.inputValue("#coupon-printer")) === "", `${label}: a typed bed size still names a printer`);
   if (shots) {
     await settle(page);
     await page.screenshot({ path: join(shots, "desktop-light-emboss.png") });
@@ -758,7 +796,7 @@ async function fullRun(browser, origin, native) {
   w = await web(page);
   const limit = w.maxAssetBytes.toLocaleString("en-US");
   check(
-    note.includes(`“huge.svg” is`) && note.includes(`artwork can be at most`) && note.includes(`(${limit} bytes)`) && note.includes("The tile keeps the Neuraldeep.net mark"),
+    note.includes(`“huge.svg” is`) && note.includes(`artwork can be at most`) && note.includes(`(${limit} bytes)`) && note.includes("The part keeps the Neuraldeep.net mark"),
     `${label}: the art note for a big file is "${note}"`,
   );
   check(w.evaluations === before && w.state === "ready", `${label}: a file over the limit was evaluated (${w.evaluations} vs ${before}, ${w.state})`);
@@ -937,7 +975,7 @@ async function fullRun(browser, origin, native) {
   check(s.showing?.triangles === 0 && s.showing.roles.length === 0 && s.showing.overlayTriangles === 0, `${label}: a failed build left ${JSON.stringify(s.showing)} on screen`);
   check((await page.textContent("#tile-stats")).trim() === "", `${label}: a failed build left the stats "${await page.textContent("#tile-stats")}"`);
   const emptyLegend = await page.textContent("#legend");
-  check(emptyLegend.includes("Nothing to show: the tile could not be built"), `${label}: the legend after a failed build is "${emptyLegend}"`);
+  check(emptyLegend.includes("Nothing to show: the part could not be built"), `${label}: the legend after a failed build is "${emptyLegend}"`);
   check((await page.isDisabled("#download-3mf")) && (await page.isDisabled("#download-stl")), `${label}: downloads are on after a failed build`);
   check((await page.textContent("#findings")).includes("Error"), `${label}: the validation panel does not show the error`);
   await page.selectOption("#fit", "example");
@@ -967,7 +1005,7 @@ async function fullRun(browser, origin, native) {
   if (finished) {
     cancelNote = "16x16 finished before the slow-build note; the cancel was not exercised";
   } else {
-    check(/Building the logo tile…\s*\d+ s/.test(slow) && slow.includes("Any change cancels this one."), `${label}: the 16x16 status line says "${slow}"`);
+    check(/Building “Logo tile”…\s*\d+ s/.test(slow) && slow.includes("Any change cancels this one."), `${label}: the 16x16 status line says "${slow}"`);
     const staleBefore = (await web(page)).staleReplies;
     await page.fill("#p-size-0", "2");
     await page.fill("#p-size-1", "4");
@@ -1206,10 +1244,201 @@ async function phoneRun(browser, origin, native) {
   }
   const full = await fullMapRun(page, label, "tap");
 
+  // The part designer on a phone: the Neuraldeep.net tile with its preset
+  // picker and the part file controls, all inside the width.
+  await page.tap("#tab-tile");
+  const before3 = (await web(page)).evaluations;
+  await page.selectOption("#part-select", "bundled:ndn.brand-tile");
+  await waitFor(page, { after: before3, want: (p, x) => x.design?.id === "ndn.brand-tile" && p.contentHash === native.designer.opened.contentHash }, 120_000, `${label} brand tile`);
+  const partControls = await page.evaluate(() =>
+    [...document.querySelectorAll("#panel-tile section:first-child :is(input:not([type=file]), select, button)")]
+      .filter((e) => e.offsetParent !== null)
+      .map((e) => ({ what: e.id || e.getAttribute("aria-label") || e.tagName, ...e.getBoundingClientRect().toJSON() })),
+  );
+  check(partControls.some((c) => c.what === "preset") && partControls.some((c) => c.what === "save-part"), `${label}: the preset picker or the save button is missing`);
+  for (const c of partControls) {
+    check(c.left >= 0 && c.right <= layout.innerWidth + 0.5, `${label}: ${c.what} is outside the width (${c.left}..${c.right})`);
+    if (["preset", "part-select", "save-part", "add-preset", "preset-name"].includes(c.what)) check(c.height >= 40, `${label}: ${c.what} is ${c.height} px tall, under the 40 px touch target`);
+  }
+  if (shots) {
+    await page.locator("#preset-row").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(shots, "phone-dark-presets.png") });
+  }
+
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
   console.log(
     `# ${label}: no horizontal scroll at ${layout.innerWidth} px, dark background ${layout.background} (light ${light}), tap to 3x4, touch drag moved the camera ${moved.toFixed(1)} mm, ` +
-      `record step map ${legible.text}, a tap chose a stud (its twin in copy 1 marked); full set on 256 x 256 mm ${full.text}`,
+      `record step map ${legible.text}, a tap chose a stud (its twin in copy 1 marked); full set on 256 x 256 mm ${full.text}, ` +
+      `the Neuraldeep.net tile's preset picker and part file controls fit the width`,
+  );
+  await context.close();
+}
+
+/** Build a part file with the CLI from a folder holding it and its artwork; the --json answer. */
+function cliBuild(text, label) {
+  const dir = mkdtempSync(join(tmpdir(), "openbrick-saved-"));
+  try {
+    mkdirSync(join(dir, "assets/brand"), { recursive: true });
+    copyFileSync(join(repo, "parts/assets/brand/neuraldeep-mark-2x4.svg"), join(dir, "assets/brand/neuraldeep-mark-2x4.svg"));
+    const part = join(dir, "ndn.brand-tile.obpart.json");
+    writeFileSync(part, text);
+    const out = run("cargo", ["run", "-q", "--release", "-p", "openbrick", "--", "build", part, "--fit", "example", "--json", "--out", join(dir, "saved.3mf")]);
+    return JSON.parse(out);
+  } catch (err) {
+    failures.push(`${label}: the CLI could not build the saved part: ${err.message}`);
+    return {};
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The part designer (docs/plan/06 sections 3 and 11): open, edit, preset,
+ * save. The Neuraldeep.net tile is chosen from the bundled parts and then
+ * opened from its file; made 2x6 and given its "Pressed-in mark" preset (the
+ * picker then names it); those values kept as a new preset; and the part
+ * saved: the file is byte-identical to native_eval's (add_preset_json and
+ * save_part_json), the page then builds the saved document, and the CLI
+ * builds the saved file with the same content hash; the reopened file is
+ * checked against a printer's bed (SIZE.BED) and back. Then the nameplate
+ * keychain, dropped on the 3D view: its text label and key ring are named as
+ * features this version cannot build, with what turns them off; the font has
+ * a kind note instead of a control; a text over its limit is refused in the
+ * page; with studs on top and no ring it builds the native part. A fit
+ * profile chosen as a part is refused with a message, and the part stays.
+ */
+async function designerRun(browser, origin, native) {
+  const label = "designer";
+  const d = native.designer;
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: "light", acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2`);
+  let w = await waitFor(page, {}, 120_000, label);
+  check(w.design?.id === "ndn.logo-tile" && w.design.presets.length === 0, `${label}: the first part is ${JSON.stringify(w.design)}`);
+  check(await page.isHidden("#preset-row"), `${label}: the logo tile has no presets, yet the picker shows`);
+  check((await page.textContent("#part-heading")) === "Logo tile", `${label}: heading ${await page.textContent("#part-heading")}`);
+
+  // The bundled Neuraldeep.net tile, then the same file opened.
+  let n = w.evaluations;
+  await page.selectOption("#part-select", "bundled:ndn.brand-tile");
+  w = await waitFor(page, { after: n, want: (p, x) => x.design?.id === "ndn.brand-tile" }, 120_000, `${label} bundled brand tile`);
+  checkPart(w.part, d.opened, `${label} bundled brand tile`);
+  n = w.evaluations;
+  await page.setInputFiles("#part-file", join(repo, "parts/ndn.brand-tile.obpart.json"));
+  w = await waitFor(page, { after: n, want: (p, x) => x.design?.source === "file" }, 120_000, `${label} opened brand tile`);
+  checkPart(w.part, d.opened, `${label} opened brand tile`);
+  check(
+    JSON.stringify(w.design.presets) === JSON.stringify(["Raised mark", "Pressed-in mark", "Two-colour inlay"]) && w.design.preset === "Raised mark",
+    `${label}: presets ${JSON.stringify(w.design.presets)}, matching ${w.design.preset}`,
+  );
+  check((await page.textContent("#part-note")).startsWith("Opened “ndn.brand-tile.obpart.json”"), `${label}: part note "${await page.textContent("#part-note")}"`);
+  check((await page.inputValue("#part-select")) === "file", `${label}: the part select shows ${await page.inputValue("#part-select")}`);
+
+  // Edit: two studs longer, then the Pressed-in mark preset (it keeps the size).
+  n = w.evaluations;
+  await page.click('button[data-for="p-size-1"][data-step="1"]');
+  await page.click('button[data-for="p-size-1"][data-step="1"]');
+  await page.selectOption("#preset", "Pressed-in mark");
+  w = await waitFor(page, { after: n, want: (p) => p.contentHash === d.edited.contentHash }, 120_000, `${label} edited`);
+  checkPart(w.part, d.edited, `${label} edited`);
+  check(w.design.preset === "Pressed-in mark" && (await page.inputValue("#preset")) === "Pressed-in mark", `${label}: the picker shows ${w.design.preset}`);
+  check((await page.inputValue("#p-size-1")) === "6", `${label}: the length field shows ${await page.inputValue("#p-size-1")}`);
+  // A value no preset holds turns the picker to Custom values; emboss at
+  // the preset's height is the "Raised mark" again.
+  await page.fill("#p-reliefHeight", "0.8");
+  await page.waitForFunction(() => window.__web?.design?.preset === "", null, { timeout: 10_000, polling: 50 });
+  check((await page.inputValue("#preset")) === "", `${label}: the picker shows ${await page.inputValue("#preset")} for 0.8 mm`);
+  await page.fill("#p-reliefHeight", "0.6");
+  await page.click('input[name="p-relief"][value="emboss"]');
+  await page.waitForFunction(() => window.__web?.design?.preset === "Raised mark", null, { timeout: 10_000, polling: 50 });
+  await page.click('input[name="p-relief"][value="deboss"]');
+  w = await waitFor(page, { after: w.evaluations, want: (p) => p.contentHash === d.edited.contentHash }, 120_000, `${label} back to deboss`);
+
+  // Keep the values as a preset, then save the part.
+  await page.click("#add-preset");
+  check((await page.textContent("#save-note")).includes("Give the preset a name"), `${label}: an unnamed preset gives "${await page.textContent("#save-note")}"`);
+  await page.fill("#preset-name", d.presetName);
+  await page.click("#add-preset");
+  await page.waitForFunction((name) => window.__web?.design?.presets?.includes(name), d.presetName, { timeout: 30_000, polling: 50 });
+  w = await waitFor(page, { after: w.evaluations }, 120_000, `${label} preset added`);
+  check(w.design.preset === "Pressed-in mark", `${label}: after adding, the picker shows ${w.design.preset}`);
+  check((await page.textContent("#save-note")).includes(`Added the preset “${d.presetName}”`), `${label}: save note "${await page.textContent("#save-note")}"`);
+  const saved = await download(page, "#save-part", `${label} part file`);
+  checkFile(saved, d.saved, `${label} saved part`);
+  w = await waitFor(page, { after: w.evaluations, want: (p) => p.contentHash === d.savedPart.contentHash }, 120_000, `${label} saved part`);
+  checkPart(w.part, d.savedPart, `${label} saved part`);
+  check(w.saves.length === 1 && w.saves[0].name === d.saved.name, `${label}: saves ${JSON.stringify(w.saves)}`);
+  // open -> save -> CLI build: the CLI gives the hash the page shows.
+  const cli = cliBuild(saved.bytes.toString("utf8"), label);
+  check(cli.contentHash === d.savedPart.contentHash, `${label}: the CLI built the saved file with hash ${cli.contentHash}, the page ${d.savedPart.contentHash}`);
+  // The saved file opens again with the new preset.
+  n = w.evaluations;
+  await page.setInputFiles("#part-file", saved.path);
+  w = await waitFor(page, { after: n, want: (p) => p.contentHash === d.savedPart.contentHash }, 120_000, `${label} saved part reopened`);
+  check(w.design.presets.includes(d.presetName) && w.design.preset === "Pressed-in mark", `${label}: reopened presets ${JSON.stringify(w.design.presets)}, matching ${w.design.preset}`);
+
+  // An opened part is checked against the chosen printer too (SIZE.BED through
+  // evaluate_part_on_printer); the bed does not change the content hash.
+  check(w.part.unchecked.includes("SIZE.BED"), `${label}: without a printer SIZE.BED is checked for the opened part: ${JSON.stringify(w.part.unchecked)}`);
+  n = w.evaluations;
+  await page.selectOption("#printer", "prusa-mini-plus");
+  w = await waitFor(page, { after: n, want: (p) => p.printer === "prusa-mini-plus" }, 120_000, `${label} saved part on a printer`);
+  check(!w.part.unchecked.includes("SIZE.BED") && !w.part.blockers.includes("SIZE.BED"), `${label}: the opened part on the Prusa MINI+ ${JSON.stringify(w.part)}`);
+  check(w.part.contentHash === d.savedPart.contentHash, `${label}: the printer changed the opened part's content hash`);
+  check((await page.textContent("#printer-note")).includes("the part fits"), `${label}: printer note "${await page.textContent("#printer-note")}"`);
+  n = w.evaluations;
+  await page.selectOption("#printer", "");
+  w = await waitFor(page, { after: n, want: (p) => p.printer === "" }, 120_000, `${label} saved part without a printer`);
+  check(w.part.unchecked.includes("SIZE.BED"), `${label}: without a printer SIZE.BED is checked for the opened part`);
+
+  // The keychain, dropped on the 3D view: its unsupported features are named.
+  const keychainText = readFileSync(join(repo, "parts/ndn.nameplate-keychain.obpart.json"), "utf8");
+  await page.evaluate((text) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([text], "ndn.nameplate-keychain.obpart.json", { type: "application/json" }));
+    document.querySelector("#stage").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, keychainText);
+  await waitState(page, "part-error", 60_000, `${label} keychain`);
+  w = await web(page);
+  check(
+    w.design.id === "ndn.nameplate-keychain" && JSON.stringify(w.design.unsupported) === JSON.stringify(d.keychainUnsupported.map((u) => u.feature)),
+    `${label}: the keychain opened as ${JSON.stringify(w.design)}`,
+  );
+  const partNote = await page.textContent("#part-note");
+  check(partNote.includes("“label” (relief.text)") && partNote.includes("“ring” (loop.keyring)") && partNote.includes("turn on Studs on top and set Loop to None"), `${label}: the part note says "${partNote}"`);
+  const status = await page.textContent("#status");
+  check(status.includes("“label” uses relief.text, which this version cannot build yet") && !status.includes("skip_unsupported"), `${label}: the status line says "${status}"`);
+  check(await page.isHidden("#preset-row"), `${label}: the keychain has no presets, yet the picker shows`);
+  check((await page.textContent('[data-param="font"]')).includes("font is not possible here yet"), `${label}: the font has no kind note`);
+  check(await page.isDisabled("#download-3mf"), `${label}: the 3MF download is on for a part that did not build`);
+  // A text over the document's limit is refused in the page.
+  await page.fill("#p-text", "X".repeat(15));
+  check((await page.textContent("#status")).includes("at most 14 characters"), `${label}: a long text gives "${await page.textContent("#status")}"`);
+  await page.fill("#p-text", "OPENBRICK3D");
+  // Studs on top turns the label off; no ring turns the ring off.
+  n = w.evaluations;
+  await page.check("#p-studsOnTop");
+  await page.click('input[name="p-loop"][value="none"]');
+  w = await waitFor(page, { after: n, want: (p) => p.contentHash === d.keychain.contentHash }, 120_000, `${label} keychain with studs`);
+  checkPart(w.part, d.keychain, `${label} keychain`);
+  check(w.part.params.studsOnTop === true && w.part.params.width === 2, `${label}: keychain values ${JSON.stringify(w.part.params)}`);
+
+  // A fit profile chosen as a part is refused, and the part stays.
+  await page.setInputFiles("#part-file", join(repo, "profiles/fit/example-mk4s-petg-0.4.json"));
+  await page.waitForFunction(() => document.querySelector("#part-note").className.includes("bad"), null, { timeout: 30_000, polling: 50 });
+  const refused = await page.textContent("#part-note");
+  check(refused.includes("a `fit` document") && refused.includes("keeps Nameplate keychain"), `${label}: a fit profile as a part gives "${refused}"`);
+  check((await web(page)).design.id === "ndn.nameplate-keychain", `${label}: the part changed after a refused file`);
+  if (shots) await page.screenshot({ path: join(shots, "designer-keychain.png") });
+
+  w = await web(page);
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  check(w.warnings.length === 0, `${label}: page warnings: ${w.warnings.join(" | ")}`);
+  console.log(
+    `# ${label}: the Neuraldeep.net tile opened (bundled and from its file) equals native, 2x6 with "Pressed-in mark" equals native, ` +
+      `a new preset and the saved part (${saved.bytes.length} bytes) are byte-identical to native, the CLI builds it with the page's hash ${d.savedPart.contentHash.slice(0, 12)}…, ` +
+      `the saved part is checked on the Prusa MINI+ bed (SIZE.BED), the keychain names relief.text and loop.keyring and builds with studs on top and no ring, a fit profile is refused as a part`,
   );
   await context.close();
 }
@@ -1275,6 +1504,11 @@ async function main() {
   try {
     try {
       saved = await fullRun(browser, origin, native);
+    } catch (err) {
+      failures.push(err.message);
+    }
+    try {
+      await designerRun(browser, origin, native);
     } catch (err) {
       failures.push(err.message);
     }

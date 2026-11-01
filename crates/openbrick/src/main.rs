@@ -48,7 +48,7 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// List bundled process profiles.
+    /// List bundled process profiles and printers.
     Profiles,
     /// Structurally check a part document (.obpart.json).
     Check { file: PathBuf },
@@ -217,6 +217,15 @@ fn main() -> ExitCode {
                     } else {
                         ""
                     }
+                );
+            }
+            println!();
+            println!("Printers (--printer, rule SIZE.BED):");
+            for p in openbrick_print::default_printers() {
+                let [x, y, z] = p.build_volume_mm;
+                println!(
+                    "{:<18} {:<36} {} x {} x {} mm, {} toolhead(s), {} filament(s)",
+                    p.id, p.name, x, y, z, p.toolheads, p.filaments
                 );
             }
             ExitCode::SUCCESS

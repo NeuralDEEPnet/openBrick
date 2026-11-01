@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { cellMap, choose, chosenCells, labelText, offsetRows, recordInput, signedMm } from "../src/calibration.js";
 import { controlsFor, defaultValues, paramOverrides, visibility } from "../src/params.js";
+import { withCoreDefaults } from "../src/part.js";
 import { dispatch } from "../src/protocol.js";
 import { sampleFile, sizeForSample } from "../src/samples.js";
 import { findingView } from "../src/ui.js";
@@ -222,4 +223,50 @@ test("the WebAssembly core lays out the coupon and refuses artwork over its limi
   }).reply;
   assert.equal(r.ok, false);
   assert.match(r.error, /limit for artwork is \d+ bytes/);
+});
+
+test("the WebAssembly core opens, presets and saves the parts in parts/ as the page sends them", { skip }, async () => {
+  const core = await loadCore();
+  const read = (name) => readFileSync(new URL(`../../../parts/${name}`, import.meta.url), "utf8");
+  const brand = read("ndn.brand-tile.obpart.json");
+  const opened = dispatch(core, { id: 1, type: "openPart", text: brand, process: "fdm-0.4" }).reply.result;
+  assert.equal(opened.ok, true, opened.error);
+  assert.deepEqual(
+    opened.presets.map((p) => [p.name, p.error]),
+    JSON.parse(brand).presets.map((p) => [p.name, null]),
+  );
+  assert.deepEqual(opened.unsupported, []);
+  // Every part in parts/ opens, and the values the page's controls send save.
+  for (const name of ["ndn.logo-tile.obpart.json", "ndn.brand-tile.obpart.json", "ndn.brand-badge.obpart.json", "ndn.nameplate-keychain.obpart.json"]) {
+    const text = read(name);
+    const answer = dispatch(core, { id: 2, type: "openPart", text, process: "fdm-0.4" }).reply.result;
+    assert.equal(answer.ok, true, name);
+    const spec = controlsFor(withCoreDefaults(JSON.parse(text), answer.defaults), { maxStuds: core.max_studs() });
+    const values = defaultValues(spec);
+    const params = paramOverrides(spec, values, visibility(spec, values).visible);
+    const saved = dispatch(core, { id: 3, type: "savePart", doc: text, params, process: "fdm-0.4" }).reply;
+    assert.equal(saved.ok, true, `${name}: ${saved.error}`);
+    // Saving the same values again changes nothing.
+    const again = dispatch(core, { id: 4, type: "savePart", doc: saved.result.text, params: {}, process: "fdm-0.4" }).reply.result.text;
+    assert.equal(again, saved.result.text, name);
+  }
+  const keychain = dispatch(core, { id: 5, type: "openPart", text: read("ndn.nameplate-keychain.obpart.json"), process: "fdm-0.4" }).reply.result;
+  assert.deepEqual(
+    keychain.unsupported.map((u) => u.op),
+    ["relief.text", "loop.keyring"],
+  );
+  // A preset added through the protocol reads back as the page sent it.
+  const params = { size: [2, 6], relief: "deboss", reliefHeight: 0.6 };
+  const withPreset = dispatch(core, { id: 6, type: "addPreset", doc: brand, name: "Long", params, process: "fdm-0.4" }).reply.result.text;
+  assert.deepEqual(JSON.parse(withPreset).presets.at(-1), { name: "Long", params });
+  // Values written with units come back as the numbers the panel shows.
+  const doc = JSON.parse(brand);
+  doc.params.reliefHeight.default = "0.6mm";
+  doc.presets = [{ name: "Higher", params: { reliefHeight: "0.8mm" } }];
+  const units = dispatch(core, { id: 8, type: "openPart", text: JSON.stringify(doc), process: "fdm-0.4" }).reply.result;
+  assert.equal(units.defaults.reliefHeight, 0.6);
+  assert.deepEqual(units.presets, [{ name: "Higher", params: { reliefHeight: 0.8 }, error: null }]);
+  const refused = dispatch(core, { id: 7, type: "savePart", doc: brand, params: { reliefHeight: 9 }, process: "fdm-0.4" }).reply;
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /reliefHeight/);
 });

@@ -5,7 +5,9 @@
 //!
 //! A fixture holds the measurements of a part, the process id, an optional fit
 //! profile (an id from `profiles/fit/`, an inline profile, or null, plus an
-//! optional JSON merge patch `fitPatch`, RFC 7396) and the expected report. The
+//! optional JSON merge patch `fitPatch`, RFC 7396), an optional bed (`printer`,
+//! an id from `profiles/printer/`, or `bed`, `[x, y, z]` in mm; without either
+//! rule `SIZE.BED` is listed as not checked) and the expected report. The
 //! expected reports are checked against `schemas/report.schema.json` by
 //! `cargo xtask data`.
 //!
@@ -15,8 +17,8 @@
 use std::path::{Path, PathBuf};
 
 use openbrick_print::{
-    default_process_profiles, finding_unit, validate, FitProfile, Measurements, ProcessProfile,
-    Report, Severity, IMPLEMENTED_RULES,
+    default_process_profiles, finding_unit, printer, validate, validate_on_bed, Bed, FeatureNames,
+    FitProfile, Measurements, ProcessProfile, Report, Severity, IMPLEMENTED_RULES,
 };
 use serde_json::Value;
 
@@ -134,7 +136,27 @@ fn run(path: &Path) -> Case {
             "{shown}: measurements field `{k}` is not a Measurements field"
         );
     }
-    let report = validate(&m, &process, fit.as_ref());
+    let bed = match (doc.get("printer"), doc.get("bed")) {
+        (Some(Value::String(id)), None) => Some(
+            printer(id)
+                .unwrap_or_else(|| panic!("{shown}: no bundled printer `{id}`"))
+                .bed(),
+        ),
+        (None, Some(size)) => {
+            let size: [f64; 3] = serde_json::from_value(size.clone())
+                .unwrap_or_else(|e| panic!("{shown}: bed: {e}"));
+            Some(Bed::of_size(size).unwrap_or_else(|| panic!("{shown}: bed {size:?}")))
+        }
+        (None, None) => None,
+        _ => panic!("{shown}: give a printer id or a bed size, not both"),
+    };
+    let report = validate_on_bed(
+        &m,
+        &process,
+        fit.as_ref(),
+        &FeatureNames::default(),
+        bed.as_ref(),
+    );
     Case {
         path: path.to_path_buf(),
         doc,
@@ -145,12 +167,14 @@ fn run(path: &Path) -> Case {
 }
 
 /// The top-level fields of a fixture, in reading order.
-const FIELDS: [&str; 7] = [
+const FIELDS: [&str; 9] = [
     "description",
     "rule",
     "process",
     "fit",
     "fitPatch",
+    "printer",
+    "bed",
     "measurements",
     "report",
 ];
@@ -242,6 +266,7 @@ fn unit_in_message(unit: &str) -> &'static str {
         "mm" => " mm",
         "%" => " %",
         "mm³" => " mm3",
+        "°" => "°",
         _ => "",
     }
 }
@@ -464,6 +489,17 @@ fn blockers_and_warnings_follow_the_rule_table() {
         ("CLUTCH.RISK/fail", true),
         ("CLUTCH.RISK/fail-tube", true),
         ("CLUTCH.RISK/fail-solid-pin", true),
+        ("MESH.SELF_INTERSECT/fail", false),
+        ("ROOF.BRIDGE/fail", true),
+        ("OVERHANG.MAX/fail", false),
+        ("OVERHANG.MAX/fail-floating", false),
+        ("OVERHANG.MAX/fail-supports-allowed", true),
+        ("OVERHANG.BRIDGED/fail", true),
+        ("ORIENT.FACE/fail", false),
+        ("ORIENT.FACE/fail-studs", false),
+        ("ORIENT.FACE/fail-not-flat", false),
+        ("SIZE.BED/fail", false),
+        ("SIZE.BED/fail-too-tall", false),
     ];
     for (name, exportable) in expect {
         let case = run(&fixtures_dir().join(format!("{name}.json")));

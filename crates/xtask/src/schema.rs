@@ -78,6 +78,15 @@ pub const DATA_SETS: &[DataSet] = &[
         reader: read_fit,
     },
     DataSet {
+        dir: "profiles/printer",
+        files: "",
+        kind: Some("printer"),
+        schema: "printer-profile.schema.json",
+        prefix: "printer-",
+        reader_name: "openbrick_print::PrinterProfile",
+        reader: read_printer,
+    },
+    DataSet {
         dir: "parts",
         files: "",
         kind: None,
@@ -123,6 +132,20 @@ fn read_standard(text: &str) -> Result<Value, String> {
 fn read_process(text: &str) -> Result<Value, String> {
     let p: openbrick_print::ProcessProfile =
         serde_json::from_str(text).map_err(|e| e.to_string())?;
+    written(serde_json::to_value(&p))
+}
+
+/// Printers, plus what the schema cannot state: at least one filament per
+/// toolhead.
+fn read_printer(text: &str) -> Result<Value, String> {
+    let p: openbrick_print::PrinterProfile =
+        serde_json::from_str(text).map_err(|e| e.to_string())?;
+    if p.filaments < p.toolheads {
+        return Err(format!(
+            "`{}` lists {} filaments for {} toolheads; every toolhead prints at least one",
+            p.id, p.filaments, p.toolheads
+        ));
+    }
     written(serde_json::to_value(&p))
 }
 

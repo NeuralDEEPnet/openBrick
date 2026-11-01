@@ -72,8 +72,12 @@ pub struct CouponArgs {
     pub pockets: PocketSet,
     /// Bed size the coupon must fit, XxY in mm (default 180x180, a Prusa
     /// MINI+ or Bambu Lab A1 mini; 5 mm stay free at each edge).
-    #[arg(long, value_parser = parse_bed, value_name = "XxY")]
+    #[arg(long, value_parser = parse_bed, value_name = "XxY", conflicts_with = "printer")]
     pub bed: Option<[f64; 2]>,
+    /// Lay the coupon out for this printer's bed (a bundled printer id, see
+    /// `openbrick profiles`; for example prusa-xl), instead of --bed.
+    #[arg(long, value_name = "ID")]
+    pub printer: Option<String>,
     /// Identical copies of the cell set, for repeatability (default 2).
     #[arg(long, value_name = "N")]
     pub copies: Option<u32>,
@@ -305,6 +309,9 @@ pub fn coupon(args: &CouponArgs, ui: Ui) -> Result<Outcome, Fail> {
     };
     if let Some(bed) = args.bed {
         opts.bed_mm = bed;
+    }
+    if let Some(bed) = crate::part::choose_bed(args.printer.as_deref(), None)? {
+        opts.bed_mm = [bed.size_mm[0], bed.size_mm[1]];
     }
     if let Some(copies) = args.copies {
         opts.copies = copies;

@@ -33,15 +33,24 @@
     "isManifold": true,
     "minBodyWallAtBedMm": 0.8,
     "minBodyWallMm": 1.2,
+    "overhangs": [],
     "pinDiameterMm": 3.18,
     "process": "fdm-0.4",
     "ribDepthMm": 0.3,
     "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 0,
     "studDiameterMm": 4.8,
     "triangleCount": 2640,
     "volumeMm3": 848.418
   },
   "report": {
-    "findings": []
+    "findings": [],
+    "unchecked": [
+      {
+        "reason": "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)",
+        "rule": "SIZE.BED"
+      }
+    ]
   }
 }

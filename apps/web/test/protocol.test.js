@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   brick,
+  bundled,
   BUILD_TYPES,
   createHandler,
   EXPORT_TYPES,
@@ -82,6 +83,22 @@ function fakeCore({ throws = null } = {}) {
     process_profiles_json: () => JSON.stringify([{ id: "fdm-0.4" }]),
     example_fit_profile_json: () => '{"kind":"fit","id":"example"}',
     logo_tile_part_json: () => '{"id":"ndn.logo-tile"}',
+    bundled_parts_json: () => '[{"id":"ndn.logo-tile","label":"Logo tile","file":"ndn.logo-tile.obpart.json","text":"{}"}]',
+    max_part_bytes: () => 4194304,
+    open_part_json(text, process) {
+      calls.push(["open_part_json", text, process]);
+      return text.startsWith("{") ? JSON.stringify({ ok: true, id: "t", presets: [], unsupported: [] }) : JSON.stringify({ ok: false, error: "the file is not JSON" });
+    },
+    save_part_json(doc, params, process) {
+      calls.push(["save_part_json", doc, params, process]);
+      fail();
+      return `${doc}\n`;
+    },
+    add_preset_json(doc, name, params, process) {
+      calls.push(["add_preset_json", doc, name, params, process]);
+      if (!name.trim()) throw new Error("a preset needs a name");
+      return `${doc} ${name}\n`;
+    },
     artwork_samples_json: () => '[{"id":"neuraldeep-mark","files":[{"asset":"assets/brand/neuraldeep-mark-2x4.svg","tile":[2,4],"svg":"<svg/>"}]}]',
     disclaimer: () => "not affiliated",
     role_colors_json: () => '{"body":"#2f6db5","accent":"#f4f1e8"}',
@@ -133,6 +150,17 @@ function fakeCore({ throws = null } = {}) {
       fail();
       return new Uint8Array([0x50, 0x4b, 3, 4]);
     },
+    evaluate_part_on_printer(doc, params, process, fit, set, printer) {
+      const out = this.evaluate_part(doc, params, process, fit, set);
+      calls[calls.length - 1] = ["evaluate_part_on_printer", printer];
+      return out;
+    },
+    export_part_on_printer(format, doc, params, process, fit, set, colors, printer) {
+      calls.push(["export_part_on_printer", format, printer]);
+      fail();
+      return new Uint8Array([0x50, 0x4b, 3, 4]);
+    },
+    printers_json: () => '[{"id":"prusa-mini-plus","name":"Original Prusa MINI+","buildVolumeMm":[180,180,180]}]',
     resolve_params_json(doc, params, process) {
       calls.push(["resolve_params_json", params, process]);
       return '{"values":{},"visible":{"reliefHeight":false}}';
@@ -396,7 +424,7 @@ test("evaluatePart sends JSON text and the assets to the core and returns plain,
     ["accent", "#f4f1e8", 1],
   ]);
   assert.equal(r.overlay.role, "removed");
-  assert.deepEqual(r.report, { findings: [{ ...REMOVED_AREA, unit: "%" }] }, "each finding carries the core's unit");
+  assert.deepEqual(r.report, { findings: [{ ...REMOVED_AREA, unit: "%" }], unchecked: [] }, "each finding carries the core's unit");
   assert.equal(r.exportAllowed, true);
   assert.deepEqual(r.measurements, { process: "fdm-0.4" });
   assert.deepEqual(r.warnings, ["a note"]);
@@ -424,7 +452,10 @@ test("units come from the core, one per finding, in report order", () => {
       ["WALL.MIN", "mm"],
     ],
   );
-  assert.deepEqual(reportWithUnits('{"findings":[]}', "[]"), { findings: [] });
+  assert.deepEqual(reportWithUnits('{"findings":[]}', "[]"), { findings: [], unchecked: [] });
+  // The rules the core could not check travel as they are.
+  const unchecked = [{ rule: "SIZE.BED", reason: "no printer or bed was given" }];
+  assert.deepEqual(reportWithUnits(JSON.stringify({ findings: [], unchecked }), "[]").unchecked, unchecked);
   // A count that does not match is a core bug, not something to guess around.
   assert.throws(() => reportWithUnits(report, '["%"]'), /1 units for 2 findings/);
   assert.throws(() => reportWithUnits(report, "null"), /no units for 2 findings/);
@@ -437,6 +468,7 @@ test("part requests are checked before the core is called", () => {
     [{ ...PART, params: [1] }, /params must be an object/],
     [{ ...PART, process: "" }, /process must be the id/],
     [{ ...PART, fit: null }, /fit must be the fit profile as JSON text/],
+    [{ ...PART, printer: 3 }, /printer must be the id of a bundled printer/],
     [{ ...PART, assets: [{ name: "a.svg", bytes: [1, 2] }] }, /assets must be a list of \{ name, bytes: Uint8Array \}/],
   ];
   for (const [fields, message] of bad) {
@@ -465,6 +497,19 @@ test("exportPart returns the file bytes, transferred, and passes the colours", (
   assert.ok(core.assetSets.every((s) => s.freed));
 });
 
+test("a printer goes to the core's printer calls; none keeps the plain ones", () => {
+  const core = fakeCore();
+  const request = { id: 7, type: "evaluatePart", ...PART, printer: "prusa-mini-plus", assets: [{ name: "a.svg", bytes: SVG }] };
+  assert.equal(dispatch(core, request).reply.ok, true);
+  assert.deepEqual(core.calls[0], ["evaluate_part_on_printer", "prusa-mini-plus"]);
+  assert.equal(dispatch(core, { ...request, printer: "" }).reply.ok, true);
+  assert.equal(core.calls[1][0], "evaluate_part");
+  const exported = dispatch(core, { ...request, type: "exportPart", format: "3mf" });
+  assert.equal(exported.reply.ok, true, exported.reply.error);
+  assert.deepEqual(core.calls[2], ["export_part_on_printer", "3mf", "prusa-mini-plus"]);
+  assert.deepEqual(bundled(core).printers.map((p) => p.id), ["prusa-mini-plus"]);
+});
+
 test("a refused export is an error reply with the core's message", () => {
   const core = fakeCore({ throws: "export is disabled while the validation report has 1 blocker: FIT.MISSING: ..." });
   const { reply } = dispatch(core, { id: 3, type: "exportPart", format: "3mf", ...PART });
@@ -483,9 +528,35 @@ test("bundled and resolveParams read the core's data", () => {
   assert.deepEqual(b.roleColors, { body: "#2f6db5", accent: "#f4f1e8" });
   assert.equal(b.maxAssetBytes, 4194304);
   assert.equal(b.couponChoices.defaultPocketSet, "cross");
+  assert.deepEqual(b.parts.map((p) => [p.id, p.file]), [["ndn.logo-tile", "ndn.logo-tile.obpart.json"]], "parsed");
+  assert.equal(b.maxPartBytes, 4194304);
   const r = dispatch(core, { id: 2, type: "resolveParams", ...PART, params: { relief: "inlay" } }).reply.result;
   assert.deepEqual(r.visible, { reliefHeight: false });
   assert.deepEqual(core.calls[0], ["resolve_params_json", '{"relief":"inlay"}', "fdm-0.4"]);
+});
+
+test("openPart, savePart and addPreset pass the document through the core", () => {
+  const core = fakeCore();
+  const opened = dispatch(core, { id: 1, type: "openPart", text: '{"a":1}', process: "fdm-0.4" }).reply;
+  assert.equal(opened.ok, true);
+  assert.deepEqual(opened.result, { ok: true, id: "t", presets: [], unsupported: [] });
+  // A file that is not a part is an answer, not a failed request.
+  const refused = dispatch(core, { id: 2, type: "openPart", text: "nope", process: "fdm-0.4" }).reply;
+  assert.deepEqual([refused.ok, refused.result.ok, refused.result.error], [true, false, "the file is not JSON"]);
+  assert.match(dispatch(core, { id: 3, type: "openPart", process: "fdm-0.4" }).reply.error, /needs the document as text/);
+  assert.match(dispatch(core, { id: 4, type: "openPart", text: "{}" }).reply.error, /process/);
+
+  const saved = dispatch(core, { id: 5, type: "savePart", ...PART, params: { relief: "deboss" } }).reply;
+  assert.deepEqual(saved.result, { text: `${PART.doc}\n` });
+  assert.deepEqual(core.calls.at(-1), ["save_part_json", PART.doc, '{"relief":"deboss"}', "fdm-0.4"]);
+  const preset = dispatch(core, { id: 6, type: "addPreset", ...PART, name: "Mine", params: {} }).reply;
+  assert.deepEqual(preset.result, { text: `${PART.doc} Mine\n` });
+  assert.deepEqual(core.calls.at(-1), ["add_preset_json", PART.doc, "Mine", "{}", "fdm-0.4"]);
+  // The core's refusals come back as errors with its message.
+  assert.match(dispatch(core, { id: 7, type: "addPreset", ...PART, name: " ", params: {} }).reply.error, /needs a name/);
+  assert.match(dispatch(core, { id: 8, type: "addPreset", ...PART, params: {} }).reply.error, /preset's name/);
+  const failing = fakeCore({ throws: "parameter `reliefHeight`: 9 is above the maximum 1.5" });
+  assert.match(dispatch(failing, { id: 9, type: "savePart", ...PART, params: {} }).reply.error, /reliefHeight/);
 });
 
 // ------------------------------------------------------------ calibration coupon

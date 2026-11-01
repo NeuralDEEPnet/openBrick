@@ -1,0 +1,85 @@
+{
+  "description": "A face-down swap inlay whose artwork has a filled 15 mm circle: the body bridges its opening in the face slab 0.6 mm above the bed, wider than the 12 mm maxUnsupportedBridgeMm. A warning with a hint about the artwork, not a blocker: a sag shows on the artwork but leaves the part whole.",
+  "rule": "OVERHANG.MAX",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bedFaceReliefMm": 0.0,
+    "bedFaceStuds": 0,
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "faceDown": true,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.4,
+    "minBodyWallMm": 0.8,
+    "minStrokeMm": 1.27,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "overhangs": [
+      {
+        "angleDeg": 90.0,
+        "areaMm2": 176.7,
+        "centreMm": [
+          8.0,
+          16.0
+        ],
+        "heightMm": 0.6,
+        "spanMm": 15.0
+      }
+    ],
+    "printUp": "bottom",
+    "process": "fdm-0.4",
+    "reliefHeightMm": 0.6,
+    "reliefMode": "inlay",
+    "removedAreaPct": 0.5,
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "selfIntersections": 0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "use inlay style `parts` (the artwork prints as its own part, so nothing bridges), relief mode deboss (it prints face up), or artwork whose filled areas are at most 12 mm wide (a smaller logo, or an outline); you may export as it is",
+        "message": "the inlay prints face down, and the body bridges 1 opening of the artwork in the face slab 0.6 mm above the bed, hanging up to 90° from vertical (beyond the 50° maxOverhangDeg), the widest 15 mm across, more than the 12 mm maxUnsupportedBridgeMm of process `fdm-0.4`: the bridge may sag into the artwork, so it may come out rough or shallower there",
+        "rule": "OVERHANG.MAX",
+        "severity": "warning",
+        "threshold": 50.0,
+        "value": 90.0
+      }
+    ],
+    "unchecked": [
+      {
+        "reason": "the artwork is not compared with the blocklist of protected marks yet: that needs the artwork matcher of the Q16 spike (docs/plan/12); please make sure you may use the artwork",
+        "rule": "TRADEMARK.LOGO"
+      },
+      {
+        "reason": "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)",
+        "rule": "SIZE.BED"
+      }
+    ]
+  }
+}

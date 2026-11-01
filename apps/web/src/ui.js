@@ -126,7 +126,7 @@ export function removedText(result) {
   return `Red: ${upToThree.format(pct)} % of the artwork does not print as drawn (lines thinner than the minimum feature, or face material too thin between cuts)`;
 }
 
-const num = (x, unit) => (typeof x === "number" ? `${upToThree.format(x)}${unit ? ` ${unit}` : ""}` : "not measured");
+const num = (x, unit) => (typeof x === "number" ? `${upToThree.format(x)}${unit ? (unit === "°" ? unit : ` ${unit}`) : ""}` : "not measured");
 
 /**
  * What the validation panel shows for one finding: severity in words and as an
@@ -170,14 +170,26 @@ export function downloadBlockedReason(report) {
   return `Download is off until the ${rules.length === 1 ? "blocker" : "blockers"} ${list} ${rules.length === 1 ? "is" : "are"} fixed (see Validation).`;
 }
 
-/** The summary line above the findings. */
+/**
+ * The summary line above the findings. Rules the core could not check
+ * (`report.unchecked`) are named, so a report with none of its findings
+ * never reads as a full pass while a rule went unchecked.
+ */
 export function reportSummary(report) {
   const all = report?.findings ?? [];
+  const unchecked = [...new Set((report?.unchecked ?? []).map((u) => u.rule))];
   const b = all.filter((f) => f.severity === "blocker").length;
   const w = all.length - b;
-  if (all.length === 0) return "No findings: every implemented rule passes.";
   const part = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  return `${part(b, "blocker")}, ${part(w, "warning")}.`;
+  if (all.length === 0 && unchecked.length === 0) return "No findings: every implemented rule passes.";
+  const found = all.length === 0 ? "No findings" : `${part(b, "blocker")}, ${part(w, "warning")}`;
+  if (unchecked.length === 0) return `${found}.`;
+  return `${found}; ${part(unchecked.length, "rule")} not checked (${unchecked.join(", ")}).`;
+}
+
+/** The summary line counts as a pass (styled green) only with no findings and every rule checked. */
+export function reportPasses(report) {
+  return (report?.findings ?? []).length === 0 && (report?.unchecked ?? []).length === 0;
 }
 
 /** The label of a fit profile in the fit select: "Example fit profile (Prusa MK4S, PETG)". */

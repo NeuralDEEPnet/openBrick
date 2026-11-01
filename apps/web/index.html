@@ -175,6 +175,8 @@
       .finding .head strong { margin-right: 6px; }
       .finding.blocker .head strong { color: var(--bad); }
       .finding.warning .head strong { color: var(--warn); }
+      .finding.unchecked { border-style: dashed; }
+      .finding.unchecked .head strong { color: var(--muted); }
       .finding .nums { color: var(--muted); font-size: 13px; }
       #summary.ok { color: var(--ok); font-weight: 600; }
       #notes { margin-top: 10px; font-size: 13px; }
@@ -272,6 +274,18 @@
       #record-note:empty, #fit-actions:empty { display: none; }
       #fit-actions { margin: 4px 0 0; font-size: 13px; }
       .calibrate-row { margin: 6px 0 0; font-size: 13px; }
+      /* The part document: open, presets, save (src/part.js). */
+      #part-note, #save-note { overflow-wrap: anywhere; }
+      #part-note:empty, #save-note:empty { display: none; }
+      h3 { margin: 0 0 6px; font-size: 14px; font-weight: 650; }
+      .part-save { margin-top: 4px; padding-top: 10px; border-top: 1px dashed var(--line); }
+      .preset-new > label { color: var(--muted); font-size: 13px; }
+      .preset-new .row { flex-wrap: nowrap; gap: 8px; align-items: stretch; }
+      .preset-new input[type="text"] { flex: 1 1 auto; min-width: 0; width: 100%; padding: 0 8px; }
+      .preset-new button { flex: none; }
+      @media (max-width: 360px) { .preset-new .row { flex-wrap: wrap; } }
+      .field.check label { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; color: var(--text); font-size: inherit; cursor: pointer; }
+      .field.check input { width: 20px; height: 20px; min-height: 0; accent-color: var(--accent); margin: 0; }
       [hidden] { display: none !important; }
       .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
       @media (max-width: 480px) {
@@ -286,7 +300,7 @@
     <header>
       <h1>OpenBrick3D <span>playground</span></h1>
       <div role="tablist" aria-label="What to make">
-        <button type="button" role="tab" id="tab-tile" aria-controls="panel-tile" aria-selected="true">Logo tile</button>
+        <button type="button" role="tab" id="tab-tile" aria-controls="panel-tile" aria-selected="true">Part</button>
         <button type="button" role="tab" id="tab-coupon" aria-controls="panel-coupon" aria-selected="false" tabindex="-1">Calibration coupon</button>
       </div>
     </header>
@@ -299,13 +313,44 @@
         <div id="panel-tile" role="tabpanel" aria-labelledby="tab-tile">
           <section aria-labelledby="part-heading">
             <h2 id="part-heading">Logo tile</h2>
+            <div class="field" id="part-row">
+              <label for="part-select">Part document</label>
+              <select id="part-select" aria-describedby="part-help part-note"></select>
+              <input type="file" id="part-file" accept=".json,application/json" hidden />
+              <p class="help" id="part-help">Open any part (.obpart.json): choose “Open a part file…” or drop the file here or on the 3D view.</p>
+              <p class="note" id="part-note" aria-live="polite"></p>
+            </div>
+            <div class="field" id="preset-row" hidden>
+              <label for="preset">Preset</label>
+              <select id="preset" aria-describedby="preset-help"></select>
+              <p class="help" id="preset-help">A preset sets the values it names and keeps the others.</p>
+            </div>
             <form id="tile-form" novalidate></form>
+            <div class="part-save" role="group" aria-labelledby="part-save-heading">
+              <h3 id="part-save-heading">Part file</h3>
+              <div class="preset-new">
+                <label for="preset-name">New preset name</label>
+                <div class="row">
+                  <input type="text" id="preset-name" autocomplete="off" maxlength="60" placeholder="My tile" aria-describedby="save-note" />
+                  <button type="button" id="add-preset">Save current as preset</button>
+                </div>
+              </div>
+              <div class="downloads spaced">
+                <button type="button" id="save-part" aria-describedby="save-note">Save part file</button>
+              </div>
+              <p class="note" id="save-note" aria-live="polite"></p>
+            </div>
           </section>
           <section aria-labelledby="print-heading">
             <h2 id="print-heading">Printer</h2>
             <div class="field">
               <label for="process">Process profile</label>
               <select id="process" disabled></select>
+            </div>
+            <div class="field">
+              <label for="printer">Printer (bed size check)</label>
+              <select id="printer" aria-describedby="printer-note" disabled></select>
+              <p class="note" id="printer-note" aria-live="polite"></p>
             </div>
             <div class="field">
               <label for="fit">Fit profile</label>
@@ -360,6 +405,10 @@
             <div class="field">
               <label for="coupon-pockets">Pocket layout</label>
               <select id="coupon-pockets" disabled></select>
+            </div>
+            <div class="field">
+              <label for="coupon-printer">Printer</label>
+              <select id="coupon-printer" disabled></select>
             </div>
             <div class="row">
               <div class="field">

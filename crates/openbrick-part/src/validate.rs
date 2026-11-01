@@ -12,19 +12,32 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use openbrick_print::{check_fit_missing, FeatureNames, FitProfile, ProcessProfile, Report};
+use openbrick_print::{check_fit_missing, Bed, FeatureNames, FitProfile, ProcessProfile, Report};
 
 use crate::Built;
 
 /// Check a built part against a process profile and an optional fit profile.
 /// [`Report::export_allowed`] says whether it may be exported. The fit profile
-/// must be the one the part was built with (rule `FIT.PROCESS`).
+/// must be the one the part was built with (rule `FIT.PROCESS`). Rule
+/// `SIZE.BED` is listed as not checked; [`validate_on_bed`] checks it.
 pub fn validate(built: &Built, process: &ProcessProfile, fit: Option<&FitProfile>) -> Report {
+    validate_on_bed(built, process, fit, None)
+}
+
+/// [`validate`], and rule `SIZE.BED` against `bed` when one is given (a
+/// printer's, `openbrick_print::printer`, or one of a given size).
+pub fn validate_on_bed(
+    built: &Built,
+    process: &ProcessProfile,
+    fit: Option<&FitProfile>,
+    bed: Option<&Bed>,
+) -> Report {
     let names = FeatureNames {
         studs: emitter(built, "studM"),
         tubes: emitter(built, "tubeF"),
     };
-    let mut report = openbrick_print::validate_with(&built.measurements, process, fit, &names);
+    let mut report =
+        openbrick_print::validate_on_bed(&built.measurements, process, fit, &names, bed);
     if report.findings.iter().any(|f| f.rule == "FIT.MISSING") {
         // The same check per emitting feature, so each finding can say where.
         let mut by_feature: BTreeMap<&str, Vec<&str>> = BTreeMap::new();

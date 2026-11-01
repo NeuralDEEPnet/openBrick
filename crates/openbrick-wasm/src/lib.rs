@@ -36,6 +36,12 @@
 //!   (the kernel's fused union), laid out for printing; it refuses while the
 //!   report has a blocker. [`export_solids`] (Rust only) gives the solids it
 //!   writes, so the CLI's tests can compare meshes with the playground's.
+//! - Part documents ([`doc`], docs/plan/06 sections 3 and 11):
+//!   [`open_part_json`] checks a document the user opened and lists its
+//!   presets and the features the evaluator cannot build yet;
+//!   [`save_part_json`] writes it with the edited values as defaults and
+//!   [`add_preset_json`] with the current values as a named preset, both in
+//!   the one saved layout of `openbrick_part::format`.
 //! - Calibration coupon ([`coupon`], docs/plan/05 section 4): [`build_coupon`],
 //!   [`coupon_layout_json`] and [`export_coupon`].
 //! - Calibration wizard ([`record`], docs/plan/05 section 4): [`record_fit`]
@@ -43,26 +49,30 @@
 //!   `openbrick calibrate record` writes for the same choices, byte for byte,
 //!   with its offsets, or a refusal that names the field it concerns.
 //! - Bundled data ([`data`]): the process profiles, the example fit profile, the
-//!   logo tile part document, the artwork samples ([`artwork_samples_json`]:
+//!   bundled part documents (the logo tile and the Neuraldeep.net tile with
+//!   its presets, [`bundled_parts_json`]) and their size limit, the artwork
+//!   samples ([`artwork_samples_json`]:
 //!   the Neuraldeep.net marks, the playground's default, with their notice,
 //!   and the CC0 sample mark), the disclaimer, the display colours of the
 //!   colour roles and the asset size limit.
 
 pub mod coupon;
 pub mod data;
+pub mod doc;
 mod layout;
 pub mod part;
 pub mod record;
 
 pub use coupon::{build_coupon, coupon_layout_json, export_coupon, CouponOut};
 pub use data::{
-    artwork_samples_json, coupon_choices_json, disclaimer, example_fit_profile_json,
-    logo_tile_part_json, max_asset_bytes, process_profiles_json, role_colors_json, sample_logo_svg,
-    BRAND_NOTICE, BRAND_NOTICE_URL,
+    artwork_samples_json, bundled_parts_json, coupon_choices_json, disclaimer,
+    example_fit_profile_json, logo_tile_part_json, max_asset_bytes, max_part_bytes, printers_json,
+    process_profiles_json, role_colors_json, sample_logo_svg, BRAND_NOTICE, BRAND_NOTICE_URL,
 };
+pub use doc::{add_preset_json, open_part_json, save_part_json};
 pub use part::{
-    evaluate_part, export_part, export_solids, resolve_params_json, AssetSet, ExportSolid,
-    PartExport, PartOut,
+    evaluate_part, evaluate_part_on_printer, export_part, export_part_on_printer, export_solids,
+    export_solids_on_printer, resolve_params_json, AssetSet, ExportSolid, PartExport, PartOut,
 };
 pub use record::{record_fit, RecordFitInput};
 

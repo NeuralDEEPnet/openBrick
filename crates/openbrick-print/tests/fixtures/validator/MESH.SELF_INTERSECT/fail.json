@@ -1,0 +1,63 @@
+{
+  "description": "Three pairs of triangles of the final mesh pass through each other (a kernel or evaluator bug): blocker, the count against 0.",
+  "rule": "MESH.SELF_INTERSECT",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.4,
+    "minBodyWallMm": 0.8,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "overhangs": [],
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 3,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "this is a bug in the evaluator or the kernel, not in your part: please report it with the part file and its parameters; other parameter values may avoid it meanwhile",
+        "message": "the mesh passes through itself: 3 pairs of triangles cross (a printable part has 0), so a slicer cannot tell inside from outside there",
+        "rule": "MESH.SELF_INTERSECT",
+        "severity": "blocker",
+        "threshold": 0.0,
+        "value": 3.0
+      }
+    ],
+    "unchecked": [
+      {
+        "reason": "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)",
+        "rule": "SIZE.BED"
+      }
+    ]
+  }
+}

@@ -1184,6 +1184,9 @@ pub fn build_coupon<K: Kernel>(
     let mesh = solid.to_mesh();
     let volume = solid.volume_mm3();
     let (lo, hi) = mesh.bounds();
+    // Every cell opens upward and the coupon prints flat, base down: no roof
+    // hangs, and the checks should find no overhang at all.
+    let checks = crate::print_checks::measure(&[&mesh], &mesh, false, None, process, chamfer);
 
     // Fields left at their defaults: no fit profile, any process, and no single
     // stud, tube, pin or rib size (the coupon sweeps them; each cell's value is
@@ -1215,6 +1218,9 @@ pub fn build_coupon<K: Kernel>(
         // Labels someone reads to calibrate: rule FEATURE.MIN blocks if they
         // ever print thinner than the process minimum.
         fit_critical_artwork: true,
+        self_intersections: checks.self_intersections,
+        roof_span_mm: checks.roof_span_mm,
+        overhangs: Some(checks.overhangs),
         ..Measurements::default()
     };
 

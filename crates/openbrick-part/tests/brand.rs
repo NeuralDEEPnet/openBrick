@@ -74,10 +74,10 @@ const MARK_2X4: Mark = Mark {
     doc: BRAND_TILE,
     size: [2, 4],
     hashes: [
-        "7eed249de2c40d5a130d2b35b1ad12fb9a8185e19cc89ee39c3446d4a6f588ba",
-        "3426dbb3141f9f489a83fde0e2d014a56864a36bf354daac89c803951ffd80c8",
-        "ee6e2edad78063a76002b501d953438223e9a484d595e653eec0994947ad4284",
-        "1208c021dfc9c9754fc22d8ec6bb15a4d3f810e00a93f2ecf99fa23df6c6e087",
+        "64cabfe45bb3e3ec122c75bbc68294b8b1d4eb733dc2de405b266ccbafa11f25",
+        "af063b2b6193cbcce0035f5b40043a804790da6731de49e6ad988e8739019490",
+        "f4d89eba597824247e129a76f1489794bf362d8ed8eeea4fdbf1d3a56e0fa31c",
+        "eb13322818dc568d200e6e4223f4ba28a8416f6422f28809f89b23aab45e8908",
     ],
     emboss_components: 9,
     emboss_accent: 0x5e64_74d0_3786_9a4d,
@@ -89,10 +89,10 @@ const MARK_4X6: Mark = Mark {
     doc: BRAND_TILE,
     size: [4, 6],
     hashes: [
-        "6bdd71ec528a51f17d92d5a6302d6f21d75a41ab610cf56bf29c1cd346bc9064",
-        "5d3ec1efa192d7628b06fbc07fed364e994e63ec60418654de49421f3a3f1c24",
-        "c29296b6e1588676a2e5c0e75e452f28a7cd5e1966a1bed8f33f5fe9e16e756a",
-        "14b01a24c8ac298b6bd457b4e76a7311360a8624044bd77a47758c97d09066e2",
+        "2c440d110ce81f634008b5b718831c4e74314febd49b94030931dbe34dec8926",
+        "cac97025fe1bd339fc05e9d73f8aee4cafe1f466833c1187a38967b3777cccfd",
+        "c1b6f4fb22ebb8a770696cd77b30c349cbebcc65a3784ebccd3281fc8eb1047a",
+        "c9014d5fb214cba9b16ec87bef938f989e15631d7344af030328ce6da1381298",
     ],
     emboss_components: 11,
     emboss_accent: 0xc1ea_78cb_fc36_16a5,
@@ -263,7 +263,11 @@ fn check_mark(mark: &Mark) {
         };
         assert_eq!(roles, want, "{what}");
 
-        // The validator: export allowed, and nothing to report at all.
+        // The validator: export allowed, and nothing to report but, for the
+        // swap inlay, the short bridges over the artwork's recesses: printed
+        // face down, the face slab leaves the artwork open for the first
+        // layers and the body closes it over at the slab's depth
+        // (OVERHANG.BRIDGED, a warning).
         let report = validate(&b, &p, Some(&fit));
         assert!(report.export_allowed(), "{what}: {:#?}", report.findings);
         assert!(
@@ -271,7 +275,16 @@ fn check_mark(mark: &Mark) {
             "{what}: {:#?}",
             report.findings
         );
-        assert!(report.findings.is_empty(), "{what}: {:#?}", report.findings);
+        if mode == ("inlay", "swap") {
+            assert!(!report.findings.is_empty(), "{what}");
+            assert!(
+                report.findings.iter().all(|f| f.rule == "OVERHANG.BRIDGED"),
+                "{what}: {:#?}",
+                report.findings
+            );
+        } else {
+            assert!(report.findings.is_empty(), "{what}: {:#?}", report.findings);
+        }
         let pct = m.removed_area_pct.expect("measured");
         eprintln!(
             "{what}: removed {pct:.3} %, thinnest stroke {:?} mm",

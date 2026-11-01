@@ -1,0 +1,17 @@
+{
+  "openbrick": "1.0",
+  "kind": "printer",
+  "id": "prusa-xl",
+  "credit": { "author": "OpenBrick3D contributors" },
+  "name": "Original Prusa XL, one toolhead",
+  "maker": "Prusa Research",
+  "buildVolumeMm": [360, 360, 360],
+  "toolheads": 1,
+  "filaments": 1,
+  "source": {
+    "url": "https://www.prusa3d.com/product/original-prusa-xl-assembled-single-toolhead-3d-printer/",
+    "accessed": "2026-11-01",
+    "quote": "Build volume 360 × 360 × 360 mm (46.7 l)"
+  },
+  "notes": "Prusa now sells the XL as the XL+ and gives the same build volume for every toolhead count."
+}

@@ -46,6 +46,11 @@ simplecss = "=0.2.2"
 # the Clipper2 port manifold-rust already uses for its cross-sections. Pinned
 # exactly like the kernel, since its output becomes geometry.
 clipper2-rust = "=1.2.0"
+# Part parameters and presets in document order, the designer panel's order,
+# so a saved part keeps it (openbrick-part `save`); Apache-2.0 OR MIT, pure
+# Rust, builds for wasm32; already in Cargo.lock (through zip). Pinned exactly,
+# like the kernel crates, since its order becomes the saved part bytes.
+indexmap = { version = "=2.14.2", features = ["serde"] }
 openbrick-units = { path = "crates/openbrick-units" }
 openbrick-geom = { path = "crates/openbrick-geom" }
 openbrick-part = { path = "crates/openbrick-part" }

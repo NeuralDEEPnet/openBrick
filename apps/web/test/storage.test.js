@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { forgetRecordedFit, loadRecordedFit, RECORDED_FIT_KEY, saveRecordedFit } from "../src/storage.js";
+import { forgetRecordedFit, loadPrinter, loadRecordedFit, PRINTER_KEY, RECORDED_FIT_KEY, saveRecordedFit, savePrinter } from "../src/storage.js";
 
 /** A Map-backed Storage; `fail` makes the named methods throw like a browser does. */
 function fakeStorage(fail = []) {
@@ -83,4 +83,23 @@ test("in Node, without a localStorage of its own, the defaults do not throw", ()
   assert.doesNotThrow(() => loadRecordedFit());
   assert.doesNotThrow(() => saveRecordedFit(text));
   assert.doesNotThrow(() => forgetRecordedFit());
+});
+
+test("the printer chosen last is kept, and only a bundled one is read back", () => {
+  const ids = ["bambu-a1", "prusa-mini-plus"];
+  const s = fakeStorage();
+  assert.equal(loadPrinter(ids, () => s), "");
+  assert.equal(savePrinter("prusa-mini-plus", () => s), true);
+  assert.equal(s.items.get(PRINTER_KEY), "prusa-mini-plus");
+  assert.equal(loadPrinter(ids, () => s), "prusa-mini-plus");
+  // A printer this build does not bundle (a newer page wrote it) is ignored.
+  s.items.set(PRINTER_KEY, "ender-3");
+  assert.equal(loadPrinter(ids, () => s), "");
+  // None removes the choice.
+  assert.equal(savePrinter("", () => s), true);
+  assert.equal(s.items.has(PRINTER_KEY), false);
+  // Refusing storage never throws into the page.
+  assert.equal(loadPrinter(ids, () => fakeStorage(["getItem"])), "");
+  assert.equal(savePrinter("bambu-a1", () => fakeStorage(["setItem"])), false);
+  assert.equal(savePrinter("bambu-a1", () => undefined), false);
 });

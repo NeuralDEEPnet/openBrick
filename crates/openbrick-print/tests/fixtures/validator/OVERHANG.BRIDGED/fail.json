@@ -1,0 +1,74 @@
+{
+  "description": "The ceiling of a horizontal hole: 90 degrees from vertical, held along both sides, a 4.8 mm bridge within the 12 mm maxUnsupportedBridgeMm: a warning, never a blocker (docs/plan/05 section 6).",
+  "rule": "OVERHANG.BRIDGED",
+  "process": "fdm-0.4",
+  "fit": "example-mk4s-petg-0.4",
+  "measurements": {
+    "allowedProcesses": [],
+    "bodyHeightMm": 3.2,
+    "boundsMaxMm": [
+      15.8,
+      31.8,
+      3.2
+    ],
+    "boundsMinMm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cavityDepthMm": 2.2,
+    "components": 1,
+    "featureVolumeSumMm3": 848.85,
+    "firstLayerChamferMm": 0.2,
+    "fitCriticalConnectors": [
+      "tubeF"
+    ],
+    "fitProfile": "example-mk4s-petg-0.4",
+    "genus": 0,
+    "isManifold": true,
+    "minBodyWallAtBedMm": 0.4,
+    "minBodyWallMm": 0.8,
+    "minTubeWallAtBedMm": 0.45,
+    "minTubeWallMm": 0.85,
+    "overhangs": [
+      {
+        "angleDeg": 90.0,
+        "areaMm2": 30.0,
+        "centreMm": [
+          8.0,
+          4.0
+        ],
+        "heightMm": 3.2,
+        "spanMm": 4.8
+      }
+    ],
+    "process": "fdm-0.4",
+    "ribDepthMm": 0.3,
+    "roofMm": 1.0,
+    "roofSpanMm": 4.944,
+    "selfIntersections": 0,
+    "triangleCount": 2640,
+    "tubeInnerDiameterMm": 4.95,
+    "tubeOuterDiameterMm": 6.65,
+    "volumeMm3": 848.418
+  },
+  "report": {
+    "findings": [
+      {
+        "feature": null,
+        "fix": "nothing to change for most parts; for a cleaner underside, turn on the slicer's bridge detection (PrusaSlicer: detect bridging perimeters)",
+        "message": "1 region of downward faces steeper than the 50° maxOverhangDeg of process `fdm-0.4` prints as a short bridge, the longest 4.8 mm, within the 12 mm maxUnsupportedBridgeMm: its underside may come out a little rough",
+        "rule": "OVERHANG.BRIDGED",
+        "severity": "warning",
+        "threshold": 12.0,
+        "value": 4.8
+      }
+    ],
+    "unchecked": [
+      {
+        "reason": "no printer or bed was given, so the part was not checked against a build volume; choose a printer (openbrick validate --printer, or the playground's printer menu) or give a bed (--bed WxDxH)",
+        "rule": "SIZE.BED"
+      }
+    ]
+  }
+}

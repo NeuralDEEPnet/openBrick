@@ -1,4 +1,4 @@
-# Install the openbrick command line
+# Install OpenBrick3D: the command line and the desktop app
 
 The `openbrick` CLI builds brick-compatible parts into printable 3MF and STL
 files, validates them and prints the calibration coupon
@@ -13,7 +13,8 @@ prebuilt binaries for:
 | Windows | x86-64 |
 
 **The commands below work from the first release, v0.1.0, on.** Until that
-release is published, [build from a clone](#from-a-clone).
+release is published, [build from a clone](#from-a-clone). The desktop app
+has installers of its own: see [Desktop app (alpha)](#desktop-app-alpha).
 
 ## macOS and Linux
 
@@ -130,8 +131,10 @@ attestation is how you check them meanwhile.
 | `openbrick-installer.sh`, `openbrick-installer.ps1` | the installers above |
 | `openbrick.cdx.xml` | a [CycloneDX](https://cyclonedx.org) software bill of materials: the Rust crates that go into the CLI, with versions and licences. It errs on the side of listing too much: it is resolved for x86-64 Linux (the other builds differ in a few platform crates), it includes build-time helpers, and cargo-cyclonedx resolves features for the whole workspace, so it can name a crate or two that the CLI does not compile. `THIRD-PARTY-LICENSES.txt` follows the CLI's own dependency tree, for every platform |
 | `sha256.sum`, `*.sha256` | checksums |
+| `OpenBrick3D_<version>_universal.dmg`, `…_universal.app.tar.gz`, `…_x64-setup.exe`, `…_x64_en-US.msi`, `openbrick3d_<version>_amd64.deb`, `openbrick3d-<version>-1.x86_64.rpm` | the desktop app's installers, from the release after v0.1.0 on ([below](#desktop-app-alpha)); each carries the app's `LICENSE` and `THIRD-PARTY-LICENSES.txt` (the licence texts of the crates and of three.js compiled into the app) |
+| `desktop-sha256.sum`, the installers' `*.sha256` | the desktop installers' checksums ([verify a desktop installer](#verify-a-desktop-installer)) |
 | `source.tar.gz` | the repository at the release tag |
-| `dist-manifest.json` | a machine-readable list of all of the above |
+| `dist-manifest.json` | a machine-readable list of the CLI files above (not the desktop installers) |
 
 The `<target>` names are `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
 `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`,
@@ -156,6 +159,89 @@ same ones; otherwise you can delete them too. On Windows, the PowerShell
 installer added the folder to your user `PATH`; remove it in *Settings >
 System > About > Advanced system settings > Environment Variables* if you
 like.
+
+## Desktop app (alpha)
+
+The desktop app is the browser playground in its own window, with your
+system's open and save dialogs ([apps/desktop](../../apps/desktop/README.md)).
+From the release after v0.1.0 on, every release also carries its installers
+(v0.1.0 has none; until the next release,
+[build it from source](../../apps/desktop/README.md#build-and-run)):
+
+| System | File | How to install |
+|--------|------|----------------|
+| macOS 13 or later, Apple silicon and Intel | `OpenBrick3D_<version>_universal.dmg` | open it and drag OpenBrick3D to Applications |
+| | `OpenBrick3D_<version>_universal.app.tar.gz` | the same app as an archive: `tar -xzf` it into Applications |
+| Windows 10 and 11, x86-64 | `OpenBrick3D_<version>_x64-setup.exe` | installs for your user, no administrator needed |
+| | `OpenBrick3D_<version>_x64_en-US.msi` | the same app as an MSI, for managed computers |
+| Linux x86-64 with glibc 2.39 or newer and WebKitGTK 4.1 (Ubuntu 24.04 or newer, Debian 13, Fedora 40 or newer) | `openbrick3d_<version>_amd64.deb` | `sudo apt install ./openbrick3d_<version>_amd64.deb` |
+| | `openbrick3d-<version>-1.x86_64.rpm` | `sudo dnf install ./openbrick3d-<version>-1.x86_64.rpm` |
+
+The Linux packages bring only the app and its licence texts (about 3.7 MiB);
+the package manager adds the webview libraries from your distribution. They
+need glibc 2.39 and say so (`libc6 (>= 2.39)`), so on an older system, such
+as Ubuntu 22.04 or Debian 12, apt and dnf refuse to install them;
+[build it from source](../../apps/desktop/README.md#build-and-run) there.
+There is no AppImage yet: it would copy those libraries into the file, which
+needs a licence decision first
+(apps/desktop/README.md). On Linux, if the window stays blank (seen with some
+NVIDIA drivers), start it with `openbrick-desktop --safe-rendering`.
+
+### The first start of an unsigned app
+
+The installers are not code-signed yet. Signing needs certificates from Apple
+and for Windows, which come with M4
+([docs/plan/09](../plan/09-platforms-and-distribution.md) section 3). Until
+then your system cannot tell who made the app and asks you to confirm it once.
+That is expected and nothing is wrong with your download; if you would rather
+check it first, [verify it](#verify-a-desktop-installer). If you prefer not to
+confirm an unsigned app at all, the CLI and the browser playground do the same
+work.
+
+**macOS.** The app is only ad-hoc signed (Apple silicon runs nothing without
+a signature) and not notarised, so Gatekeeper stops it the first time
+([Apple's guide](https://support.apple.com/guide/mac-help/mh40616/mac)):
+
+- macOS 13 and 14: in Finder, Control-click (or right-click) OpenBrick3D in
+  Applications, choose **Open**, then **Open** again in the dialog.
+- macOS 15 and later: open the app once and close the message, then go to
+  *System Settings > Privacy & Security*, scroll to *Security*, click
+  **Open Anyway** next to the note about OpenBrick3D, confirm with your
+  password, and choose **Open**.
+- Or, in Terminal, remove the download mark from this one app:
+  `xattr -dr com.apple.quarantine /Applications/OpenBrick3D.app`. This also
+  helps if macOS says the app "is damaged and can't be opened": that is the
+  same check, not a broken file.
+
+macOS remembers your choice; later starts need nothing.
+
+**Windows.** SmartScreen shows "Windows protected your PC" for the installer.
+Click **More info**, then **Run anyway**. Your browser may also say the file
+is not commonly downloaded; in Edge choose *… > Keep*, then *Show more >
+Keep anyway*. Installing needs no other step, and the installed app starts
+normally afterwards.
+
+**Linux.** Nothing to confirm; the packages are not signed either, which apt
+and dnf accept for a local file. If your dnf setup refuses unsigned local
+packages, verify the file first and add `--nogpgcheck`.
+
+### Verify a desktop installer
+
+Each installer has a `.sha256` file, `desktop-sha256.sum` lists them all, and
+every one has a GitHub artifact attestation, like the CLI files
+([above](#verify-a-download)):
+
+```sh
+sha256sum -c desktop-sha256.sum --ignore-missing      # macOS: shasum -a 256 -c desktop-sha256.sum --ignore-missing
+gh attestation verify OpenBrick3D_0.2.0_universal.dmg --repo NeuralDEEPnet/openBrick
+```
+
+### Update and uninstall the desktop app
+
+There is no updater yet (M4): to update, install the new release over the old
+one. To uninstall, drag OpenBrick3D from Applications to the Bin on macOS; on
+Windows, use *Settings > Apps > Installed apps > OpenBrick3D > Uninstall*; on
+Linux, `sudo apt remove openbrick3d` or `sudo dnf remove openbrick3d`.
 
 ## Other channels
 

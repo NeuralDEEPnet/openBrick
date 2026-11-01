@@ -5,7 +5,9 @@
 use openbrick_geom::manifold_rust::ManifoldRust;
 use openbrick_geom::Mesh;
 use openbrick_part::eval::MIN_LENGTH_MM;
-use openbrick_part::{evaluate, Built, EvalError, EvalInput, MemoryAssets, ParamValues, PartDoc};
+use openbrick_part::{
+    evaluate, Built, EvalError, EvalInput, MemoryAssets, MeshChecks, ParamValues, PartDoc,
+};
 use openbrick_print::{default_process_profiles, FitProfile, Offsets, ProcessProfile};
 use openbrick_units::STANDARD;
 
@@ -97,6 +99,7 @@ pub fn run_with_assets(
             fit,
             assets,
             skip_unsupported,
+            mesh_checks: MeshChecks::Always,
         },
     )
 }
