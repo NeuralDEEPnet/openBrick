@@ -242,3 +242,72 @@ fn documents_round_trip_byte_for_byte() {
         assert_eq!(back.bom(), m.bom());
     }
 }
+
+/// The footprint centre of `part` at `pose` in X and Z (twice, to stay in integers).
+fn centre2(m: &Model, part: openbrick_catalog::PartId, pose: &LatticePose) -> [i32; 2] {
+    let b = m.body_box(part, pose).unwrap();
+    [b.min[0] + b.max[0], b.min[2] + b.max[2]]
+}
+
+#[test]
+fn over_a_free_baseplate_the_snap_is_centred_within_half_a_stud_of_the_hit() {
+    // The baseplate is 320 LDU wide; hits at least 80 inside it leave every nearby
+    // candidate on the plate, so the nearest lattice pose is always valid.
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed + 4242);
+        let m = on_baseplate();
+        for _ in 0..40 {
+            let (x, z) = (rng.range(-80, 80), rng.range(-80, 80));
+            let p = part(rng.pick(&PARTS));
+            let rot = Rot24(*rng.pick(&yaws()));
+            let s = m.snap(p, rot, &down(x, z)).unwrap().expect("a hit");
+            assert!(s.valid, "seed {seed}: {s:?}");
+            let c = centre2(&m, p, &s.pose());
+            // Centre within 10 LDU (half a stud) of the hit point on each axis.
+            assert!((c[0] - 2 * x).abs() <= 20 && (c[1] - 2 * z).abs() <= 20, "seed {seed}: part {p} at ({x},{z}) snapped to {s:?}, centre*2 {c:?}");
+        }
+    }
+}
+
+#[test]
+fn no_valid_pose_at_the_same_height_is_nearer_than_the_snap() {
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed + 777);
+        let m = build(seed, 25);
+        for _ in 0..25 {
+            let ray = ray_towards(&mut rng, 100);
+            let Some(hit) = m.pick(&ray) else { continue };
+            if hit.normal != [0, -1, 0] {
+                continue; // top faces: the height is fixed, so only X and Z compete
+            }
+            let p = part(rng.pick(&PARTS));
+            let rot = Rot24(*rng.pick(&yaws()));
+            let Some(s) = m.snap(p, rot, &ray).unwrap() else { continue };
+            if !s.valid {
+                continue;
+            }
+            let dist = |c: [i32; 2]| {
+                let dx = f64::from(c[0]) / 2.0 - hit.point[0];
+                let dz = f64::from(c[1]) / 2.0 - hit.point[2];
+                dx * dx + dz * dz
+            };
+            let best = dist(centre2(&m, p, &s.pose()));
+            for i in -3..=3 {
+                for j in -3..=3 {
+                    let other = LatticePose {
+                        pos: [s.pos[0] + 20 * i, s.pos[1], s.pos[2] + 20 * j],
+                        rot,
+                    };
+                    let ok = m.check_pose(p, &other, None).is_ok() && m.mates(p, &other, None).unwrap() > 0;
+                    if ok {
+                        assert!(
+                            best <= dist(centre2(&m, p, &other)) + 1e-9,
+                            "seed {seed}: {s:?} is farther from the hit {:?} than {other:?}",
+                            hit.point
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
