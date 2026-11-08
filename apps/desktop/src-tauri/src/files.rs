@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 /// only keeps a wrong choice (a disk image, a video) from being read whole.
 pub const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
 
-/// The same bound for a part pack (`openbrick-catalog`'s `MAX_PACK_BYTES`, 256 MiB).
-pub const MAX_PACK_READ_BYTES: u64 = 256 * 1024 * 1024;
+/// The same bound for a part pack (`openbrick-catalog`'s `MAX_PACK_BYTES`, 128 MiB).
+pub const MAX_PACK_READ_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Header that carries the suggested file name of a save, percent-encoded
 /// (`encodeURIComponent`) because header values are ASCII.
@@ -131,7 +131,7 @@ impl OpenKind {
     }
 
     /// The most bytes a read of this kind may ask for: [`MAX_READ_BYTES`], except a
-    /// part pack, which is tens of megabytes (the core's own limit is 256 MiB).
+    /// part pack, which is tens of megabytes (the core's own limit is 128 MiB).
     pub fn max_read_bytes(self) -> u64 {
         match self {
             Self::Pack => MAX_PACK_READ_BYTES,
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(OpenKind::Model.extensions(), ["obrick", "json"]);
         assert_eq!(OpenKind::Pack.extensions(), ["obpack"]);
         assert_eq!(OpenKind::Model.max_read_bytes(), MAX_READ_BYTES);
-        assert_eq!(OpenKind::Pack.max_read_bytes(), 256 * 1024 * 1024);
+        assert_eq!(OpenKind::Pack.max_read_bytes(), 128 * 1024 * 1024);
         // Each kind has its own scripted file, so a test folder can hold all of them.
         let names = [
             OpenKind::Svg,

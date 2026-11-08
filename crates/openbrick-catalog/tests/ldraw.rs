@@ -1034,6 +1034,38 @@ fn when_every_part_fails_the_error_says_why() {
     assert!(e.to_string().contains("category filter"), "{e}");
 }
 
+#[test]
+fn hostile_descriptions_are_made_printable_and_short_in_the_pack() {
+    let t = Tmp::new("hostile-text");
+    let desc = format!("Brick \u{202E}gnirts \u{1b}[31m{}", "long ".repeat(400));
+    t.write(
+        "ldraw/parts/3001.dat",
+        &format!(
+            "0 {desc}\n0 Name: 3001.dat\n0 Author: A\u{200B}B\u{202E} {}\n0 !LDRAW_ORG Part UPDATE 2026-01\n0 !LICENSE CC\n0 !CATEGORY Brick\n{CERT}1 16 0 0 0 10 0 0 0 4 0 0 0 10 cube.dat\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 stud.dat\n",
+            "x".repeat(2000)
+        ),
+    );
+    t.write("ldraw/p/cube.dat", &std::fs::read_to_string(fixture().join("ldraw/p/cube.dat")).unwrap());
+    t.write("ldraw/p/stud.dat", &std::fs::read_to_string(fixture().join("ldraw/p/stud.dat")).unwrap());
+    t.write("ldraw/CAreadme.txt", "agreement\u{202E}\nline two\ttab\u{1b}[2J\n");
+    let opts = ImportOptions {
+        include_unconnected: true,
+        ..ImportOptions::default()
+    };
+    let (pack, _) = import(&t.0, &opts, &mut quiet).expect("imports");
+    let p = &pack.header.parts[0];
+    assert!(p.name.chars().count() <= 256 && p.name.ends_with('…'), "{}", p.name);
+    assert!(p.author.chars().count() <= 512);
+    for text in [&p.name, &p.author] {
+        assert!(!openbrick_catalog::text::has_unsafe(text), "{text:?}");
+    }
+    assert!(p.name.contains('\u{FFFD}'));
+    let licence = &pack.header.licences[0].text;
+    assert_eq!(licence, "agreement\u{FFFD}\nline two\ttab\u{FFFD}[2J\n");
+    // And the file reads back through every check.
+    Pack::from_bytes(&pack.to_bytes().unwrap()).expect("the pack reads back");
+}
+
 // ------------------------------------------------------------ properties
 
 #[test]

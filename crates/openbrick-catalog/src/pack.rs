@@ -22,14 +22,19 @@
 //!
 //! Writing is deterministic: the same parts in the same order give the same
 //! bytes. Reading is bounded ([`MAX_PACK_BYTES`], [`MAX_HEADER_BYTES`],
-//! [`MAX_PARTS`], [`MAX_BLOB_BYTES`]) and checks the hash, the header and every
-//! mesh range and index before it hands out anything, so a damaged or hostile
-//! file is an error and never a panic.
+//! [`MAX_PARTS`], [`MAX_BLOB_BYTES`], and a length for every text field) and
+//! checks the hash, the header and every mesh range and index before it hands
+//! out anything, so a damaged or hostile file is an error and never a panic.
+//! The size the blob inflates to is checked against what the header says the
+//! parts need before anything is inflated, and the inflater is never allowed
+//! to go beyond it.
 
 use sha2::{Digest, Sha256};
 
 use crate::builtin::PartMesh;
 use crate::shape::{Aabb, Conn, MAX_BOX_CELLS, MAX_BOX_EXTENT_LDU};
+use crate::text::{has_unsafe, safe};
+use openbrick_units::STUD_PITCH_LDU;
 
 /// The pack format this build writes and reads.
 pub const PACK_FORMAT: u32 = 1;
@@ -37,14 +42,40 @@ pub const PACK_FORMAT: u32 = 1;
 pub const MAGIC: &[u8; 8] = b"OBPACK1\n";
 /// The prefix of the part ids of an LDraw pack: `ld.3001`.
 pub const LDRAW_ID_PREFIX: &str = "ld.";
-/// The largest pack file read, in bytes.
-pub const MAX_PACK_BYTES: usize = 256 * 1024 * 1024;
-/// The largest header, in bytes.
-pub const MAX_HEADER_BYTES: usize = 32 * 1024 * 1024;
+/// The largest pack file read, in bytes. A pack of the 2026-10 library's 1,526 usable parts is 21 MB.
+pub const MAX_PACK_BYTES: usize = 128 * 1024 * 1024;
+/// The largest header, in bytes (that pack's is 2.9 MB).
+pub const MAX_HEADER_BYTES: usize = 16 * 1024 * 1024;
 /// The most parts in one pack.
 pub const MAX_PARTS: usize = 20_000;
-/// The largest mesh blob after inflating, in bytes.
-pub const MAX_BLOB_BYTES: usize = 512 * 1024 * 1024;
+/// The largest mesh blob after inflating, in bytes (that pack's is 62 MB). A reader holds the
+/// compressed pack and the blob at once, in a WebAssembly page that is 4 GiB at most.
+pub const MAX_BLOB_BYTES: usize = 128 * 1024 * 1024;
+/// The longest part name (the LDraw description), in characters.
+pub const MAX_NAME_CHARS: usize = 256;
+/// The longest category, in characters.
+pub const MAX_CATEGORY_CHARS: usize = 64;
+/// The longest author or licence line of a part, in characters.
+pub const MAX_CREDIT_CHARS: usize = 512;
+/// The longest attribution line, in bytes.
+pub const MAX_ATTRIBUTION_BYTES: usize = 64 * 1024;
+/// The most licence texts, and their names and texts together, in bytes.
+pub const MAX_LICENCES: usize = 16;
+pub const MAX_LICENCE_BYTES: usize = 1024 * 1024;
+/// The longest library version, generator and licence name, in characters.
+pub const MAX_LABEL_CHARS: usize = 256;
+/// The joint kinds a part may list.
+pub const JOINT_KINDS: [&str; 4] = ["clip", "hinge", "ball", "socket"];
+
+/// The footprint of a body box in whole studs along X then Z (at least one each).
+pub fn footprint_studs(body: &Aabb) -> [u32; 2] {
+    let w = |a: usize| {
+        let d = i64::from(body.max[a]) - i64::from(body.min[a]);
+        let c = i64::from(STUD_PITCH_LDU);
+        ((d + c - 1) / c).clamp(1, i64::from(u32::MAX)) as u32
+    };
+    [w(0), w(2)]
+}
 /// The most triangles in one part's mesh.
 pub const MAX_TRIANGLES_PER_PART: u32 = 200_000;
 
@@ -149,8 +180,9 @@ pub enum PackError {
     Version(u32),
 }
 
+/// A damaged-pack error. The text is cut and made safe to print: it may repeat parts of the file.
 fn damaged(m: impl Into<String>) -> PackError {
-    PackError::Damaged(m.into())
+    PackError::Damaged(safe(&m.into(), 300))
 }
 
 /// A pack in memory: the header and the inflated mesh blob.
@@ -242,6 +274,9 @@ impl Pack {
     /// The deterministic file bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, PackError> {
         let header = serde_json::to_vec(&self.header).map_err(|e| damaged(e.to_string()))?;
+        if header.len() > MAX_HEADER_BYTES {
+            return Err(damaged("the header is too large for a pack; import fewer parts"));
+        }
         let blob = miniz_oxide::deflate::compress_to_vec(&self.blob, 6);
         let mut out = Vec::with_capacity(8 + 4 + header.len() + 12 + blob.len() + 32);
         out.extend(MAGIC);
@@ -300,14 +335,24 @@ impl Pack {
         if raw_len > MAX_BLOB_BYTES {
             return Err(damaged("the mesh blob is too large"));
         }
+        // What the header's parts need: the blob must be exactly that, so a stream that inflates
+        // to more (a bomb) is refused at the declared size, before any more is allocated.
+        let needed = header.parts.iter().try_fold(0u64, |n, p| {
+            n.checked_add(u64::from(p.vertices) * 12 + u64::from(p.triangles) * 12)
+        });
+        if needed != Some(raw_len as u64) {
+            return Err(damaged(
+                "the size of the mesh blob is not the size the parts need",
+            ));
+        }
         let comp = body
             .get(at + 12..at + 12 + clen)
             .ok_or_else(|| damaged("the mesh blob is cut short"))?;
         if at + 12 + clen != body.len() {
             return Err(damaged("there are extra bytes after the mesh blob"));
         }
-        let blob = miniz_oxide::inflate::decompress_to_vec_with_limit(comp, MAX_BLOB_BYTES)
-            .map_err(|e| damaged(format!("the mesh blob does not inflate: {e:?}")))?;
+        let blob = miniz_oxide::inflate::decompress_to_vec_with_limit(comp, raw_len)
+            .map_err(|e| damaged(format!("the mesh blob does not inflate ({:?})", e.status)))?;
         if blob.len() != raw_len {
             return Err(damaged("the mesh blob has the wrong size"));
         }
@@ -320,6 +365,93 @@ impl Pack {
         Ok(pack)
     }
 
+    /// The text of the header: lengths, and no control, bidirectional or format character in what
+    /// the page shows. The licence texts may hold line breaks and tabs, nothing else of the kind.
+    fn check_header_text(&self) -> Result<(), PackError> {
+        let h = &self.header;
+        let plain = |what: &str, v: &str, max_chars: usize| -> Result<(), PackError> {
+            if v.chars().count() > max_chars {
+                return Err(damaged(format!("the {what} is longer than {max_chars} characters")));
+            }
+            if has_unsafe(v) {
+                return Err(damaged(format!(
+                    "the {what} has a control, direction or other invisible character"
+                )));
+            }
+            Ok(())
+        };
+        let id_ok = !h.id.is_empty()
+            && h.id.len() <= 32
+            && h.id.starts_with(|c: char| c.is_ascii_lowercase())
+            && h.id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !id_ok {
+            return Err(damaged(
+                "the pack id must be 1 to 32 characters: lower-case letters, digits and `-`, starting with a letter",
+            ));
+        }
+        if !["low", "standard", "high"].contains(&h.resolution.as_str()) {
+            return Err(damaged("the resolution is not low, standard or high"));
+        }
+        plain("openbrick version", &h.openbrick, 16)?;
+        plain("library version", &h.library, 32)?;
+        plain("generator", &h.generator, MAX_LABEL_CHARS)?;
+        if h.attribution.len() > MAX_ATTRIBUTION_BYTES || has_unsafe(&h.attribution) {
+            return Err(damaged(
+                "the attribution is longer than 64 KiB or has a control or invisible character",
+            ));
+        }
+        if h.licences.len() > MAX_LICENCES {
+            return Err(damaged(format!("more than {MAX_LICENCES} licence texts")));
+        }
+        let mut total = 0usize;
+        for l in &h.licences {
+            plain("licence name", &l.name, MAX_LABEL_CHARS)?;
+            total = total.saturating_add(l.name.len()).saturating_add(l.text.len());
+            if l.text.chars().any(|c| !matches!(c, '\n' | '\r' | '\t') && crate::text::is_unsafe_char(c)) {
+                return Err(damaged(format!(
+                    "the licence text `{}` has a control, direction or other invisible character",
+                    safe(&l.name, 60)
+                )));
+            }
+        }
+        if total > MAX_LICENCE_BYTES {
+            return Err(damaged("the licence texts are longer than 1 MiB in all"));
+        }
+        Ok(())
+    }
+
+    /// The text a part shows in the palette.
+    fn check_part_text(&self, p: &PackPart) -> Result<(), PackError> {
+        for (what, v, max) in [
+            ("name", p.name.as_str(), MAX_NAME_CHARS),
+            ("category", p.category.as_str(), MAX_CATEGORY_CHARS),
+            ("author", p.author.as_str(), MAX_CREDIT_CHARS),
+            ("licence line", p.license.as_str(), MAX_CREDIT_CHARS),
+        ] {
+            if v.chars().count() > max {
+                return Err(damaged(format!(
+                    "the {what} of part {} is longer than {max} characters",
+                    p.id
+                )));
+            }
+            if has_unsafe(v) {
+                return Err(damaged(format!(
+                    "the {what} of part {} has a control, direction or other invisible character",
+                    p.id
+                )));
+            }
+        }
+        if p.joints.len() > JOINT_KINDS.len() || p.joints.iter().any(|j| !JOINT_KINDS.contains(&j.as_str())) {
+            return Err(damaged(format!(
+                "part {} lists a joint kind other than clip, hinge, ball or socket",
+                p.id
+            )));
+        }
+        Ok(())
+    }
+
     /// The structural checks of a pack read from a file.
     fn check(&self) -> Result<(), PackError> {
         let h = &self.header;
@@ -329,18 +461,23 @@ impl Pack {
         if h.parts.len() > MAX_PARTS {
             return Err(damaged("too many parts"));
         }
+        self.check_header_text()?;
         let mut seen = std::collections::HashSet::new();
         let mut next = 0u64;
         for p in &h.parts {
+            // Plain ASCII only: no control, bidirectional or other invisible character, and no
+            // look-alike letters, in a name that is typed into files and shown in messages.
             if !p.id.starts_with(LDRAW_ID_PREFIX)
+                || p.id.len() <= LDRAW_ID_PREFIX.len()
                 || p.id.len() > 64
-                || p.id.chars().any(char::is_control)
+                || !p.id.chars().all(|c| c.is_ascii_graphic())
             {
                 return Err(damaged(format!(
-                    "part id `{}` is not valid",
+                    "part id `{}` is not valid (`ld.` and a part number, at most 64 printable ASCII characters)",
                     p.id.escape_debug()
                 )));
             }
+            self.check_part_text(p)?;
             if !seen.insert(p.id.as_str()) {
                 return Err(damaged(format!("part id `{}` appears twice", p.id)));
             }
@@ -376,6 +513,14 @@ impl Pack {
                         p.id
                     )));
                 }
+            }
+            if p.studs != footprint_studs(&p.body)
+                || i64::from(p.height_ldu) != i64::from(p.body.max[1]) - i64::from(p.body.min[1])
+            {
+                return Err(damaged(format!(
+                    "part {} says it is {} x {} studs and {} LDU high, but its body box is {:?} to {:?}",
+                    p.id, p.studs[0], p.studs[1], p.height_ldu, p.body.min, p.body.max
+                )));
             }
             if p.body.lattice_cells() > MAX_BOX_CELLS {
                 return Err(damaged(format!(
@@ -519,6 +664,8 @@ mod tests {
                 max: [4000, 0, 4000],
             };
             p.pick = p.body;
+            p.studs = [400, 400];
+            p.height_ldu = 8000;
         }))
         .unwrap_err();
         assert!(e.to_string().contains("lattice cells"), "{e}");
@@ -534,6 +681,173 @@ mod tests {
         }))
         .is_ok());
         assert!(t.elapsed().as_millis() < 1000);
+    }
+
+    /// A pack file assembled by hand from header JSON, a compressed blob and the declared inflated
+    /// size, with a correct checksum: what a hostile writer can make.
+    fn raw_file(header: &[u8], comp: &[u8], raw_len: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend(MAGIC);
+        out.extend((header.len() as u32).to_le_bytes());
+        out.extend(header);
+        out.extend((comp.len() as u32).to_le_bytes());
+        out.extend(raw_len.to_le_bytes());
+        out.extend(comp);
+        let sum = Sha256::digest(&out);
+        out.extend(sum);
+        out
+    }
+
+    fn header_of(p: &Pack) -> serde_json::Value {
+        serde_json::to_value(&p.header).unwrap()
+    }
+
+    #[test]
+    fn text_fields_are_limited_and_free_of_invisible_characters() {
+        let refused = |what: &str, bytes: Vec<u8>, needle: &str| {
+            let e = Pack::from_bytes(&bytes).err().unwrap_or_else(|| panic!("{what}: accepted"));
+            let m = e.to_string();
+            assert!(m.contains(needle), "{what}: {m}");
+            assert!(m.len() < 600, "{what}: a {} byte message", m.len());
+        };
+        let long = |n: usize| "x".repeat(n);
+        // Lengths: the limit passes, one over is refused.
+        for (what, edit, ok_len, bad_len) in [
+            ("name", 0, MAX_NAME_CHARS, MAX_NAME_CHARS + 1),
+            ("category", 1, MAX_CATEGORY_CHARS, MAX_CATEGORY_CHARS + 1),
+            ("author", 2, MAX_CREDIT_CHARS, MAX_CREDIT_CHARS + 1),
+            ("licence line", 3, MAX_CREDIT_CHARS, MAX_CREDIT_CHARS + 1),
+        ] {
+            let set = |n: usize| {
+                forged(|p| match edit {
+                    0 => p.name = long(n),
+                    1 => p.category = long(n),
+                    2 => p.author = long(n),
+                    _ => p.license = long(n),
+                })
+            };
+            assert!(Pack::from_bytes(&set(ok_len)).is_ok(), "{what} at the limit");
+            refused(what, set(bad_len), "longer than");
+        }
+        // A 2 MB name inside a header that is itself within bounds.
+        refused("2 MB name", forged(|p| p.name = long(2 << 20)), "longer than");
+        // A header over its bound is refused when written and when read.
+        let mut p = sample();
+        p.header.parts[0].name = long(20 << 20);
+        assert!(p.to_bytes().is_err());
+        let json = serde_json::to_vec(&p.header).unwrap();
+        refused(
+            "20 MB header",
+            raw_file(&json, &miniz_oxide::deflate::compress_to_vec(&p.blob, 1), p.blob.len() as u64),
+            "header is too large",
+        );
+        // Invisible characters: a right-to-left override, a zero width space, an escape, a newline.
+        for bad in ["a\u{202E}b", "a\u{200B}b", "a\u{1b}[31mb", "a\nb", "a\u{2066}b"] {
+            refused("name", forged(|p| p.name = bad.into()), "invisible");
+            refused("author", forged(|p| p.author = bad.into()), "invisible");
+            refused("licence line", forged(|p| p.license = bad.into()), "invisible");
+            refused("category", forged(|p| p.category = bad.into()), "invisible");
+        }
+        // Ids are plain ASCII.
+        for bad in ["ld.\u{202E}1", "ld.\u{430}1", "ld.1\n", "ld.a b", "x.1", "ld.", &format!("ld.{}", long(70))] {
+            refused("id", forged(|p| p.id = bad.into()), "not valid");
+        }
+        // Joints are the four kinds.
+        assert!(Pack::from_bytes(&forged(|p| p.joints = vec!["clip".into(), "ball".into()])).is_ok());
+        refused("joint", forged(|p| p.joints = vec!["x".into()]), "joint kind");
+    }
+
+    #[test]
+    fn header_text_is_limited_too() {
+        let edit = |f: &dyn Fn(&mut serde_json::Value)| {
+            let p = sample();
+            let mut h = header_of(&p);
+            f(&mut h);
+            raw_file(
+                &serde_json::to_vec(&h).unwrap(),
+                &miniz_oxide::deflate::compress_to_vec(&p.blob, 6),
+                p.blob.len() as u64,
+            )
+        };
+        let refused = |bytes: Vec<u8>, needle: &str| {
+            let m = Pack::from_bytes(&bytes).unwrap_err().to_string();
+            assert!(m.contains(needle) && m.len() < 600, "{m}");
+        };
+        assert!(Pack::from_bytes(&edit(&|_| {})).is_ok());
+        refused(edit(&|h| h["attribution"] = ("a".repeat(70_000)).into()), "attribution");
+        refused(edit(&|h| h["attribution"] = "a\u{202E}b".into()), "attribution");
+        refused(edit(&|h| h["library"] = "a".repeat(33).into()), "library version");
+        refused(edit(&|h| h["library"] = "20\u{202E}26".into()), "library version");
+        refused(edit(&|h| h["generator"] = "a\u{1b}[2J".into()), "generator");
+        refused(edit(&|h| h["id"] = "LDRAW".into()), "pack id");
+        refused(edit(&|h| h["id"] = "ld/../x".into()), "pack id");
+        refused(edit(&|h| h["id"] = "".into()), "pack id");
+        refused(edit(&|h| h["resolution"] = "ultra".into()), "resolution");
+        // Licences: a text with a line break and a tab is fine, an override is not, and the total is bounded.
+        assert!(Pack::from_bytes(&edit(&|h| h["licences"][0]["text"] = "a\n\tb\r\n".into())).is_ok());
+        refused(edit(&|h| h["licences"][0]["text"] = "a\u{202E}b".into()), "licence text");
+        refused(edit(&|h| h["licences"][0]["name"] = "a\nb".into()), "licence name");
+        let big = "a".repeat(600 * 1024);
+        refused(
+            edit(&|h| h["licences"] = serde_json::json!([{"name":"a","text":big},{"name":"b","text":big}])),
+            "licence texts",
+        );
+        refused(
+            edit(&|h| h["licences"] = serde_json::json!(vec![serde_json::json!({"name":"a","text":"b"}); 17])),
+            "licence texts",
+        );
+        // The footprint and height must be the body box's.
+        refused(forged(|p| p.studs = [2, 1]), "studs");
+        refused(forged(|p| p.height_ldu = 25), "studs");
+        refused(forged(|p| p.studs = [0, 1]), "studs");
+    }
+
+    #[test]
+    fn a_blob_that_inflates_beyond_what_the_header_declares_is_refused_without_inflating() {
+        let p = sample();
+        let json = serde_json::to_vec(&p.header).unwrap();
+        // Declares 500 MB: refused before anything is inflated, however small the stream.
+        let zeros = vec![0u8; 8 << 20];
+        let comp = miniz_oxide::deflate::compress_to_vec(&zeros, 1);
+        let t = std::time::Instant::now();
+        let e = Pack::from_bytes(&raw_file(&json, &comp, 500 << 20)).unwrap_err();
+        assert!(e.to_string().contains("too large"), "{e}");
+        // Declares the right size (what the two parts need) but the stream inflates to 8 MiB.
+        let e = Pack::from_bytes(&raw_file(&json, &comp, p.blob.len() as u64)).unwrap_err();
+        assert!(e.to_string().contains("does not inflate"), "{e}");
+        // Declares a size the parts do not need.
+        let e = Pack::from_bytes(&raw_file(&json, &comp, 1 << 20)).unwrap_err();
+        assert!(e.to_string().contains("parts need"), "{e}");
+        assert!(t.elapsed().as_millis() < 1000, "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn error_messages_are_short_whatever_the_file_says() {
+        // serde repeats the value it did not expect: a 2 MB string where a number goes.
+        let p = sample();
+        let mut h = header_of(&p);
+        h["format"] = "x".repeat(2 << 20).into();
+        let bytes = raw_file(
+            &serde_json::to_vec(&h).unwrap(),
+            &miniz_oxide::deflate::compress_to_vec(&p.blob, 6),
+            p.blob.len() as u64,
+        );
+        let m = Pack::from_bytes(&bytes).unwrap_err().to_string();
+        assert!(m.len() < 500, "{} bytes: {}", m.len(), &m[..80]);
+        // A stream that stops half way inflates to a big partial output, which must not be in the message.
+        let mut p = sample();
+        p.header.parts.truncate(1);
+        let mut h = header_of(&p);
+        h["parts"][0]["vertices"] = 700_000.into();
+        h["parts"][0]["triangles"] = 0.into();
+        let need = 700_000u64 * 12;
+        let mut comp = miniz_oxide::deflate::compress_to_vec(&vec![0u8; need as usize], 1);
+        let half = comp.len() / 2;
+        comp.truncate(half);
+        let m = Pack::from_bytes(&raw_file(&serde_json::to_vec(&h).unwrap(), &comp, need))
+            .unwrap_err()
+            .to_string();
+        assert!(m.contains("does not inflate") && m.len() < 300, "{} bytes: {m}", m.len());
     }
 
     #[test]

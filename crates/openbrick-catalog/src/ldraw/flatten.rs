@@ -20,6 +20,7 @@ use std::collections::HashMap;
 
 use super::library::{Library, LibraryError};
 use super::parse::{Bfc, Line, SubFile, Winding};
+use crate::text::safe_msg;
 
 /// A 3 x 3 matrix and a translation: `p -> m p + t`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,9 +103,9 @@ impl Default for Limits {
 pub enum WalkError {
     #[error(transparent)]
     Library(#[from] LibraryError),
-    #[error("sub-files are nested deeper than {0} levels at {1}; the file is damaged or hostile")]
+    #[error("sub-files are nested deeper than {} levels at {}; the file is damaged or hostile", .0, safe_msg(.1))]
     TooDeep(usize, String),
-    #[error("{0} refers to itself through its sub-files")]
+    #[error("{} refers to itself through its sub-files", safe_msg(.0))]
     Cycle(String),
     #[error("more than {0} sub-file references in one part")]
     TooManyRefs(usize),

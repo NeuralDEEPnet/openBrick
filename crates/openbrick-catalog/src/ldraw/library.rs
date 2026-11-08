@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use super::parse::{parse, ParsedFile};
+use crate::text::safe_msg;
 
 /// The largest single file read, in bytes. The biggest official file is a few
 /// megabytes.
@@ -79,13 +80,13 @@ impl Resolution {
 /// Why a library could not be opened or read.
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
-    #[error("cannot open {path}: {message}")]
+    #[error("cannot open {}: {}", safe_msg(path), safe_msg(message))]
     Open { path: String, message: String },
-    #[error("{path} does not look like an LDraw library: it has no `parts` and `p` folders (looked in the folder itself and in its `ldraw` folder); give the folder that holds them, or the official complete.zip")]
+    #[error("{} does not look like an LDraw library: it has no `parts` and `p` folders (looked in the folder itself and in its `ldraw` folder); give the folder that holds them, or the official complete.zip", safe_msg(path))]
     NotALibrary { path: String },
-    #[error("the zip is not usable: {0}")]
+    #[error("the zip is not usable: {}", safe_msg(.0))]
     Zip(String),
-    #[error("{name} is {size} bytes, over the {limit}-byte limit for one file; the library may be damaged")]
+    #[error("{} is {size} bytes, over the {limit}-byte limit for one file; the library may be damaged", safe_msg(name))]
     TooBig {
         name: String,
         size: u64,
@@ -95,7 +96,7 @@ pub enum LibraryError {
     TotalTooBig(u64),
     #[error("the import did more than {0} units of work (sub-file references and triangles) in all; the library is damaged or hostile, or raise the budget")]
     WorkBudget(u64),
-    #[error("cannot read {name}: {message}")]
+    #[error("cannot read {}: {}", safe_msg(name), safe_msg(message))]
     Read { name: String, message: String },
 }
 

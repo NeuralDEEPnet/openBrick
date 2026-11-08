@@ -35,10 +35,11 @@ use super::library::{Library, LibraryError, Resolution};
 use super::parse::Header;
 use crate::builtin::PartMesh;
 use crate::pack::{
-    Connectivity, LicenceText, Pack, PackCounts, PackError, PackHeader, PackPart, LDRAW_ID_PREFIX,
-    MAX_BLOB_BYTES, MAX_PARTS, PACK_FORMAT,
+    footprint_studs, Connectivity, LicenceText, Pack, PackCounts, PackError, PackHeader, PackPart,
+    LDRAW_ID_PREFIX, MAX_BLOB_BYTES, MAX_CATEGORY_CHARS, MAX_CREDIT_CHARS, MAX_NAME_CHARS,
+    MAX_PARTS, PACK_FORMAT,
 };
-use crate::text::safe_msg;
+use crate::text::{is_unsafe_char, safe, safe_msg, REPLACEMENT};
 use crate::LDRAW_ATTRIBUTION;
 
 /// The categories imported unless the caller names others: the system parts
@@ -88,6 +89,9 @@ pub struct ImportOptions {
     /// library and options always end the same way. Default [`DEFAULT_MAX_WORK`].
     pub max_work: u64,
 }
+
+/// The largest licence file the importer copies into a pack, in bytes (the real ones are under 20 KB).
+pub const MAX_LICENCE_FILE_BYTES: usize = 256 * 1024;
 
 /// The default work budget of an import (see [`ImportOptions::max_work`]).
 pub const DEFAULT_MAX_WORK: u64 = 50_000_000;
@@ -394,19 +398,22 @@ pub fn import(
         if d.uncertified_triangles > 0 {
             report.uncertified += 1;
         }
-        let size = [d.body.max[0] - d.body.min[0], d.body.max[2] - d.body.min[2]];
-        let studs = size.map(|v| ((v + 19) / 20).max(1) as u32);
+        let studs = footprint_studs(&d.body);
         parts.push(PackPart {
             id: cand.id,
-            name: cand
-                .header
-                .description
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" "),
-            category: cand.category,
-            author: cand.header.author.clone(),
-            license: cand.header.license.clone(),
+            // Text from the library is cut and made printable here, so the pack reads back.
+            name: safe(
+                &cand
+                    .header
+                    .description
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                MAX_NAME_CHARS,
+            ),
+            category: safe(&cand.category, MAX_CATEGORY_CHARS),
+            author: safe(&cand.header.author, MAX_CREDIT_CHARS),
+            license: safe(&cand.header.license, MAX_CREDIT_CHARS),
             connectivity,
             joints: d.joints.iter().map(|s| (*s).to_string()).collect(),
             studs,
@@ -447,6 +454,24 @@ pub fn import(
         ),
     ] {
         if let Some(text) = lib.root_text(file) {
+            if text.len() > MAX_LICENCE_FILE_BYTES {
+                return Err(ImportError::Library(LibraryError::TooBig {
+                    name: file.into(),
+                    size: text.len() as u64,
+                    limit: MAX_LICENCE_FILE_BYTES,
+                }));
+            }
+            // Line breaks and tabs stay; any other control or invisible character is replaced.
+            let text = text
+                .chars()
+                .map(|c| {
+                    if !matches!(c, '\n' | '\r' | '\t') && is_unsafe_char(c) {
+                        REPLACEMENT
+                    } else {
+                        c
+                    }
+                })
+                .collect();
             licences.push(LicenceText {
                 name: name.into(),
                 text,

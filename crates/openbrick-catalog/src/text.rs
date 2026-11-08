@@ -39,18 +39,23 @@ pub fn has_unsafe(s: &str) -> bool {
     s.chars().any(is_unsafe_char)
 }
 
-/// `s` with every unsafe character replaced by U+FFFD and at most `max_chars` characters, with an
-/// ellipsis when it was cut.
+/// `s` with every unsafe character replaced by U+FFFD and at most `max_chars` characters (`max_chars`
+/// at least 1), the last one an ellipsis when it was cut.
 pub fn safe(s: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    for (n, c) in s.chars().enumerate() {
-        if n == max_chars {
-            out.push('…');
+    let mut out: Vec<char> = Vec::new();
+    let mut cut = false;
+    for c in s.chars() {
+        if out.len() == max_chars.max(1) {
+            cut = true;
             break;
         }
         out.push(if is_unsafe_char(c) { REPLACEMENT } else { c });
     }
-    out
+    if cut {
+        out.pop();
+        out.push('…');
+    }
+    out.into_iter().collect()
 }
 
 /// [`safe`] with the length every message uses.
@@ -71,7 +76,8 @@ mod tests {
         assert_eq!(safe("a\u{1b}[31mred\u{7}", 50), "a\u{FFFD}[31mred\u{FFFD}");
         assert_eq!(safe("ab\u{202E}cd\u{2066}e\u{200B}f\u{FEFF}", 50), "ab\u{FFFD}cd\u{FFFD}e\u{FFFD}f\u{FFFD}");
         assert_eq!(safe("line\nbreak\r\u{85}\u{2028}", 50), "line\u{FFFD}break\u{FFFD}\u{FFFD}\u{FFFD}");
-        assert_eq!(safe(&"x".repeat(1000), 5), "xxxxx…");
+        assert_eq!(safe(&"x".repeat(1000), 5), "xxxx…");
+        assert_eq!(safe("12345", 5), "12345", "exactly the limit is not cut");
         assert_eq!(safe("é日本語", 50), "é日本語");
         assert!(has_unsafe("a\u{202E}") && !has_unsafe("plain é"));
     }
