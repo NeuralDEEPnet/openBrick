@@ -38,7 +38,8 @@
 //   asmPick        ray                                      a hit or null
 //   asmApply       command                                  { id, ...state }; the engine refuses with a message
 //   asmUndo, asmRedo, asmState                              the state (assemblerState() below)
-//   asmLoad        text                                     the state of the model in a .obrick document
+//   asmLoad        text                                     the state of the model in a .obrick document, and `notices`
+//                                                            (sentences: the model opened with another build of its pack)
 //   asmSave        name                                     { text }
 //   asmSample      id                                       { text } of a sample model
 //   asmTurn        rot, quarterTurns                        { rot }: the rotation index turned about the vertical axis
@@ -633,8 +634,11 @@ export function dispatch(core, request, now) {
         break;
       case "asmLoad":
         if (typeof request.text !== "string") throw new TypeError("asmLoad needs the .obrick document as text");
-        assembler(core).load(request.text);
-        result = assemblerState(core);
+        {
+          // `notices`: sentences about a model that opened with another build of the pack it was made with.
+          const notices = JSON.parse(assembler(core).load(request.text));
+          result = { ...assemblerState(core), notices };
+        }
         break;
       case "asmSave":
         result = { text: assembler(core).save(String(request.name ?? "Model")) };

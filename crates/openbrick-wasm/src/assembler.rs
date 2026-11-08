@@ -340,8 +340,10 @@ impl Assembler {
     }
 
     /// Replace the model with a `.obrick` document; the history starts empty.
-    /// A document that does not load leaves the model as it was.
-    pub fn load(&mut self, text: &str) -> Result<(), CoreError> {
+    /// A document that does not load leaves the model as it was. Returns the notices of a
+    /// model that opened but with a pack other than the one it was made with, as a JSON array
+    /// of sentences (`[]` for none).
+    pub fn load(&mut self, text: &str) -> Result<String, CoreError> {
         if text.len() > MAX_MODEL_BYTES {
             return Err(CoreError(format!(
                 "the file is {} bytes; a model file can be at most {MAX_MODEL_BYTES} bytes ({} MiB)",
@@ -349,10 +351,10 @@ impl Assembler {
                 MAX_MODEL_BYTES / (1024 * 1024)
             )));
         }
-        let m = Model::from_text(catalog()?, text).map_err(engine)?;
+        let (m, notices) = Model::from_text_with_notices(catalog()?, text).map_err(engine)?;
         self.model = m;
         self.revision += 1;
-        Ok(())
+        Ok(json!(notices).to_string())
     }
 
     /// The model as `.obrick` text named `name` (deterministic).

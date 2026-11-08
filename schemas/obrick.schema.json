@@ -44,6 +44,7 @@
     "requires": {
       "description": "Part packs the model needs besides the built-in catalog (an LDraw pack, .obpack): written when a part of a pack is placed, so a reader can say which pack to load. Parts of the pack have ids `ld.<number>`. Optional.",
       "type": "array",
+      "maxItems": 16,
       "items": {
         "type": "object",
         "required": [
@@ -55,12 +56,13 @@
           "pack": {
             "description": "The pack's name: ldraw.",
             "type": "string",
-            "minLength": 1
+            "pattern": "^[a-z0-9-]{1,32}$"
           },
           "library": {
             "description": "The library version the pack was made from, for example 2026-10.",
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "maxLength": 32
           },
           "fingerprint": {
             "description": "SHA-256 of the pack file, 64 hex digits.",

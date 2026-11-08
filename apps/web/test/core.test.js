@@ -364,10 +364,10 @@ const fixtureLibrary = new URL("../../../crates/openbrick-catalog/tests/fixtures
 const skipPack = skip || (existsSync(cli) ? false : "target/debug/openbrick is not built; run `cargo build -p openbrick`");
 
 /** The mini pack the CLI makes from the synthetic fixture library (ours, written for the tests). */
-function miniPack() {
+function miniPack(extra = []) {
   const dir = mkdtempSync(join(tmpdir(), "openbrick-pack-"));
   const out = join(dir, "mini.obpack");
-  const r = spawnSync(cli, ["catalog", "import", fixtureLibrary, "--out", out, "--category-filter", "Brick,Plate,Tile,Technic"], { encoding: "utf8" });
+  const r = spawnSync(cli, ["catalog", "import", fixtureLibrary, "--out", out, "--category-filter", "Brick,Plate,Tile,Technic", ...extra], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   const bytes = new Uint8Array(readFileSync(out));
   rmSync(dir, { recursive: true });
@@ -454,5 +454,13 @@ test("the real core loads an LDraw pack: parts join the catalog, models say whic
   assert.equal(ok({ type: "asmInit" }).parts.length, 14);
   // Loading it again works (the page does this when a worker is replaced).
   ok({ type: "asmLoadPack", bytes });
-  assert.equal(ok({ type: "asmLoad", text: placed.text }).stats.parts, 2);
+  const again = ok({ type: "asmLoad", text: placed.text });
+  assert.equal(again.stats.parts, 2);
+  assert.deepEqual(again.notices, [], "the pack the model was made with: nothing to say");
+  // Another build of the pack (the low-resolution primitives): the model opens, and says so.
+  ok({ type: "asmLoadPack", bytes: miniPack(["--resolution", "low"]) });
+  const other = ok({ type: "asmLoad", text: placed.text });
+  assert.equal(other.stats.parts, 2, "a pack of another version still opens the model");
+  assert.equal(other.notices.length, 1);
+  assert.match(other.notices[0], /different build of the `ldraw` pack/);
 });

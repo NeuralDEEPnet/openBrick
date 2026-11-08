@@ -272,3 +272,98 @@ fn a_pack_part_whose_studs_are_off_the_stud_grid_is_placed_where_it_snaps() {
         .unwrap_err();
     assert!(matches!(e, EngineError::OffGrid { .. }), "{e}");
 }
+
+/// The same pack with another library version (so another fingerprint) or another resolution.
+fn other_pack(library: Option<&str>) -> Pack {
+    let base = pack();
+    let mut header = base.header.clone();
+    match library {
+        Some(l) => header.library = l.into(),
+        None => header.generator = "another build".into(),
+    }
+    let meshes: Vec<_> = (0..header.parts.len())
+        .map(|i| base.mesh(i).unwrap())
+        .collect();
+    Pack::build(header, &meshes).unwrap()
+}
+
+#[test]
+fn a_pack_of_another_version_opens_the_model_with_a_notice() {
+    let c = with_pack();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.3003", [0, -24, 0], 0)).unwrap();
+    let text = m.to_text("one", None);
+    // The same pack: no notice.
+    let (back, notices) = Model::from_text_with_notices(c, &text).unwrap();
+    assert!(notices.is_empty(), "{notices:?}");
+    assert_eq!(back.len(), 1);
+    // Another library version: the model opens and the notice says both versions.
+    let newer = Catalog::builtin().unwrap().with_pack(&other_pack(Some("2027-02")));
+    let (back, notices) = Model::from_text_with_notices(&newer, &text).unwrap();
+    assert_eq!(back.len(), 1, "a pack of another version still opens the model");
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("2026-01") && notices[0].contains("2027-02"), "{}", notices[0]);
+    assert!(notices[0].contains("fingerprint"), "{}", notices[0]);
+    // The same library version, another build of the pack.
+    let rebuilt = Catalog::builtin().unwrap().with_pack(&other_pack(None));
+    let (_, notices) = Model::from_text_with_notices(&rebuilt, &text).unwrap();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("another build"), "{}", notices[0]);
+    // A model of built-in parts only, whatever it says it requires, has nothing to differ in.
+    let mut plain = Model::new(c);
+    plain.apply(&add("ob.brick-2x4", [0, -24, 0], 0)).unwrap();
+    let doc = plain.to_text("p", None);
+    assert!(Model::from_text_with_notices(&newer, &doc).unwrap().1.is_empty());
+    // `from_text` is unchanged: it opens with another pack and says nothing.
+    assert!(Model::from_text(&newer, &text).is_ok());
+}
+
+#[test]
+fn requires_is_checked_in_the_core_like_the_schema() {
+    let c = with_pack();
+    let mut m = Model::new(c);
+    m.apply(&add("ob.brick-2x4", [0, -24, 0], 0)).unwrap();
+    let base = m.to_text("p", None);
+    let good = r#"{"pack":"ldraw","library":"2026-01","fingerprint":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+    let with = |requires: &str| base.replacen("\"palette\"", &format!("\"requires\": [{requires}],\n  \"palette\""), 1);
+    assert!(Model::from_text(c, &with(good)).is_ok());
+    let many = vec![good; 17].join(",");
+    let bad_fp = good.replace("0000000000000000000000000000000000000000000000000000000000000000", "ABC");
+    let upper = good.replace("00000000", "ABCDEF00");
+    let long_lib = good.replace("2026-01", &"9".repeat(33));
+    let bidi_lib = good.replace("2026-01", "20\\u202e26");
+    let empty_pack = good.replace("\"ldraw\"", "\"\"");
+    let odd_pack = good.replace("\"ldraw\"", "\"LD/RAW\"");
+    for (what, requires) in [
+        ("17 entries", many.as_str()),
+        ("short fingerprint", bad_fp.as_str()),
+        ("upper-case fingerprint", upper.as_str()),
+        ("long library", long_lib.as_str()),
+        ("bidi library", bidi_lib.as_str()),
+        ("empty pack", empty_pack.as_str()),
+        ("odd pack", odd_pack.as_str()),
+    ] {
+        let e = Model::from_text(c, &with(requires)).map(|_| ()).unwrap_err();
+        assert!(matches!(e, DocError::Requires(_)), "{what}: {e}");
+        assert!(e.to_string().starts_with("`requires`"), "{what}: {e}");
+        assert!(e.to_string().len() < 400, "{what}: {e}");
+    }
+    // 16 entries are read.
+    assert!(Model::from_text(c, &with(&vec![good; 16].join(","))).is_ok());
+}
+
+#[test]
+fn error_messages_repeat_only_a_short_printable_part_of_the_document() {
+    let long = "x".repeat(100_000);
+    let doc = format!(
+        r#"{{"openbrick":"1.0","kind":"model","name":"x","units":"ldu","frame":"ldraw-y-down","catalog":"openbrick-builtin@1","palette":[],"bom":[],
+        "submodels":[{{"id":"main","instances":[{{"id":1,"part":"ld.\u202e{long}","pose":{{"pos":[10,-24,10],"rot":0}},"colour":4}}]}}]}}"#
+    );
+    let e = Model::from_text(catalog(), &doc).map(|_| ()).unwrap_err();
+    assert!(e.to_string().len() < 800, "{} bytes", e.to_string().len());
+    assert!(!e.to_string().contains('\u{202e}'), "{e}");
+    let e = Model::from_text(catalog(), &doc.replace("\"model\"", &format!("\"{long}\"")))
+        .map(|_| ())
+        .unwrap_err();
+    assert!(e.to_string().len() < 400, "{} bytes", e.to_string().len());
+}
