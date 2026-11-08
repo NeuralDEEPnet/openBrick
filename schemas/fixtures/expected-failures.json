@@ -28,6 +28,10 @@
     "part-unknown-up-face.json": { "pointer": "/print/up", "keyword": "anyOf", "message": "\"upside\"" },
     "printer-zero-height.json": { "pointer": "/buildVolumeMm/2", "keyword": "exclusiveMinimum", "message": "0 is less than or equal to the minimum of 0" },
     "printer-missing-source.json": { "pointer": "", "keyword": "required", "message": "\"source\"" },
+    "palette-bad-rgb.json": { "pointer": "/colours/0/rgb", "keyword": "pattern", "message": "\"red\"" },
+    "palette-missing-source.json": { "pointer": "", "keyword": "required", "message": "\"source\"" },
+    "obrick-bad-rotation.json": { "pointer": "/submodels/0/instances/0/pose/rot", "keyword": "maximum", "message": "24" },
+    "obrick-wrong-units.json": { "pointer": "/units", "keyword": "const", "message": "ldu" },
     "part-preset-without-name.json": { "pointer": "/presets/0", "keyword": "required", "message": "\"name\"" }
   }
 }

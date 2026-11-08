@@ -1,0 +1,44 @@
+{
+  "openbrick": "1.0",
+  "kind": "model",
+  "name": "Rainbow staircase",
+  "credit": {"author":"OpenBrick3D contributors"},
+  "units": "ldu",
+  "frame": "ldraw-y-down",
+  "catalog": "openbrick-builtin@1",
+  "palette": [
+    {"code":10000,"name":"Neuraldeep blue","rgb":"#2f6db5"},
+    {"code":15,"name":"White","rgb":"#f2f1ec"},
+    {"code":4,"name":"Red","rgb":"#c4281f"},
+    {"code":25,"name":"Orange","rgb":"#ee8a1f"},
+    {"code":14,"name":"Yellow","rgb":"#f4c520"},
+    {"code":2,"name":"Green","rgb":"#2a7a45"},
+    {"code":1,"name":"Blue","rgb":"#1f4f9c"},
+    {"code":70,"name":"Brown","rgb":"#5c3a24"}
+  ],
+  "submodels": [
+    {
+      "id": "main",
+      "instances": [
+        {"id":1,"part":"ob.baseplate-16x16","pose":{"pos":[0,-8,0],"rot":0},"colour":2},
+        {"id":2,"part":"ob.brick-2x4","pose":{"pos":[-80,-32,0],"rot":0},"colour":10000},
+        {"id":3,"part":"ob.brick-2x4","pose":{"pos":[-40,-56,0],"rot":0},"colour":1},
+        {"id":4,"part":"ob.brick-2x4","pose":{"pos":[0,-80,0],"rot":0},"colour":15},
+        {"id":5,"part":"ob.brick-2x4","pose":{"pos":[40,-104,0],"rot":0},"colour":14},
+        {"id":6,"part":"ob.brick-2x4","pose":{"pos":[80,-128,0],"rot":0},"colour":25},
+        {"id":7,"part":"ob.brick-2x4","pose":{"pos":[120,-152,0],"rot":0},"colour":4},
+        {"id":8,"part":"ob.plate-2x4","pose":{"pos":[120,-160,0],"rot":0},"colour":70}
+      ]
+    }
+  ],
+  "bom": [
+    {"part":"ob.brick-2x4","name":"Brick 2 x 4","colour":1,"colourName":"Blue","count":1},
+    {"part":"ob.brick-2x4","name":"Brick 2 x 4","colour":4,"colourName":"Red","count":1},
+    {"part":"ob.brick-2x4","name":"Brick 2 x 4","colour":14,"colourName":"Yellow","count":1},
+    {"part":"ob.brick-2x4","name":"Brick 2 x 4","colour":15,"colourName":"White","count":1},
+    {"part":"ob.brick-2x4","name":"Brick 2 x 4","colour":25,"colourName":"Orange","count":1},
+    {"part":"ob.brick-2x4","name":"Brick 2 x 4","colour":10000,"colourName":"Neuraldeep blue","count":1},
+    {"part":"ob.plate-2x4","name":"Plate 2 x 4","colour":70,"colourName":"Brown","count":1},
+    {"part":"ob.baseplate-16x16","name":"Baseplate 16 x 16","colour":2,"colourName":"Green","count":1}
+  ]
+}

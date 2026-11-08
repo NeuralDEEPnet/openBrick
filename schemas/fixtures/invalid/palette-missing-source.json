@@ -1,0 +1,23 @@
+{
+  "openbrick": "1.0",
+  "kind": "palette",
+  "id": "minimal",
+  "name": "Two colours",
+  "credit": {
+    "author": "Test"
+  },
+  "defaultPart": 4,
+  "defaultBase": 2,
+  "colours": [
+    {
+      "code": 4,
+      "name": "Red",
+      "rgb": "#c4281f"
+    },
+    {
+      "code": 2,
+      "name": "Green",
+      "rgb": "#2a7a45"
+    }
+  ]
+}

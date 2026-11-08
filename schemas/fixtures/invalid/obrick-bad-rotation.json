@@ -1,0 +1,47 @@
+{
+  "openbrick": "1.0",
+  "kind": "model",
+  "name": "Minimal",
+  "credit": {
+    "author": "Test"
+  },
+  "units": "ldu",
+  "frame": "ldraw-y-down",
+  "catalog": "openbrick-builtin@1",
+  "palette": [
+    {
+      "code": 2,
+      "name": "Green",
+      "rgb": "#2a7a45"
+    }
+  ],
+  "submodels": [
+    {
+      "id": "main",
+      "instances": [
+        {
+          "id": 1,
+          "part": "ob.baseplate-16x16",
+          "pose": {
+            "pos": [
+              0,
+              -8,
+              0
+            ],
+            "rot": 24
+          },
+          "colour": 2
+        }
+      ]
+    }
+  ],
+  "bom": [
+    {
+      "part": "ob.baseplate-16x16",
+      "name": "Baseplate 16 x 16",
+      "colour": 2,
+      "colourName": "Green",
+      "count": 1
+    }
+  ]
+}

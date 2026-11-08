@@ -5110,6 +5110,8 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "jsonschema",
+ "openbrick-catalog",
+ "openbrick-engine",
  "openbrick-part",
  "openbrick-print",
  "openbrick-units",
