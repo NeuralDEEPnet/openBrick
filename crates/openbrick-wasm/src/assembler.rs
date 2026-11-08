@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use openbrick_catalog::{builtin, Catalog, Lod, PartMesh, BUILTIN, CATALOG_ID};
-use openbrick_engine::{Command, Model, Ray};
+use openbrick_catalog::{builtin, Catalog, Lod, Origin, Pack, PartMesh, BUILTIN, CATALOG_ID};
+use openbrick_engine::{Command, Model, ModelDoc, Ray};
 use openbrick_units::{Credit, Rot24, STANDARD};
 use serde_json::json;
 
@@ -38,8 +38,116 @@ const SAMPLES: [(&str, &str, &str, &str); 2] = [
     ),
 ];
 
+/// The LDraw pack this core has loaded, and the catalog built from it.
+struct Loaded {
+    pack: Arc<Pack>,
+    catalog: &'static Catalog,
+}
+
+static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
+/// Catalogs made so far, by pack fingerprint: a model borrows its catalog for as
+/// long as it lives, so a catalog is leaked once per distinct pack and reused when
+/// the same pack is loaded again (a worker restart). At most [`MAX_PACK_LOADS`]
+/// distinct packs per core; a catalog is only the parts' boxes and connectors,
+/// never their meshes.
+static CATALOGS: Mutex<Vec<(String, &'static Catalog)>> = Mutex::new(Vec::new());
+const MAX_PACK_LOADS: usize = 16;
+
+fn lock<T>(m: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>, CoreError> {
+    m.lock()
+        .map_err(|_| CoreError("the assembler's state is poisoned; reload the page".into()))
+}
+
 fn catalog() -> Result<&'static Catalog, CoreError> {
+    if let Some(l) = lock(&LOADED)?.as_ref() {
+        return Ok(l.catalog);
+    }
     Catalog::builtin().map_err(|e| CoreError(e.to_string()))
+}
+
+fn loaded_pack() -> Result<Option<Arc<Pack>>, CoreError> {
+    Ok(lock(&LOADED)?.as_ref().map(|l| l.pack.clone()))
+}
+
+/// Load an LDraw pack (`.obpack` bytes) into this core: its parts join the catalog
+/// after the built-in ones (part numbers of the built-ins and every built-in id stay
+/// as they are). New assemblers (`new Assembler()`) place its parts; one made before
+/// keeps the catalog it was made with, so the page makes a new one and loads its
+/// model text into it. Returns the pack's info as JSON: `{ id, library,
+/// fingerprint, attribution, licences: [{ name, text }], counts, parts, resolution,
+/// generator }`. A file that is not a pack, or is damaged, is an error and changes nothing.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn assembler_load_pack(bytes: &[u8]) -> Result<String, CoreError> {
+    let pack = Pack::from_bytes(bytes).map_err(engine)?;
+    let base = Catalog::builtin().map_err(|e| CoreError(e.to_string()))?;
+    let fingerprint = pack.fingerprint().to_string();
+    let cat = {
+        let mut made = lock(&CATALOGS)?;
+        if let Some((_, c)) = made.iter().find(|(f, _)| *f == fingerprint) {
+            *c
+        } else {
+            if made.len() >= MAX_PACK_LOADS {
+                return Err(CoreError(format!(
+                    "{MAX_PACK_LOADS} different packs were loaded in this session; reload the page to load another"
+                )));
+            }
+            let leaked: &'static Catalog = Box::leak(Box::new(base.with_pack(&pack)));
+            made.push((fingerprint.clone(), leaked));
+            leaked
+        }
+    };
+    let info = pack_info(&pack);
+    *lock(&LOADED)? = Some(Loaded {
+        pack: Arc::new(pack),
+        catalog: cat,
+    });
+    Ok(info.to_string())
+}
+
+/// Forget the loaded LDraw pack; new assemblers have the built-in catalog only.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn assembler_unload_pack() -> Result<(), CoreError> {
+    *lock(&LOADED)? = None;
+    Ok(())
+}
+
+fn pack_info(pack: &Pack) -> serde_json::Value {
+    let h = &pack.header;
+    json!({
+        "id": h.id, "library": h.library, "fingerprint": pack.fingerprint(),
+        "attribution": h.attribution, "licences": h.licences, "counts": h.counts,
+        "parts": h.parts.len(), "resolution": h.resolution, "generator": h.generator,
+        "format": h.format,
+    })
+}
+
+/// What a `.obrick` document needs that this core cannot give: `{ requires: [{ pack,
+/// library, fingerprint }], missing: [part ids, first 20], missingCount }`. The page
+/// asks before it loads a model, so a model that needs a pack can offer to add it
+/// instead of failing.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn assembler_model_needs(text: &str) -> Result<String, CoreError> {
+    if text.len() > MAX_MODEL_BYTES {
+        return Err(CoreError(format!(
+            "the file is {} bytes; a model file can be at most {MAX_MODEL_BYTES} bytes",
+            text.len()
+        )));
+    }
+    let doc = ModelDoc::parse(text).map_err(engine)?;
+    let c = catalog()?;
+    let mut missing: Vec<String> = Vec::new();
+    let mut count = 0usize;
+    for s in &doc.submodels {
+        for i in &s.instances {
+            if c.find(&i.part).is_none() {
+                count += 1;
+                if missing.len() < 20 && !missing.contains(&i.part) {
+                    missing.push(i.part.clone());
+                }
+            }
+        }
+    }
+    Ok(json!({ "requires": doc.requires, "missing": missing, "missingCount": count }).to_string())
 }
 
 fn engine<E: std::fmt::Display>(e: E) -> CoreError {
@@ -49,23 +157,41 @@ fn engine<E: std::fmt::Display>(e: E) -> CoreError {
 /// The catalog the assembler places parts from, its palette, the 24 rotation
 /// matrices and the yaw rotations the page offers, as JSON: `{ catalog, lduMm,
 /// maxModelBytes, studPitchLdu, plateLdu,
-/// parts: [{ id, name, body, studs: [x, z], heightLdu, base, bodyBox, pickBox,
-/// connectors }], palette, rotations (24 row-major 3x3 matrices), yaws (the
+/// parts: [{ id, name, body, origin, category, connectivity, joints, studs: [x, z],
+/// heightLdu, base, bodyBox, pickBox, connectors, author?, license? }], pack (the
+/// loaded LDraw pack's info, or null), palette, rotations (24 row-major 3x3 matrices), yaws (the
 /// rotation index of 0 to 3 quarter turns), samples: [{ id, label, file }] }`.
 /// Boxes are `{ min, max }` in integer LDU in the part's frame.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn assembler_catalog_json() -> Result<String, CoreError> {
     let c = catalog()?;
+    let pack = loaded_pack()?;
+    let first_pack = c
+        .parts
+        .iter()
+        .take_while(|p| p.origin == Origin::Builtin)
+        .count();
     let parts: Vec<_> = c
         .parts
         .iter()
-        .map(|p| {
-            json!({
-                "id": p.id, "name": p.name, "body": p.body, "studs": p.studs,
-                "heightLdu": p.height_ldu, "base": p.base,
+        .enumerate()
+        .map(|(i, p)| {
+            let mut v = json!({
+                "id": p.id, "name": p.name, "body": p.body, "origin": p.origin,
+                "category": p.category, "connectivity": p.connectivity, "joints": p.joints,
+                "studs": p.studs, "heightLdu": p.height_ldu, "base": p.base,
                 "bodyBox": p.shape.body, "pickBox": p.shape.pick,
                 "connectors": p.shape.connectors.len(),
-            })
+            });
+            if let Some(pp) = pack.as_ref().and_then(|k| {
+                i.checked_sub(first_pack)
+                    .and_then(|j| k.header.parts.get(j))
+            }) {
+                v["author"] = json!(pp.author);
+                v["license"] = json!(pp.license);
+                v["triangles"] = json!(pp.triangles);
+            }
+            v
         })
         .collect();
     let rotations: Vec<_> = Rot24::all().map(|r| r.matrix()).collect();
@@ -78,9 +204,11 @@ pub fn assembler_catalog_json() -> Result<String, CoreError> {
         "catalog": CATALOG_ID,
         "lduMm": STANDARD.get().ldu_mm,
         "maxModelBytes": MAX_MODEL_BYTES,
+        "maxPackBytes": openbrick_catalog::pack::MAX_PACK_BYTES,
         "studPitchLdu": openbrick_units::STUD_PITCH_LDU,
         "plateLdu": openbrick_units::PLATE_LDU,
         "parts": parts,
+        "pack": pack.as_ref().map(|p| pack_info(p)),
         "palette": openbrick_catalog::Palette::bundled(),
         "rotations": rotations,
         "yaws": yaws,
@@ -148,11 +276,28 @@ fn cached(index: u32, lod: Lod) -> Result<Arc<PartMesh>, CoreError> {
     Ok(mesh)
 }
 
-/// The render mesh of catalog part number `index`, built once by the part
-/// evaluator and cached. `detail` false gives the cheap level (8 segments per
-/// stud instead of 24): the page uses it for the baseplate and for big models.
+/// The render mesh of catalog part number `index`: a built-in part is built once by
+/// the part evaluator and cached (`detail` false gives the cheap level, 8 segments
+/// per stud instead of 24; the page uses it for the baseplate and for big models);
+/// a part of the loaded LDraw pack is read from the pack, which has one level
+/// (chosen at import), so `detail` does not matter for it.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn assembler_part_mesh(index: u32, detail: bool) -> Result<AsmMesh, CoreError> {
+    if index as usize >= BUILTIN.len() {
+        let pack = loaded_pack()?.ok_or_else(|| {
+            CoreError(format!(
+                "there is no catalog part number {index}; no LDraw pack is loaded"
+            ))
+        })?;
+        let m = pack
+            .mesh(index as usize - BUILTIN.len())
+            .ok_or_else(|| CoreError(format!("there is no catalog part number {index}")))?;
+        return Ok(AsmMesh {
+            positions: m.positions.iter().flatten().copied().collect(),
+            triangles: (m.indices.len() / 3) as u32,
+            indices: m.indices,
+        });
+    }
     let m = cached(index, if detail { Lod::Detail } else { Lod::Low })?;
     Ok(AsmMesh {
         positions: m.positions.iter().flatten().copied().collect(),

@@ -17,5 +17,10 @@ openbrick-units = { workspace = true }
 # Part shapes (boxes and connectors derived by the evaluator) and the palette.
 openbrick-catalog = { workspace = true }
 
+[dev-dependencies]
+# tests/ldraw_parts.rs places parts of a pack imported from the synthetic mini library
+# of the catalog's tests (the importer is a feature the library build leaves off).
+openbrick-catalog = { workspace = true, features = ["import"] }
+
 [lints]
 workspace = true

@@ -9,8 +9,8 @@ use openbrick_catalog::{Aabb, Catalog, CatalogPart, Conn, Palette, PartId};
 use openbrick_units::{LatticePose, Rot24};
 
 use crate::history::History;
-use crate::on_stud_grid;
 use crate::spatial::{ConnHash, SpatialHash};
+use crate::{on_fine_grid, on_stud_grid};
 
 /// Id of a placed part, unique within a model and kept by `.obrick` files.
 /// Small integers in placement order; ULIDs arrive with collaboration (docs/plan/07
@@ -92,7 +92,7 @@ pub enum EngineError {
     Collides { with: InstanceId, name: String },
     #[error("the part would reach {depth} LDU below the ground; place it on the ground or on another part")]
     BelowGround { depth: i32 },
-    #[error("the part's connectors would be off the stud grid at {pos:?}; positions come from snapping, or put each stud on an odd multiple of half a stud in X and Z and a whole plate in Y")]
+    #[error("the part's studs or receptacles would be off the lattice at {pos:?}; positions come from snapping, or put each one on a multiple of half a stud in X and Z and of half a plate in Y")]
     OffGrid { pos: [i32; 3] },
     #[error("there is nothing to undo")]
     NothingToUndo,
@@ -234,11 +234,18 @@ impl<'c> Model<'c> {
                 limit: crate::MAX_COORD,
             });
         }
+        // Vertical studs and receptacles must be on the lattice: the stud grid for a
+        // built-in part, the finer one (half a stud, half a plate) for a part of an LDraw
+        // pack, whose studs may be half a stud apart. A part turned on its side is
+        // checked by its box alone, and pins and axles have no grid of their own.
+        let builtin = self.part(part)?.origin == openbrick_catalog::Origin::Builtin;
         for c in self.placed_connectors(part, pose)? {
-            // Vertical connectors (the only kind the built-in parts have)
-            // must be on the stud grid; a part turned on its side is checked
-            // by its box alone until side connectors exist.
-            if c.dir[1] != 0 && !on_stud_grid(c.pos) {
+            let on = if builtin {
+                on_stud_grid(c.pos)
+            } else {
+                on_fine_grid(c.pos)
+            };
+            if c.kind.is_stud_kind() && c.dir[1] != 0 && !on {
                 return Err(EngineError::OffGrid { pos: c.pos });
             }
         }
@@ -388,12 +395,12 @@ impl<'c> Model<'c> {
             pos[k] = (want2 - have2).div_euclid(2);
         }
         pos[1] = old.max[1] - local.max[1];
-        // Put the first vertical connector on the grid; the rest follow.
+        // Put the first vertical stud or receptacle on the grid; the rest follow.
         if let Some(c) = shape
             .connectors
             .iter()
             .map(|c| c.transformed(rot, pos))
-            .find(|c| c.dir[1] != 0)
+            .find(|c| c.kind.is_stud_kind() && c.dir[1] != 0)
         {
             for k in [0, 2] {
                 let off = (c.pos[k] - openbrick_units::HALF_STUD_LDU)

@@ -2,7 +2,7 @@
 //! `check` and the disclaimer. M1 adds `build` (a part document to a printable
 //! 3MF or STL, validated first), `validate` (the validator report) and
 //! `calibrate coupon` / `calibrate record` (the calibration coupon and the fit
-//! profile recorded from it). `convert`, `run`, `catalog` and `serve` land in
+//! profile recorded from it). `catalog` (import, info, fetch) arrived with the LDraw pack; `convert`, `run` and `serve` land in
 //! M3 and M4 per docs/plan/11.
 //!
 //! Exit codes: 0 success; 1 the validator found blockers (nothing was
@@ -13,6 +13,7 @@
 
 mod bom;
 mod calibrate;
+mod catalog;
 mod export;
 mod files;
 mod params;
@@ -73,6 +74,9 @@ enum Cmd {
     /// Prints part by colour counts and the connection statistics; floating
     /// parts are a warning, an invalid file exits 2.
     Bom(Box<bom::BomArgs>),
+    /// Import the LDraw parts library into a pack, inspect a pack, or download the library.
+    #[command(subcommand, after_help = "Guide: docs/guides/ldraw-parts.md")]
+    Catalog(Box<catalog::CatalogCmd>),
     /// Convert between .obrick, .ldr/.mpd, 3MF, STL, glTF (M3).
     Convert { file: PathBuf },
     /// Run a batch merch job (M4).
@@ -175,6 +179,7 @@ fn main() -> ExitCode {
         Cmd::Build(args) => run_json("build", args.part.json, |ui| part::build(&args, ui)),
         Cmd::Validate(args) => run_json("validate", args.json, |ui| part::validate_cmd(&args, ui)),
         Cmd::Bom(args) => run_json("bom", args.json, |ui| bom::run(&args, ui)),
+        Cmd::Catalog(cmd) => run_json(cmd.name(), cmd.json(), |ui| cmd.run(ui)),
         Cmd::Calibrate(cmd) => run_json(cmd.name(), cmd.json(), |ui| cmd.run(ui)),
         Cmd::Standard { json } => {
             let s = openbrick_units::STANDARD.get();

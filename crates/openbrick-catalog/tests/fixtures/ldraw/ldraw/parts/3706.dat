@@ -1,0 +1,10 @@
+0 Technic Beam  1 with Axle Hole
+0 Name: 3706.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Part UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+0 !CATEGORY Technic
+0 BFC CERTIFY CCW
+
+1 16 0 0 0 1 0 0 0 20 0 0 0 1 axlehole.dat
+1 16 0 0 0 10 0 0 0 20 0 0 0 10 cube.dat

@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 /// only keeps a wrong choice (a disk image, a video) from being read whole.
 pub const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
 
+/// The same bound for a part pack (`openbrick-catalog`'s `MAX_PACK_BYTES`, 256 MiB).
+pub const MAX_PACK_READ_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Header that carries the suggested file name of a save, percent-encoded
 /// (`encodeURIComponent`) because header values are ASCII.
 pub const NAME_HEADER: &str = "x-openbrick-name";
@@ -82,8 +85,8 @@ impl SaveFormat {
     }
 }
 
-/// What the page opens: an SVG drawing for the artwork, a fit profile or a
-/// part document.
+/// What the page opens: an SVG drawing for the artwork, a fit profile, a
+/// part document, an assembler model or an LDraw part pack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenKind {
     /// The artwork of a part (relief.svg).
@@ -95,6 +98,9 @@ pub enum OpenKind {
     Part,
     /// An assembler model (`.obrick`, or `.obrick.json`), opened in Build mode.
     Model,
+    /// A part pack (`.obpack`) made by `openbrick catalog import` from the user's
+    /// own LDraw library: Build mode adds its parts to the palette.
+    Pack,
 }
 
 impl OpenKind {
@@ -105,8 +111,9 @@ impl OpenKind {
             "fit" => Ok(Self::FitProfile),
             "part" => Ok(Self::Part),
             "model" => Ok(Self::Model),
+            "pack" => Ok(Self::Pack),
             other => Err(format!(
-                "cannot open a file of kind {other:?}; the desktop app opens svg, fit, part or model"
+                "cannot open a file of kind {other:?}; the desktop app opens svg, fit, part, model or pack"
             )),
         }
     }
@@ -119,6 +126,16 @@ impl OpenKind {
             Self::FitProfile | Self::Part => &["json"],
             // A model is `name.obrick` or `name.obrick.json`.
             Self::Model => &["obrick", "json"],
+            Self::Pack => &["obpack"],
+        }
+    }
+
+    /// The most bytes a read of this kind may ask for: [`MAX_READ_BYTES`], except a
+    /// part pack, which is tens of megabytes (the core's own limit is 256 MiB).
+    pub fn max_read_bytes(self) -> u64 {
+        match self {
+            Self::Pack => MAX_PACK_READ_BYTES,
+            _ => MAX_READ_BYTES,
         }
     }
 
@@ -130,6 +147,7 @@ impl OpenKind {
             Self::FitProfile => "open.json",
             Self::Part => "open.obpart.json",
             Self::Model => "open.obrick.json",
+            Self::Pack => "open.obpack",
         }
     }
 
@@ -140,6 +158,7 @@ impl OpenKind {
             Self::FitProfile => "Fit profile (JSON)",
             Self::Part => "Part document (.obpart.json)",
             Self::Model => "Assembler model (.obrick)",
+            Self::Pack => "LDraw part pack (.obpack)",
         }
     }
 
@@ -150,6 +169,7 @@ impl OpenKind {
             Self::FitProfile => "Choose a fit profile",
             Self::Part => "Open a part document",
             Self::Model => "Open an assembler model",
+            Self::Pack => "Add parts from an LDraw library (.obpack)",
         }
     }
 }
@@ -359,6 +379,7 @@ mod tests {
         assert_eq!(OpenKind::parse("fit"), Ok(OpenKind::FitProfile));
         assert_eq!(OpenKind::parse("part"), Ok(OpenKind::Part));
         assert_eq!(OpenKind::parse("model"), Ok(OpenKind::Model));
+        assert_eq!(OpenKind::parse("pack"), Ok(OpenKind::Pack));
         for bad in ["", "json", "SVG", "any", "obpart"] {
             assert!(OpenKind::parse(bad).is_err(), "{bad:?} parsed");
         }
@@ -366,12 +387,16 @@ mod tests {
         assert_eq!(OpenKind::FitProfile.extensions(), ["json"]);
         assert_eq!(OpenKind::Part.extensions(), ["json"]);
         assert_eq!(OpenKind::Model.extensions(), ["obrick", "json"]);
-        // Each kind has its own scripted file, so a test folder can hold all three.
+        assert_eq!(OpenKind::Pack.extensions(), ["obpack"]);
+        assert_eq!(OpenKind::Model.max_read_bytes(), MAX_READ_BYTES);
+        assert_eq!(OpenKind::Pack.max_read_bytes(), 256 * 1024 * 1024);
+        // Each kind has its own scripted file, so a test folder can hold all of them.
         let names = [
             OpenKind::Svg,
             OpenKind::FitProfile,
             OpenKind::Part,
             OpenKind::Model,
+            OpenKind::Pack,
         ]
         .map(OpenKind::test_file_name);
         assert_eq!(
@@ -380,7 +405,8 @@ mod tests {
                 "open.svg",
                 "open.json",
                 "open.obpart.json",
-                "open.obrick.json"
+                "open.obrick.json",
+                "open.obpack"
             ]
         );
     }

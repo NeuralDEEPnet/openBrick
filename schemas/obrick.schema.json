@@ -37,9 +37,38 @@
       "const": "ldraw-y-down"
     },
     "catalog": {
-      "description": "The part catalog the part ids name; this build reads openbrick-builtin@1.",
+      "description": "The part catalog the part ids name; this build reads openbrick-builtin@1. Parts of an LDraw pack are named in `requires`.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*@[0-9]+$"
+    },
+    "requires": {
+      "description": "Part packs the model needs besides the built-in catalog (an LDraw pack, .obpack): written when a part of a pack is placed, so a reader can say which pack to load. Parts of the pack have ids `ld.<number>`. Optional.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "pack",
+          "library",
+          "fingerprint"
+        ],
+        "properties": {
+          "pack": {
+            "description": "The pack's name: ldraw.",
+            "type": "string",
+            "minLength": 1
+          },
+          "library": {
+            "description": "The library version the pack was made from, for example 2026-10.",
+            "type": "string",
+            "minLength": 1
+          },
+          "fingerprint": {
+            "description": "SHA-256 of the pack file, 64 hex digits.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
     },
     "palette": {
       "description": "The colours the model uses, for tools without the OpenBrick3D palette.",
@@ -199,6 +228,16 @@
         "units": true,
         "frame": true,
         "catalog": true,
+        "requires": {
+          "items": {
+            "properties": {
+              "pack": true,
+              "library": true,
+              "fingerprint": true
+            },
+            "additionalProperties": false
+          }
+        },
         "palette": {
           "items": {
             "properties": {

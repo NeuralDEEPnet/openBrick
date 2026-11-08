@@ -2586,18 +2586,21 @@ dependencies = [
  "openbrick-units",
  "openbrick-wasm",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "openbrick-catalog"
 version = "0.1.0"
 dependencies = [
+ "miniz_oxide 0.9.1",
  "openbrick-geom",
  "openbrick-part",
  "openbrick-print",
  "openbrick-units",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
 ]
 

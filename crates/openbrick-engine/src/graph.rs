@@ -11,7 +11,7 @@ use crate::model::{InstanceId, Model};
 #[serde(rename_all = "camelCase")]
 pub struct Stats {
     pub parts: usize,
-    /// Mated connector pairs (a stud in a receptacle is one).
+    /// Mated connector pairs (a stud in a receptacle is one, a pin in a hole is one).
     pub connections: usize,
     /// Connected groups of parts.
     pub components: usize,
@@ -52,10 +52,7 @@ impl Model<'_> {
             let conns = self
                 .placed_connectors(inst.part, &inst.pose)
                 .expect("placed parts are in the catalog");
-            for c in conns
-                .iter()
-                .filter(|c| c.kind == openbrick_catalog::ConnKind::StudM)
-            {
+            for c in conns.iter().filter(|c| c.kind.is_male()) {
                 if let Some(other) = self.conns.mate_of(c, Some(inst.id)) {
                     out.push((inst.id.min(other), inst.id.max(other)));
                 }

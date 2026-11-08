@@ -1,0 +1,14 @@
+0 Synthetic Unit Cube
+0 Name: cube.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Primitive UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+
+0 BFC CERTIFY CCW
+
+4 16 -1 0 1 -1 1 1 -1 1 -1 -1 0 -1
+4 16 1 0 -1 1 1 -1 1 1 1 1 0 1
+4 16 -1 0 -1 1 0 -1 1 0 1 -1 0 1
+4 16 -1 1 1 1 1 1 1 1 -1 -1 1 -1
+4 16 -1 1 -1 1 1 -1 1 0 -1 -1 0 -1
+4 16 -1 0 1 1 0 1 1 1 1 -1 1 1

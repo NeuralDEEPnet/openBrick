@@ -24,7 +24,7 @@ pub mod model;
 pub mod snap;
 mod spatial;
 
-pub use document::{Bom, BomLine, DocError, ModelDoc, MODEL_PRAGMA};
+pub use document::{Bom, BomLine, DocError, ModelDoc, PackRequirement, MODEL_PRAGMA};
 pub use graph::Stats;
 pub use history::Command;
 pub use model::{EngineError, Instance, InstanceId, Instances, Model};
@@ -42,16 +42,38 @@ pub const MAX_RAY: f64 = 1.0e9;
 /// The stud grid every vertical connector of a placed part lies on: X and Z
 /// are odd multiples of half a stud (`HALF_STUD_LDU`, so a 2 x 2 placed at the
 /// origin has its studs at plus and minus 10), and Y is a whole number of
-/// plates. [`snap`] only produces poses on it, and [`Model`] refuses others.
+/// plates. [`snap`] only produces poses on it for the built-in parts and for
+/// parts whose studs all share one phase.
 pub fn on_stud_grid(p: [i32; 3]) -> bool {
     use openbrick_units::{HALF_STUD_LDU, PLATE_LDU, STUD_PITCH_LDU};
     let horizontal = |v: i32| (v - HALF_STUD_LDU).rem_euclid(STUD_PITCH_LDU) == 0;
     horizontal(p[0]) && horizontal(p[2]) && p[1].rem_euclid(PLATE_LDU) == 0
 }
 
+/// The finest grid a stud or receptacle may lie on: X and Z on whole multiples
+/// of half a stud, Y on whole multiples of half a plate. [`Model`] refuses a
+/// pose that puts one of these connectors anywhere else. Parts from an LDraw
+/// pack can have studs and receptacles half a stud apart (jumper plates) or
+/// half a plate off a plate boundary (brackets); the built-in parts always lie
+/// on the coarser [`on_stud_grid`].
+pub fn on_fine_grid(p: [i32; 3]) -> bool {
+    use openbrick_units::{HALF_PLATE_LDU, HALF_STUD_LDU};
+    p[0].rem_euclid(HALF_STUD_LDU) == 0
+        && p[2].rem_euclid(HALF_STUD_LDU) == 0
+        && p[1].rem_euclid(HALF_PLATE_LDU) == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fine_grid_is_half_stud_and_half_plate() {
+        assert!(on_fine_grid([10, 4, -30]));
+        assert!(on_fine_grid([0, -4, 0]));
+        assert!(!on_fine_grid([5, 0, 0]));
+        assert!(!on_fine_grid([0, 2, 0]));
+    }
 
     #[test]
     fn stud_grid_is_half_stud_phased() {

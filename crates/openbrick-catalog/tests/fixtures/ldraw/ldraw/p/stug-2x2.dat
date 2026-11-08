@@ -1,0 +1,12 @@
+0 Synthetic Stud Group 2 x 2
+0 Name: stug-2x2.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Primitive UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+
+0 BFC CERTIFY CCW
+
+1 16 -10 0 -10 1 0 0 0 1 0 0 0 1 stud.dat
+1 16 -10 0 10 1 0 0 0 1 0 0 0 1 stud.dat
+1 16 10 0 -10 1 0 0 0 1 0 0 0 1 stud.dat
+1 16 10 0 10 1 0 0 0 1 0 0 0 1 stud.dat

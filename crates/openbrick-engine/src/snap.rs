@@ -207,7 +207,7 @@ impl Model<'_> {
             .connectors
             .iter()
             .map(|c| c.transformed(rot, [0, 0, 0]))
-            .find(|c| c.dir[1] != 0)
+            .find(|c| c.kind.is_stud_kind() && c.dir[1] != 0)
             .map(|c| {
                 [
                     (HALF_STUD_LDU - c.pos[0]).rem_euclid(STUD_PITCH_LDU),

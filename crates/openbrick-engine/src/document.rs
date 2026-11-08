@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use openbrick_catalog::{Catalog, Colour, Palette, CATALOG_ID};
+use openbrick_catalog::{Catalog, Colour, Origin, Palette, CATALOG_ID, LDRAW_ID_PREFIX};
 use openbrick_units::{Credit, LatticePose, Rot24};
 
 use crate::model::{EngineError, Instance, InstanceId, Model};
@@ -38,12 +38,28 @@ pub struct ModelDoc {
     pub frame: String,
     /// The catalog the part ids name.
     pub catalog: String,
+    /// The part packs the model needs besides the built-in catalog: written when a
+    /// part of an LDraw pack is placed, so a reader can say which pack to load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<PackRequirement>,
     /// The colours the model uses, for tools without our palette.
     #[serde(default)]
     pub palette: Vec<Colour>,
     pub submodels: Vec<Submodel>,
     #[serde(default)]
     pub bom: Vec<BomLine>,
+}
+
+/// A part pack a model needs (`.obpack`, docs/plan/08 section 1): which library
+/// version it was made from and its fingerprint (SHA-256 of the pack file).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PackRequirement {
+    /// `ldraw`.
+    pub pack: String,
+    /// The LDraw library version, `2026-10`.
+    pub library: String,
+    /// The pack's fingerprint, 64 hex digits.
+    pub fingerprint: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -98,8 +114,17 @@ pub enum DocError {
         got: String,
         want: &'static str,
     },
-    #[error("the model uses the part catalog `{0}`; this build has `{CATALOG_ID}`. The LDraw catalog arrives in a later version")]
+    #[error(
+        "the model uses the part catalog `{0}`; this build has `{CATALOG_ID}`; update OpenBrick3D"
+    )]
     Catalog(String),
+    #[error("instance {id}: part `{part}` comes from the LDraw pack `{pack}` (library {library}), which is not loaded; add it first (Build mode: \"Add parts from an LDraw library…\"; command line: --pack), see docs/guides/ldraw-parts.md")]
+    MissingPack {
+        id: InstanceId,
+        part: String,
+        pack: String,
+        library: String,
+    },
     #[error("the model has {0} submodels; this build reads exactly one, `main`")]
     Submodels(usize),
     #[error("instance {id}: part `{part}` is not in the catalog `{CATALOG_ID}`")]
@@ -133,6 +158,9 @@ impl ModelDoc {
         field("units", j(&self.units), false);
         field("frame", j(&self.frame), false);
         field("catalog", j(&self.catalog), false);
+        if !self.requires.is_empty() {
+            field("requires", list(&self.requires, "    ", "  "), false);
+        }
         field("palette", list(&self.palette, "    ", "  "), false);
         let submodels: Vec<String> = self
             .submodels
@@ -197,6 +225,24 @@ impl<'c> Model<'c> {
             .collect()
     }
 
+    /// The packs the placed parts need: one entry when any part comes from the loaded pack.
+    pub fn requirements(&self) -> Vec<PackRequirement> {
+        let catalog = self.catalog();
+        let uses_pack = self
+            .instances
+            .part
+            .iter()
+            .any(|&p| catalog.parts[p as usize].origin == Origin::Ldraw);
+        match (&catalog.pack, uses_pack) {
+            (Some(pack), true) => vec![PackRequirement {
+                pack: pack.id.clone(),
+                library: pack.library.clone(),
+                fingerprint: pack.fingerprint.clone(),
+            }],
+            _ => Vec::new(),
+        }
+    }
+
     /// The model as a document named `name`.
     pub fn to_doc(&self, name: &str, credit: Option<Credit>) -> ModelDoc {
         let palette = Palette::bundled();
@@ -227,6 +273,7 @@ impl<'c> Model<'c> {
             units: UNITS.into(),
             frame: FRAME.into(),
             catalog: CATALOG_ID.into(),
+            requires: self.requirements(),
             palette: used,
             submodels: vec![Submodel {
                 id: MAIN.into(),
@@ -266,9 +313,21 @@ impl<'c> Model<'c> {
         }
         let mut model = Model::new(catalog);
         for (index, i) in main.instances.iter().enumerate() {
-            let part = catalog.find(&i.part).ok_or_else(|| DocError::UnknownPart {
-                id: i.id,
-                part: i.part.clone(),
+            let part = catalog.find(&i.part).ok_or_else(|| {
+                if i.part.starts_with(LDRAW_ID_PREFIX) {
+                    let need = doc.requires.first();
+                    DocError::MissingPack {
+                        id: i.id,
+                        part: i.part.clone(),
+                        pack: need.map_or_else(|| "ldraw".into(), |r| r.pack.clone()),
+                        library: need.map_or_else(|| "unknown".into(), |r| r.library.clone()),
+                    }
+                } else {
+                    DocError::UnknownPart {
+                        id: i.id,
+                        part: i.part.clone(),
+                    }
+                }
             })?;
             if i.pose.rot >= 24 {
                 return Err(DocError::Instance {
