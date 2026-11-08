@@ -162,9 +162,18 @@ openbrick bom house.obrick.json --pack ldraw.obpack
   construction systems and printed variants, even if you name such a category in
   `--category-filter`; OpenBrick3D never draws minifigures. Part names in the palette are the
   descriptions the LDraw authors wrote.
-- Downloaded files are treated as untrusted: file sizes, nesting depth, the number
-  of references and the zip's entry names are all checked, and the importer never
-  writes outside the output file.
+- Downloaded files are treated as untrusted. File sizes, nesting depth, the number
+  of references and the zip's entry names are all checked. A zip whose entries
+  overlap, whose local headers name other files, whose sizes (or CRC-32) do not
+  match or whose entries claim more than 1 GiB in all is refused; one import does
+  at most 50 million units of work (references expanded and triangles made; the
+  whole default import is 4.7 million) and reads at most 640 MiB, whatever each
+  part's own limits allow. A pack is read with limits too (128 MiB file, 128 MiB
+  inflated, a length for every text, no control or invisible characters, part boxes
+  at most 8,192 LDU wide), and text from a library or a pack is made printable
+  before the command line prints it. The importer never writes outside the output
+  file. When `import` finds nothing to write it says why (how many parts were
+  scanned, failed or too complex, and the first failures).
 
 ## What is not done yet
 
