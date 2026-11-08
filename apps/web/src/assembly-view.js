@@ -51,6 +51,34 @@ export function createAssemblyView(viewer, { catalog, lduMm }) {
   outline.add(box);
   root.add(outline);
 
+  // The ground: the engine treats the whole Y = 0 plane as the table (a model needs no
+  // baseplate), so Build mode draws it, a grid of studs on a plain plane, and a ghost is
+  // never over an invisible floor. It sits a hair below the plane so a baseplate's
+  // bottom does not flicker against it.
+  const pitch = catalog.studPitchLdu;
+  const groundStuds = 96;
+  const groundSize = groundStuds * pitch;
+  const groundMaterial = new THREE.MeshBasicNodeMaterial({ color: "#cdd6e0" });
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), groundMaterial);
+  plane.rotation.x = Math.PI / 2; // lies in XZ, facing up (LDraw minus Y)
+  plane.position.y = 0.2;
+  plane.renderOrder = -2;
+  let grid = null;
+  function paintGround() {
+    const css = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+    groundMaterial.color.set(css("--ground", "#cdd6e0"));
+    if (grid) {
+      root.remove(grid);
+      grid.geometry.dispose();
+      grid.material.dispose();
+    }
+    grid = new THREE.GridHelper(groundSize, groundStuds, css("--grid-major", "#7d8a99"), css("--grid-minor", "#b4bfcb"));
+    grid.position.y = 0.1;
+    root.add(grid);
+  }
+  root.add(plane);
+  paintGround();
+
   const colour = new THREE.Color();
   const matrix = new THREE.Matrix4();
   let triangles = 0;
@@ -74,13 +102,17 @@ export function createAssemblyView(viewer, { catalog, lduMm }) {
 
   /** The render meshes of the catalog parts: [{ index, positions, indices, triangles }]. */
   function setMeshes(meshes) {
+    // The ghost still holds one of the geometries about to be disposed: let go of it first.
+    ghost.visible = false;
+    ghost.geometry = new THREE.BufferGeometry();
+    ghostPart = -1;
     for (const entry of parts.values()) {
       dropMesh(entry);
       entry.geometry.dispose();
     }
     parts.clear();
     for (const m of meshes) parts.set(m.index, { geometry: geometryOf(m), triangles: m.triangles, mesh: null, capacity: 0 });
-    ghostPart = -1;
+    markDirty();
   }
 
   function ensureMesh(index, count) {
@@ -206,6 +238,7 @@ export function createAssemblyView(viewer, { catalog, lduMm }) {
   }
 
   function show(on) {
+    if (on) paintGround();
     root.visible = on;
     setBuildActive(on);
   }

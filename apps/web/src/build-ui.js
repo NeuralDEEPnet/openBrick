@@ -6,7 +6,10 @@
 // are the engine's answers (CLAUDE.md).
 
 import { createAssemblyView } from "./assembly-view.js";
+import { ModelKeeper } from "./model-keeper.js";
 import {
+  aimRay,
+  aimStep,
   bomRows,
   colourHex,
   colourName,
@@ -17,6 +20,9 @@ import {
   isClick,
   isModelFile,
   keyAction,
+  replaceNeedsConfirm,
+  stageKeyAction,
+  clearable,
   modelFileName,
   modelNameFromFile,
   shadeHex,
@@ -112,6 +118,19 @@ function thumbnail(mesh, colour, size = 48) {
  * Returns { enter(), leave() }; `page.build` carries state for the smoke test.
  */
 export function createBuildMode({ client, viewer, files, showStatus, page }) {
+  // Every request to the core goes through `asm`, which first puts the model back if the
+  // client replaced the worker (a cancelled Part or coupon build, or a trap).
+  // The 3D view's accessible name outside Build mode, put back when Build is left.
+  const stageLabel = $("stage").getAttribute("aria-label");
+  const keeper = new ModelKeeper({
+    client,
+    onRestored: async (restored) => {
+      await applyState(restored);
+      info.restores += 1;
+      message("The core was restarted, so your model was put back from the page's copy. The undo history is gone.", { alert: true });
+    },
+  });
+  const asm = keeper.guarded();
   let ready = null;
   let catalog = null;
   let view = null;
@@ -125,6 +144,11 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   let state = null;
   let hovered = null;
   let lastPointer = null;
+  /** The keyboard's aim: a ground point of the model frame in LDU, or null when the pointer aims. */
+  let aim = null;
+  /** Edits since the last save or open: replacing the model asks first. */
+  let dirty = false;
+  let lastReason = "";
   let snapBusy = false;
   let snapAgain = false;
   let lastSnap = null;
@@ -146,7 +170,15 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     error: null,
     detail: true,
     revision: 0,
-    saves: [],
+    /** How many times the model was put back into a replaced worker. */
+    restores: 0,
+    saveCount: 0,
+    lastSave: null,
+    hover: "",
+    aim: null,
+    dirty: false,
+    canRestore: false,
+    confirming: false,
     counts: null,
     thumbnails: 0,
     /** Client coordinates of a point in the model frame (LDU), for tests. */
@@ -169,14 +201,14 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
         return (performance.now() - t0) / n;
       };
       const id = catalog.parts[choice.part].id;
-      const snapMs = await time(() => client.assemblerSnap(id, choice.rot, ray()));
-      const pickMs = await time(() => client.assemblerPick(ray()));
-      const snap = await client.assemblerSnap(id, choice.rot, ray());
+      const snapMs = await time(() => asm.assemblerSnap(id, choice.rot, ray()));
+      const pickMs = await time(() => asm.assemblerPick(ray()));
+      const snap = await asm.assemblerSnap(id, choice.rot, ray());
       let placeUndoMs = null;
       if (snap?.valid) {
         placeUndoMs = await time(async () => {
-          await client.assemblerApply({ op: "add", part: id, pos: snap.pos, rot: snap.rot, colour: choice.colour });
-          await client.assemblerUndo();
+          await asm.assemblerApply({ op: "add", part: id, pos: snap.pos, rot: snap.rot, colour: choice.colour });
+          await asm.assemblerUndo();
         });
       }
       await refresh();
@@ -207,6 +239,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   async function applyState(next) {
     state = next;
+    keeper.remember(next.text);
     await syncDetail(next.stats.parts);
     instances = decodeInstances(next.instances);
     byId.clear();
@@ -219,7 +252,9 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     renderStats();
     $("build-undo").disabled = !next.canUndo;
     $("build-redo").disabled = !next.canRedo;
-    $("build-clear").disabled = !instances.some((i) => !catalog.parts[i.part].base);
+    $("build-clear").disabled = !clearable(instances, catalog.parts);
+    $("build-restore").disabled = keeper.previous === null;
+    info.canRestore = keeper.previous !== null;
     const sizeNote = instances.length > 0 && !detail ? " (simple studs: the model is large)" : "";
     status([stateSentence(next.stats) + sizeNote]);
   }
@@ -228,7 +263,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function syncDetail(count) {
     const want = wantDetail(count, detail);
     if (want === detail) return;
-    ({ meshes } = await client.assemblerMeshes(want));
+    ({ meshes } = await asm.assemblerMeshes(want));
     detail = want;
     info.detail = want;
     view.setMeshes(meshes);
@@ -250,16 +285,17 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   }
 
   async function refresh() {
-    await applyState(await client.assemblerState());
+    await applyState(await asm.assemblerState());
   }
 
   // ----------------------------------------------------------- commands
 
   async function command(cmd, done) {
     try {
-      const next = await client.assemblerApply(cmd);
+      const next = await asm.assemblerApply(cmd);
       await applyState(next);
       info.error = null;
+      setDirty(true);
       if (done) message(done(next));
       return next;
     } catch (err) {
@@ -274,8 +310,14 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   const partName = () => catalog.parts[choice.part].name;
 
-  async function placeAt(x, y) {
-    const snap = await client.assemblerSnap(catalog.parts[choice.part].id, choice.rot, view.pointerRay(x, y));
+  function setDirty(on) {
+    dirty = on;
+    info.dirty = on;
+  }
+
+  /** Place the chosen part where `ray` points (a pointer ray or the keyboard's aim). */
+  async function placeWith(ray) {
+    const snap = await asm.assemblerSnap(catalog.parts[choice.part].id, choice.rot, ray);
     showSnap(snap);
     if (!snap) return message("Point at the baseplate or a part first");
     if (!snap.valid) return message(snapText(snap, partName(), names()).join(". "), { alert: true });
@@ -285,18 +327,17 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     );
   }
 
-  async function removeAt(x, y) {
-    const hit = await client.assemblerPick(view.pointerRay(x, y));
+  async function removeWith(ray) {
+    const hit = await asm.assemblerPick(ray);
     const inst = hit?.instance != null ? byId.get(hit.instance) : null;
     if (!inst) return message("Nothing to remove there");
-    if (catalog.parts[inst.part].base) return message("The baseplate stays: use Clear to remove the parts on it");
     const name = catalog.parts[inst.part].name;
     await command({ op: "remove", id: inst.id }, (s) => `Removed ${name}. ${stateSentence(s.stats)}`);
   }
 
   async function removeHovered() {
     const inst = hovered && byId.get(hovered);
-    if (!inst || catalog.parts[inst.part].base) return message("Point at a part to remove it");
+    if (!inst) return message("Point at a part to remove it");
     const name = catalog.parts[inst.part].name;
     await command({ op: "remove", id: inst.id }, (s) => `Removed ${name}. ${stateSentence(s.stats)}`);
   }
@@ -304,7 +345,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function undo() {
     if (!state?.canUndo) return;
     try {
-      await applyState(await client.assemblerUndo());
+      await applyState(await asm.assemblerUndo());
+      setDirty(true);
       message(`Undone. ${stateSentence(state.stats)}`);
     } catch (err) {
       message(err.message, { alert: true });
@@ -315,7 +357,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function redo() {
     if (!state?.canRedo) return;
     try {
-      await applyState(await client.assemblerRedo());
+      await applyState(await asm.assemblerRedo());
+      setDirty(true);
       message(`Redone. ${stateSentence(state.stats)}`);
     } catch (err) {
       message(err.message, { alert: true });
@@ -324,7 +367,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   }
 
   async function rotate(quarterTurns) {
-    const { rot } = await client.assemblerTurn(choice.rot, quarterTurns);
+    const { rot } = await asm.assemblerTurn(choice.rot, quarterTurns);
     choice.rot = rot;
     info.rot = rot;
     message(`Rotated: ${quarterTurns > 0 ? "a quarter turn" : "a quarter turn back"}`);
@@ -333,6 +376,19 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   // ----------------------------------------------------------- hover and ghost
 
+  /** The hover line: not a live region, so moving the pointer is silent for a screen reader. */
+  function setHover(text) {
+    $("build-hover").textContent = text;
+    info.hover = text;
+  }
+
+  /** The ray the keyboard's aim or the pointer gives, or null when neither points anywhere. */
+  function currentRay() {
+    if (aim) return aimRay(aim.x, aim.z);
+    if (lastPointer) return view.pointerRay(lastPointer.x, lastPointer.y);
+    return null;
+  }
+
   function showSnap(snap) {
     lastSnap = snap;
     const g = ghostState(snap);
@@ -340,32 +396,42 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     info.ghostPos = snap ? snap.pos : null;
     hovered = snap?.target ?? null;
     const target = hovered && byId.get(hovered);
-    view.setOutline(target && !catalog.parts[target.part].base ? target : null);
+    view.setOutline(target ? target : null);
     if (choice.tool === "place" && snap) view.setGhost({ part: choice.part, rot: snap.rot, pos: snap.pos, state: g });
     else view.setGhost(null);
-    if (active && choice.tool === "place") status(snapText(snap, partName(), names()));
+    const text = snapText(snap, partName(), names());
+    setHover(text.join(". "));
+    // Only a change to a different problem is announced, never each pointer move.
+    const reason = g === "invalid" ? `${snap.collides ?? ""}|${snap.mates === 0 && !snap.grounded}` : "";
+    if (reason !== lastReason) {
+      lastReason = reason;
+      if (g === "invalid") message(text.join(". "));
+    }
   }
 
   async function hoverNow() {
-    if (!lastPointer || !active) return;
-    const { x, y } = lastPointer;
-    const ray = view.pointerRay(x, y);
+    const ray = currentRay();
+    if (!ray || !active) return;
     if (choice.tool === "place") {
-      showSnap(await client.assemblerSnap(catalog.parts[choice.part].id, choice.rot, ray));
+      const snap = await asm.assemblerSnap(catalog.parts[choice.part].id, choice.rot, ray);
+      // The answer may arrive after the person left Build mode or moved the pointer away.
+      if (!active || !currentRay()) return;
+      showSnap(snap);
     } else {
-      const hit = await client.assemblerPick(ray);
+      const hit = await asm.assemblerPick(ray);
+      if (!active || !currentRay()) return;
       hovered = hit?.instance ?? null;
       const target = hovered && byId.get(hovered);
       view.setGhost(null);
-      view.setOutline(target && !catalog.parts[target.part].base ? target : null);
+      view.setOutline(target ? target : null);
       info.ghost = "none";
-      status([target && !catalog.parts[target.part].base ? `Click to remove ${catalog.parts[target.part].name}` : "Point at a part to remove it"]);
+      setHover(target ? `Click to remove ${catalog.parts[target.part].name}` : "Point at a part to remove it");
     }
   }
 
   /** Ask for the hover of the latest pointer position; one request at a time. */
   function updateHover() {
-    if (!lastPointer || !active) return;
+    if (!currentRay() || !active) return;
     if (snapBusy) {
       snapAgain = true;
       return;
@@ -394,15 +460,18 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     canvas.addEventListener("pointermove", (e) => {
       if (!active || e.buttons !== 0 || e.pointerType === "touch") return;
       lastPointer = { x: e.clientX, y: e.clientY };
+      setAim(null);
       updateHover();
     });
     canvas.addEventListener("pointerleave", (e) => {
       if (!active || e.pointerType === "touch") return;
       lastPointer = null;
+      if (aim) return; // the keyboard's aim goes on
       hovered = null;
       view.setGhost(null);
       view.setOutline(null);
       info.ghost = "none";
+      setHover("");
     });
     canvas.addEventListener("pointerup", (e) => {
       if (!active || !down || down.id !== e.pointerId) return;
@@ -410,7 +479,9 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       down = null;
       if (d.button !== 0 || !isClick(d, { x: e.clientX, y: e.clientY, t: performance.now() })) return;
       lastPointer = { x: e.clientX, y: e.clientY };
-      enqueue(() => (choice.tool === "place" ? placeAt(e.clientX, e.clientY) : removeAt(e.clientX, e.clientY)));
+      setAim(null);
+      const ray = view.pointerRay(e.clientX, e.clientY);
+      enqueue(() => (choice.tool === "place" ? placeWith(ray) : removeWith(ray)));
     });
     canvas.addEventListener("pointercancel", () => {
       down = null;
@@ -418,10 +489,59 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     canvas.addEventListener("contextmenu", (e) => active && e.preventDefault());
   }
 
+  /** Set or clear the keyboard's aim ({ x, z } in LDU); the pointer takes over by clearing it. */
+  function setAim(next) {
+    aim = next;
+    info.aim = next ? [next.x, next.z] : null;
+  }
+
+  /** What an arrow, Enter, Shift+arrow or +/- does while the 3D view has the focus. */
+  async function stageAction(a) {
+    const { internals } = viewer;
+    switch (a.type) {
+      case "orbit":
+        return internals.orbitBy(a.azimuth, a.polar);
+      case "zoom":
+        return internals.zoomBy(a.factor);
+      case "reframe":
+        return view.frameLdu(...modelFrame());
+      case "aim": {
+        const [dx, dz] = aimStep(a.key, internals.cameraForward());
+        const pitch = catalog.studPitchLdu;
+        setAim({ x: (aim?.x ?? 0) + dx * pitch, z: (aim?.z ?? 0) + dz * pitch });
+        lastPointer = null;
+        await hoverNow();
+        const where = `stud ${aim.x / pitch}, ${aim.z / pitch}`;
+        message(`Aim at ${where}. ${info.hover}`);
+        return;
+      }
+      case "place": {
+        if (!aim) {
+          // The first press only shows where the aim is; nothing is placed blind.
+          setAim({ x: 0, z: 0 });
+          lastPointer = null;
+          await hoverNow();
+          return message(`Aim at the middle of the baseplate. ${info.hover}. Arrow keys move it; Enter places.`);
+        }
+        const ray = aimRay(aim.x, aim.z);
+        await (choice.tool === "place" ? placeWith(ray) : removeWith(ray));
+        return;
+      }
+    }
+  }
+
   function wireKeys() {
+    const stage = $("stage");
     document.addEventListener("keydown", (e) => {
       if (!active || typingTarget(e.target) || e.altKey) return;
-      // Space and Enter on a focused button belong to the button.
+      if (document.activeElement === stage) {
+        const a = stageKeyAction(e);
+        if (a) {
+          e.preventDefault();
+          enqueue(() => stageAction(a));
+          return;
+        }
+      }
       const action = keyAction(e);
       if (!action) return;
       e.preventDefault();
@@ -438,6 +558,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
           case "delete":
             return removeHovered();
           case "deselect":
+            setAim(null);
             return setTool("place");
         }
       });
@@ -446,29 +567,39 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   // ----------------------------------------------------------- files
 
+  /** Save the model as .obrick.json text; true when a file was written. */
   async function save() {
     const name = $("build-name").value.trim() || modelName;
     modelName = name;
     try {
-      const { text } = await client.assemblerSave(name);
+      const { text } = await asm.assemblerSave(name);
       const bytes = new TextEncoder().encode(text);
       const fileName = modelFileName(name);
       const saved = await files.save(bytes, fileName, "json");
-      info.saves.push({ name: fileName, bytes });
-      if (!saved.saved) return message("Not saved: the save dialog was closed without choosing a file");
+      if (!saved.saved) {
+        message("Not saved: the save dialog was closed without choosing a file");
+        return false;
+      }
+      // Only the name and size are kept, never the bytes.
+      info.saveCount += 1;
+      info.lastSave = { name: fileName, size: bytes.length };
+      setDirty(false);
       message(`Saved ${saved.path ?? saved.name}`);
       status([`Saved ${saved.path ?? saved.name}`, `${(bytes.length / 1024).toFixed(1)} KB`]);
+      return true;
     } catch (err) {
       message(err.message ?? String(err), { alert: true });
+      return false;
     }
   }
 
   async function loadText(text, name) {
     try {
-      const next = await client.assemblerLoad(text);
+      const next = await asm.assemblerLoad(text);
       modelName = name;
       $("build-name").value = name;
       await applyState(next);
+      setDirty(false);
       view.frameLdu(...modelFrame());
       choice.rot = 0;
       info.rot = 0;
@@ -484,15 +615,68 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     }
   }
 
+  // The in-page confirmation (a dialog box would block the desktop webview and a test
+  // driver): Save first, Replace, or Cancel, with the focus on Cancel.
+  let answer = null;
+  function confirmReplace(label) {
+    $("build-confirm-text").textContent = `Replace your unsaved model with ${label}? The changes you made since the last save would be lost.`;
+    $("build-confirm").hidden = false;
+    info.confirming = true;
+    $("build-confirm-cancel").focus();
+    return new Promise((resolve) => {
+      answer = (value) => {
+        answer = null;
+        $("build-confirm").hidden = true;
+        info.confirming = false;
+        resolve(value);
+      };
+    });
+  }
+
+  /**
+   * Replace the model with what `produce()` gives ({ text, name }, or null for nothing),
+   * after asking when there are unsaved edits, and set the old one aside for "Restore
+   * previous model". Resolves true when the model was replaced.
+   */
+  async function replaceModel(label, produce) {
+    if (replaceNeedsConfirm({ dirty })) {
+      const reply = await confirmReplace(label);
+      if (reply === "cancel") {
+        message("Kept your model");
+        return false;
+      }
+      if (reply === "save" && !(await save())) return false;
+    }
+    const prior = { text: state.text, name: modelName, dirty };
+    const made = await produce();
+    if (!made) return false;
+    if (!(await loadText(made.text, made.name))) return false;
+    keeper.setPrevious(prior);
+    $("build-restore").disabled = false;
+    info.canRestore = true;
+    message(`Opened ${made.name}. "Restore previous model" brings back the one it replaced.`);
+    return true;
+  }
+
+  /** Bring back the model that Open or a sample replaced; the one on screen becomes the previous one. */
+  async function restorePrevious() {
+    const prev = keeper.previous;
+    if (!prev) return;
+    const current = { text: state.text, name: modelName, dirty };
+    if (await loadText(prev.text, prev.name)) {
+      setDirty(prev.dirty);
+      keeper.setPrevious(current);
+      message(`Restored ${prev.name}`);
+    }
+  }
+
   async function openFile(file) {
     if (!file) return;
-    if (!isModelFile(file.name)) return message(`${file.name} is not a model: choose a .obrick file`, { alert: true });
+    if (!isModelFile(file.name)) return message(`${file.name} is not a model: choose a .obrick.json file`, { alert: true });
     if (file.size > catalog.maxModelBytes) {
       return message(`${file.name} is ${file.size} bytes; a model file can be at most ${catalog.maxModelBytes} bytes`, { alert: true });
     }
-    await enqueue(async () => {
-      await loadText(await file.text(), modelNameFromFile(file.name));
-    });
+    await enqueue(() => replaceModel(file.name, async () => ({ text: await file.text(), name: modelNameFromFile(file.name) })));
   }
 
   async function chooseOpen() {
@@ -510,10 +694,12 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function loadSample(id) {
     const sample = catalog.samples.find((s) => s.id === id);
     if (!sample) return;
-    await enqueue(async () => {
-      const { text } = await client.assemblerSample(id);
-      await loadText(text, sample.label);
-    });
+    await enqueue(() =>
+      replaceModel(`the ${sample.label} sample`, async () => {
+        const { text } = await asm.assemblerSample(id);
+        return { text, name: sample.label };
+      }),
+    );
   }
 
   // ----------------------------------------------------------- the camera
@@ -548,7 +734,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     document.body.dataset.buildTool = tool;
     view?.setGhost(null);
     view?.setOutline(null);
-    status([tool === "remove" ? "Remove mode: click or tap a part to remove it" : `Placing ${choice.part === null ? "" : partName()}: point at the baseplate`]);
+    status([tool === "remove" ? "Remove mode: click or tap a part to remove it" : `Placing ${choice.part === null ? "" : partName()}: point at the ground or a part`]);
     updateHover();
   }
 
@@ -595,13 +781,23 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     $("build-rotate").addEventListener("click", () => enqueue(() => rotate(1)));
     $("build-place-centre").addEventListener("click", () => {
       const r = viewer.internals.canvas.getBoundingClientRect();
-      enqueue(() => (choice.tool === "place" ? placeAt(r.left + r.width / 2, r.top + r.height / 2) : removeAt(r.left + r.width / 2, r.top + r.height / 2)));
+      enqueue(() => (choice.tool === "place" ? placeWith(view.pointerRay(r.left + r.width / 2, r.top + r.height / 2)) : removeWith(view.pointerRay(r.left + r.width / 2, r.top + r.height / 2))));
     });
     $("build-remove-mode").addEventListener("click", () => setTool(choice.tool === "remove" ? "place" : "remove"));
     $("build-undo").addEventListener("click", () => enqueue(undo));
     $("build-redo").addEventListener("click", () => enqueue(redo));
     $("build-clear").addEventListener("click", () => enqueue(() => command({ op: "clearBuilt" }, (s) => `Cleared. ${stateSentence(s.stats)}`)));
     $("build-save").addEventListener("click", () => enqueue(save));
+    $("build-restore").addEventListener("click", () => enqueue(restorePrevious));
+    $("build-confirm-save").addEventListener("click", () => answer?.("save"));
+    $("build-confirm-replace").addEventListener("click", () => answer?.("replace"));
+    $("build-confirm-cancel").addEventListener("click", () => answer?.("cancel"));
+    $("build-confirm").addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        answer?.("cancel");
+      }
+    });
     $("build-open").addEventListener("click", () => chooseOpen());
     $("build-file").addEventListener("change", () => {
       const file = $("build-file").files?.[0];
@@ -624,11 +820,11 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   async function start() {
     status(["Building the parts with the core…"]);
-    catalog = await client.assemblerCatalog();
-    const first = await client.assemblerState();
+    catalog = await asm.assemblerCatalog();
+    const first = await asm.assemblerState();
     detail = wantDetail(first.stats.parts, true);
     info.detail = detail;
-    ({ meshes } = await client.assemblerMeshes(detail));
+    ({ meshes } = await asm.assemblerMeshes(detail));
     view = createAssemblyView(viewer, { catalog, lduMm: catalog.lduMm });
     view.setMeshes(meshes);
     buildPalettes();
@@ -638,10 +834,10 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     if (first.stats.parts === 0) {
       // A new model starts on a baseplate, as one undoable command.
       const baseId = catalog.parts.find((p) => p.base).id;
-      const next = await client.assemblerApply({ op: "add", part: baseId, pos: [0, -catalog.parts.find((p) => p.base).heightLdu, 0], rot: 0, colour: catalog.palette.defaultBase });
+      const next = await asm.assemblerApply({ op: "add", part: baseId, pos: [0, -catalog.parts.find((p) => p.base).heightLdu, 0], rot: 0, colour: catalog.palette.defaultBase });
       await applyState(next);
       // The baseplate is part of the start, not an edit to undo.
-      await client.assemblerLoad((await client.assemblerSave(modelName)).text);
+      await asm.assemblerLoad((await asm.assemblerSave(modelName)).text);
       await refresh();
     } else await applyState(first);
     info.ready = true;
@@ -656,18 +852,29 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
         info.error = err.message;
         throw err;
       });
+      // The worker may have been replaced while Part or the coupon was showing: this goes
+      // through the keeper, which puts the model back before answering.
+      await applyState(await asm.assemblerState());
       view.show(true);
       view.frameLdu(...modelFrame());
-      $("build-hint").textContent = "Click or tap to place · drag to orbit · R rotates · Del removes · Ctrl+Z undoes";
+      $("build-hint").textContent = "Click or tap to place · drag to orbit · R rotates · Delete removes · Ctrl+Z undoes · Tab to this view for the keyboard";
+      const stage = $("stage");
+      stage.tabIndex = 0;
+      stage.setAttribute("aria-label", "3D view of the model. Arrow keys move the aim by one stud, Enter places a part at the aim, Shift and arrow keys orbit, plus and minus zoom, Home frames the model.");
       setTool(choice.tool);
       status([stateSentence(state.stats)]);
     },
     leave() {
       active = false;
       lastPointer = null;
+      setAim(null);
+      setHover("");
       view?.setGhost(null);
       view?.setOutline(null);
       view?.show(false);
+      const stage = $("stage");
+      stage.removeAttribute("tabindex");
+      stage.setAttribute("aria-label", stageLabel);
     },
     summary: frameSummary,
   };

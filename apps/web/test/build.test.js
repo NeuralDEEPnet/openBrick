@@ -4,7 +4,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  aimRay,
+  aimStep,
   bomRows,
+  clearable,
   colourHex,
   colourName,
   decodeInstances,
@@ -16,6 +19,10 @@ import {
   isClick,
   isModelFile,
   keyAction,
+  ORBIT_STEP_DEG,
+  replaceNeedsConfirm,
+  stageKeyAction,
+  ZOOM_STEP,
   DETAIL_BELOW,
   LOW_DETAIL_ABOVE,
   modelFileName,
@@ -185,4 +192,59 @@ test("thumbnails keep the visible faces, far to near, and fit the square", () =>
   }
   assert.equal(shadeHex("#808080", 0.5), "#404040");
   assert.equal(shadeHex("#ffffff", 2), "#ffffff");
+});
+
+test("the 3D view's own keys: aim, place, orbit, zoom, frame; never Ctrl or Cmd combinations", () => {
+  assert.deepEqual(stageKeyAction({ key: "ArrowUp" }), { type: "aim", key: "ArrowUp" });
+  assert.deepEqual(stageKeyAction({ key: "Enter" }), { type: "place" });
+  assert.deepEqual(stageKeyAction({ key: " " }), { type: "place" });
+  assert.deepEqual(stageKeyAction({ key: "ArrowLeft", shiftKey: true }), { type: "orbit", azimuth: ORBIT_STEP_DEG, polar: -0 });
+  assert.deepEqual(stageKeyAction({ key: "ArrowDown", shiftKey: true }), { type: "orbit", azimuth: -0, polar: ORBIT_STEP_DEG });
+  assert.equal(stageKeyAction({ key: "+" }).factor < 1, true, "plus brings the camera closer");
+  assert.equal(stageKeyAction({ key: "-" }).factor, ZOOM_STEP);
+  assert.deepEqual(stageKeyAction({ key: "Home" }), { type: "reframe" });
+  assert.equal(stageKeyAction({ key: "z", ctrlKey: true }), null);
+  assert.equal(stageKeyAction({ key: "ArrowUp", ctrlKey: true }), null);
+  assert.equal(stageKeyAction({ key: "Enter", metaKey: true }), null);
+  assert.equal(stageKeyAction({ key: "q" }), null);
+});
+
+test("the aim moves one stud along the nearer ground axis, as the camera looks", () => {
+  // The first view looks from the front right: towards minus X and minus Z of the scene (Y up).
+  const first = [-1, -1.5];
+  assert.deepEqual(aimStep("ArrowUp", first), [0, 1], "away from you is plus Z of the model frame (the frame flips Z)");
+  assert.deepEqual(aimStep("ArrowDown", first), [0, -1]);
+  assert.deepEqual(aimStep("ArrowRight", first), [1, 0]);
+  assert.deepEqual(aimStep("ArrowLeft", first), [-1, 0]);
+  // Turned a quarter: looking along minus X, Up goes to minus X and Right to the model's minus Z... check each quadrant is a rotation.
+  const looks = [[0, -1], [-1, 0], [0, 1], [1, 0]];
+  const seen = new Set();
+  for (const f of looks) {
+    const up = aimStep("ArrowUp", f);
+    const right = aimStep("ArrowRight", f);
+    assert.equal(Math.abs(up[0]) + Math.abs(up[1]), 1);
+    assert.ok(up[0] * right[0] + up[1] * right[1] === 0, "right is across up");
+    assert.deepEqual(aimStep("ArrowDown", f), [-up[0] || 0, -up[1] || 0]);
+    seen.add(up.join());
+  }
+  assert.equal(seen.size, 4, "the four views give four different Up directions");
+  // Looking straight down gives a direction too (no NaN).
+  assert.equal(aimStep("ArrowUp", [0, 0]).every(Number.isFinite), true);
+  assert.equal(aimStep("PageUp", first), null);
+  assert.deepEqual(aimRay(40, -20), { origin: [40, -1_000_000, -20], dir: [0, 1, 0] });
+});
+
+test("replacing the model asks only when there are unsaved edits", () => {
+  assert.equal(replaceNeedsConfirm({ dirty: true }), true);
+  assert.equal(replaceNeedsConfirm({ dirty: false }), false);
+  assert.equal(replaceNeedsConfirm({}), false);
+});
+
+test("Clear has something to do unless only ground baseplates are left", () => {
+  const parts = [{ base: true, heightLdu: 8 }, { base: false, heightLdu: 24 }];
+  const ground = { part: 0, pos: [0, -8, 0] };
+  assert.equal(clearable([], parts), false);
+  assert.equal(clearable([ground], parts), false);
+  assert.equal(clearable([ground, { part: 1, pos: [10, -32, 10] }], parts), true);
+  assert.equal(clearable([{ part: 0, pos: [0, -32, 0] }], parts), true, "a baseplate on bricks goes too");
 });

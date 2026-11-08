@@ -1227,7 +1227,19 @@ async function buildRun(browser, origin) {
   await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, "a valid ghost over the baseplate");
   b = await buildState(page);
   check(JSON.stringify(b.ghostPos) === JSON.stringify([0, -32, 0]), `${label}: ghost at ${JSON.stringify(b.ghostPos)}`);
-  check(/click or tap to place \(8 studs connected\)/.test(await page.textContent("#status")), `${label}: status ${await page.textContent("#status")}`);
+  check(/click or tap to place \(8 studs connected\)/.test(await page.textContent("#build-hover")), `${label}: hover line ${await page.textContent("#build-hover")}`);
+  // The hover line is not a live region, and moving the pointer leaves the live status alone.
+  check(await page.$eval("#build-hover", (el) => !el.closest("[aria-live], [role=status], [role=alert]")), `${label}: the hover line is inside a live region`);
+  const liveBefore = await page.textContent("#status");
+  for (const [dx, dz] of [[20, 0], [40, 20], [-20, 40]]) {
+    const q = await screenAt(page, [dx, -8, dz]);
+    await page.mouse.move(q.x, q.y);
+    await page.waitForTimeout(80);
+  }
+  await page.waitForTimeout(300);
+  check((await page.textContent("#status")) === liveBefore, `${label}: the live status changed on pointer moves ("${liveBefore}" then "${await page.textContent("#status")}")`);
+  await page.mouse.move(point.x, point.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, "the ghost back at the first point");
   if (shots) await page.screenshot({ path: join(shots, "build-ghost.png") });
   await page.mouse.click(point.x, point.y);
   await buildWait(page, () => window.__web.build.parts === 2, 20_000, "the brick placed");
@@ -1264,12 +1276,55 @@ async function buildRun(browser, origin) {
   await buildWait(page, () => window.__web.build.ghost !== "none", 10_000, "hovering the plate");
   await page.keyboard.press("Delete");
   await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Delete removing the plate");
+  // A baseplate is a part like another: Delete removes it, Ctrl+Z puts it back.
   const floor = await screenAt(page, [100, -8, 100]);
   await page.mouse.move(floor.x, floor.y);
-  await page.waitForTimeout(300);
+  await buildWait(page, () => window.__web.build.ghost === "valid", 10_000, "hovering the baseplate");
   await page.keyboard.press("Delete");
-  await page.waitForTimeout(300);
-  check((await buildState(page)).parts === 2, `${label}: Delete on the baseplate removed something`);
+  await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Delete removing the baseplate");
+  await page.keyboard.press("Control+z");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Ctrl+Z bringing the baseplate back");
+
+  // The keyboard path: the 3D view takes the focus; arrow keys move the aim a stud at a time and
+  // the core snaps the part there; Enter places; Shift+arrows and +/- move the camera.
+  await page.click('#build-parts [aria-label="Plate 1 x 1"]');
+  await page.focus("#stage");
+  check((await page.getAttribute("#stage", "tabindex")) === "0" && /Arrow keys move the aim/.test(await page.getAttribute("#stage", "aria-label")), `${label}: the 3D view is focusable and says how to use it`);
+  await page.keyboard.press("Enter");
+  await buildWait(page, () => window.__web.build.aim?.join() === "0,0" && window.__web.build.ghost !== "none", 10_000, "the first Enter showing the aim");
+  check((await buildState(page)).parts === 2, `${label}: the first Enter placed something`);
+  for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+  await buildWait(page, () => window.__web.build.aim?.join() === "100,0" && window.__web.build.ghost === "valid", 10_000, "five Right arrows");
+  const p0 = (await buildState(page)).ghostPos;
+  await page.keyboard.press("ArrowRight");
+  await buildWait(page, () => window.__web.build.aim?.join() === "120,0", 10_000, "one more Right arrow");
+  await page.waitForFunction((x) => window.__web.build.ghostPos?.[0] === x, p0[0] + 20, { timeout: 10_000, polling: 50 }).catch(() => {});
+  let b2 = await buildState(page);
+  check(b2.ghostPos[0] === p0[0] + 20 && b2.ghostPos[1] === p0[1] && b2.ghostPos[2] === p0[2], `${label}: Right moved the ghost from ${p0} to ${b2.ghostPos}, not one stud (the core snaps it)`);
+  await page.keyboard.press("ArrowUp");
+  await buildWait(page, () => window.__web.build.aim?.join() === "120,20", 10_000, "an Up arrow");
+  // The core's answer follows the key press: wait for the ghost to arrive.
+  await page.waitForFunction((z) => window.__web.build.ghostPos?.[2] === z, p0[2] + 20, { timeout: 10_000, polling: 50 }).catch(() => {});
+  b2 = await buildState(page);
+  check(b2.ghostPos[2] === p0[2] + 20, `${label}: Up moved the ghost to z ${b2.ghostPos[2]}, from ${p0[2]}`);
+  await page.keyboard.press("Enter");
+  await buildWait(page, () => window.__web.build.parts === 3, 10_000, "Enter placing at the aim");
+  check(/Placed Plate 1 . 1/.test((await buildState(page)).message), `${label}: message after a keyboard placement ${(await buildState(page)).message}`);
+  await page.keyboard.press("Delete");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Delete removing the part at the aim");
+  const camBefore = await page.evaluate(() => window.__web.stats().camera);
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.waitForTimeout(400);
+  const camTurned = await page.evaluate(() => window.__web.stats().camera);
+  check(camTurned.some((v, i) => Math.abs(v - camBefore[i]) > 1), `${label}: Shift+Left did not move the camera (${camBefore} then ${camTurned})`);
+  const dist = (c) => Math.hypot(...c);
+  await page.keyboard.press("+");
+  await page.waitForTimeout(400);
+  const camNear = await page.evaluate(() => window.__web.stats().camera);
+  check(dist(camNear) < dist(camTurned) - 1, `${label}: + did not bring the camera closer (${dist(camTurned)} then ${dist(camNear)})`);
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Escape");
+  await buildWait(page, () => window.__web.build.aim === null, 10_000, "Escape clearing the aim");
 
   // Save: a download of .obrick text; save, open, save is byte-identical.
   await page.fill("#build-name", "Smoke model");
@@ -1290,8 +1345,24 @@ async function buildRun(browser, origin) {
   await buildWait(page, () => window.__web.build.parts === 2, 10_000, "undoing Clear");
   await page.click("#build-clear");
   await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Clear again");
+  // Clear was an edit, so opening a file asks first: Escape keeps the model, Replace opens the file.
+  check((await buildState(page)).dirty === true, `${label}: edits since the save are not noticed`);
   await page.setInputFiles("#build-file", savedPath);
+  await buildWait(page, () => window.__web.build.confirming === true, 10_000, "the confirmation before replacing unsaved work");
+  check(await page.isVisible("#build-confirm") && (await page.evaluate(() => document.activeElement?.id)) === "build-confirm-cancel", `${label}: the focus is not on Cancel`);
+  check((await page.getAttribute("#build-confirm", "role")) === "alertdialog", `${label}: the confirmation is not an alertdialog`);
+  await page.keyboard.press("Escape");
+  await buildWait(page, () => window.__web.build.confirming === false, 10_000, "Escape cancelling");
+  check((await buildState(page)).parts === 1, `${label}: Cancel replaced the model anyway`);
+  await page.setInputFiles("#build-file", savedPath);
+  await buildWait(page, () => window.__web.build.confirming === true, 10_000, "the confirmation again");
+  await page.click("#build-confirm-replace");
   await buildWait(page, () => window.__web.build.parts === 2, 20_000, "opening the saved model");
+  check((await buildState(page)).canRestore === true && (await page.isEnabled("#build-restore")), `${label}: no way back after replacing`);
+  await page.click("#build-restore");
+  await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Restore previous model");
+  await page.click("#build-restore");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Restore previous model again (the swap)");
   const rows = await page.$$eval("#build-bom tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
   check(rows.length === 2 && rows.some((r) => r[0] === "1" && r[1] === "Brick 2 x 4"), `${label}: bill of materials ${JSON.stringify(rows)}`);
   check((await page.textContent("#build-bom-total")).startsWith("2 parts"), `${label}: bill total ${await page.textContent("#build-bom-total")}`);
@@ -1306,8 +1377,52 @@ async function buildRun(browser, origin) {
   await buildWait(page, () => /Could not open/.test(window.__web.build.message), 10_000, "the refusal of a file that is not a model");
   check((await page.getAttribute("#build-message", "role")) === "alert" && (await buildState(page)).parts === 2, `${label}: the refusal is an alert and the model stays`);
 
+  // The worker is replaced when a slow Part build is cancelled (src/client.js): the model must
+  // survive that. Build, switch to Part, start a 16x16 tile, change it back while it runs,
+  // and return to Build.
+  {
+    const partsBefore = (await buildState(page)).parts;
+    const restartsBefore = (await web(page)).restarts;
+    const restoresBefore = (await buildState(page)).restores;
+    await page.click("#tab-tile");
+    const n = (await web(page)).evaluations;
+    await page.fill("#p-size-0", "16");
+    await page.fill("#p-size-1", "16");
+    const until = Date.now() + 10_000;
+    while (Date.now() < until && !/\d+ s/.test(await page.textContent("#status"))) await sleep(100);
+    await page.fill("#p-size-0", "2");
+    await page.fill("#p-size-1", "6");
+    await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x6" }, 90_000, `${label} the tile after the cancelled build`);
+    const restarted = (await web(page)).restarts > restartsBefore;
+    await page.click("#tab-build");
+    await buildWait(page, () => window.__web.build.ready && window.__web.mode === "build", 30_000, "returning to Build");
+    // Back in Build the page puts the model into the new worker (restores counts it) before it answers.
+    await page
+      .waitForFunction(([n0, r0, want]) => window.__web.build.parts === n0 && (!want || window.__web.build.restores > r0), [partsBefore, restoresBefore, restarted], { timeout: 30_000, polling: 50 })
+      .catch(() => failures.push(`${label}: the model is gone after a worker restart (${JSON.stringify({ restarted })})`));
+    b = await buildState(page);
+    check(b.stats.parts === partsBefore, `${label}: ${b.stats.parts} parts in the core after the restart, ${partsBefore} before`);
+    if (restarted) check(/restarted/.test(b.message) && b.message.includes("undo history"), `${label}: the restart was not announced: ${b.message}`);
+    // The model in the core is real: a snap onto the brick finds its studs, and the part is attached.
+    const topPoint = await screenAt(page, [0, -32, 0]);
+    await page.click('#build-parts [aria-label="Plate 1 x 2"]');
+    await page.mouse.move(topPoint.x, topPoint.y);
+    await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, "a ghost on the brick after the restart");
+    await page.mouse.click(topPoint.x, topPoint.y);
+    await buildWait(page, () => window.__web.build.parts === 3, 20_000, "placing after the restart");
+    b = await buildState(page);
+    check(b.stats.floating.length === 0 && b.stats.connections >= 10, `${label}: the part placed after the restart is not attached to the restored brick (${JSON.stringify(b.stats)})`);
+    await page.keyboard.press("Control+z");
+    await buildWait(page, () => window.__web.build.parts === 2, 10_000, "undo after the restart");
+    console.log(`# ${label}: the model survived ${restarted ? `${(await web(page)).restarts - restartsBefore} worker restart(s)` : "the Part detour (the 16x16 finished before it could be cancelled, so no restart was exercised)"}`);
+  }
+
   // The samples.
+  // The model has edits since the last save, so a sample asks first (the confirmation is in the page).
+  check((await buildState(page)).dirty === true, `${label}: dirty before the sample`);
   await page.selectOption("#build-samples", "house");
+  await buildWait(page, () => window.__web.build.confirming === true, 10_000, "the confirmation before a sample replaces unsaved work");
+  await page.click("#build-confirm-replace");
   await buildWait(page, () => window.__web.build.parts === 49, 20_000, "the house sample");
   b = await buildState(page);
   check(b.stats.floating.length === 0 && b.stats.components === 1, `${label}: the house stands (${JSON.stringify(b.stats)})`);

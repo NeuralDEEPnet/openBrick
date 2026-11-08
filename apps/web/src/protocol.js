@@ -429,7 +429,7 @@ export function assemblerCatalog(core) {
  * The model on screen: { instances: Int32Array (seven numbers per part: id,
  * catalog part number, x, y, z in LDU, rotation index, colour code), stats
  * ({ parts, connections, components, grounded, floating }), bom, canUndo,
- * canRedo, revision }.
+ * canRedo, revision, text (the model as .obrick text) }.
  */
 export function assemblerState(core) {
   const a = assembler(core);
@@ -440,6 +440,8 @@ export function assemblerState(core) {
     canUndo: a.can_undo(),
     canRedo: a.can_redo(),
     revision: a.revision(),
+    // The model as .obrick text, for the page's copy (src/model-keeper.js): a replaced worker starts empty.
+    text: a.save("Autosave"),
   };
 }
 

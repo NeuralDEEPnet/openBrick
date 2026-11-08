@@ -85,6 +85,74 @@ export function keyAction(event) {
   return null;
 }
 
+/**
+ * What a key does while the 3D view itself has the focus (Build mode's keyboard path,
+ * for people who cannot aim a pointer): arrow keys move the aim by one stud, Enter or
+ * Space places at the aim, Shift+arrows orbit the camera, plus and minus zoom, Home frames
+ * the model. Returns { type: "aim", key } | { type: "orbit", azimuth, polar } |
+ * { type: "zoom", factor } | { type: "place" } | { type: "reframe" } | null, with angles
+ * in degrees. Ctrl and Cmd combinations are never taken (undo and redo are keyAction's).
+ */
+export function stageKeyAction(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey) return null;
+  const key = String(event.key ?? "");
+  const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[key];
+  if (arrow) {
+    if (event.shiftKey) return { type: "orbit", azimuth: -arrow[0] * ORBIT_STEP_DEG, polar: -arrow[1] * ORBIT_STEP_DEG };
+    return { type: "aim", key };
+  }
+  if (key === "Enter" || key === " ") return { type: "place" };
+  if (key === "+" || key === "=") return { type: "zoom", factor: 1 / ZOOM_STEP };
+  if (key === "-" || key === "_") return { type: "zoom", factor: ZOOM_STEP };
+  if (key === "Home") return { type: "reframe" };
+  return null;
+}
+
+/** Degrees one Shift+arrow press turns the camera, and the factor one zoom key press scales the distance by. */
+export const ORBIT_STEP_DEG = 15;
+export const ZOOM_STEP = 1.25;
+
+/**
+ * The aim's step for an arrow key, in studs [dx, dz] of the model frame, relative to how
+ * the camera looks: Up goes away from you, Right to your right, along the nearer of the
+ * two ground axes. `forward` is the camera's horizontal view direction in the scene's
+ * frame ([x, z], Y up; the model frame has the same X and the opposite Z). The page only
+ * moves a cursor here: where the part then goes is the core's answer to a ray at the aim.
+ */
+export function aimStep(key, forward) {
+  const [fx, fz] = forward;
+  // Nearest axis of the view direction, in the scene frame.
+  const f = Math.abs(fx) >= Math.abs(fz) ? [Math.sign(fx) || 1, 0] : [0, Math.sign(fz) || -1];
+  const right = [-f[1], f[0]];
+  const sceneStep = { ArrowUp: f, ArrowDown: [-f[0], -f[1]], ArrowRight: right, ArrowLeft: [-right[0], -right[1]] }[key];
+  if (!sceneStep) return null;
+  // Scene to model frame: X stays, Z flips. (Avoid -0.)
+  return [sceneStep[0] || 0, -sceneStep[1] || 0];
+}
+
+/** A ray straight down onto the ground point (x, z), from high above, in LDU of the model frame. */
+export function aimRay(x, z, height = 1_000_000) {
+  return { origin: [x, -height, z], dir: [0, 1, 0] };
+}
+
+/**
+ * Whether replacing the model (Open, Samples) needs the person's say first: it does when
+ * edits since the last save or open would be lost.
+ */
+export function replaceNeedsConfirm({ dirty }) {
+  return dirty === true;
+}
+
+/**
+ * Whether Clear has anything to remove: any part but a baseplate standing on the ground
+ * (the engine's `ClearBuilt` keeps exactly those). `parts` is the catalog's part list
+ * (`base`, `heightLdu`); a baseplate is on the ground when its bottom (position plus height)
+ * is at Y = 0, whichever way it is turned about the vertical axis.
+ */
+export function clearable(instances, parts) {
+  return instances.some((i) => !(parts[i.part].base && i.pos[1] + parts[i.part].heightLdu === 0));
+}
+
 /** True where typing must not trigger a shortcut: text fields, selects and the like. */
 export function typingTarget(el) {
   const tag = String(el?.tagName ?? "").toLowerCase();

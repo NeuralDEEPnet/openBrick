@@ -324,6 +324,30 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
         part.visible = !on;
         dirty = true;
       },
+      /** The camera's horizontal view direction in the scene frame: [x, z], Y up. */
+      cameraForward() {
+        const d = controls.target.clone().sub(camera.position);
+        return [d.x, d.z];
+      },
+      /** Turn the camera about its target by degrees (azimuth about the vertical, polar from it). */
+      orbitBy(azimuthDeg, polarDeg) {
+        const offset = camera.position.clone().sub(controls.target);
+        const sph = new THREE.Spherical().setFromVector3(offset);
+        sph.theta += (azimuthDeg * Math.PI) / 180;
+        sph.phi = Math.min(Math.PI - 0.05, Math.max(0.05, sph.phi + (polarDeg * Math.PI) / 180));
+        camera.position.copy(controls.target).add(offset.setFromSpherical(sph));
+        camera.lookAt(controls.target);
+        controls.update();
+        dirty = true;
+      },
+      /** Scale the camera's distance from its target, within the controls' limits. */
+      zoomBy(factor) {
+        const offset = camera.position.clone().sub(controls.target);
+        const length = Math.min(controls.maxDistance, Math.max(controls.minDistance, offset.length() * factor));
+        camera.position.copy(controls.target).add(offset.setLength(length));
+        controls.update();
+        dirty = true;
+      },
       frameSphere(center, radius, keepDirection = false) {
         frame({ center, radius }, keepDirection);
         dirty = true;

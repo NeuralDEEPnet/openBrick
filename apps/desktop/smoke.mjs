@@ -463,7 +463,7 @@ async function main() {
     await session.waitFor("return window.__web.build.parts === 2 ? true : null;", `${label} build place`, 60_000);
     await session.exec("const i = document.getElementById('build-name'); i.value = 'Desktop model'; i.dispatchEvent(new Event('input'));");
     await session.click("#build-save");
-    await session.waitFor("return window.__web.build.saves.length > 0 ? true : null;", `${label} build save`, 60_000);
+    await session.waitFor("return window.__web.build.saveCount > 0 ? true : null;", `${label} build save`, 60_000);
     const modelFile = fileOf(dialogs, "Desktop-model.obrick.json");
     check(modelFile !== null, `${label}: the model was not saved as Desktop-model.obrick.json`);
     const modelDoc = JSON.parse(readFileSync(join(dialogs, "Desktop-model.obrick.json"), "utf8"));
