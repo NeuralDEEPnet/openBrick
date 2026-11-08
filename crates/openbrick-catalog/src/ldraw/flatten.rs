@@ -188,6 +188,7 @@ impl<'a> Walker<'a> {
                 Line::SubFile(s) => {
                     let inv = std::mem::take(&mut invert_next);
                     self.stats.refs += 1;
+                    self.lib.charge(1)?;
                     if self.stats.refs > self.limits.max_refs {
                         return Err(WalkError::TooManyRefs(self.limits.max_refs));
                     }
@@ -254,6 +255,7 @@ impl<'a> Walker<'a> {
         for o in orders {
             for tri in 1..o.len() - 1 {
                 self.stats.triangles += 1;
+                self.lib.charge(1)?;
                 if !certified {
                     self.stats.uncertified_triangles += 1;
                 }

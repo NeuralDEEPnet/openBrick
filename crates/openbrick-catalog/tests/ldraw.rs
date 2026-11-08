@@ -952,6 +952,88 @@ fn a_damaged_deflate_stream_error_is_short() {
     assert!(text.len() < 400, "{} bytes of error", text.len());
 }
 
+// ------------------------------------------------------------ import budget
+
+/// A folder library of `n` brick parts, each referencing a one-triangle primitive `refs` times.
+fn heavy_library(t: &Tmp, n: usize, refs: usize) {
+    t.write("ldraw/p/tri.dat", &format!("0 tri\n0 !LDRAW_ORG Primitive\n{CERT}{TRI}"));
+    for i in 0..n {
+        let name = 1000 + i;
+        t.write(
+            &format!("ldraw/parts/{name}.dat"),
+            &format!(
+                "0 Brick {name}\n0 Name: {name}.dat\n0 Author: t\n0 !LDRAW_ORG Part UPDATE 2026-01\n0 !LICENSE CC\n0 !CATEGORY Brick\n{CERT}{}",
+                "1 16 0 0 0 1 0 0 0 1 0 0 0 1 tri.dat\n".repeat(refs)
+            ),
+        );
+    }
+}
+
+#[test]
+fn one_work_budget_covers_the_whole_import() {
+    let t = Tmp::new("budget");
+    // 300 parts of 1,000 references: each is inside every per-part limit, together they are
+    // 900,000 units of work.
+    heavy_library(&t, 300, 1000);
+    let opts = ImportOptions {
+        include_unconnected: true,
+        limit: None,
+        ..ImportOptions::default()
+    };
+    let (pack, report) = import(&t.0, &opts, &mut quiet).expect("within the default budget");
+    assert_eq!(pack.header.parts.len(), 300);
+    // Per part: the scan walk expands the references, the tessellating walk expands them and
+    // produces a triangle for each.
+    assert_eq!(report.work, 300 * 1000 * 3);
+    let small = ImportOptions {
+        max_work: 100_000,
+        ..opts.clone()
+    };
+    let e = import(&t.0, &small, &mut quiet).err().expect("over budget");
+    assert!(
+        matches!(e, openbrick_catalog::ldraw::ImportError::Library(LibraryError::WorkBudget(100_000))),
+        "{e}"
+    );
+    assert!(e.to_string().contains("100000"), "{e}");
+    // Exactly the work done is allowed.
+    let exact = ImportOptions {
+        max_work: report.work,
+        ..opts
+    };
+    assert!(import(&t.0, &exact, &mut quiet).is_ok());
+}
+
+#[test]
+fn when_every_part_fails_the_error_says_why() {
+    let t = Tmp::new("allfail");
+    // Parts that refer to themselves: each fails in the walk.
+    for i in 0..5 {
+        let name = 2000 + i;
+        t.write(
+            &format!("ldraw/parts/{name}.dat"),
+            &format!(
+                "0 Brick {name}\n0 Name: {name}.dat\n0 Author: t\n0 !LDRAW_ORG Part UPDATE 2026-01\n0 !LICENSE CC\n0 !CATEGORY Brick\n{CERT}1 16 0 0 0 1 0 0 0 1 0 0 0 1 {name}.dat\n"
+            ),
+        );
+    }
+    t.write("ldraw/p/.keep.dat", "");
+    let e = import(&t.0, &ImportOptions::default(), &mut quiet)
+        .err()
+        .expect("nothing to write");
+    let text = e.to_string();
+    assert!(text.contains("5 failed to read"), "{text}");
+    assert!(text.contains("parts/2000.dat"), "{text}");
+    assert!(text.contains("refers to itself"), "{text}");
+    assert!(!text.contains("category filter"), "the filter is not the problem: {text}");
+    // An empty category list result still points at the filter.
+    let opts = ImportOptions {
+        categories: Some(vec!["Nope".into()]),
+        ..ImportOptions::default()
+    };
+    let e = import(&t.0, &opts, &mut quiet).err().unwrap();
+    assert!(e.to_string().contains("category filter"), "{e}");
+}
+
 // ------------------------------------------------------------ properties
 
 #[test]

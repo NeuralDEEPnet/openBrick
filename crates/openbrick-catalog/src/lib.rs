@@ -18,6 +18,7 @@ pub mod ldraw;
 pub mod pack;
 pub mod palette;
 pub mod shape;
+pub mod text;
 
 use std::sync::OnceLock;
 

@@ -480,6 +480,8 @@ pub struct Library {
     resolution: Resolution,
     cache: RefCell<HashMap<String, Option<Rc<ParsedFile>>>>,
     bytes_read: Cell<u64>,
+    work: Cell<u64>,
+    max_work: Cell<u64>,
 }
 
 /// A resolved file: its library path and parsed content.
@@ -506,6 +508,8 @@ impl Library {
             resolution,
             cache: RefCell::new(HashMap::new()),
             bytes_read: Cell::new(0),
+            work: Cell::new(0),
+            max_work: Cell::new(u64::MAX),
         };
         if !lib.source.names().iter().any(|n| n.starts_with("parts/")) {
             return Err(LibraryError::NotALibrary {
@@ -517,6 +521,28 @@ impl Library {
 
     pub fn resolution(&self) -> Resolution {
         self.resolution
+    }
+
+    /// Bound the work every walk of this library may do in all: one unit per sub-file reference
+    /// expanded and per triangle produced. Unlimited until this is called. A counter, not a clock,
+    /// so a given library and budget always succeed or fail the same way.
+    pub fn set_work_budget(&self, units: u64) {
+        self.max_work.set(units);
+    }
+
+    /// Work units charged so far.
+    pub fn work(&self) -> u64 {
+        self.work.get()
+    }
+
+    /// Charge `units` of work; an error once the budget is spent.
+    pub fn charge(&self, units: u64) -> Result<(), LibraryError> {
+        let total = self.work.get().saturating_add(units);
+        self.work.set(total);
+        if total > self.max_work.get() {
+            return Err(LibraryError::WorkBudget(self.max_work.get()));
+        }
+        Ok(())
     }
 
     /// Paths (`parts/3001.dat`) of the top-level part files, sorted.

@@ -185,7 +185,7 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
     })
     .map_err(|e| match e {
         ImportError::Library(e) => Fail::Input(e.to_string()),
-        ImportError::Empty => Fail::Input(e.to_string()),
+        ImportError::Empty(_) => Fail::Input(e.to_string()),
         ImportError::Pack(e) => Fail::Internal(e.to_string()),
     })?;
     let bytes = pack.to_bytes().map_err(|e| Fail::Internal(e.to_string()))?;

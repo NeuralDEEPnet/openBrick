@@ -16,6 +16,7 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 ### Fixed
 - A pack with a huge part box no longer hangs the engine or the WebAssembly worker: a pack box wider than 8,192 LDU (the widest real part is 960) or a body covering more than 65,536 lattice cells is refused when the pack is read, and the engine's spatial hash refuses any box over that cell count with an error instead of inserting one entry per cell (this also protects documents and built-in parts).
 - The LDraw zip reader refuses zips whose entries overlap (one deflate stream under hundreds of names took 32 s to read), whose local header names another file, or whose sizes add up to more than 1 GiB (the library's own are 507 MB), verifies every entry's CRC-32 and size, and caps the bytes read in one import at 640 MiB (was 8 GiB); inflate errors report the status only.
+- `catalog import` has one work budget for the whole import (50 million units of references and triangles, a counter and not a clock; a full import of the default categories is 4.7 million, with Technic 6.8 million), on top of the limits per part, so hundreds of parts each just inside their own limits can no longer add up to half a minute; when no part can be written the error now gives the counts and the first failures instead of sending the person to the category filter.
 
 ## 0.1.0 - 2026-11-01
 

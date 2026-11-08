@@ -38,6 +38,7 @@ use crate::pack::{
     Connectivity, LicenceText, Pack, PackCounts, PackError, PackHeader, PackPart, LDRAW_ID_PREFIX,
     MAX_BLOB_BYTES, MAX_PARTS, PACK_FORMAT,
 };
+use crate::text::safe_msg;
 use crate::LDRAW_ATTRIBUTION;
 
 /// The categories imported unless the caller names others: the system parts
@@ -82,7 +83,14 @@ pub struct ImportOptions {
     pub limits: Limits,
     /// A part with more triangles than this is left out.
     pub max_part_triangles: usize,
+    /// The most work the whole import may do, in units of one sub-file reference expanded or one
+    /// triangle produced, over every part (`limits` bound one part). A counter, so the same
+    /// library and options always end the same way. Default [`DEFAULT_MAX_WORK`].
+    pub max_work: u64,
 }
+
+/// The default work budget of an import (see [`ImportOptions::max_work`]).
+pub const DEFAULT_MAX_WORK: u64 = 50_000_000;
 
 impl Default for ImportOptions {
     fn default() -> ImportOptions {
@@ -93,6 +101,7 @@ impl Default for ImportOptions {
             include_unconnected: false,
             limits: Limits::default(),
             max_part_triangles: 30_000,
+            max_work: DEFAULT_MAX_WORK,
         }
     }
 }
@@ -132,6 +141,8 @@ pub struct ImportReport {
     pub uncertified: u32,
     /// The first few failures: path and message.
     pub failures: Vec<(String, String)>,
+    /// Work units the import did (references expanded and triangles produced, both walks of every part).
+    pub work: u64,
     pub seconds: f64,
 }
 
@@ -141,8 +152,8 @@ pub enum ImportError {
     Library(#[from] LibraryError),
     #[error(transparent)]
     Pack(#[from] PackError),
-    #[error("the library has no part that qualifies; check the category filter (default: {})", DEFAULT_CATEGORIES.join(", "))]
-    Empty,
+    #[error("the library has no part to write: {0}")]
+    Empty(String),
 }
 
 /// The category of a part: its `!CATEGORY` line, else the first word of its description.
@@ -236,6 +247,7 @@ pub fn import(
 ) -> Result<(Pack, ImportReport), ImportError> {
     let t0 = Instant::now();
     let lib = Library::open(path, opts.resolution)?;
+    lib.set_work_budget(opts.max_work);
     let wanted: Vec<String> = opts.categories.clone().unwrap_or_else(|| {
         DEFAULT_CATEGORIES
             .iter()
@@ -336,6 +348,10 @@ pub fn import(
                 done.push(Done { cand, d });
             }
             Ok(None) => report.excluded.no_geometry += 1,
+            // The budget is for the whole import: when it is spent, nothing more is read.
+            Err(WalkError::Library(e @ LibraryError::WorkBudget(_))) => {
+                return Err(ImportError::Library(e));
+            }
             Err(e) => {
                 report.excluded.failed += 1;
                 if report.failures.len() < 20 {
@@ -353,7 +369,7 @@ pub fn import(
         .collect();
     let mut chosen = take_balanced(usable, cap);
     if chosen.is_empty() {
-        return Err(ImportError::Empty);
+        return Err(ImportError::Empty(empty_reason(&report, opts)));
     }
     // Keep the blob inside its bound.
     let mut bytes = 0usize;
@@ -408,6 +424,7 @@ pub fn import(
         });
     }
     report.counts.imported = parts.len() as u32;
+    report.work = lib.work();
     report.library = if library.is_empty() {
         "unknown".into()
     } else {
@@ -487,7 +504,39 @@ fn take_balanced(parts: Vec<Done>, cap: usize) -> Vec<Done> {
 }
 
 fn failure_text(e: &WalkError) -> String {
-    e.to_string()
+    safe_msg(&e.to_string())
+}
+
+/// Why nothing qualified, with the numbers: what was scanned, what was left out and why, and the
+/// first failures, so the person is not sent to the category filter when the files were the problem.
+fn empty_reason(r: &ImportReport, opts: &ImportOptions) -> String {
+    let x = &r.excluded;
+    let mut m = format!(
+        "{} part files scanned, {} eligible, {} in the chosen categories; of those {} failed to read, {} were too complex, {} had no geometry, and {} had no connector{}",
+        r.counts.scanned,
+        r.counts.eligible,
+        r.counts.in_categories,
+        x.failed,
+        x.too_complex,
+        x.no_geometry,
+        r.counts.in_categories.saturating_sub(r.counts.with_connectors + x.failed + x.too_complex + x.no_geometry),
+        if opts.include_unconnected { "" } else { " (--include-unconnected writes those too)" },
+    );
+    if x.failed > 0 {
+        let first: Vec<String> = r
+            .failures
+            .iter()
+            .take(3)
+            .map(|(p, why)| format!("{}: {}", safe_msg(p), why))
+            .collect();
+        m.push_str(&format!("; first failures: {}", first.join("; ")));
+    } else if r.counts.in_categories == 0 {
+        m.push_str(&format!(
+            "; check the category filter (default: {})",
+            DEFAULT_CATEGORIES.join(", ")
+        ));
+    }
+    m
 }
 
 #[cfg(test)]
