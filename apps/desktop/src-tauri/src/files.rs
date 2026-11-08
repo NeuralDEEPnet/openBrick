@@ -367,12 +367,21 @@ mod tests {
         assert_eq!(OpenKind::Part.extensions(), ["json"]);
         assert_eq!(OpenKind::Model.extensions(), ["obrick", "json"]);
         // Each kind has its own scripted file, so a test folder can hold all three.
-        let names =
-            [OpenKind::Svg, OpenKind::FitProfile, OpenKind::Part, OpenKind::Model]
-                .map(OpenKind::test_file_name);
+        let names = [
+            OpenKind::Svg,
+            OpenKind::FitProfile,
+            OpenKind::Part,
+            OpenKind::Model,
+        ]
+        .map(OpenKind::test_file_name);
         assert_eq!(
             names,
-            ["open.svg", "open.json", "open.obpart.json", "open.obrick.json"]
+            [
+                "open.svg",
+                "open.json",
+                "open.obpart.json",
+                "open.obrick.json"
+            ]
         );
     }
 
