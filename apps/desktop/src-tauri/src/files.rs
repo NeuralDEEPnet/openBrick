@@ -93,6 +93,8 @@ pub enum OpenKind {
     /// A part document (`openbrick/part@1`, `.obpart.json`), opened in the
     /// designer.
     Part,
+    /// An assembler model (`.obrick`, or `.obrick.json`), opened in Build mode.
+    Model,
 }
 
 impl OpenKind {
@@ -102,8 +104,9 @@ impl OpenKind {
             "svg" => Ok(Self::Svg),
             "fit" => Ok(Self::FitProfile),
             "part" => Ok(Self::Part),
+            "model" => Ok(Self::Model),
             other => Err(format!(
-                "cannot open a file of kind {other:?}; the desktop app opens svg, fit or part"
+                "cannot open a file of kind {other:?}; the desktop app opens svg, fit, part or model"
             )),
         }
     }
@@ -114,6 +117,8 @@ impl OpenKind {
             Self::Svg => &["svg"],
             // A part is `name.obpart.json`; dialogs filter on the last extension.
             Self::FitProfile | Self::Part => &["json"],
+            // A model is `name.obrick` or `name.obrick.json`.
+            Self::Model => &["obrick", "json"],
         }
     }
 
@@ -124,6 +129,7 @@ impl OpenKind {
             Self::Svg => "open.svg",
             Self::FitProfile => "open.json",
             Self::Part => "open.obpart.json",
+            Self::Model => "open.obrick.json",
         }
     }
 
@@ -133,6 +139,7 @@ impl OpenKind {
             Self::Svg => "SVG drawing",
             Self::FitProfile => "Fit profile (JSON)",
             Self::Part => "Part document (.obpart.json)",
+            Self::Model => "Assembler model (.obrick)",
         }
     }
 
@@ -142,6 +149,7 @@ impl OpenKind {
             Self::Svg => "Choose an SVG drawing",
             Self::FitProfile => "Choose a fit profile",
             Self::Part => "Open a part document",
+            Self::Model => "Open an assembler model",
         }
     }
 }
@@ -350,16 +358,22 @@ mod tests {
         assert_eq!(OpenKind::parse("svg"), Ok(OpenKind::Svg));
         assert_eq!(OpenKind::parse("fit"), Ok(OpenKind::FitProfile));
         assert_eq!(OpenKind::parse("part"), Ok(OpenKind::Part));
+        assert_eq!(OpenKind::parse("model"), Ok(OpenKind::Model));
         for bad in ["", "json", "SVG", "any", "obpart"] {
             assert!(OpenKind::parse(bad).is_err(), "{bad:?} parsed");
         }
         assert_eq!(OpenKind::Svg.extensions(), ["svg"]);
         assert_eq!(OpenKind::FitProfile.extensions(), ["json"]);
         assert_eq!(OpenKind::Part.extensions(), ["json"]);
+        assert_eq!(OpenKind::Model.extensions(), ["obrick", "json"]);
         // Each kind has its own scripted file, so a test folder can hold all three.
         let names =
-            [OpenKind::Svg, OpenKind::FitProfile, OpenKind::Part].map(OpenKind::test_file_name);
-        assert_eq!(names, ["open.svg", "open.json", "open.obpart.json"]);
+            [OpenKind::Svg, OpenKind::FitProfile, OpenKind::Part, OpenKind::Model]
+                .map(OpenKind::test_file_name);
+        assert_eq!(
+            names,
+            ["open.svg", "open.json", "open.obpart.json", "open.obrick.json"]
+        );
     }
 
     #[test]

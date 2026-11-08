@@ -17,8 +17,8 @@ export const COMMANDS = { pick: "pick_file", read: "read_picked_file", save: "sa
 export const NAME_HEADER = "x-openbrick-name";
 export const FORMAT_HEADER = "x-openbrick-format";
 
-/** What the page opens: an SVG drawing, a fit profile or a part document (OpenKind in files.rs). */
-export const OPEN_KINDS = ["svg", "fit", "part"];
+/** What the page opens: an SVG drawing, a fit profile, a part document or an assembler model (OpenKind in files.rs). */
+export const OPEN_KINDS = ["svg", "fit", "part", "model"];
 
 /**
  * The desktop app's bridge, `{ invoke }`, when the page runs inside it (the

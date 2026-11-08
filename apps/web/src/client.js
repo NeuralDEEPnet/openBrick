@@ -178,6 +178,66 @@ export class CoreClient {
     return this.#export({ ...fields, type: "exportCoupon" });
   }
 
+  // The assembler (Build mode): plain requests, never superseded. The model lives
+  // in the worker's core; every change answers with the state to draw.
+
+  /** The built-in catalog, palette, rotation matrices and samples. */
+  assemblerCatalog() {
+    return this.#send({ type: "asmInit" });
+  }
+
+  /** The render meshes of every catalog part ({ meshes }); `detail` false for the cheap level. */
+  assemblerMeshes(detail = true) {
+    return this.#send({ type: "asmMeshes", detail });
+  }
+
+  /** The engine's snapped pose for a part under a pointer ray (LDU, model frame), or null. */
+  assemblerSnap(part, rot, ray) {
+    return this.#send({ type: "asmSnap", part, rot, ray });
+  }
+
+  /** What the ray hits first, or null. */
+  assemblerPick(ray) {
+    return this.#send({ type: "asmPick", ray });
+  }
+
+  /** Apply a command (see crates/openbrick-engine/src/history.rs); resolves with { id, ...state }. */
+  assemblerApply(command) {
+    return this.#send({ type: "asmApply", command });
+  }
+
+  assemblerUndo() {
+    return this.#send({ type: "asmUndo" });
+  }
+
+  assemblerRedo() {
+    return this.#send({ type: "asmRedo" });
+  }
+
+  assemblerState() {
+    return this.#send({ type: "asmState" });
+  }
+
+  /** Replace the model with a .obrick document; resolves with the state. */
+  assemblerLoad(text) {
+    return this.#send({ type: "asmLoad", text });
+  }
+
+  /** The model as .obrick text: { text }. */
+  assemblerSave(name) {
+    return this.#send({ type: "asmSave", name });
+  }
+
+  /** The text of a sample model: { text }. */
+  assemblerSample(id) {
+    return this.#send({ type: "asmSample", id });
+  }
+
+  /** A rotation index turned about the vertical axis: { rot }. */
+  assemblerTurn(rot, quarterTurns) {
+    return this.#send({ type: "asmTurn", rot, quarterTurns });
+  }
+
   /** Stop the worker; anything still waiting is rejected. */
   dispose() {
     this.#fail(new CoreError("the core client was disposed"));

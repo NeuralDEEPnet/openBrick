@@ -83,7 +83,11 @@
 //    /openBrick/ and checks that the page, worker, module and assets all load
 //    from there and give the native part.
 //
-// Usage: node smoke.mjs [--no-build] [--no-webgpu] [--no-base-check]
+// 4b. Build mode (buildRun, buildPhoneRun): the assembler on desktop and on a
+//    phone, with a 513-brick model for the performance numbers; see the comments
+//    on those functions. `--only-build` runs only these two steps.
+//
+// Usage: node smoke.mjs [--no-build] [--no-webgpu] [--no-base-check] [--only-build]
 //                       [--screenshots <dir>] [--downloads <dir>]
 //
 // Downloads go to apps/web/smoke-downloads/ unless --downloads names another
@@ -1143,6 +1147,261 @@ async function fullRun(browser, origin, native) {
   return [threemf.path, inlay.path, inlayParts.path, badge.path, coupon.path, recorded.tile.path];
 }
 
+/**
+ * A model of 16 layers of 32 bricks (2x4) on the baseplate, 513 parts, as .obrick
+ * text, for the performance numbers: the 16 x 16 baseplate is 320 LDU wide, and a
+ * 2x4 is 80 by 40, so 4 by 8 of them tile one layer. The core still checks every
+ * part when the page opens it.
+ */
+function bigModel() {
+  const instances = [{ id: 1, part: "ob.baseplate-16x16", pose: { pos: [0, -8, 0], rot: 0 }, colour: 2 }];
+  let id = 2;
+  for (let layer = 0; layer < 16; layer++) {
+    for (const x of [-120, -40, 40, 120]) {
+      for (let r = 0; r < 8; r++) {
+        instances.push({ id: id++, part: "ob.brick-2x4", pose: { pos: [x, -8 - 24 * (layer + 1), -140 + 40 * r], rot: 0 }, colour: [10000, 15, 4, 14][layer % 4] });
+      }
+    }
+  }
+  return JSON.stringify({
+    openbrick: "1.0",
+    kind: "model",
+    name: "Tower of 512 bricks",
+    credit: { author: "smoke test" },
+    units: "ldu",
+    frame: "ldraw-y-down",
+    catalog: "openbrick-builtin@1",
+    palette: [],
+    submodels: [{ id: "main", instances }],
+    bom: [],
+  });
+}
+
+const buildState = (page) => page.evaluate(() => JSON.parse(JSON.stringify({ ...window.__web.build, project: undefined, measure: undefined, bench: undefined })));
+
+async function buildWait(page, want, timeoutMs, what) {
+  try {
+    await page.waitForFunction(want, null, { timeout: timeoutMs, polling: 50 });
+  } catch {
+    throw new Error(`build: ${what} did not happen within ${timeoutMs / 1000} s (last: ${JSON.stringify(await buildState(page))})`);
+  }
+}
+
+/** Where a point of the model frame (LDU) is on screen. */
+const screenAt = (page, pos) => page.evaluate((p) => window.__web.build.project(p), pos);
+
+/**
+ * Build mode (docs/plan/07 section 10), desktop: the parts and colour palettes,
+ * a brick placed on the baseplate with the core's snapped ghost (valid), a plate
+ * on top of it (connected), R turns the ghost, Ctrl+Z and Ctrl+Shift+Z undo and
+ * redo, Delete removes the part under the pointer, the model saved as .obrick
+ * text (deterministic: save, open and save again is the same bytes), Clear keeps
+ * the baseplate, opening the file brings the model and its bill of materials
+ * back, the house sample stands (nothing floating), a file that is not a model
+ * is refused with a message, and a 513-brick model is drawn and stays
+ * interactive; the core's round trips and the frame times are printed.
+ */
+async function buildRun(browser, origin) {
+  const label = "build";
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light", acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the core's catalog and meshes");
+  let b = await buildState(page);
+  check((await web(page)).mode === "build", `${label}: the mode is not build`);
+  check((await page.getAttribute("#tab-build", "aria-selected")) === "true", `${label}: the Build tab is not selected`);
+  check(b.parts === 1 && b.stats.parts === 1, `${label}: a new model starts with the baseplate (${b.parts})`);
+  const partButtons = await page.$$eval('#build-parts [role="radio"]', (els) => els.map((e) => ({ name: e.getAttribute("aria-label"), checked: e.getAttribute("aria-checked") })));
+  check(partButtons.length === 14 && partButtons.filter((p) => p.checked === "true").length === 1, `${label}: ${partButtons.length} parts in the palette`);
+  const colourButtons = await page.$$eval('#build-colours [role="radio"]', (els) => els.map((e) => e.getAttribute("aria-label")));
+  check(colourButtons.length >= 8 && colourButtons.includes("Neuraldeep blue"), `${label}: colours ${colourButtons.join(", ")}`);
+  check((await page.$$('#build-parts canvas.thumb')).length === 14, `${label}: a thumbnail for every part`);
+  check((await page.getAttribute("#build-parts", "role")) === "radiogroup" && (await page.getAttribute("#build-colours", "role")) === "radiogroup", `${label}: the palettes are radio groups`);
+  const labelled = await page.$$eval("#panel-build button, #panel-build select, #panel-build input:not([type=file])", (els) => els.filter((e) => !(e.getAttribute("aria-label") || e.labels?.length || e.textContent.trim())).map((e) => e.id));
+  check(labelled.length === 0, `${label}: controls without a name: ${labelled.join(", ")}`);
+
+  // A brick on the baseplate: the ghost is the core's snapped pose.
+  const point = await screenAt(page, [0, -8, 0]);
+  await page.mouse.move(point.x, point.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, "a valid ghost over the baseplate");
+  b = await buildState(page);
+  check(JSON.stringify(b.ghostPos) === JSON.stringify([0, -32, 0]), `${label}: ghost at ${JSON.stringify(b.ghostPos)}`);
+  check(/click or tap to place \(8 studs connected\)/.test(await page.textContent("#status")), `${label}: status ${await page.textContent("#status")}`);
+  if (shots) await page.screenshot({ path: join(shots, "build-ghost.png") });
+  await page.mouse.click(point.x, point.y);
+  await buildWait(page, () => window.__web.build.parts === 2, 20_000, "the brick placed");
+  b = await buildState(page);
+  check(b.stats.connections === 8 && b.stats.floating.length === 0, `${label}: brick connected on 8 studs (${JSON.stringify(b.stats)})`);
+  check(/Placed Brick 2 . 4/.test(b.message), `${label}: message ${b.message}`);
+
+  // A plate on top, found by the ray hitting the brick's top face.
+  await page.click('#build-parts [aria-label="Plate 1 x 2"]');
+  await page.click('#build-colours [aria-label="Red"]');
+  const top = await screenAt(page, [0, -32, 0]);
+  await page.mouse.move(top.x, top.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid" && window.__web.build.selected === "ob.plate-1x2", 20_000, "a valid ghost over the brick");
+  b = await buildState(page);
+  check(b.ghostPos[1] === -40, `${label}: the plate stands on the brick, its bottom at the brick's top (y ${b.ghostPos[1]})`);
+  await page.mouse.click(top.x, top.y);
+  await buildWait(page, () => window.__web.build.parts === 3, 20_000, "the plate placed");
+  b = await buildState(page);
+  check(b.stats.floating.length === 0 && b.stats.connections >= 8 + 2, `${label}: the plate is attached (${JSON.stringify(b.stats)})`);
+
+  // R turns the ghost (the core composes the rotation), Ctrl+Z / Ctrl+Shift+Z undo and redo.
+  const before = (await buildState(page)).rot;
+  await page.mouse.move(top.x + 1, top.y + 1);
+  await page.keyboard.press("r");
+  await page.waitForFunction((r) => window.__web.build.rot !== r, before, { timeout: 10_000 }).catch(() => failures.push(`${label}: R did not turn the ghost`));
+  await page.keyboard.press("Control+z");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Ctrl+Z");
+  check(await page.isEnabled("#build-redo"), `${label}: redo is available after undo`);
+  await page.keyboard.press("Control+Shift+Z");
+  await buildWait(page, () => window.__web.build.parts === 3, 10_000, "Ctrl+Shift+Z");
+
+  // Delete removes the part under the pointer; the baseplate stays.
+  await page.mouse.move(top.x, top.y);
+  await buildWait(page, () => window.__web.build.ghost !== "none", 10_000, "hovering the plate");
+  await page.keyboard.press("Delete");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Delete removing the plate");
+  const floor = await screenAt(page, [100, -8, 100]);
+  await page.mouse.move(floor.x, floor.y);
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Delete");
+  await page.waitForTimeout(300);
+  check((await buildState(page)).parts === 2, `${label}: Delete on the baseplate removed something`);
+
+  // Save: a download of .obrick text; save, open, save is byte-identical.
+  await page.fill("#build-name", "Smoke model");
+  const [saved] = await Promise.all([page.waitForEvent("download"), page.click("#build-save")]);
+  const savedPath = join(downloads, saved.suggestedFilename());
+  await saved.saveAs(savedPath);
+  const text = readFileSync(savedPath, "utf8");
+  check(saved.suggestedFilename() === "Smoke-model.obrick.json", `${label}: saved as ${saved.suggestedFilename()}`);
+  const doc = JSON.parse(text);
+  check(doc.kind === "model" && doc.catalog === "openbrick-builtin@1" && doc.submodels[0].instances.length === 2, `${label}: the saved model has ${doc.submodels?.[0]?.instances?.length} parts`);
+  check(doc.bom.reduce((n, l) => n + l.count, 0) === 2 && doc.palette.length === 2, `${label}: the saved bill of materials ${JSON.stringify(doc.bom)}`);
+  check(doc.submodels[0].instances.every((i) => Number.isInteger(i.pose.pos[0]) && i.pose.rot >= 0 && i.pose.rot < 24), `${label}: poses are integer LDU and a rotation index`);
+
+  await page.click("#build-clear");
+  await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Clear");
+  check(!(await page.isEnabled("#build-clear")), `${label}: Clear is disabled with nothing built`);
+  await page.click("#build-undo");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "undoing Clear");
+  await page.click("#build-clear");
+  await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Clear again");
+  await page.setInputFiles("#build-file", savedPath);
+  await buildWait(page, () => window.__web.build.parts === 2, 20_000, "opening the saved model");
+  const rows = await page.$$eval("#build-bom tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+  check(rows.length === 2 && rows.some((r) => r[0] === "1" && r[1] === "Brick 2 x 4"), `${label}: bill of materials ${JSON.stringify(rows)}`);
+  check((await page.textContent("#build-bom-total")).startsWith("2 parts"), `${label}: bill total ${await page.textContent("#build-bom-total")}`);
+  const [again] = await Promise.all([page.waitForEvent("download"), page.click("#build-save")]);
+  const againPath = join(downloads, "again-" + again.suggestedFilename());
+  await again.saveAs(againPath);
+  check(readFileSync(againPath, "utf8") === text, `${label}: save, open, save is not byte-identical`);
+
+  // A file that is not a model is refused, and the model stays.
+  writeFileSync(join(downloads, "not-a-model.obrick"), "{}");
+  await page.setInputFiles("#build-file", join(downloads, "not-a-model.obrick"));
+  await buildWait(page, () => /Could not open/.test(window.__web.build.message), 10_000, "the refusal of a file that is not a model");
+  check((await page.getAttribute("#build-message", "role")) === "alert" && (await buildState(page)).parts === 2, `${label}: the refusal is an alert and the model stays`);
+
+  // The samples.
+  await page.selectOption("#build-samples", "house");
+  await buildWait(page, () => window.__web.build.parts === 49, 20_000, "the house sample");
+  b = await buildState(page);
+  check(b.stats.floating.length === 0 && b.stats.components === 1, `${label}: the house stands (${JSON.stringify(b.stats)})`);
+  await page.waitForTimeout(600);
+  if (shots) await page.screenshot({ path: join(shots, "build-house-desktop.png") });
+  await page.selectOption("#build-samples", "staircase");
+  await buildWait(page, () => window.__web.build.parts === 8, 20_000, "the staircase sample");
+  if (shots) await page.screenshot({ path: join(shots, "build-staircase-desktop.png") });
+
+  // Performance: 513 bricks.
+  writeFileSync(join(downloads, "tower-512.obrick"), bigModel());
+  const t0 = Date.now();
+  await page.setInputFiles("#build-file", join(downloads, "tower-512.obrick"));
+  await buildWait(page, () => window.__web.build.parts === 513, 60_000, "the 513-brick model");
+  const openMs = Date.now() - t0;
+  b = await buildState(page);
+  check(b.stats.floating.length === 0 && b.stats.components === 1 && b.counts.parts === 513, `${label}: the 513-brick model ${JSON.stringify(b.stats)} ${JSON.stringify(b.counts)}`);
+  check(b.counts.drawCalls <= 2, `${label}: ${b.counts.drawCalls} draw calls for 513 bricks`);
+  check(b.detail === false, `${label}: the 513-brick model should use the cheap mesh level`);
+  // Software rendering takes seconds per frame of half a million triangles: give the screenshot time.
+  if (shots) await page.screenshot({ path: join(shots, "build-513-desktop.png"), timeout: 180_000 });
+  // The top of the tower: a ray there hits the top layer's top face, so a part can be placed.
+  const centre = await screenAt(page, [0, -392, 0]);
+  await page.mouse.move(centre.x, centre.y);
+  const bench = await page.evaluate((at) => window.__web.build.bench(20, at), centre);
+  check(bench.placeUndoMs !== null, `${label}: nothing could be placed on top of the tower`);
+  const times = await page.evaluate(() => window.__web.build.measure(60));
+  const sum = (a) => ({ fps: 1000 / (a.reduce((x, y) => x + y, 0) / a.length), worst: Math.max(...a) });
+  const f = sum(times);
+  check(bench.snapMs < 50 && bench.pickMs < 50, `${label}: a snap takes ${bench.snapMs.toFixed(2)} ms, a pick ${bench.pickMs.toFixed(2)} ms with 513 parts`);
+  check(f.fps > 1, `${label}: ${f.fps.toFixed(1)} fps with 513 bricks`);
+  console.log(
+    `# build: 513 bricks (${b.counts.triangles} triangles, ${b.counts.drawCalls} draw calls): opened in ${openMs} ms, ` +
+      `snap ${bench.snapMs.toFixed(2)} ms, pick ${bench.pickMs.toFixed(2)} ms, place+undo ${bench.placeUndoMs?.toFixed(2)} ms per call (core round trips); ` +
+      `${f.fps.toFixed(1)} fps while orbiting (worst frame ${f.worst.toFixed(0)} ms, software rendering on this machine)`,
+  );
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(`# ${label}: palettes, snapped ghost, place, stack, rotate, undo, redo, delete, save, open, samples and 513 bricks work`);
+  await context.close();
+}
+
+/** Build mode on a phone: touch, dark theme, tap to place, nothing wider than the screen. */
+async function buildPhoneRun(browser, origin) {
+  const label = "build-phone";
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: "dark" });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the catalog on the phone");
+  const layout = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+    outside: [...document.querySelectorAll("#panel-build button, #panel-build select, #panel-build input:not([type=file]), [role=tab]")]
+      .filter((el) => el.offsetParent !== null)
+      .map((el) => ({ what: el.id || el.getAttribute("aria-label"), r: el.getBoundingClientRect() }))
+      .filter((x) => x.r.left < -0.5 || x.r.right > window.innerWidth + 0.5)
+      .map((x) => x.what),
+    small: [...document.querySelectorAll("#panel-build button")]
+      .filter((el) => el.offsetParent !== null && (el.getBoundingClientRect().height < 36 || el.getBoundingClientRect().width < 36))
+      .map((el) => el.id || el.getAttribute("aria-label")),
+  }));
+  check(layout.scrollWidth <= layout.innerWidth, `${label}: horizontal scroll (${layout.scrollWidth} > ${layout.innerWidth})`);
+  check(layout.outside.length === 0, `${label}: outside the width: ${layout.outside.join(", ")}`);
+  check(layout.small.length === 0, `${label}: touch targets under 36 px: ${layout.small.join(", ")}`);
+  if (shots) {
+    await page.screenshot({ path: join(shots, "build-phone-panel.png") });
+    await page.screenshot({ path: join(shots, "build-phone-full.png"), fullPage: true });
+  }
+  // Tap on the baseplate places a brick: the touch tap alone, with no hover first.
+  await page.evaluate(() => document.querySelector("#stage").scrollIntoView());
+  const at = await screenAt(page, [0, -8, 0]);
+  await page.touchscreen.tap(at.x, at.y);
+  await buildWait(page, () => window.__web.build.parts === 2, 20_000, "a tap placing a brick");
+  const b = await buildState(page);
+  check(b.stats.connections === 8 && b.stats.floating.length === 0, `${label}: the tapped brick is connected (${JSON.stringify(b.stats)})`);
+  // The rotate button (no keyboard on a phone), then another tap beside it.
+  await page.evaluate(() => document.querySelector("#build-rotate").scrollIntoView());
+  await page.tap("#build-rotate");
+  await page.waitForFunction(() => window.__web.build.rot !== 0, null, { timeout: 10_000 }).catch(() => failures.push(`${label}: the rotate button did not turn the part`));
+  await page.evaluate(() => document.querySelector("#stage").scrollIntoView());
+  const next = await screenAt(page, [100, -8, 100]);
+  await page.touchscreen.tap(next.x, next.y);
+  await buildWait(page, () => window.__web.build.parts === 3, 20_000, "a second tap");
+  await page.evaluate(() => document.querySelector("#build-undo").scrollIntoView());
+  await page.tap("#build-undo");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "the undo button");
+  await page.evaluate(() => document.querySelector("#stage").scrollIntoView());
+  await page.waitForTimeout(500);
+  if (shots) await page.screenshot({ path: join(shots, "build-phone-stage.png") });
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(`# ${label}: taps place, the rotate and undo buttons work, nothing is wider than 390 px`);
+  await context.close();
+}
+
 async function webgpuRun(browser, origin, native) {
   const label = "webgpu";
   const context = await browser.newContext({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1, colorScheme: "light" });
@@ -1513,8 +1772,9 @@ async function main() {
   if (shots) mkdirSync(shots, { recursive: true });
   rmSync(downloads, { recursive: true, force: true });
   mkdirSync(downloads, { recursive: true });
-  const native = nativeValues();
-  console.log(
+  const onlyBuild = args.has("--only-build");
+  const native = onlyBuild ? null : nativeValues();
+  if (native) console.log(
     `native (${native.kernel}): emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash}, ` +
       `deboss ${native.part.deboss.triangles}, inlay ${native.part.inlay.triangles}, badge ${native.part["badge-emboss"].triangles}, ` +
       `coupon ${native.coupon.triangles} triangles ${native.coupon.contentHash}`,
@@ -1523,29 +1783,40 @@ async function main() {
   const browser = await chromium.launch({ headless: true, args: browserArgs });
   let saved = [];
   try {
-    try {
-      saved = await fullRun(browser, origin, native);
-    } catch (err) {
-      failures.push(err.message);
+    if (!onlyBuild) {
+      try {
+        saved = await fullRun(browser, origin, native);
+      } catch (err) {
+        failures.push(err.message);
+      }
+      try {
+        await designerRun(browser, origin, native);
+      } catch (err) {
+        failures.push(err.message);
+      }
     }
-    try {
-      await designerRun(browser, origin, native);
-    } catch (err) {
-      failures.push(err.message);
+    for (const buildStep of [buildRun, buildPhoneRun]) {
+      try {
+        await buildStep(browser, origin);
+      } catch (err) {
+        failures.push(err.message);
+      }
     }
-    if (!args.has("--no-webgpu")) {
+    if (!onlyBuild && !args.has("--no-webgpu")) {
       try {
         await webgpuRun(browser, origin, native);
       } catch (err) {
         failures.push(err.message);
       }
     }
-    try {
-      await phoneRun(browser, origin, native);
-    } catch (err) {
-      failures.push(err.message);
+    if (!onlyBuild) {
+      try {
+        await phoneRun(browser, origin, native);
+      } catch (err) {
+        failures.push(err.message);
+      }
     }
-    if (!args.has("--no-base-check")) {
+    if (!onlyBuild && !args.has("--no-base-check")) {
       try {
         await baseRun(browser, native);
       } catch (err) {

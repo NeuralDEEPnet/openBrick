@@ -292,6 +292,28 @@
       @media (max-width: 360px) { .preset-new .row { flex-wrap: wrap; } }
       .field.check label { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; color: var(--text); font-size: inherit; cursor: pointer; }
       .field.check input { width: 20px; height: 20px; min-height: 0; accent-color: var(--accent); margin: 0; }
+      /* Build mode (src/build-ui.js): the parts and colour palettes, tools and the model's stats. */
+      .tile-only { display: block; }
+      .build-only { display: none; }
+      body[data-mode="build"] .tile-only { display: none; }
+      body[data-mode="build"] .build-only { display: block; }
+      body[data-mode="build"] #stage canvas { cursor: crosshair; }
+      body[data-mode="build"][data-build-tool="remove"] #stage canvas { cursor: not-allowed; }
+      .palette { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
+      .palette.swatches { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); }
+      .palette button.choice { display: grid; place-items: center; min-height: 44px; padding: 4px; text-align: center; line-height: 1.15; }
+      .palette button.choice[aria-checked="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); background: var(--control-hover); }
+      .choice-body { display: grid; justify-items: center; gap: 2px; }
+      .choice-label { font-size: 12px; }
+      canvas.thumb { width: 48px; height: 48px; display: block; }
+      .swatch.big { width: 30px; height: 30px; border-radius: 6px; }
+      .swatch { display: inline-block; vertical-align: middle; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--muted); }
+      .tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      .tools button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+      #build-message { margin: 8px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+      #build-message:empty { display: none; }
+      #build-message[role="alert"] { color: var(--bad); font-weight: 600; }
+      #build-colour-name { font-weight: 600; }
       [hidden] { display: none !important; }
       .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
       @media (max-width: 480px) {
@@ -311,13 +333,15 @@
       </div>
       <div role="tablist" aria-label="What to make">
         <button type="button" role="tab" id="tab-tile" aria-controls="panel-tile" aria-selected="true">Part</button>
+        <button type="button" role="tab" id="tab-build" aria-controls="panel-build" aria-selected="false" tabindex="-1">Build</button>
         <button type="button" role="tab" id="tab-coupon" aria-controls="panel-coupon" aria-selected="false" tabindex="-1">Calibration coupon</button>
       </div>
     </header>
     <div id="layout">
       <main id="stage" aria-label="3D view: drag to orbit, also underneath, pinch or scroll to zoom, two fingers or right-drag to pan">
         <ul class="legend" id="legend" aria-label="Colours in the 3D view"></ul>
-        <p class="hint" aria-hidden="true">Drag to orbit, also underneath · pinch or scroll to zoom</p>
+        <p class="hint tile-only" aria-hidden="true">Drag to orbit, also underneath · pinch or scroll to zoom</p>
+        <p class="hint build-only" id="build-hint" aria-hidden="true"></p>
       </main>
       <aside>
         <div id="panel-tile" role="tabpanel" aria-labelledby="tab-tile">
@@ -402,6 +426,60 @@
             <p id="download-reason" aria-live="polite"></p>
             <p class="calibrate-row" id="calibrate-row" hidden><button type="button" class="link" id="download-calibrate">Calibrate</button>: record how your printer fits from the printed calibration coupon, here in the browser.</p>
             <p class="note" id="download-note">The 3MF is one object whose parts are the colour roles, each with its colour: give each part its own filament in the slicer. The STL is one solid for a single colour.</p>
+          </section>
+        </div>
+        <div id="panel-build" role="tabpanel" aria-labelledby="tab-build" hidden>
+          <section aria-labelledby="build-parts-heading">
+            <h2 id="build-parts-heading">Parts</h2>
+            <div id="build-parts" class="palette" role="radiogroup" aria-label="Part to place"></div>
+            <p class="help">Pick a part, then click or tap the baseplate or another part: it snaps onto the studs. Rotate with R or the button; the ghost is green where it fits and red where it does not, and the line at the bottom says why.</p>
+          </section>
+          <section aria-labelledby="build-colour-heading">
+            <h2 id="build-colour-heading">Colour: <span id="build-colour-name"></span></h2>
+            <div id="build-colours" class="palette swatches" role="radiogroup" aria-label="Colour of the next part"></div>
+          </section>
+          <section aria-labelledby="build-tools-heading">
+            <h2 id="build-tools-heading">Tools</h2>
+            <div class="tools">
+              <button type="button" id="build-rotate" aria-keyshortcuts="R">Rotate 90° (R)</button>
+              <button type="button" id="build-place-centre">Place in the middle of the view</button>
+              <button type="button" id="build-remove-mode" aria-pressed="false" aria-keyshortcuts="Delete">Remove mode (Del)</button>
+            </div>
+            <div class="tools">
+              <button type="button" id="build-undo" aria-keyshortcuts="Control+Z Meta+Z" disabled>Undo</button>
+              <button type="button" id="build-redo" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" disabled>Redo</button>
+              <button type="button" id="build-clear" disabled>Clear</button>
+            </div>
+            <div class="field">
+              <label for="build-samples">Samples</label>
+              <select id="build-samples"></select>
+            </div>
+            <div class="field">
+              <label for="build-name">Model name</label>
+              <input type="text" id="build-name" value="My build" maxlength="60" autocomplete="off" />
+            </div>
+            <div class="tools">
+              <button type="button" id="build-save" class="primary">Save .obrick</button>
+              <button type="button" id="build-open">Open .obrick…</button>
+              <input type="file" id="build-file" accept=".obrick,.json,application/json" hidden />
+            </div>
+            <p id="build-message" role="status" aria-live="polite"></p>
+          </section>
+          <section aria-labelledby="build-stats-heading">
+            <h2 id="build-stats-heading">Model</h2>
+            <dl class="stats" id="build-stats"></dl>
+            <details>
+              <summary>Bill of materials</summary>
+              <div class="table-wrap">
+                <table>
+                  <caption class="visually-hidden">Parts of the model by colour</caption>
+                  <thead><tr><th scope="col">Count</th><th scope="col">Part</th><th scope="col">Colour</th></tr></thead>
+                  <tbody id="build-bom"></tbody>
+                </table>
+              </div>
+              <p class="note" id="build-bom-total"></p>
+            </details>
+            <p class="note">Floating means a part has no chain of connections to a part on the ground. It is a hint, not an error. The parts here are generated by the OpenBrick3D part evaluator; the LDraw parts catalog comes later.</p>
           </section>
         </div>
         <div id="panel-coupon" role="tabpanel" aria-labelledby="tab-coupon" hidden>

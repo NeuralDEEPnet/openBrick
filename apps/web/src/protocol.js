@@ -27,7 +27,18 @@
 //                                                           defaults, presets, unsupported } or { ok: false, error }
 //   savePart       doc, params, process                     { text }: the document with params as defaults
 //   addPreset      doc, name, params, process               { text }: the document with a preset `name`
+//   asmInit        -                                        the assembler catalog (assemblerCatalog() below)
+//   asmMeshes      detail                                   { meshes: [{ index, positions, indices, triangles }] }
+//   asmSnap        part, rot, ray                           a snap or null (the engine's Snap)
+//   asmPick        ray                                      a hit or null
+//   asmApply       command                                  { id, ...state }; the engine refuses with a message
+//   asmUndo, asmRedo, asmState                              the state (assemblerState() below)
+//   asmLoad        text                                     the state of the model in a .obrick document
+//   asmSave        name                                     { text }
+//   asmSample      id                                       { text } of a sample model
+//   asmTurn        rot, quarterTurns                        { rot }: the rotation index turned about the vertical axis
 //
+
 // `doc` is the part document as JSON text, `params` an object of parameter
 // overrides, `process` a bundled process profile id, `fit` a fit profile as JSON
 // text ("" for none), `printer` a bundled printer id whose bed rule SIZE.BED
@@ -49,7 +60,7 @@
 // exports of crates/openbrick-wasm, so the unit tests run it against a fake core
 // and, when it is built, the real one.
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /** Requests that build geometry: the client lets a newer one supersede an older one. */
 export const BUILD_TYPES = Object.freeze(["brick", "evaluatePart", "buildCoupon"]);
@@ -387,6 +398,65 @@ export function addPreset(core, request) {
   return { text: core.add_preset_json(f.doc, request.name, f.params, f.process) };
 }
 
+// ---------------------------------------------------------------- assembler
+
+/** The one assembler of a core (a model and its history); a replacement worker starts with an empty one. */
+const assemblers = new WeakMap();
+
+function assembler(core) {
+  let a = assemblers.get(core);
+  if (!a) {
+    a = new core.Assembler();
+    assemblers.set(core, a);
+  }
+  return a;
+}
+
+const isRay = (r) => Array.isArray(r?.origin) && r.origin.length === 3 && Array.isArray(r?.dir) && r.dir.length === 3;
+
+function rayArgs(ray) {
+  if (!isRay(ray)) throw new TypeError("a pointer ray is { origin: [x, y, z], dir: [x, y, z] } in LDU");
+  return [...ray.origin, ...ray.dir];
+}
+
+/** The catalog, palette, rotation matrices and samples (assembler_catalog_json). */
+export function assemblerCatalog(core) {
+  assembler(core);
+  return JSON.parse(core.assembler_catalog_json());
+}
+
+/**
+ * The model on screen: { instances: Int32Array (seven numbers per part: id,
+ * catalog part number, x, y, z in LDU, rotation index, colour code), stats
+ * ({ parts, connections, components, grounded, floating }), bom, canUndo,
+ * canRedo, revision }.
+ */
+export function assemblerState(core) {
+  const a = assembler(core);
+  return {
+    instances: a.instances(),
+    stats: JSON.parse(a.stats()),
+    bom: JSON.parse(a.bom()),
+    canUndo: a.can_undo(),
+    canRedo: a.can_redo(),
+    revision: a.revision(),
+  };
+}
+
+/** The render meshes of the catalog parts: the baseplate always at the cheap level, the others at `detail` or not. */
+export function assemblerMeshes(core, request) {
+  const catalog = assemblerCatalog(core);
+  const meshes = catalog.parts.map((part, index) => {
+    const mesh = core.assembler_part_mesh(index, part.base ? false : request?.detail !== false);
+    try {
+      return { index, id: part.id, positions: mesh.take_positions(), indices: mesh.take_indices(), triangles: mesh.triangle_count() };
+    } finally {
+      mesh.free();
+    }
+  });
+  return { meshes };
+}
+
 /** The buffers of a result to transfer instead of copying: mesh arrays and file bytes. */
 export function transferables(result) {
   const out = [];
@@ -397,6 +467,7 @@ export function transferables(result) {
   if (Array.isArray(result?.meshes)) result.meshes.forEach(mesh);
   mesh(result?.overlay);
   if (result?.bytes instanceof Uint8Array) out.push(result.bytes.buffer);
+  if (result?.instances instanceof Int32Array) out.push(result.instances.buffer);
   // A buffer listed twice cannot be transferred; keep each once.
   return [...new Set(out)];
 }
@@ -460,6 +531,50 @@ export function dispatch(core, request, now) {
         break;
       case "addPreset":
         result = addPreset(core, request);
+        break;
+      case "asmInit":
+        result = assemblerCatalog(core);
+        break;
+      case "asmMeshes":
+        result = assemblerMeshes(core, request);
+        break;
+      case "asmSnap": {
+        if (typeof request.part !== "string") throw new TypeError("asmSnap needs the catalog id of the part");
+        result = JSON.parse(assembler(core).snap(request.part, request.rot ?? 0, ...rayArgs(request.ray)));
+        break;
+      }
+      case "asmPick":
+        result = JSON.parse(assembler(core).pick(...rayArgs(request.ray)));
+        break;
+      case "asmApply": {
+        const { id } = JSON.parse(assembler(core).apply(JSON.stringify(request.command)));
+        result = { id, ...assemblerState(core) };
+        break;
+      }
+      case "asmUndo":
+        assembler(core).undo();
+        result = assemblerState(core);
+        break;
+      case "asmRedo":
+        assembler(core).redo();
+        result = assemblerState(core);
+        break;
+      case "asmState":
+        result = assemblerState(core);
+        break;
+      case "asmLoad":
+        if (typeof request.text !== "string") throw new TypeError("asmLoad needs the .obrick document as text");
+        assembler(core).load(request.text);
+        result = assemblerState(core);
+        break;
+      case "asmSave":
+        result = { text: assembler(core).save(String(request.name ?? "Model")) };
+        break;
+      case "asmSample":
+        result = { text: core.assembler_sample(String(request.id)) };
+        break;
+      case "asmTurn":
+        result = { rot: core.assembler_turn_rotation(request.rot ?? 0, request.quarterTurns ?? 1) };
         break;
       default:
         throw new Error(`unknown request type ${JSON.stringify(request?.type)}`);

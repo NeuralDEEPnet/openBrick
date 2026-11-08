@@ -69,6 +69,7 @@ import {
 } from "./calibration.js";
 import { forgetRecordedFit, loadPrinter, loadRecordedFit, savePrinter, saveRecordedFit } from "./storage.js";
 import { sampleFile, sampleLabel, sizeForSample, sizeNote } from "./samples.js";
+import { createBuildMode } from "./build-ui.js";
 import { createViewer } from "./viewer.js";
 
 const $ = (id) => document.getElementById(id);
@@ -2350,13 +2351,15 @@ async function main() {
 
   // ------------------------------------------------------------------ modes
 
-  const tabs = { tile: $("tab-tile"), coupon: $("tab-coupon") };
-  const panels = { tile: $("panel-tile"), coupon: $("panel-coupon") };
+  const tabs = { tile: $("tab-tile"), build: $("tab-build"), coupon: $("tab-coupon") };
+  const panels = { tile: $("panel-tile"), build: $("panel-build"), coupon: $("panel-coupon") };
+  const build = createBuildMode({ client, viewer, files, showStatus, page });
 
   function setMode(mode, { focus = false } = {}) {
     // The status line's seconds belong to the mode being left; a build the new
     // mode starts shows its own.
     stopTicker();
+    if (page.mode === "build" && mode !== "build") build.leave();
     page.mode = mode;
     document.body.dataset.mode = mode;
     for (const [m, tab] of Object.entries(tabs)) {
@@ -2367,7 +2370,12 @@ async function main() {
     if (focus) tabs[mode].focus();
     document.querySelector("aside").scrollTop = 0;
     history.replaceState(null, "", pageUrl());
-    if (mode === "tile") {
+    if (mode === "build") {
+      clearTimeout(timer);
+      timer = null;
+      legend.replaceChildren();
+      build.enter().catch(fail);
+    } else if (mode === "tile") {
       legend.replaceChildren();
       if (state.dirty || !state.result) {
         // Until the evaluation answers, the view keeps the last tile, or nothing.
