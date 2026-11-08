@@ -15,7 +15,8 @@ use crate::model::{EngineError, Instance, InstanceId, Model};
 /// object tagged by `op`: `{"op":"add","part":"ob.brick-2x4","pos":[0,-24,0],
 /// "rot":0,"colour":4}`, `{"op":"remove","id":3}`, `{"op":"move","id":3,
 /// "pos":[...],"rot":0}`, `{"op":"turn","id":3,"quarterTurns":1}`,
-/// `{"op":"recolour","id":3,"colour":15}`, `{"op":"clear"}`.
+/// `{"op":"recolour","id":3,"colour":15}`, `{"op":"clear"}`,
+/// `{"op":"clearBuilt"}`.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Command {
@@ -46,6 +47,9 @@ pub enum Command {
         colour: u16,
     },
     Clear,
+    /// Remove every part except baseplates (the page's "Clear": start over on
+    /// the same baseplate), as one undoable step.
+    ClearBuilt,
 }
 
 /// A primitive edit; applying one returns its inverse.
@@ -185,6 +189,19 @@ impl Model<'_> {
                         .iter()
                         .rev()
                         .map(|&id| Op::Delete { id })
+                        .collect(),
+                ),
+                None,
+            ),
+            Command::ClearBuilt => (
+                Op::Batch(
+                    self.instances
+                        .iter()
+                        .filter(|i| !self.catalog().parts[i.part as usize].base)
+                        .collect::<Vec<_>>()
+                        .iter()
+                        .rev()
+                        .map(|i| Op::Delete { id: i.id })
                         .collect(),
                 ),
                 None,

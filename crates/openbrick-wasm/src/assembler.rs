@@ -48,6 +48,7 @@ fn engine<E: std::fmt::Display>(e: E) -> CoreError {
 
 /// The catalog the assembler places parts from, its palette, the 24 rotation
 /// matrices and the yaw rotations the page offers, as JSON: `{ catalog, lduMm,
+/// maxModelBytes,
 /// parts: [{ id, name, body, studs: [x, z], heightLdu, base, bodyBox, pickBox,
 /// connectors }], palette, rotations (24 row-major 3x3 matrices), yaws (the
 /// rotation index of 0 to 3 quarter turns), samples: [{ id, label, file }] }`.
@@ -76,6 +77,7 @@ pub fn assembler_catalog_json() -> Result<String, CoreError> {
     Ok(json!({
         "catalog": CATALOG_ID,
         "lduMm": STANDARD.get().ldu_mm,
+        "maxModelBytes": MAX_MODEL_BYTES,
         "parts": parts,
         "palette": openbrick_catalog::Palette::bundled(),
         "rotations": rotations,

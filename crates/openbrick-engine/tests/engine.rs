@@ -238,3 +238,20 @@ fn ids_are_not_reused_after_an_undo() {
         "a file saved before the undo never meets a new part with its id"
     );
 }
+
+#[test]
+fn clear_built_keeps_the_baseplate_and_undoes_in_one_step() {
+    let mut m = on_baseplate();
+    place(&mut m, "ob.brick-2x2", 0, &down(0, 0), 4).unwrap();
+    place(&mut m, "ob.plate-1x2", 0, &down(0, 0), 15).unwrap();
+    let before = m.instances().clone();
+    m.apply(&Command::ClearBuilt).unwrap();
+    assert_eq!(m.len(), 1);
+    assert!(m.stats().floating.is_empty());
+    m.undo().unwrap();
+    assert_eq!(m.instances(), &before);
+    // Nothing to clear is still a command, and harmless.
+    let mut empty = on_baseplate();
+    empty.apply(&Command::ClearBuilt).unwrap();
+    assert_eq!(empty.len(), 1);
+}
