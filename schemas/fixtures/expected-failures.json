@@ -32,6 +32,9 @@
     "palette-missing-source.json": { "pointer": "", "keyword": "required", "message": "\"source\"" },
     "obrick-bad-rotation.json": { "pointer": "/submodels/0/instances/0/pose/rot", "keyword": "maximum", "message": "24" },
     "obrick-wrong-units.json": { "pointer": "/units", "keyword": "const", "message": "ldu" },
+    "obrick-id-zero.json": { "pointer": "/submodels/0/instances/0/id", "keyword": "minimum", "message": "0" },
+    "obrick-id-too-large.json": { "pointer": "/submodels/0/instances/0/id", "keyword": "maximum", "message": "4294967296" },
+    "obrick-position-out-of-range.json": { "pointer": "/submodels/0/instances/0/pose/pos/1", "keyword": "minimum", "message": "2147483648" },
     "part-preset-without-name.json": { "pointer": "/presets/0", "keyword": "required", "message": "\"name\"" }
   }
 }

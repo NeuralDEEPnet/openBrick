@@ -31,6 +31,14 @@ pub use model::{EngineError, Instance, InstanceId, Instances, Model};
 pub use snap::{Hit, Ray, Snap};
 pub use spatial::{cell_hash, cell_of, CELL};
 
+/// The largest coordinate, in LDU, a placed part may have on any axis: 10^8, the bound
+/// `schemas/obrick.schema.json` states (40,000 km at 0.4 mm per LDU), far inside `i32`
+/// so no box or connector arithmetic can overflow. Poses beyond it are refused.
+pub const MAX_COORD: i32 = 100_000_000;
+
+/// The largest magnitude of a pointer ray's origin, in LDU: ten times [`MAX_COORD`].
+pub const MAX_RAY: f64 = 1.0e9;
+
 /// The stud grid every vertical connector of a placed part lies on: X and Z
 /// are odd multiples of half a stud (`HALF_STUD_LDU`, so a 2 x 2 placed at the
 /// origin has its studs at plus and minus 10), and Y is a whole number of

@@ -168,10 +168,15 @@ pub struct Assembler {
 }
 
 fn ray(o: [f64; 3], d: [f64; 3]) -> Result<Ray, CoreError> {
-    if o.iter().chain(&d).any(|v| !v.is_finite()) || d == [0.0; 3] {
-        return Err(CoreError(
-            "the pointer ray needs a finite origin and a direction that is not zero".into(),
-        ));
+    if o.iter()
+        .chain(&d)
+        .any(|v| !v.is_finite() || v.abs() > openbrick_engine::MAX_RAY)
+        || d == [0.0; 3]
+    {
+        return Err(CoreError(format!(
+            "the pointer ray needs a finite origin and direction, none beyond {} LDU, and a direction that is not zero",
+            openbrick_engine::MAX_RAY
+        )));
     }
     Ok(Ray { origin: o, dir: d })
 }

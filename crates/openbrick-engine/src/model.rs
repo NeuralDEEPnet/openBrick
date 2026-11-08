@@ -100,6 +100,12 @@ pub enum EngineError {
     NothingToRedo,
     #[error("id {0} is used by two placed parts; give each its own id")]
     DuplicateId(InstanceId),
+    #[error("id 0 is not an id; part ids start at 1")]
+    ZeroId,
+    #[error("the model has used every part id up to {0}; save it and start a new model")]
+    IdsExhausted(InstanceId),
+    #[error("position {pos:?} is beyond {limit} LDU from the origin; keep every coordinate within plus or minus {limit}")]
+    OutOfRange { pos: [i32; 3], limit: i32 },
 }
 
 /// A model: the catalog it places parts from, the instance table and its
@@ -212,6 +218,16 @@ impl<'c> Model<'c> {
         if pose.rot.0 >= 24 {
             return Err(EngineError::UnknownRotation(pose.rot.0));
         }
+        if pose
+            .pos
+            .iter()
+            .any(|c| c.unsigned_abs() > crate::MAX_COORD as u32)
+        {
+            return Err(EngineError::OutOfRange {
+                pos: pose.pos,
+                limit: crate::MAX_COORD,
+            });
+        }
         for c in self.placed_connectors(part, pose)? {
             // Vertical connectors (the only kind the built-in parts have)
             // must be on the stud grid; a part turned on its side is checked
@@ -276,6 +292,9 @@ impl<'c> Model<'c> {
     /// Insert `inst` at table position `index` (clamped to the end), after
     /// checking it. The building block of add and of undoing a removal.
     pub(crate) fn insert(&mut self, index: usize, inst: Instance) -> Result<(), EngineError> {
+        if inst.id == 0 {
+            return Err(EngineError::ZeroId);
+        }
         if self.index.contains_key(&inst.id) {
             return Err(EngineError::DuplicateId(inst.id));
         }
@@ -288,7 +307,7 @@ impl<'c> Model<'c> {
         self.reindex_from(index);
         self.spatial.insert(inst.id, &b);
         self.conns.insert(inst.id, &conns);
-        self.next_id = self.next_id.max(inst.id + 1);
+        self.next_id = self.next_id.max(inst.id.saturating_add(1));
         Ok(())
     }
 

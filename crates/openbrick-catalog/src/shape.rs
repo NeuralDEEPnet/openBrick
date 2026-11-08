@@ -32,8 +32,10 @@ impl Aabb {
             max: [0; 3],
         };
         for k in 0..3 {
-            out.min[k] = a[k].min(b[k]) + pos[k];
-            out.max[k] = a[k].max(b[k]) + pos[k];
+            // Saturating: the engine bounds positions (`MAX_COORD`), so this never
+            // saturates for a placed part; a hostile pose must still not panic.
+            out.min[k] = a[k].min(b[k]).saturating_add(pos[k]);
+            out.max[k] = a[k].max(b[k]).saturating_add(pos[k]);
         }
         out
     }
@@ -41,9 +43,9 @@ impl Aabb {
     /// Size along each axis.
     pub fn size(&self) -> [i32; 3] {
         [
-            self.max[0] - self.min[0],
-            self.max[1] - self.min[1],
-            self.max[2] - self.min[2],
+            self.max[0].saturating_sub(self.min[0]),
+            self.max[1].saturating_sub(self.min[1]),
+            self.max[2].saturating_sub(self.min[2]),
         ]
     }
 
@@ -113,7 +115,11 @@ impl Conn {
         let p = rot.apply(self.pos);
         Conn {
             kind: self.kind,
-            pos: [p[0] + pos[0], p[1] + pos[1], p[2] + pos[2]],
+            pos: [
+                p[0].saturating_add(pos[0]),
+                p[1].saturating_add(pos[1]),
+                p[2].saturating_add(pos[2]),
+            ],
             dir: rot.apply(self.dir),
         }
     }

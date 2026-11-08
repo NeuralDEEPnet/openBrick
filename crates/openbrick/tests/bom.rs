@@ -106,3 +106,30 @@ fn invalid_and_missing_files_exit_2() {
     let v: Value = serde_json::from_slice(&o.stdout).expect("one JSON object");
     assert_eq!(v["ok"], false);
 }
+
+/// A debug build of the binary (the test profile) panics on any unchecked overflow, so exit
+/// codes here prove the reader refuses hostile numbers instead of computing with them.
+#[test]
+fn hostile_models_exit_2_or_0_never_3() {
+    let one = |id: u64, pos: [i64; 3]| {
+        format!(
+            r#"{{"openbrick":"1.0","kind":"model","name":"t","units":"ldu","frame":"ldraw-y-down",
+            "catalog":"openbrick-builtin@1","palette":[],"bom":[],
+            "submodels":[{{"id":"main","instances":[
+              {{"id":{id},"part":"ob.brick-1x1","pose":{{"pos":[{},{},{}],"rot":5}},"colour":4}}]}}]}}"#,
+            pos[0], pos[1], pos[2]
+        )
+    };
+    for (name, id, pos, want) in [
+        ("id-zero", 0, [10, -24, 10], 2),
+        ("id-max", 4_294_967_295, [10, -24, 10], 0),
+        ("y-min", 1, [10, i64::from(i32::MIN), 10], 2),
+        ("x-max", 1, [i64::from(i32::MAX), -24, 10], 2),
+        ("x-beyond", 1, [100_000_010, -24, 10], 2),
+        ("z-neg-beyond", 1, [10, -24, -100_000_010], 2),
+    ] {
+        let p = temp(&format!("hostile-{name}.obrick"), &one(id, pos));
+        let o = bom(&[p.to_str().unwrap()]);
+        assert_eq!(o.status.code(), Some(want), "{name}: {}", text(&o.stderr));
+    }
+}

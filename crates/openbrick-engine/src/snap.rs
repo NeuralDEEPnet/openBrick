@@ -116,7 +116,17 @@ fn ray_box(ray: &Ray, b: &Aabb) -> Option<(f64, [i32; 3])> {
 }
 
 /// The value nearest `v` that is `phase` modulo `step` (ties go down).
+///
+/// `v` must be within [`crate::MAX_COORD`] (the callers check), so the result and
+/// the candidate arithmetic around it stay far inside `i32`; the clamp is a second line
+/// of defence against a value that is not.
 fn nearest_phase(v: f64, phase: i32, step: i32) -> i32 {
+    let limit = f64::from(crate::MAX_COORD);
+    let v = if v.is_finite() {
+        v.clamp(-limit, limit)
+    } else {
+        0.0
+    };
     let k = ((v - f64::from(phase)) / f64::from(step)).round();
     let candidate = phase + step * k as i32;
     // round() sends .5 away from zero; make ties go down for symmetry.
@@ -131,6 +141,19 @@ impl Model<'_> {
     /// The first thing `ray` hits: a placed part (lowest id on a tie) or the
     /// ground plane Y = 0 seen from above.
     pub fn pick(&self, ray: &Ray) -> Option<Hit> {
+        // A ray that is not finite, or starts absurdly far away, hits nothing.
+        let sane = ray
+            .origin
+            .iter()
+            .all(|c| c.is_finite() && c.abs() <= crate::MAX_RAY)
+            && ray
+                .dir
+                .iter()
+                .all(|c| c.is_finite() && c.abs() <= crate::MAX_RAY)
+            && ray.dir != [0.0; 3];
+        if !sane {
+            return None;
+        }
         let mut best: Option<Hit> = None;
         for inst in self.instances.iter() {
             if let Some((t, normal)) = ray_box(ray, &self.pick_box(&inst)) {
@@ -170,6 +193,14 @@ impl Model<'_> {
         let Some(hit) = self.pick(ray) else {
             return Ok(None);
         };
+        // A hit beyond the coordinate bound can place nothing (check_pose refuses it).
+        if hit
+            .point
+            .iter()
+            .any(|c| !c.is_finite() || c.abs() > f64::from(crate::MAX_COORD))
+        {
+            return Ok(None);
+        }
         let local = shape.body.transformed(rot, [0, 0, 0]);
         // The phase that puts the part's studs on the grid.
         let phase = shape

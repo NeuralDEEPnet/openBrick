@@ -147,6 +147,11 @@ impl Model<'_> {
                     .ok_or_else(|| EngineError::UnknownPart(part.clone()))?;
                 let pose = pose(*pos, *rot)?;
                 let id = self.next_id();
+                if id == InstanceId::MAX {
+                    // u32::MAX itself may be taken (a loaded file can use it), and
+                    // next_id saturates there: stop rather than guess.
+                    return Err(EngineError::IdsExhausted(id));
+                }
                 let op = Op::Insert {
                     index: self.len(),
                     inst: Instance {

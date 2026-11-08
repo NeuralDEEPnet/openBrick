@@ -3,12 +3,13 @@
 use std::collections::HashMap;
 
 use openbrick_catalog::{Aabb, Conn};
+use openbrick_units::{PLATE_LDU, STUD_PITCH_LDU};
 
 use crate::model::InstanceId;
 
-/// Lattice cell size for the spatial hash: one brick footprint (20 x 8 x 20 LDU,
-/// one stud by one plate).
-pub const CELL: [i32; 3] = [20, 8, 20];
+/// Lattice cell size for the spatial hash: one stud by one plate by one stud
+/// (docs/plan/07 section 4), from the Dimensional Standard's lattice constants.
+pub const CELL: [i32; 3] = [STUD_PITCH_LDU, PLATE_LDU, STUD_PITCH_LDU];
 
 /// Teschner et al. 2003 hash of a lattice cell.
 pub fn cell_hash(cell: [i32; 3]) -> u64 {
@@ -31,7 +32,11 @@ pub fn cell_of(pos: [i32; 3]) -> [i32; 3] {
 /// does not reach into the next cell).
 fn cells(b: &Aabb) -> impl Iterator<Item = [i32; 3]> {
     let lo = cell_of(b.min);
-    let hi = cell_of([b.max[0] - 1, b.max[1] - 1, b.max[2] - 1]);
+    let hi = cell_of([
+        b.max[0].saturating_sub(1),
+        b.max[1].saturating_sub(1),
+        b.max[2].saturating_sub(1),
+    ]);
     (lo[0]..=hi[0]).flat_map(move |x| {
         (lo[1]..=hi[1]).flat_map(move |y| (lo[2]..=hi[2]).map(move |z| [x, y, z]))
     })
