@@ -1,6 +1,6 @@
 [package]
 name = "openbrick-engine"
-description = "Assembler engine: instance tables, lattice hashes, snapping, collision, connection graph, commands"
+description = "Assembler engine: instance tables, lattice hashes, snapping, collision, connection graph, commands, .obrick documents"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,8 +11,11 @@ publish = false
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 openbrick-units = { workspace = true }
+# Part shapes (boxes and connectors derived by the evaluator) and the palette.
+openbrick-catalog = { workspace = true }
 
 [lints]
 workspace = true

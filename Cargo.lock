@@ -2591,8 +2591,11 @@ name = "openbrick-catalog"
 version = "0.1.0"
 dependencies = [
  "openbrick-geom",
+ "openbrick-part",
+ "openbrick-print",
  "openbrick-units",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -2612,8 +2615,10 @@ dependencies = [
 name = "openbrick-engine"
 version = "0.1.0"
 dependencies = [
+ "openbrick-catalog",
  "openbrick-units",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
