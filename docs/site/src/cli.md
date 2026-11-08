@@ -473,7 +473,7 @@ Options:
 ```text
 Download the official LDraw library (complete.zip) into a folder.
 
-Refuses to overwrite, caps the size at 400 MiB and checks the SHA-256.
+Refuses to overwrite, stops at 400 MiB (also when the server does not say how long the file is) and checks the SHA-256.
 
 Usage: openbrick catalog fetch [OPTIONS] --dest <DIR>
 
@@ -486,6 +486,9 @@ Options:
 
       --url <URL>
           Download from another https address (a mirror); the hash is still checked
+
+      --max-bytes <BYTES>
+          Stop the download once it passes this many bytes (default and highest: 400 MiB)
 
       --json
 

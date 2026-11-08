@@ -24,7 +24,9 @@ openbrick catalog fetch --dest ~/ldraw
 
 This downloads `https://library.ldraw.org/library/updates/complete.zip` into
 `~/ldraw` (it needs `curl`, uses HTTPS only, honours the `HTTPS_PROXY` of your
-environment, refuses to download more than 400 MiB, and never overwrites an
+environment, refuses to download more than 400 MiB (it watches the file grow and
+stops curl at the cap, even if the server never says how big the file is), and
+never overwrites an
 existing `complete.zip`). It then checks the file's SHA-256 against the release this
 version of OpenBrick3D was checked against (update 2026-10,
 `023083918da2d3697c794fb4267975509584f3611b993095874206a803fa610f`).

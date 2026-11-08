@@ -273,3 +273,60 @@ fn bom_reads_a_model_with_pack_parts_only_with_the_pack() {
     assert_eq!(j["bom"][0]["name"], "Brick 2 x 2");
     let _ = std::fs::remove_dir_all(d);
 }
+
+/// A fake `curl` on the PATH that writes to the `--output` file forever (100 KB every 10 ms, 30 MB at
+/// most) without ever stating a length, and records its arguments.
+#[cfg(unix)]
+fn fake_curl(bin: &Path, log: &Path, marker: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let script = format!(
+        r#"#!/bin/sh
+echo "$@" > '{log}'
+while [ $# -gt 0 ]; do
+  case "$1" in --output) out="$2"; shift;; esac
+  shift
+done
+i=0
+while [ $i -lt 300 ]; do head -c 100000 /dev/zero >> "$out"; i=$((i+1)); sleep 0.01; done
+touch '{marker}'
+"#,
+        log = log.display(),
+        marker = marker.display()
+    );
+    let path = bin.join("curl");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn fetch_stops_a_download_that_never_says_how_long_it_is() {
+    let d = dir("fetch-cap");
+    let bin = d.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let (log, marker) = (d.join("args.txt"), d.join("finished"));
+    fake_curl(&bin, &log, &marker);
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let dest = d.join("dl");
+    let t = std::time::Instant::now();
+    let o = Command::new(env!("CARGO_BIN_EXE_openbrick"))
+        .args(["catalog", "fetch", "--dest", dest.to_str().unwrap()])
+        .args(["--url", "https://example.invalid/complete.zip"])
+        .args(["--max-bytes", "1000000"])
+        .env("PATH", path)
+        .current_dir(repo())
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2), "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    assert!(err.contains("passed the 1000000-byte cap") && err.contains("stopped and deleted"), "{err}");
+    assert!(!marker.exists(), "the fake download was not stopped");
+    assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
+    assert!(!dest.join("complete.zip.part").exists(), "the partial file is deleted");
+    assert!(!dest.join("complete.zip").exists());
+    // Still https only, with curl's own cap too, and no shell: the arguments are curl's.
+    let args = std::fs::read_to_string(&log).unwrap();
+    assert!(args.contains("--proto =https") && args.contains("--proto-redir =https"), "{args}");
+    assert!(args.contains("--max-filesize 1000000"), "{args}");
+    std::fs::remove_dir_all(d).unwrap();
+}

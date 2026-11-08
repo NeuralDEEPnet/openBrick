@@ -12,7 +12,8 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus};
+use std::time::Duration;
 
 use clap::{Args, Subcommand};
 use openbrick_catalog::ldraw::{import, ImportError, ImportOptions, Resolution};
@@ -50,7 +51,8 @@ pub enum CatalogCmd {
     Info(InfoArgs),
     /// Download the official LDraw library (complete.zip) into a folder.
     ///
-    /// Refuses to overwrite, caps the size at 400 MiB and checks the SHA-256.
+    /// Refuses to overwrite, stops at 400 MiB (also when the server does not say how
+    /// long the file is) and checks the SHA-256.
     Fetch(FetchArgs),
 }
 
@@ -143,6 +145,9 @@ pub struct FetchArgs {
     /// Download from another https address (a mirror); the hash is still checked.
     #[arg(long, value_name = "URL")]
     pub url: Option<String>,
+    /// Stop the download once it passes this many bytes (default and highest: 400 MiB).
+    #[arg(long, value_name = "BYTES")]
+    pub max_bytes: Option<u64>,
     #[arg(long)]
     pub json: bool,
 }
@@ -412,20 +417,28 @@ fn fetch_cmd(a: &FetchArgs, ui: Ui) -> Result<Outcome, Fail> {
         "downloading {url} (at most {} MiB)",
         MAX_DOWNLOAD_BYTES / (1024 * 1024)
     ));
-    let status = Command::new("curl")
-        .args(["--fail", "--silent", "--show-error", "--location"])
+    let cap = a.max_bytes.map_or(MAX_DOWNLOAD_BYTES, |n| n.min(MAX_DOWNLOAD_BYTES));
+    let mut curl = Command::new("curl");
+    curl.args(["--fail", "--silent", "--show-error", "--location"])
         .args(["--proto", "=https", "--proto-redir", "=https"])
-        .args(["--max-filesize", &MAX_DOWNLOAD_BYTES.to_string()])
+        .args(["--max-filesize", &cap.to_string()])
         .args(["--max-time", "3600"])
         .arg("--output")
         .arg(&part)
-        .arg(url)
-        .status()
-        .map_err(|e| {
-            Fail::Input(format!(
-                "cannot run curl ({e}); install curl, or download complete.zip from https://library.ldraw.org/updates?latest by hand and give it to `catalog import` directly"
-            ))
-        })?;
+        .arg(url);
+    let status = match run_capped(&mut curl, &part, cap, Duration::from_millis(50)).map_err(|e| {
+        Fail::Input(format!(
+            "cannot run curl ({e}); install curl, or download complete.zip from https://library.ldraw.org/updates?latest by hand and give it to `catalog import` directly"
+        ))
+    })? {
+        Capped::Done(status) => status,
+        Capped::TooBig(size) => {
+            let _ = std::fs::remove_file(&part);
+            return Err(Fail::Input(format!(
+                "the download passed the {cap}-byte cap ({size} bytes so far) while it was still coming, so it was stopped and deleted; `--max-filesize` only works when the server says how long the file is"
+            )));
+        }
+    };
     if !status.success() {
         let _ = std::fs::remove_file(&part);
         return Err(Fail::Input(format!(
@@ -433,10 +446,10 @@ fn fetch_cmd(a: &FetchArgs, ui: Ui) -> Result<Outcome, Fail> {
         )));
     }
     let size = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-    if size > MAX_DOWNLOAD_BYTES {
+    if size > cap {
         let _ = std::fs::remove_file(&part);
         return Err(Fail::Input(format!(
-            "the download is {size} bytes, over the {MAX_DOWNLOAD_BYTES}-byte cap; it was deleted"
+            "the download is {size} bytes, over the {cap}-byte cap; it was deleted"
         )));
     }
     let got = sha256_file(&part).map_err(|e| Fail::Input(e.to_string()))?;
@@ -455,6 +468,48 @@ fn fetch_cmd(a: &FetchArgs, ui: Ui) -> Result<Outcome, Fail> {
     Ok(done(&target, &got, size))
 }
 
+/// How a capped run ended.
+#[derive(Debug)]
+pub enum Capped {
+    /// The program exited on its own (and the file is within the cap).
+    Done(ExitStatus),
+    /// The file passed the cap while the program ran, so it was killed; the size seen.
+    TooBig(u64),
+}
+
+/// Run `cmd` (no shell), and kill it as soon as `file`, which it writes, is bigger than `cap` bytes.
+///
+/// curl's `--max-filesize` only works when the server says how long the body is; a response
+/// without a length is otherwise bounded by the time limit alone, which at line speed is far more
+/// than the disk may be asked to hold. The file's size is polled every `poll`, so it can pass the
+/// cap by what is written in one interval.
+pub fn run_capped(
+    cmd: &mut Command,
+    file: &Path,
+    cap: u64,
+    poll: Duration,
+) -> std::io::Result<Capped> {
+    let mut child = cmd.spawn()?;
+    loop {
+        let size = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+        if size > cap {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(Capped::TooBig(size));
+        }
+        if let Some(status) = child.try_wait()? {
+            // Whatever was written between the last look and the exit counts too.
+            let size = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+            return Ok(if size > cap {
+                Capped::TooBig(size)
+            } else {
+                Capped::Done(status)
+            });
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 fn done(target: &Path, sha: &str, size: u64) -> Outcome {
     Outcome {
         code: 0,
@@ -468,5 +523,62 @@ fn done(target: &Path, sha: &str, size: u64) -> Outcome {
             "sha256": sha,
             "licence": "LDraw Parts Library, CC BY 2.0 / CC BY 4.0 per file; see CAreadme.txt inside",
         }),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("openbrick-capped-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_download_that_keeps_coming_is_killed_at_the_cap() {
+        let d = scratch("kill");
+        let out = d.join("part");
+        let marker = d.join("finished");
+        // A "server" that never says how long it is: 100 KB every 10 ms, 30 MB at most.
+        let script = format!(
+            "i=0; while [ $i -lt 300 ]; do head -c 100000 /dev/zero >> '{}'; i=$((i+1)); sleep 0.01; done; touch '{}'",
+            out.display(),
+            marker.display()
+        );
+        let t = std::time::Instant::now();
+        let r = run_capped(
+            Command::new("sh").arg("-c").arg(script),
+            &out,
+            1_000_000,
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        let Capped::TooBig(size) = r else {
+            panic!("not stopped: {r:?}")
+        };
+        assert!(size > 1_000_000 && size < 5_000_000, "stopped at {size} bytes");
+        assert!(!marker.exists(), "the program ran to the end");
+        assert!(t.elapsed().as_secs() < 3, "{:?}", t.elapsed());
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn a_download_within_the_cap_ends_normally_and_a_failure_is_passed_on() {
+        let d = scratch("ok");
+        let out = d.join("part");
+        let script = format!("head -c 5000 /dev/zero > '{}'", out.display());
+        let r = run_capped(Command::new("sh").arg("-c").arg(script), &out, 10_000, Duration::from_millis(5)).unwrap();
+        assert!(matches!(r, Capped::Done(s) if s.success()), "{r:?}");
+        let r = run_capped(Command::new("sh").arg("-c").arg("exit 3"), &out, 10_000, Duration::from_millis(5)).unwrap();
+        assert!(matches!(r, Capped::Done(s) if s.code() == Some(3)), "{r:?}");
+        // A program that writes everything at once and exits before the first look is still checked.
+        let script = format!("head -c 50000 /dev/zero > '{}'", out.display());
+        let r = run_capped(Command::new("sh").arg("-c").arg(script), &out, 10_000, Duration::from_millis(500)).unwrap();
+        assert!(matches!(r, Capped::TooBig(50_000)), "{r:?}");
+        assert!(run_capped(&mut Command::new("/no/such/program"), &out, 1, Duration::from_millis(5)).is_err());
+        std::fs::remove_dir_all(d).unwrap();
     }
 }
