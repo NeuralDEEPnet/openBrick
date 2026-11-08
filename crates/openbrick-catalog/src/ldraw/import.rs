@@ -9,13 +9,14 @@
 //! 2. A file name of digits and at most one trailing letter (`3001`, `3040b`):
 //!    the common moulds. Printed and patterned variants (`3001p01`, `...pr0001`)
 //!    and assemblies (`...c01`) have longer names.
-//! 3. Never minifigure parts (an LDraw category beginning `Minifig`, or a
-//!    description containing "minifig"), other construction systems that are
-//!    not brick-compatible (Duplo, Scala, Belville, Fabuland, Primo, Quatro,
-//!    Znap, Modulex), patterns and stickers, or a description containing the
-//!    manufacturer's word mark ([`WORD_MARK`]; CLAUDE.md: the word mark appears
-//!    only in the disclaimer and in docs/plan/12, so the program never prints
-//!    it and a part named with it is left out).
+//! 3. Never figure parts: an LDraw category beginning `Minifig`, `Figure` (the
+//!    library's `Figure` and `Figure Accessory` hold the doll-style figures) or
+//!    `Constraction`, whatever leading `_` or `~` it carries, or a description
+//!    containing "minifig", "mini-doll" or "minidoll" (Build mode never draws
+//!    figures). Nor other construction systems that are not brick-compatible
+//!    (Duplo, Scala, Belville, Fabuland, Primo, Quatro, Znap, Modulex), nor
+//!    patterns and stickers. These run before the category filter, so asking
+//!    for a figure category by name still imports nothing from it.
 //! 4. The chosen categories ([`DEFAULT_CATEGORIES`] unless the caller names
 //!    others). A part's category is its `!CATEGORY` line, else the first word
 //!    of its description (the LDraw rule).
@@ -62,9 +63,11 @@ pub const DEFAULT_CATEGORIES: &[&str] = &[
     "Bracket",
 ];
 
-/// The manufacturer's word mark, lower case, written in two pieces so that this file does not spell
-/// it out: a part whose description holds it is left out of a pack.
-pub const WORD_MARK: [&str; 2] = ["le", "go"];
+/// Categories (lower case, as a prefix) of figure parts, which are never imported: the library's
+/// `Minifig...` (head, torso, accessory, ...), `Figure` and `Figure Accessory`, and `Constraction`.
+const FIGURE_CATEGORIES: [&str; 3] = ["minifig", "figure", "constraction"];
+/// Words in a description (lower case) that mark a figure part whatever its category says.
+const FIGURE_WORDS: [&str; 3] = ["minifig", "mini-doll", "minidoll"];
 
 /// Other construction systems and patterned parts that are left out.
 const OTHER_SYSTEMS: [&str; 8] = [
@@ -185,7 +188,11 @@ pub fn exclusion(file_name: &str, h: &Header) -> Option<&'static str> {
     }
     let lower = d.to_ascii_lowercase();
     let cat = category_of(h).to_ascii_lowercase();
-    if cat.starts_with("minifig") || lower.contains("minifig") {
+    // A category may carry the library's `_` (obsolete) or `~` (moved) marks in front.
+    let cat = cat.trim_start_matches(['_', '~', '=', '|', ' ']);
+    if FIGURE_CATEGORIES.iter().any(|c| cat.starts_with(c))
+        || FIGURE_WORDS.iter().any(|w| lower.contains(w))
+    {
         return Some("minifig");
     }
     if OTHER_SYSTEMS
@@ -197,7 +204,6 @@ pub fn exclusion(file_name: &str, h: &Header) -> Option<&'static str> {
     if lower.contains("pattern")
         || lower.contains("sticker")
         || cat.starts_with("sticker")
-        || lower.contains(&WORD_MARK.concat())
     {
         return Some("prints_and_stickers");
     }
@@ -645,14 +651,66 @@ mod tests {
             ),
             Some("not_a_part")
         );
-        // A description with the manufacturer's word mark is left out (the word is assembled here, not typed).
-        let marked = format!(
-            "Brick 1 x 1 with {} Logo",
-            WORD_MARK.concat().to_uppercase()
-        );
+    }
+
+    #[test]
+    fn figure_parts_are_left_out_whatever_they_are_called() {
+        let with_category = |cat: &str, desc: &str| Header {
+            category: Some(cat.into()),
+            ..header(desc)
+        };
+        // Categories of the library: Figure and Figure Accessory (the doll-style figures), with the
+        // library's marks in front, in any case; Constraction too.
+        for cat in [
+            "Figure",
+            "Figure Accessory",
+            "FIGURE",
+            "_Figure",
+            "~Figure",
+            "_Figure Accessory",
+            "Constraction",
+            "Constraction Accessory",
+            "Minifig",
+            "Minifig Headwear",
+            "~Minifig",
+        ] {
+            assert_eq!(
+                exclusion("1.dat", &with_category(cat, "Brick 1 x 1")),
+                Some("minifig"),
+                "{cat}"
+            );
+        }
+        // The description alone, with no category, and whatever word form it uses.
+        for desc in [
+            "Figure Friends Girl Torso",
+            "Mini-Doll Torso",
+            "Minidoll Hair Long",
+            "MINIFIG Head",
+            "Hair Minifigure Long",
+            "Torso with Mini-doll Arms",
+        ] {
+            assert_eq!(
+                exclusion("2.dat", &header(desc)),
+                // "Figure Friends ..." has `Figure` as its first word, so as its category.
+                Some("minifig"),
+                "{desc}"
+            );
+        }
+        // Names that only look similar stay: a figurine-like word is not the category, and a
+        // category that merely contains the word later is not a figure category.
+        for (cat, desc) in [
+            ("Figurine", "Brick 1 x 1"),
+            ("Brick", "Brick 2 x 2 Configuration"),
+            ("Plate", "Plate 2 x 2 for a Mini Brick"),
+            ("Brick", "Brick 1 x 1 with Figure Eight Cutout"),
+            ("Constructor", "Brick 1 x 2"),
+        ] {
+            assert_eq!(exclusion("3.dat", &with_category(cat, desc)), None, "{cat}: {desc}");
+        }
+        // The category filter cannot bring them back: the filter runs after this.
         assert_eq!(
-            exclusion("9.dat", &header(&marked)),
-            Some("prints_and_stickers")
+            exclusion("4.dat", &with_category("Figure", "Torso 1")),
+            Some("minifig")
         );
     }
 

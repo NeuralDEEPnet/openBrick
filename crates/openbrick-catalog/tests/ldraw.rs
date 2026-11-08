@@ -1066,6 +1066,38 @@ fn hostile_descriptions_are_made_printable_and_short_in_the_pack() {
     Pack::from_bytes(&pack.to_bytes().unwrap()).expect("the pack reads back");
 }
 
+#[test]
+fn asking_for_a_figure_category_by_name_imports_no_figure_part() {
+    let t = Tmp::new("figures");
+    t.write("ldraw/p/tri.dat", &format!("0 tri\n0 !LDRAW_ORG Primitive\n{CERT}{TRI}"));
+    for (n, desc, cat) in [
+        (1001, "Brick 1 x 1", "Brick"),
+        (1002, "Figure Friends Girl Torso", "Figure"),
+        (1003, "Hair Accessory", "_Figure Accessory"),
+        (1004, "Construction Hand", "~Constraction"),
+        (1005, "Doll Hair", "Brick"),
+    ] {
+        let desc = if n == 1005 { "Mini-Doll Hair" } else { desc };
+        t.write(
+            &format!("ldraw/parts/{n}.dat"),
+            &format!("0 {desc}\n0 Name: {n}.dat\n0 Author: t\n0 !LDRAW_ORG Part UPDATE 2026-01\n0 !LICENSE CC\n0 !CATEGORY {cat}\n{CERT}1 16 0 0 0 1 0 0 0 1 0 0 0 1 tri.dat\n"),
+        );
+    }
+    let opts = ImportOptions {
+        categories: Some(
+            ["Brick", "Figure", "Figure Accessory", "_Figure Accessory", "Constraction", "~Constraction"]
+                .map(String::from)
+                .to_vec(),
+        ),
+        include_unconnected: true,
+        ..ImportOptions::default()
+    };
+    let (pack, report) = import(&t.0, &opts, &mut quiet).expect("the brick imports");
+    let ids: Vec<&str> = pack.header.parts.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids, ["ld.1001"]);
+    assert_eq!(report.excluded.minifig, 4);
+}
+
 // ------------------------------------------------------------ properties
 
 #[test]

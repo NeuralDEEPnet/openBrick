@@ -54,11 +54,11 @@ command (a release build is several times faster):
 |---|---|
 | top-level part files scanned | 24,985 |
 | left out: subparts, aliases, obsolete files | 9,266 |
-| left out: minifigure parts | 3,572 |
-| left out: other construction systems (Duplo and the like) | 780 |
-| left out: printed, patterned and sticker variants | 6,798 |
-| left out: assemblies and variants with longer file names | 448 |
-| left out: other categories | 2,576 |
+| left out: minifigure and other figure parts (categories Minifig, Figure, Constraction) | 4,253 |
+| left out: other construction systems (Duplo and the like) | 665 |
+| left out: printed, patterned and sticker variants | 6,479 |
+| left out: assemblies and variants with longer file names | 443 |
+| left out: other categories | 2,334 |
 | **eligible parts in the chosen categories** | **1,545** |
 | of those, with at least one derived connector | 1,469 (95.1 percent) |
 | written to the pack by default (`--limit 600`, every category in turn) | 600, 10.2 MB, 45 seconds |
@@ -154,9 +154,11 @@ openbrick bom house.obrick.json --pack ldraw.obpack
 - **Do not commit a library or a pack to a repository and do not include one in a
   release.** The repository's `.gitignore` already ignores `*.obpack`, `complete.zip`
   and an `ldraw/` folder at its root, so that the tools' output stays out by default.
-- The importer leaves out minifigure parts, parts of other construction systems,
-  printed variants and any part whose name contains the manufacturer's word mark,
-  and OpenBrick3D never draws minifigures. Part names in the palette are the
+- The importer leaves out figure parts (the LDraw categories `Minifig...`, `Figure`,
+  `Figure Accessory` and `Constraction`, whatever `_` or `~` they carry, and any
+  description with "minifig", "mini-doll" or "minidoll"), parts of other
+  construction systems and printed variants, even if you name such a category in
+  `--category-filter`; OpenBrick3D never draws minifigures. Part names in the palette are the
   descriptions the LDraw authors wrote.
 - Downloaded files are treated as untrusted: file sizes, nesting depth, the number
   of references and the zip's entry names are all checked, and the importer never
