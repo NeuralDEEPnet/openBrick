@@ -185,6 +185,12 @@ impl<'c> Model<'c> {
         Ok(self.part(part)?.shape.body.transformed(pose.rot, pose.pos))
     }
 
+    /// True for a baseplate whose bottom is on the ground (the floor of a model).
+    pub fn is_ground_baseplate(&self, i: &Instance) -> bool {
+        let p = &self.catalog.parts[i.part as usize];
+        p.base && p.shape.body.transformed(i.pose.rot, i.pose.pos).max[1] == 0
+    }
+
     /// The pick box (body and studs) of a placed part.
     pub fn pick_box(&self, i: &Instance) -> Aabb {
         let shape = &self.catalog.parts[i.part as usize].shape;

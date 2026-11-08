@@ -17,6 +17,11 @@ fn catalog_lists_parts_palette_and_rotations() {
     assert_eq!(c["rotations"].as_array().unwrap().len(), 24);
     assert_eq!(c["yaws"][0], 0);
     assert_eq!(c["lduMm"], 0.4);
+    assert_eq!(
+        (c["studPitchLdu"].clone(), c["plateLdu"].clone()),
+        (json!(20), json!(8))
+    );
+    assert_eq!(c["maxModelBytes"], 16 * 1024 * 1024);
     assert!(c["palette"]["colours"].as_array().unwrap().len() >= 8);
     assert_eq!(c["samples"].as_array().unwrap().len(), 2);
 }

@@ -47,8 +47,9 @@ pub enum Command {
         colour: u16,
     },
     Clear,
-    /// Remove every part except baseplates (the page's "Clear": start over on
-    /// the same baseplate), as one undoable step.
+    /// Remove everything except the baseplates standing on the ground (the page's
+    /// "Clear": start over on the same floor), as one undoable step. A baseplate
+    /// that rests on other parts goes too, so none is left floating.
     ClearBuilt,
 }
 
@@ -202,7 +203,7 @@ impl Model<'_> {
                 Op::Batch(
                     self.instances
                         .iter()
-                        .filter(|i| !self.catalog().parts[i.part as usize].base)
+                        .filter(|i| !self.is_ground_baseplate(i))
                         .collect::<Vec<_>>()
                         .iter()
                         .rev()

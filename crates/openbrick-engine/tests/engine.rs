@@ -255,3 +255,38 @@ fn clear_built_keeps_the_baseplate_and_undoes_in_one_step() {
     empty.apply(&Command::ClearBuilt).unwrap();
     assert_eq!(empty.len(), 1);
 }
+
+#[test]
+fn clear_built_leaves_no_baseplate_in_mid_air() {
+    // A second baseplate laid on top of bricks is a placed part like any other: Clear
+    // removes it with the bricks under it, and keeps the one on the ground.
+    let mut m = on_baseplate();
+    let a = place(&mut m, "ob.brick-2x2", 0, &down(0, 0), 4).unwrap();
+    let base = m.catalog().find("ob.baseplate-16x16").unwrap();
+    let top = m.snap(base, Rot24::IDENTITY, &down(0, 0)).unwrap().unwrap();
+    assert!(top.valid && top.pos[1] < -8, "{top:?}");
+    m.apply(&Command::Add {
+        part: "ob.baseplate-16x16".into(),
+        pos: top.pos,
+        rot: top.rot,
+        colour: 2,
+    })
+    .unwrap();
+    assert_eq!(m.len(), 3);
+    m.apply(&Command::ClearBuilt).unwrap();
+    assert_eq!(m.len(), 1);
+    assert_eq!(
+        m.instance(1).unwrap().pose.pos,
+        [0, -8, 0],
+        "the ground baseplate stays"
+    );
+    assert!(m.stats().floating.is_empty());
+    m.undo().unwrap();
+    assert_eq!(m.len(), 3);
+    // Any baseplate can be removed, the ground one included: what stood on it is
+    // reported as floating, and undo brings everything back.
+    m.apply(&Command::Remove { id: 1 }).unwrap();
+    assert_eq!(m.stats().floating, vec![a, 3]);
+    m.undo().unwrap();
+    assert!(m.stats().floating.is_empty());
+}

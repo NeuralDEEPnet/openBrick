@@ -264,7 +264,10 @@ fn over_a_free_baseplate_the_snap_is_centred_within_half_a_stud_of_the_hit() {
             assert!(s.valid, "seed {seed}: {s:?}");
             let c = centre2(&m, p, &s.pose());
             // Centre within 10 LDU (half a stud) of the hit point on each axis.
-            assert!((c[0] - 2 * x).abs() <= 20 && (c[1] - 2 * z).abs() <= 20, "seed {seed}: part {p} at ({x},{z}) snapped to {s:?}, centre*2 {c:?}");
+            assert!(
+                (c[0] - 2 * x).abs() <= 20 && (c[1] - 2 * z).abs() <= 20,
+                "seed {seed}: part {p} at ({x},{z}) snapped to {s:?}, centre*2 {c:?}"
+            );
         }
     }
 }
@@ -282,7 +285,9 @@ fn no_valid_pose_at_the_same_height_is_nearer_than_the_snap() {
             }
             let p = part(rng.pick(&PARTS));
             let rot = Rot24(*rng.pick(&yaws()));
-            let Some(s) = m.snap(p, rot, &ray).unwrap() else { continue };
+            let Some(s) = m.snap(p, rot, &ray).unwrap() else {
+                continue;
+            };
             if !s.valid {
                 continue;
             }
@@ -298,7 +303,8 @@ fn no_valid_pose_at_the_same_height_is_nearer_than_the_snap() {
                         pos: [s.pos[0] + 20 * i, s.pos[1], s.pos[2] + 20 * j],
                         rot,
                     };
-                    let ok = m.check_pose(p, &other, None).is_ok() && m.mates(p, &other, None).unwrap() > 0;
+                    let ok = m.check_pose(p, &other, None).is_ok()
+                        && m.mates(p, &other, None).unwrap() > 0;
                     if ok {
                         assert!(
                             best <= dist(centre2(&m, p, &other)) + 1e-9,
