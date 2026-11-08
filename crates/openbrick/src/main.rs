@@ -124,7 +124,7 @@ fn run_json(command: &str, json: bool, f: impl FnOnce(Ui) -> Result<Outcome, Fai
             ExitCode::from(outcome.code)
         }
         Err(fail) => {
-            eprintln!("error: {}", fail.message());
+            eprintln!("error: {}", ui::printable(fail.message()));
             if json {
                 println!(
                     "{}",

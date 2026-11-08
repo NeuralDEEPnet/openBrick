@@ -365,7 +365,9 @@ pub fn import(
             Err(e) => {
                 report.excluded.failed += 1;
                 if report.failures.len() < 20 {
-                    report.failures.push((cand.path.clone(), failure_text(&e)));
+                    report
+                        .failures
+                        .push((safe_msg(&cand.path), failure_text(&e)));
                 }
             }
         }
@@ -388,7 +390,8 @@ pub fn import(
         bytes <= MAX_BLOB_BYTES
     });
 
-    let library = newest;
+    // The newest UPDATE tag is text from the library: made printable and short, as the pack requires.
+    let library = safe(&newest, 32);
     let mut parts = Vec::new();
     let mut meshes = Vec::new();
     for Done { cand, d } in chosen {

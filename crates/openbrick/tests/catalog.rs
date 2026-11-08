@@ -330,3 +330,46 @@ fn fetch_stops_a_download_that_never_says_how_long_it_is() {
     assert!(args.contains("--max-filesize 1000000"), "{args}");
     std::fs::remove_dir_all(d).unwrap();
 }
+
+#[test]
+fn text_from_a_hostile_library_never_reaches_the_terminal_raw() {
+    // A library whose one part carries an escape sequence and a right-to-left override in its
+    // version tag, description and author (the tag is printed in the report and kept in the pack).
+    let d = dir("hostile-lib");
+    let lib = d.join("lib");
+    std::fs::create_dir_all(lib.join("parts")).unwrap();
+    std::fs::create_dir_all(lib.join("p")).unwrap();
+    std::fs::write(
+        lib.join("p/tri.dat"),
+        "0 tri\n0 !LDRAW_ORG Primitive\n0 BFC CERTIFY CCW\n3 16 0 0 0 1 0 0 0 0 1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        lib.join("parts/1001.dat"),
+        "0 Brick \u{1b}[2J\u{1b}]0;owned\u{7} \u{202e}1 x 1\n0 Name: 1001.dat\n0 Author: \u{1b}[31mred\u{202e}\n0 !LDRAW_ORG Part UPDATE 20\u{1b}[31m26-01\u{202e}\n0 !LICENSE CC\n0 !CATEGORY Brick\n0 BFC CERTIFY CCW\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 tri.dat\n",
+    )
+    .unwrap();
+    let out = d.join("h.obpack");
+    let o = run(&[
+        "catalog",
+        "import",
+        lib.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+        "--include-unconnected",
+    ]);
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    let shown = format!("{}{}", text(&o.stdout), text(&o.stderr));
+    let info = run(&["catalog", "info", out.to_str().unwrap()]);
+    assert!(info.status.success(), "the pack reads back: {}", text(&info.stderr));
+    let shown = format!("{shown}{}{}", text(&info.stdout), text(&info.stderr));
+    for bad in ['\u{1b}', '\u{7}', '\u{202e}', '\u{9b}'] {
+        assert!(!shown.contains(bad), "{bad:?} reached the terminal: {shown:?}");
+    }
+    assert!(shown.contains("library 20\u{FFFD}[31m26-01\u{FFFD}"), "{shown}");
+    // The pack itself holds printable text, so the page's palette gets nothing hostile either.
+    let json = run(&["catalog", "info", out.to_str().unwrap(), "--json"]);
+    let v: Value = serde_json::from_str(&text(&json.stdout)).unwrap();
+    assert_eq!(v["library"], "20\u{FFFD}[31m26-01\u{FFFD}");
+    std::fs::remove_dir_all(d).unwrap();
+}
