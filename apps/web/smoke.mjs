@@ -1525,11 +1525,11 @@ async function buildPhoneRun(browser, origin) {
   await context.close();
 }
 
-/** A mini pack made by the CLI from the synthetic fixture library. */
-function miniPack() {
+/** A mini pack made by the CLI from the synthetic fixture library (`extra`: more import options, and a file name). */
+function miniPack(extra = [], file = "mini.obpack") {
   run("cargo", ["build", "-q", "-p", "openbrick"]);
-  const out = join(downloads, "mini.obpack");
-  run(join(repo, "target/debug/openbrick"), ["catalog", "import", join(repo, "crates/openbrick-catalog/tests/fixtures/ldraw"), "--out", out, "--force", "--category-filter", "Brick,Plate,Tile,Technic"]);
+  const out = join(downloads, file);
+  run(join(repo, "target/debug/openbrick"), ["catalog", "import", join(repo, "crates/openbrick-catalog/tests/fixtures/ldraw"), "--out", out, "--force", "--category-filter", "Brick,Plate,Tile,Technic", ...extra]);
   return out;
 }
 
@@ -1652,10 +1652,42 @@ async function buildPackRun(browser, origin) {
   await buildWait(fresh, () => /Could not add/.test(window.__web.build.message), 10_000, "the refusal of a file that is not a pack");
   check((await fresh.getAttribute("#build-message", "role")) === "alert" && (await buildState(fresh)).pack !== null && (await buildState(fresh)).parts === 3, `${label}: the refusal is an alert and the pack and model stay`);
   check(/not an OpenBrick3D pack/.test(await fresh.textContent("#build-message")), `${label}: refusal text "${await fresh.textContent("#build-message")}"`);
-  // Removing the pack clears a model that used it, and says so.
+  // Removing the pack takes the parts a model uses away: the model is not lost, it is set aside
+  // and "Restore previous model" brings it back (asking for the pack again).
   await fresh.click("#build-pack-remove");
   await buildWait(fresh, () => window.__web.build.pack === null && window.__web.build.parts <= 1, 20_000, "removing the pack");
-  check(/Removed the LDraw pack/.test(await fresh.textContent("#build-message")) && (await paletteNames(fresh)).length === 14, `${label}: after removing the pack "${await fresh.textContent("#build-message")}"`);
+  const removed = await fresh.textContent("#build-message");
+  check(/Removed the LDraw pack/.test(removed) && /set aside/.test(removed) && !/was cleared|so it was cleared/.test(removed) && (await paletteNames(fresh)).length === 14, `${label}: after removing the pack "${removed}"`);
+  check((await buildState(fresh)).canRestore === true && (await fresh.isEnabled("#build-restore")), `${label}: the model used the pack, so it is set aside and can be restored`);
+  await fresh.click("#build-restore");
+  await buildWait(fresh, () => window.__web.build.needs !== null, 20_000, "the notice that the restored model needs its pack again");
+  check((await buildState(fresh)).parts <= 1, `${label}: the restored model needs the pack before it opens`);
+  await fresh.setInputFiles("#build-pack-file", pack);
+  await buildWait(fresh, () => window.__web.build.pack !== null && window.__web.build.parts === 3 && window.__web.build.needs === null, 30_000, "the set-aside model opening once the pack is added again");
+  // With unsaved edits the change asks first; Cancel keeps both the model and the pack.
+  const spot = await screenAt(fresh, [100, -8, 100]);
+  await fresh.mouse.move(spot.x, spot.y);
+  await buildWait(fresh, () => window.__web.build.ghost === "valid", 20_000, "a valid ghost on the baseplate");
+  await fresh.mouse.click(spot.x, spot.y);
+  await buildWait(fresh, () => window.__web.build.parts === 4 && window.__web.build.dirty === true, 20_000, "an edit that is not saved");
+  await fresh.click("#build-pack-remove");
+  await buildWait(fresh, () => window.__web.build.confirming === true, 10_000, "the question before removing the pack from an unsaved model");
+  check(/set aside/.test(await fresh.textContent("#build-confirm-text")), `${label}: the question says "${await fresh.textContent("#build-confirm-text")}"`);
+  await fresh.click("#build-confirm-cancel");
+  await buildWait(fresh, () => window.__web.build.confirming === false, 10_000, "answering Cancel");
+  check((await buildState(fresh)).pack !== null && (await buildState(fresh)).parts === 4, `${label}: Cancel keeps the pack and the unsaved model`);
+  await fresh.click("#build-pack-remove");
+  await buildWait(fresh, () => window.__web.build.confirming === true, 10_000, "the question again");
+  await fresh.click("#build-confirm-replace");
+  await buildWait(fresh, () => window.__web.build.pack === null && window.__web.build.parts <= 1, 20_000, "removing the pack after Replace");
+  check((await buildState(fresh)).canRestore === true, `${label}: the unsaved model is set aside, not lost`);
+  // Another build of the pack (low-resolution primitives): the set-aside model opens with it, and says so.
+  await fresh.setInputFiles("#build-pack-file", miniPack(["--resolution", "low"], "mini-low.obpack"));
+  await buildWait(fresh, () => window.__web.build.pack !== null, 30_000, "another build of the pack");
+  check((await buildState(fresh)).pack.fingerprint !== b.pack.fingerprint, `${label}: the second pack has the first one's fingerprint`);
+  await fresh.click("#build-restore");
+  await buildWait(fresh, () => window.__web.build.parts === 4 && window.__web.build.notices.length === 1, 30_000, "the set-aside model opening with another build of its pack");
+  check(/different build of the `ldraw` pack/.test(await fresh.textContent("#build-message")), `${label}: the notice is not shown: "${await fresh.textContent("#build-message")}"`);
   check(freshErrors.length === 0, `${label}: page errors on the fresh page: ${freshErrors.join(" | ")}`);
 
   // A worker restart keeps the pack and the model (the page sends both again).

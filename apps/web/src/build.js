@@ -144,6 +144,25 @@ export function replaceNeedsConfirm({ dirty }) {
 }
 
 /**
+ * Whether a model on screen uses a part of the loaded LDraw pack: `instances` as decoded
+ * (`part` is the catalog part number), `parts` the catalog's part list (`origin`). Adding or
+ * removing a pack can only take parts away from a model that does.
+ */
+export function usesPackParts(instances, parts) {
+  return instances.some((i) => parts[i.part]?.origin === "ldraw");
+}
+
+/** The longest part name the palette shows; the core cuts names at 256 characters. */
+export const MAX_PALETTE_NAME = 120;
+
+/** A part name for the palette: control, direction and other invisible characters replaced, and cut. */
+export function paletteName(name) {
+  const clean = String(name ?? "").replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "\uFFFD");
+  const chars = [...clean];
+  return chars.length > MAX_PALETTE_NAME ? `${chars.slice(0, MAX_PALETTE_NAME - 1).join("")}…` : clean;
+}
+
+/**
  * Whether Clear has anything to remove: any part but a baseplate standing on the ground
  * (the engine's `ClearBuilt` keeps exactly those). `parts` is the catalog's part list
  * (`base`, `heightLdu`); a baseplate is on the ground when its bottom (position plus height)

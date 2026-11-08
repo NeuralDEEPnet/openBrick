@@ -105,8 +105,11 @@ shows its native file dialog). Reading it takes a moment; then:
   shows its author and licence line.
 - Parts are placed like any other: the core snaps studs and receptacles, checks
   collisions and tells you why a part cannot go somewhere.
-- **Remove the LDraw pack** goes back to the built-in parts; if the model on screen
-  uses pack parts it is cleared, and the page says so.
+- **Remove the LDraw pack** goes back to the built-in parts. If the model on screen
+  uses pack parts it cannot stay on screen, so it is set aside, not thrown away:
+  **Restore previous model** brings it back (it asks for the pack again), and when
+  the model has unsaved changes the page asks first (Save first, Replace or Cancel).
+  Adding a pack that lacks parts the model uses does the same.
 
 A part is marked in the palette when it is not the usual stud-and-receptacle part:
 
@@ -127,7 +130,11 @@ Part ids of the pack look like `ld.3001`; the built-in ids (`ob.brick-2x4`) neve
 change. Opening such a model without the pack loaded does not fail: Build mode shows
 what it needs ("This model uses 12 parts from the ldraw pack (library 2026-10)") and
 a button to add a pack; when you do, the model opens. A pack of another library
-version opens the model too, as long as it has every part the model uses.
+version opens the model too, as long as it has every part the model uses; the page
+then shows a notice with both library versions and fingerprints, because the parts'
+shapes may differ from the ones the model was built with. The `requires` list is
+checked when the model is read (at most 16 entries; `pack` lower-case, `library` up
+to 32 printable characters, `fingerprint` 64 lower-case hex digits).
 
 On the command line:
 

@@ -38,6 +38,8 @@ import {
   isModelFile,
   keyAction,
   replaceNeedsConfirm,
+  usesPackParts,
+  paletteName,
   stageKeyAction,
   clearable,
   modelFileName,
@@ -199,6 +201,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     revision: 0,
     /** How many times the model was put back into a replaced worker. */
     restores: 0,
+    /** Notices of the last model opened (another build of its pack was loaded). */
+    notices: [],
     saveCount: 0,
     lastSave: null,
     hover: "",
@@ -699,6 +703,9 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       showNeeds(null);
       pendingModel = null;
       const next = await asm.assemblerLoad(text);
+      // The model opened, with another build of the pack it was made with: say so.
+      const notices = next.notices ?? [];
+      info.notices = notices;
       modelName = name;
       $("build-name").value = name;
       await applyState(next);
@@ -706,7 +713,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       view.frameLdu(...modelFrame());
       choice.rot = 0;
       info.rot = 0;
-      message(`Opened ${name}: ${stateSentence(next.stats)}`);
+      message(`Opened ${name}: ${stateSentence(next.stats)}${notices.length ? ` Notice: ${notices.join(" ")}` : ""}`);
+      if (notices.length) status([`Opened ${name}`, ...notices]);
       return true;
     } catch (err) {
       message(`Could not open ${name}: ${err.message}`, { alert: true });
@@ -721,8 +729,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   // The in-page confirmation (a dialog box would block the desktop webview and a test
   // driver): Save first, Replace, or Cancel, with the focus on Cancel.
   let answer = null;
-  function confirmReplace(label) {
-    $("build-confirm-text").textContent = `Replace your unsaved model with ${label}? The changes you made since the last save would be lost.`;
+  function confirmReplace(label, question) {
+    $("build-confirm-text").textContent = question ?? `Replace your unsaved model with ${label}? The changes you made since the last save would be lost.`;
     $("build-confirm").hidden = false;
     info.confirming = true;
     $("build-confirm-cancel").focus();
@@ -754,10 +762,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     const made = await produce();
     if (!made) return false;
     if (!(await loadText(made.text, made.name))) return false;
-    keeper.setPrevious(prior);
-    $("build-restore").disabled = false;
-    info.canRestore = true;
-    message(`Opened ${made.name}. "Restore previous model" brings back the one it replaced.`);
+    setAside(prior);
+    message(`Opened ${made.name}. "Restore previous model" brings back the one it replaced.${info.notices.length ? ` Notice: ${info.notices.join(" ")}` : ""}`);
     return true;
   }
 
@@ -769,8 +775,34 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     if (await loadText(prev.text, prev.name)) {
       setDirty(prev.dirty);
       keeper.setPrevious(current);
-      message(`Restored ${prev.name}`);
+      message(`Restored ${prev.name}.${info.notices.length ? ` Notice: ${info.notices.join(" ")}` : ""}`);
     }
+  }
+
+  /** Keep `prior` ({ text, name, dirty }) for "Restore previous model". */
+  function setAside(prior) {
+    keeper.setPrevious(prior);
+    $("build-restore").disabled = false;
+    info.canRestore = true;
+  }
+
+  /**
+   * Before a change of pack that may take away parts the model on screen uses: when the model
+   * has unsaved edits, ask (Save first, Replace, Cancel). Resolves true to go on. The model is
+   * set aside afterwards if the core had to clear it, so nothing is lost silently.
+   */
+  async function confirmPackChange(what) {
+    if (!usesPackParts(instances, catalog.parts) || !replaceNeedsConfirm({ dirty })) return true;
+    const reply = await confirmReplace(
+      what,
+      `${what} may take away parts your unsaved model uses, and the model would be set aside (Restore previous model brings it back). The changes you made since the last save could be lost. Continue?`,
+    );
+    if (reply === "cancel") {
+      message("Kept your model and the parts you have");
+      return false;
+    }
+    if (reply === "save" && !(await save())) return false;
+    return true;
   }
 
   async function openFile(file) {
@@ -927,7 +959,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     $("build-part-tools").hidden = catalog.parts.length <= PAGE_SIZE;
   }
 
-  const displayName = (p) => p.name.replace(/\s+/g, " ").trim();
+  const displayName = (p) => paletteName(p.name.replace(/\s+/g, " ").trim());
 
   function buildPalettes() {
     const base = catalog.palette.defaultPart;
@@ -981,6 +1013,9 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   /** Take an LDraw pack file: the core checks it and joins its parts to the catalog. */
   async function loadPackBytes(bytes, name) {
     try {
+      if (!(await confirmPackChange(`Adding ${name}`))) return false;
+      // What the model was, to set aside if the new pack lacks parts it uses and the core clears it.
+      const prior = { text: state.text, name: modelName, dirty };
       message(`Reading ${name}…`);
       const r = await asm.assemblerLoadPack(bytes);
       pack = { info: r.pack, bytes, name };
@@ -993,7 +1028,11 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       renderPackInfo();
       buildPartsAgain();
       await applyState(r);
-      message(`Added ${r.pack.parts} parts from the LDraw library ${r.pack.library}.${r.kept ? "" : " The model on screen uses parts the pack lacks, so it was cleared."}`);
+      if (!r.kept) {
+        setAside(prior);
+        setDirty(false);
+      }
+      message(`Added ${r.pack.parts} parts from the LDraw library ${r.pack.library}.${r.kept ? "" : ' The model on screen uses parts the pack lacks, so it was set aside: "Restore previous model" brings it back when a pack that has them is loaded.'}`);
       status([`${name}: ${r.pack.parts} parts added`, packFileLabel(name)]);
       if (pendingModel) {
         const m = pendingModel;
@@ -1025,6 +1064,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   async function removePack() {
     try {
+      if (!(await confirmPackChange("Removing the LDraw pack"))) return;
+      const prior = { text: state.text, name: modelName, dirty };
       const r = await asm.assemblerUnloadPack();
       pack = null;
       keeper.rememberPack(null);
@@ -1035,7 +1076,11 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       renderPackInfo();
       buildPartsAgain();
       await applyState(r);
-      message(r.kept ? "Removed the LDraw pack" : "Removed the LDraw pack. The model on screen used its parts, so it was cleared.");
+      if (!r.kept) {
+        setAside(prior);
+        setDirty(false);
+      }
+      message(r.kept ? "Removed the LDraw pack" : 'Removed the LDraw pack. The model on screen used its parts, so it was set aside: "Restore previous model" brings it back (it asks for the pack again).');
     } catch (err) {
       message(err.message ?? String(err), { alert: true });
     }

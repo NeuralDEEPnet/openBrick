@@ -21,6 +21,9 @@ import {
   keyAction,
   ORBIT_STEP_DEG,
   replaceNeedsConfirm,
+  usesPackParts,
+  paletteName,
+  MAX_PALETTE_NAME,
   stageKeyAction,
   ZOOM_STEP,
   DETAIL_BELOW,
@@ -238,6 +241,24 @@ test("replacing the model asks only when there are unsaved edits", () => {
   assert.equal(replaceNeedsConfirm({ dirty: true }), true);
   assert.equal(replaceNeedsConfirm({ dirty: false }), false);
   assert.equal(replaceNeedsConfirm({}), false);
+});
+
+test("only a model that uses parts of the loaded pack can lose them when the pack changes", () => {
+  const parts = [{ origin: "builtin" }, { origin: "ldraw" }, undefined];
+  assert.equal(usesPackParts([], parts), false);
+  assert.equal(usesPackParts([{ part: 0 }], parts), false);
+  assert.equal(usesPackParts([{ part: 0 }, { part: 1 }], parts), true);
+  assert.equal(usesPackParts([{ part: 2 }, { part: 99 }], parts), false, "a part number past the catalog is not a pack part");
+});
+
+test("a part name in the palette is printable and short, whatever the pack says", () => {
+  assert.equal(paletteName("Brick 2 x 4"), "Brick 2 x 4");
+  assert.equal(paletteName("a\u202Eb\u200Bc\u001bd\ne"), "a\uFFFDb\uFFFDc\uFFFDd\uFFFDe");
+  assert.equal(paletteName("é日本語"), "é日本語");
+  const long = paletteName("x".repeat(5000));
+  assert.equal([...long].length, MAX_PALETTE_NAME);
+  assert.ok(long.endsWith("…"));
+  assert.equal(paletteName(undefined), "");
 });
 
 test("Clear has something to do unless only ground baseplates are left", () => {
