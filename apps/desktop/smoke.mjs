@@ -474,6 +474,10 @@ async function main() {
     await session.click("#build-clear");
     await session.waitFor("return window.__web.build.parts === 1 ? true : null;", `${label} build clear`, 60_000);
     await session.click("#build-open");
+    // Clearing was an edit, so the page asks before the opened file replaces the model (in the page,
+    // not a dialog box: the webview and WebDriver could not answer one).
+    await session.waitFor("return window.__web.build.confirming === true ? true : null;", `${label} build confirm`, 60_000);
+    await session.click("#build-confirm-replace");
     await session.waitFor("return window.__web.build.parts === 2 ? true : null;", `${label} build open`, 60_000);
     const bomRows = await session.exec("return [...document.querySelectorAll('#build-bom tr')].map((tr) => tr.textContent.trim());");
     check(bomRows.length === 2 && bomRows.some((r) => r.includes("Brick 2 x 4")), `${label}: bill of materials ${JSON.stringify(bomRows)}`);
