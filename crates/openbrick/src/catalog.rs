@@ -417,7 +417,9 @@ fn fetch_cmd(a: &FetchArgs, ui: Ui) -> Result<Outcome, Fail> {
         "downloading {url} (at most {} MiB)",
         MAX_DOWNLOAD_BYTES / (1024 * 1024)
     ));
-    let cap = a.max_bytes.map_or(MAX_DOWNLOAD_BYTES, |n| n.min(MAX_DOWNLOAD_BYTES));
+    let cap = a
+        .max_bytes
+        .map_or(MAX_DOWNLOAD_BYTES, |n| n.min(MAX_DOWNLOAD_BYTES));
     let mut curl = Command::new("curl");
     curl.args(["--fail", "--silent", "--show-error", "--location"])
         .args(["--proto", "=https", "--proto-redir", "=https"])
@@ -531,7 +533,8 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("openbrick-capped-{}-{name}", std::process::id()));
+        let d =
+            std::env::temp_dir().join(format!("openbrick-capped-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -559,7 +562,10 @@ mod tests {
         let Capped::TooBig(size) = r else {
             panic!("not stopped: {r:?}")
         };
-        assert!(size > 1_000_000 && size < 5_000_000, "stopped at {size} bytes");
+        assert!(
+            size > 1_000_000 && size < 5_000_000,
+            "stopped at {size} bytes"
+        );
         assert!(!marker.exists(), "the program ran to the end");
         assert!(t.elapsed().as_secs() < 3, "{:?}", t.elapsed());
         std::fs::remove_dir_all(d).unwrap();
@@ -570,15 +576,39 @@ mod tests {
         let d = scratch("ok");
         let out = d.join("part");
         let script = format!("head -c 5000 /dev/zero > '{}'", out.display());
-        let r = run_capped(Command::new("sh").arg("-c").arg(script), &out, 10_000, Duration::from_millis(5)).unwrap();
+        let r = run_capped(
+            Command::new("sh").arg("-c").arg(script),
+            &out,
+            10_000,
+            Duration::from_millis(5),
+        )
+        .unwrap();
         assert!(matches!(r, Capped::Done(s) if s.success()), "{r:?}");
-        let r = run_capped(Command::new("sh").arg("-c").arg("exit 3"), &out, 10_000, Duration::from_millis(5)).unwrap();
+        let r = run_capped(
+            Command::new("sh").arg("-c").arg("exit 3"),
+            &out,
+            10_000,
+            Duration::from_millis(5),
+        )
+        .unwrap();
         assert!(matches!(r, Capped::Done(s) if s.code() == Some(3)), "{r:?}");
         // A program that writes everything at once and exits before the first look is still checked.
         let script = format!("head -c 50000 /dev/zero > '{}'", out.display());
-        let r = run_capped(Command::new("sh").arg("-c").arg(script), &out, 10_000, Duration::from_millis(500)).unwrap();
+        let r = run_capped(
+            Command::new("sh").arg("-c").arg(script),
+            &out,
+            10_000,
+            Duration::from_millis(500),
+        )
+        .unwrap();
         assert!(matches!(r, Capped::TooBig(50_000)), "{r:?}");
-        assert!(run_capped(&mut Command::new("/no/such/program"), &out, 1, Duration::from_millis(5)).is_err());
+        assert!(run_capped(
+            &mut Command::new("/no/such/program"),
+            &out,
+            1,
+            Duration::from_millis(5)
+        )
+        .is_err());
         std::fs::remove_dir_all(d).unwrap();
     }
 }

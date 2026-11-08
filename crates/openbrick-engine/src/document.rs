@@ -134,7 +134,10 @@ pub enum DocError {
     },
     #[error("the model has {0} submodels; this build reads exactly one, `main`")]
     Submodels(usize),
-    #[error("instance {id}: part `{}` is not in the catalog `{CATALOG_ID}`", safe_msg(part))]
+    #[error(
+        "instance {id}: part `{}` is not in the catalog `{CATALOG_ID}`",
+        safe_msg(part)
+    )]
     UnknownPart { id: InstanceId, part: String },
     #[error("instance {id}: {error}")]
     Instance { id: InstanceId, error: EngineError },

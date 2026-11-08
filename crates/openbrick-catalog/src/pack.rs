@@ -275,7 +275,9 @@ impl Pack {
     pub fn to_bytes(&self) -> Result<Vec<u8>, PackError> {
         let header = serde_json::to_vec(&self.header).map_err(|e| damaged(e.to_string()))?;
         if header.len() > MAX_HEADER_BYTES {
-            return Err(damaged("the header is too large for a pack; import fewer parts"));
+            return Err(damaged(
+                "the header is too large for a pack; import fewer parts",
+            ));
         }
         let blob = miniz_oxide::deflate::compress_to_vec(&self.blob, 6);
         let mut out = Vec::with_capacity(8 + 4 + header.len() + 12 + blob.len() + 32);
@@ -371,7 +373,9 @@ impl Pack {
         let h = &self.header;
         let plain = |what: &str, v: &str, max_chars: usize| -> Result<(), PackError> {
             if v.chars().count() > max_chars {
-                return Err(damaged(format!("the {what} is longer than {max_chars} characters")));
+                return Err(damaged(format!(
+                    "the {what} is longer than {max_chars} characters"
+                )));
             }
             if has_unsafe(v) {
                 return Err(damaged(format!(
@@ -408,8 +412,13 @@ impl Pack {
         let mut total = 0usize;
         for l in &h.licences {
             plain("licence name", &l.name, MAX_LABEL_CHARS)?;
-            total = total.saturating_add(l.name.len()).saturating_add(l.text.len());
-            if l.text.chars().any(|c| !matches!(c, '\n' | '\r' | '\t') && crate::text::is_unsafe_char(c)) {
+            total = total
+                .saturating_add(l.name.len())
+                .saturating_add(l.text.len());
+            if l.text
+                .chars()
+                .any(|c| !matches!(c, '\n' | '\r' | '\t') && crate::text::is_unsafe_char(c))
+            {
                 return Err(damaged(format!(
                     "the licence text `{}` has a control, direction or other invisible character",
                     safe(&l.name, 60)
@@ -443,7 +452,9 @@ impl Pack {
                 )));
             }
         }
-        if p.joints.len() > JOINT_KINDS.len() || p.joints.iter().any(|j| !JOINT_KINDS.contains(&j.as_str())) {
+        if p.joints.len() > JOINT_KINDS.len()
+            || p.joints.iter().any(|j| !JOINT_KINDS.contains(&j.as_str()))
+        {
             return Err(damaged(format!(
                 "part {} lists a joint kind other than clip, hinge, ball or socket",
                 p.id
@@ -705,7 +716,9 @@ mod tests {
     #[test]
     fn text_fields_are_limited_and_free_of_invisible_characters() {
         let refused = |what: &str, bytes: Vec<u8>, needle: &str| {
-            let e = Pack::from_bytes(&bytes).err().unwrap_or_else(|| panic!("{what}: accepted"));
+            let e = Pack::from_bytes(&bytes)
+                .err()
+                .unwrap_or_else(|| panic!("{what}: accepted"));
             let m = e.to_string();
             assert!(m.contains(needle), "{what}: {m}");
             assert!(m.len() < 600, "{what}: a {} byte message", m.len());
@@ -726,11 +739,18 @@ mod tests {
                     _ => p.license = long(n),
                 })
             };
-            assert!(Pack::from_bytes(&set(ok_len)).is_ok(), "{what} at the limit");
+            assert!(
+                Pack::from_bytes(&set(ok_len)).is_ok(),
+                "{what} at the limit"
+            );
             refused(what, set(bad_len), "longer than");
         }
         // A 2 MB name inside a header that is itself within bounds.
-        refused("2 MB name", forged(|p| p.name = long(2 << 20)), "longer than");
+        refused(
+            "2 MB name",
+            forged(|p| p.name = long(2 << 20)),
+            "longer than",
+        );
         // A header over its bound is refused when written and when read.
         let mut p = sample();
         p.header.parts[0].name = long(20 << 20);
@@ -738,23 +758,51 @@ mod tests {
         let json = serde_json::to_vec(&p.header).unwrap();
         refused(
             "20 MB header",
-            raw_file(&json, &miniz_oxide::deflate::compress_to_vec(&p.blob, 1), p.blob.len() as u64),
+            raw_file(
+                &json,
+                &miniz_oxide::deflate::compress_to_vec(&p.blob, 1),
+                p.blob.len() as u64,
+            ),
             "header is too large",
         );
         // Invisible characters: a right-to-left override, a zero width space, an escape, a newline.
-        for bad in ["a\u{202E}b", "a\u{200B}b", "a\u{1b}[31mb", "a\nb", "a\u{2066}b"] {
+        for bad in [
+            "a\u{202E}b",
+            "a\u{200B}b",
+            "a\u{1b}[31mb",
+            "a\nb",
+            "a\u{2066}b",
+        ] {
             refused("name", forged(|p| p.name = bad.into()), "invisible");
             refused("author", forged(|p| p.author = bad.into()), "invisible");
-            refused("licence line", forged(|p| p.license = bad.into()), "invisible");
+            refused(
+                "licence line",
+                forged(|p| p.license = bad.into()),
+                "invisible",
+            );
             refused("category", forged(|p| p.category = bad.into()), "invisible");
         }
         // Ids are plain ASCII.
-        for bad in ["ld.\u{202E}1", "ld.\u{430}1", "ld.1\n", "ld.a b", "x.1", "ld.", &format!("ld.{}", long(70))] {
+        for bad in [
+            "ld.\u{202E}1",
+            "ld.\u{430}1",
+            "ld.1\n",
+            "ld.a b",
+            "x.1",
+            "ld.",
+            &format!("ld.{}", long(70)),
+        ] {
             refused("id", forged(|p| p.id = bad.into()), "not valid");
         }
         // Joints are the four kinds.
-        assert!(Pack::from_bytes(&forged(|p| p.joints = vec!["clip".into(), "ball".into()])).is_ok());
-        refused("joint", forged(|p| p.joints = vec!["x".into()]), "joint kind");
+        assert!(
+            Pack::from_bytes(&forged(|p| p.joints = vec!["clip".into(), "ball".into()])).is_ok()
+        );
+        refused(
+            "joint",
+            forged(|p| p.joints = vec!["x".into()]),
+            "joint kind",
+        );
     }
 
     #[test]
@@ -774,26 +822,51 @@ mod tests {
             assert!(m.contains(needle) && m.len() < 600, "{m}");
         };
         assert!(Pack::from_bytes(&edit(&|_| {})).is_ok());
-        refused(edit(&|h| h["attribution"] = ("a".repeat(70_000)).into()), "attribution");
-        refused(edit(&|h| h["attribution"] = "a\u{202E}b".into()), "attribution");
-        refused(edit(&|h| h["library"] = "a".repeat(33).into()), "library version");
-        refused(edit(&|h| h["library"] = "20\u{202E}26".into()), "library version");
+        refused(
+            edit(&|h| h["attribution"] = ("a".repeat(70_000)).into()),
+            "attribution",
+        );
+        refused(
+            edit(&|h| h["attribution"] = "a\u{202E}b".into()),
+            "attribution",
+        );
+        refused(
+            edit(&|h| h["library"] = "a".repeat(33).into()),
+            "library version",
+        );
+        refused(
+            edit(&|h| h["library"] = "20\u{202E}26".into()),
+            "library version",
+        );
         refused(edit(&|h| h["generator"] = "a\u{1b}[2J".into()), "generator");
         refused(edit(&|h| h["id"] = "LDRAW".into()), "pack id");
         refused(edit(&|h| h["id"] = "ld/../x".into()), "pack id");
         refused(edit(&|h| h["id"] = "".into()), "pack id");
         refused(edit(&|h| h["resolution"] = "ultra".into()), "resolution");
         // Licences: a text with a line break and a tab is fine, an override is not, and the total is bounded.
-        assert!(Pack::from_bytes(&edit(&|h| h["licences"][0]["text"] = "a\n\tb\r\n".into())).is_ok());
-        refused(edit(&|h| h["licences"][0]["text"] = "a\u{202E}b".into()), "licence text");
-        refused(edit(&|h| h["licences"][0]["name"] = "a\nb".into()), "licence name");
+        assert!(
+            Pack::from_bytes(&edit(&|h| h["licences"][0]["text"] = "a\n\tb\r\n".into())).is_ok()
+        );
+        refused(
+            edit(&|h| h["licences"][0]["text"] = "a\u{202E}b".into()),
+            "licence text",
+        );
+        refused(
+            edit(&|h| h["licences"][0]["name"] = "a\nb".into()),
+            "licence name",
+        );
         let big = "a".repeat(600 * 1024);
         refused(
-            edit(&|h| h["licences"] = serde_json::json!([{"name":"a","text":big},{"name":"b","text":big}])),
+            edit(&|h| {
+                h["licences"] = serde_json::json!([{"name":"a","text":big},{"name":"b","text":big}])
+            }),
             "licence texts",
         );
         refused(
-            edit(&|h| h["licences"] = serde_json::json!(vec![serde_json::json!({"name":"a","text":"b"}); 17])),
+            edit(&|h| {
+                h["licences"] =
+                    serde_json::json!(vec![serde_json::json!({"name":"a","text":"b"}); 17])
+            }),
             "licence texts",
         );
         // The footprint and height must be the body box's.
@@ -847,7 +920,11 @@ mod tests {
         let m = Pack::from_bytes(&raw_file(&serde_json::to_vec(&h).unwrap(), &comp, need))
             .unwrap_err()
             .to_string();
-        assert!(m.contains("does not inflate") && m.len() < 300, "{} bytes: {m}", m.len());
+        assert!(
+            m.contains("does not inflate") && m.len() < 300,
+            "{} bytes: {m}",
+            m.len()
+        );
     }
 
     #[test]

@@ -74,8 +74,14 @@ mod tests {
     fn escapes_bidi_and_control_characters_and_cuts_long_text() {
         assert_eq!(safe("Brick 2 x 4", 50), "Brick 2 x 4");
         assert_eq!(safe("a\u{1b}[31mred\u{7}", 50), "a\u{FFFD}[31mred\u{FFFD}");
-        assert_eq!(safe("ab\u{202E}cd\u{2066}e\u{200B}f\u{FEFF}", 50), "ab\u{FFFD}cd\u{FFFD}e\u{FFFD}f\u{FFFD}");
-        assert_eq!(safe("line\nbreak\r\u{85}\u{2028}", 50), "line\u{FFFD}break\u{FFFD}\u{FFFD}\u{FFFD}");
+        assert_eq!(
+            safe("ab\u{202E}cd\u{2066}e\u{200B}f\u{FEFF}", 50),
+            "ab\u{FFFD}cd\u{FFFD}e\u{FFFD}f\u{FFFD}"
+        );
+        assert_eq!(
+            safe("line\nbreak\r\u{85}\u{2028}", 50),
+            "line\u{FFFD}break\u{FFFD}\u{FFFD}\u{FFFD}"
+        );
         assert_eq!(safe(&"x".repeat(1000), 5), "xxxx…");
         assert_eq!(safe("12345", 5), "12345", "exactly the limit is not cut");
         assert_eq!(safe("é日本語", 50), "é日本語");

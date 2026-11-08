@@ -319,14 +319,23 @@ fn fetch_stops_a_download_that_never_says_how_long_it_is() {
         .unwrap();
     assert_eq!(o.status.code(), Some(2), "{}", text(&o.stderr));
     let err = text(&o.stderr);
-    assert!(err.contains("passed the 1000000-byte cap") && err.contains("stopped and deleted"), "{err}");
+    assert!(
+        err.contains("passed the 1000000-byte cap") && err.contains("stopped and deleted"),
+        "{err}"
+    );
     assert!(!marker.exists(), "the fake download was not stopped");
     assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
-    assert!(!dest.join("complete.zip.part").exists(), "the partial file is deleted");
+    assert!(
+        !dest.join("complete.zip.part").exists(),
+        "the partial file is deleted"
+    );
     assert!(!dest.join("complete.zip").exists());
     // Still https only, with curl's own cap too, and no shell: the arguments are curl's.
     let args = std::fs::read_to_string(&log).unwrap();
-    assert!(args.contains("--proto =https") && args.contains("--proto-redir =https"), "{args}");
+    assert!(
+        args.contains("--proto =https") && args.contains("--proto-redir =https"),
+        "{args}"
+    );
     assert!(args.contains("--max-filesize 1000000"), "{args}");
     std::fs::remove_dir_all(d).unwrap();
 }
@@ -361,12 +370,22 @@ fn text_from_a_hostile_library_never_reaches_the_terminal_raw() {
     assert!(o.status.success(), "{}", text(&o.stderr));
     let shown = format!("{}{}", text(&o.stdout), text(&o.stderr));
     let info = run(&["catalog", "info", out.to_str().unwrap()]);
-    assert!(info.status.success(), "the pack reads back: {}", text(&info.stderr));
+    assert!(
+        info.status.success(),
+        "the pack reads back: {}",
+        text(&info.stderr)
+    );
     let shown = format!("{shown}{}{}", text(&info.stdout), text(&info.stderr));
     for bad in ['\u{1b}', '\u{7}', '\u{202e}', '\u{9b}'] {
-        assert!(!shown.contains(bad), "{bad:?} reached the terminal: {shown:?}");
+        assert!(
+            !shown.contains(bad),
+            "{bad:?} reached the terminal: {shown:?}"
+        );
     }
-    assert!(shown.contains("library 20\u{FFFD}[31m26-01\u{FFFD}"), "{shown}");
+    assert!(
+        shown.contains("library 20\u{FFFD}[31m26-01\u{FFFD}"),
+        "{shown}"
+    );
     // The pack itself holds printable text, so the page's palette gets nothing hostile either.
     let json = run(&["catalog", "info", out.to_str().unwrap(), "--json"]);
     let v: Value = serde_json::from_str(&text(&json.stdout)).unwrap();

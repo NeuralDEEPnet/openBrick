@@ -298,11 +298,21 @@ fn a_pack_of_another_version_opens_the_model_with_a_notice() {
     assert!(notices.is_empty(), "{notices:?}");
     assert_eq!(back.len(), 1);
     // Another library version: the model opens and the notice says both versions.
-    let newer = Catalog::builtin().unwrap().with_pack(&other_pack(Some("2027-02")));
+    let newer = Catalog::builtin()
+        .unwrap()
+        .with_pack(&other_pack(Some("2027-02")));
     let (back, notices) = Model::from_text_with_notices(&newer, &text).unwrap();
-    assert_eq!(back.len(), 1, "a pack of another version still opens the model");
+    assert_eq!(
+        back.len(),
+        1,
+        "a pack of another version still opens the model"
+    );
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].contains("2026-01") && notices[0].contains("2027-02"), "{}", notices[0]);
+    assert!(
+        notices[0].contains("2026-01") && notices[0].contains("2027-02"),
+        "{}",
+        notices[0]
+    );
     assert!(notices[0].contains("fingerprint"), "{}", notices[0]);
     // The same library version, another build of the pack.
     let rebuilt = Catalog::builtin().unwrap().with_pack(&other_pack(None));
@@ -313,7 +323,10 @@ fn a_pack_of_another_version_opens_the_model_with_a_notice() {
     let mut plain = Model::new(c);
     plain.apply(&add("ob.brick-2x4", [0, -24, 0], 0)).unwrap();
     let doc = plain.to_text("p", None);
-    assert!(Model::from_text_with_notices(&newer, &doc).unwrap().1.is_empty());
+    assert!(Model::from_text_with_notices(&newer, &doc)
+        .unwrap()
+        .1
+        .is_empty());
     // `from_text` is unchanged: it opens with another pack and says nothing.
     assert!(Model::from_text(&newer, &text).is_ok());
 }
@@ -325,10 +338,19 @@ fn requires_is_checked_in_the_core_like_the_schema() {
     m.apply(&add("ob.brick-2x4", [0, -24, 0], 0)).unwrap();
     let base = m.to_text("p", None);
     let good = r#"{"pack":"ldraw","library":"2026-01","fingerprint":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
-    let with = |requires: &str| base.replacen("\"palette\"", &format!("\"requires\": [{requires}],\n  \"palette\""), 1);
+    let with = |requires: &str| {
+        base.replacen(
+            "\"palette\"",
+            &format!("\"requires\": [{requires}],\n  \"palette\""),
+            1,
+        )
+    };
     assert!(Model::from_text(c, &with(good)).is_ok());
     let many = vec![good; 17].join(",");
-    let bad_fp = good.replace("0000000000000000000000000000000000000000000000000000000000000000", "ABC");
+    let bad_fp = good.replace(
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "ABC",
+    );
     let upper = good.replace("00000000", "ABCDEF00");
     let long_lib = good.replace("2026-01", &"9".repeat(33));
     let bidi_lib = good.replace("2026-01", "20\\u202e26");
@@ -343,7 +365,9 @@ fn requires_is_checked_in_the_core_like_the_schema() {
         ("empty pack", empty_pack.as_str()),
         ("odd pack", odd_pack.as_str()),
     ] {
-        let e = Model::from_text(c, &with(requires)).map(|_| ()).unwrap_err();
+        let e = Model::from_text(c, &with(requires))
+            .map(|_| ())
+            .unwrap_err();
         assert!(matches!(e, DocError::Requires(_)), "{what}: {e}");
         assert!(e.to_string().starts_with("`requires`"), "{what}: {e}");
         assert!(e.to_string().len() < 400, "{what}: {e}");

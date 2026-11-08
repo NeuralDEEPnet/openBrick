@@ -201,10 +201,7 @@ pub fn exclusion(file_name: &str, h: &Header) -> Option<&'static str> {
     {
         return Some("other_systems");
     }
-    if lower.contains("pattern")
-        || lower.contains("sticker")
-        || cat.starts_with("sticker")
-    {
+    if lower.contains("pattern") || lower.contains("sticker") || cat.starts_with("sticker") {
         return Some("prints_and_stickers");
     }
     let stem = file_name.strip_suffix(".dat").unwrap_or(file_name);
@@ -708,7 +705,11 @@ mod tests {
             ("Brick", "Brick 1 x 1 with Figure Eight Cutout"),
             ("Constructor", "Brick 1 x 2"),
         ] {
-            assert_eq!(exclusion("3.dat", &with_category(cat, desc)), None, "{cat}: {desc}");
+            assert_eq!(
+                exclusion("3.dat", &with_category(cat, desc)),
+                None,
+                "{cat}: {desc}"
+            );
         }
         // The category filter cannot bring them back: the filter runs after this.
         assert_eq!(

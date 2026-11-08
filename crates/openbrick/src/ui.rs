@@ -84,7 +84,11 @@ pub fn printable(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.chars().any(bad) {
         return std::borrow::Cow::Borrowed(text);
     }
-    std::borrow::Cow::Owned(text.chars().map(|c| if bad(c) { REPLACEMENT } else { c }).collect())
+    std::borrow::Cow::Owned(
+        text.chars()
+            .map(|c| if bad(c) { REPLACEMENT } else { c })
+            .collect(),
+    )
 }
 
 /// A number for a message: three decimals at most, without trailing zeros.
@@ -153,11 +157,24 @@ mod tests {
 
     #[test]
     fn printable_replaces_escapes_and_direction_marks_only() {
-        assert_eq!(printable("plain é text\n\tindented"), "plain é text\n\tindented");
+        assert_eq!(
+            printable("plain é text\n\tindented"),
+            "plain é text\n\tindented"
+        );
         assert!(matches!(printable("plain"), std::borrow::Cow::Borrowed(_)));
-        assert_eq!(printable("a\u{1b}[2Jb\u{7}c\r"), "a\u{FFFD}[2Jb\u{FFFD}c\u{FFFD}");
-        assert_eq!(printable("x\u{202E}y\u{2066}z\u{200B}"), "x\u{FFFD}y\u{FFFD}z\u{FFFD}");
-        assert_eq!(printable("\u{9b}31m"), "\u{FFFD}31m", "the one-byte CSI too");
+        assert_eq!(
+            printable("a\u{1b}[2Jb\u{7}c\r"),
+            "a\u{FFFD}[2Jb\u{FFFD}c\u{FFFD}"
+        );
+        assert_eq!(
+            printable("x\u{202E}y\u{2066}z\u{200B}"),
+            "x\u{FFFD}y\u{FFFD}z\u{FFFD}"
+        );
+        assert_eq!(
+            printable("\u{9b}31m"),
+            "\u{FFFD}31m",
+            "the one-byte CSI too"
+        );
     }
 
     #[test]

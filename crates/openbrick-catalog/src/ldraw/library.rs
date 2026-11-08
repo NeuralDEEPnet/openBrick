@@ -86,7 +86,10 @@ pub enum LibraryError {
     NotALibrary { path: String },
     #[error("the zip is not usable: {}", safe_msg(.0))]
     Zip(String),
-    #[error("{} is {size} bytes, over the {limit}-byte limit for one file; the library may be damaged", safe_msg(name))]
+    #[error(
+        "{} is {size} bytes, over the {limit}-byte limit for one file; the library may be damaged",
+        safe_msg(name)
+    )]
     TooBig {
         name: String,
         size: u64,
@@ -357,10 +360,7 @@ impl ZipSource {
                         "the entries claim to inflate to more than {MAX_DECLARED_BYTES} bytes in all (the library's own are about 507 million); the zip is damaged or hostile"
                     )));
                 }
-                spans.push((
-                    u64::from(off),
-                    30 + n as u64 + u64::from(comp_size),
-                ));
+                spans.push((u64::from(off), 30 + n as u64 + u64::from(comp_size)));
                 entries.insert(
                     rel,
                     ZipEntry {

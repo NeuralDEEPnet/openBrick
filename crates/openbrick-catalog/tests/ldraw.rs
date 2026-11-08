@@ -803,9 +803,7 @@ fn zip_entries_that_share_data_are_refused_at_once() {
     specs.push(Spec::new("ldraw/p/b.dat", b"0 b\n"));
     let zip = hostile_zip(&specs);
     let t0 = std::time::Instant::now();
-    let e = open_zip(&t, "share.zip", zip)
-        .err()
-        .expect("refused");
+    let e = open_zip(&t, "share.zip", zip).err().expect("refused");
     assert!(e.to_string().contains("overlap"), "{e}");
     assert!(t0.elapsed().as_millis() < 1000, "{:?}", t0.elapsed());
     // Two entries, one of them inside the other's data.
@@ -848,7 +846,10 @@ fn zip_entries_that_claim_too_much_are_refused_when_indexed() {
         .iter()
         .map(|n| Spec {
             claimed_size: Some(400_000_000),
-            ..Spec::new(Box::leak(format!("ldraw/parts/{n}.dat").into_boxed_str()), b"0 x\n")
+            ..Spec::new(
+                Box::leak(format!("ldraw/parts/{n}.dat").into_boxed_str()),
+                b"0 x\n",
+            )
         })
         .collect();
     let e = open_zip(&t, "claims.zip", hostile_zip(&specs))
@@ -890,7 +891,10 @@ fn the_crc_and_the_size_of_an_entry_are_checked() {
     ] {
         let specs = [spec, Spec::new("ldraw/p/p.dat", b"0 p\n")];
         let lib = open_zip(&t, "crc.zip", hostile_zip(&specs)).unwrap();
-        let e = lib.load("parts/a.dat").err().unwrap_or_else(|| panic!("{what}"));
+        let e = lib
+            .load("parts/a.dat")
+            .err()
+            .unwrap_or_else(|| panic!("{what}"));
         assert!(e.to_string().contains(want), "{what}: {e}");
     }
     // An undamaged entry loads, and crc32 is the zip one.
@@ -927,7 +931,10 @@ fn a_damaged_deflate_stream_error_is_short() {
     let rest = zip.split_off(local + 1);
     let mut rest = rest;
     // Fix the directory: offsets, sizes and method of both records, and the end record.
-    let cd = rest.windows(4).position(|w| w == [0x50, 0x4b, 1, 2]).unwrap();
+    let cd = rest
+        .windows(4)
+        .position(|w| w == [0x50, 0x4b, 1, 2])
+        .unwrap();
     let mut i = cd;
     for rec in 0..2 {
         if rec == 0 {
@@ -941,7 +948,10 @@ fn a_damaged_deflate_stream_error_is_short() {
         let n = u16::from_le_bytes([rest[i + 28], rest[i + 29]]) as usize;
         i += 46 + n;
     }
-    let eocd = rest.windows(4).rposition(|w| w == [0x50, 0x4b, 5, 6]).unwrap();
+    let eocd = rest
+        .windows(4)
+        .rposition(|w| w == [0x50, 0x4b, 5, 6])
+        .unwrap();
     let cd_off = u32::from_le_bytes(rest[eocd + 16..eocd + 20].try_into().unwrap());
     rest[eocd + 16..eocd + 20].copy_from_slice(&((i64::from(cd_off) + shift) as u32).to_le_bytes());
     patched.extend(rest);
@@ -956,7 +966,10 @@ fn a_damaged_deflate_stream_error_is_short() {
 
 /// A folder library of `n` brick parts, each referencing a one-triangle primitive `refs` times.
 fn heavy_library(t: &Tmp, n: usize, refs: usize) {
-    t.write("ldraw/p/tri.dat", &format!("0 tri\n0 !LDRAW_ORG Primitive\n{CERT}{TRI}"));
+    t.write(
+        "ldraw/p/tri.dat",
+        &format!("0 tri\n0 !LDRAW_ORG Primitive\n{CERT}{TRI}"),
+    );
     for i in 0..n {
         let name = 1000 + i;
         t.write(
@@ -989,9 +1002,12 @@ fn one_work_budget_covers_the_whole_import() {
         max_work: 100_000,
         ..opts.clone()
     };
-    let e = import(&t.0, &small, &mut quiet).err().expect("over budget");
+    let e = import(&t.0, &small, &mut quiet).expect_err("over budget");
     assert!(
-        matches!(e, openbrick_catalog::ldraw::ImportError::Library(LibraryError::WorkBudget(100_000))),
+        matches!(
+            e,
+            openbrick_catalog::ldraw::ImportError::Library(LibraryError::WorkBudget(100_000))
+        ),
         "{e}"
     );
     assert!(e.to_string().contains("100000"), "{e}");
@@ -1017,14 +1033,15 @@ fn when_every_part_fails_the_error_says_why() {
         );
     }
     t.write("ldraw/p/.keep.dat", "");
-    let e = import(&t.0, &ImportOptions::default(), &mut quiet)
-        .err()
-        .expect("nothing to write");
+    let e = import(&t.0, &ImportOptions::default(), &mut quiet).expect_err("nothing to write");
     let text = e.to_string();
     assert!(text.contains("5 failed to read"), "{text}");
     assert!(text.contains("parts/2000.dat"), "{text}");
     assert!(text.contains("refers to itself"), "{text}");
-    assert!(!text.contains("category filter"), "the filter is not the problem: {text}");
+    assert!(
+        !text.contains("category filter"),
+        "the filter is not the problem: {text}"
+    );
     // An empty category list result still points at the filter.
     let opts = ImportOptions {
         categories: Some(vec!["Nope".into()]),
@@ -1045,16 +1062,29 @@ fn hostile_descriptions_are_made_printable_and_short_in_the_pack() {
             "x".repeat(2000)
         ),
     );
-    t.write("ldraw/p/cube.dat", &std::fs::read_to_string(fixture().join("ldraw/p/cube.dat")).unwrap());
-    t.write("ldraw/p/stud.dat", &std::fs::read_to_string(fixture().join("ldraw/p/stud.dat")).unwrap());
-    t.write("ldraw/CAreadme.txt", "agreement\u{202E}\nline two\ttab\u{1b}[2J\n");
+    t.write(
+        "ldraw/p/cube.dat",
+        &std::fs::read_to_string(fixture().join("ldraw/p/cube.dat")).unwrap(),
+    );
+    t.write(
+        "ldraw/p/stud.dat",
+        &std::fs::read_to_string(fixture().join("ldraw/p/stud.dat")).unwrap(),
+    );
+    t.write(
+        "ldraw/CAreadme.txt",
+        "agreement\u{202E}\nline two\ttab\u{1b}[2J\n",
+    );
     let opts = ImportOptions {
         include_unconnected: true,
         ..ImportOptions::default()
     };
     let (pack, _) = import(&t.0, &opts, &mut quiet).expect("imports");
     let p = &pack.header.parts[0];
-    assert!(p.name.chars().count() <= 256 && p.name.ends_with('…'), "{}", p.name);
+    assert!(
+        p.name.chars().count() <= 256 && p.name.ends_with('…'),
+        "{}",
+        p.name
+    );
     assert!(p.author.chars().count() <= 512);
     for text in [&p.name, &p.author] {
         assert!(!openbrick_catalog::text::has_unsafe(text), "{text:?}");
@@ -1069,7 +1099,10 @@ fn hostile_descriptions_are_made_printable_and_short_in_the_pack() {
 #[test]
 fn asking_for_a_figure_category_by_name_imports_no_figure_part() {
     let t = Tmp::new("figures");
-    t.write("ldraw/p/tri.dat", &format!("0 tri\n0 !LDRAW_ORG Primitive\n{CERT}{TRI}"));
+    t.write(
+        "ldraw/p/tri.dat",
+        &format!("0 tri\n0 !LDRAW_ORG Primitive\n{CERT}{TRI}"),
+    );
     for (n, desc, cat) in [
         (1001, "Brick 1 x 1", "Brick"),
         (1002, "Figure Friends Girl Torso", "Figure"),
@@ -1085,9 +1118,16 @@ fn asking_for_a_figure_category_by_name_imports_no_figure_part() {
     }
     let opts = ImportOptions {
         categories: Some(
-            ["Brick", "Figure", "Figure Accessory", "_Figure Accessory", "Constraction", "~Constraction"]
-                .map(String::from)
-                .to_vec(),
+            [
+                "Brick",
+                "Figure",
+                "Figure Accessory",
+                "_Figure Accessory",
+                "Constraction",
+                "~Constraction",
+            ]
+            .map(String::from)
+            .to_vec(),
         ),
         include_unconnected: true,
         ..ImportOptions::default()
