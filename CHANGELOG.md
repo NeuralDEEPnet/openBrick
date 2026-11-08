@@ -13,6 +13,9 @@ All notable changes to OpenBrick3D. Format follows Keep a Changelog; versions fo
 - Every desktop installer carries the app's `LICENSE` and `THIRD-PARTY-LICENSES.txt` (the licence texts of its crates, its WebAssembly core's crates and three.js; `scripts/third-party-licenses.py --desktop`), and the .deb and .rpm declare the glibc they need (2.39), so older systems refuse them instead of the app failing at its first start.
 - Neuraldeep.net branding, as the owner asked: the demo tiles now carry only the text NEURALDEEP.NET, drawn from Inter Display ExtraBold outlines (SIL Open Font License 1.1) by `scripts/brand-text.py` for 2x6, 2x8, 2x10 and 4x4 tiles, each passing FEATURE.MIN on fdm-0.4 in every relief; the invented portrait mark and hexagon badge are removed (`ndn.brand-tile` and `ndn.brand-badge` 2.0.0, the tile now 2x6 by default). The playground starts the logo tile at 2x6 with the wordmark and shows Neural Deep Network Ltd's own logo, unchanged, in its header and footer.
 
+### Fixed
+- A pack with a huge part box no longer hangs the engine or the WebAssembly worker: a pack box wider than 8,192 LDU (the widest real part is 960) or a body covering more than 65,536 lattice cells is refused when the pack is read, and the engine's spatial hash refuses any box over that cell count with an error instead of inserting one entry per cell (this also protects documents and built-in parts).
+
 ## 0.1.0 - 2026-11-01
 
 The M1 CLI alpha: the first release.

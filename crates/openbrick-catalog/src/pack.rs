@@ -29,7 +29,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::builtin::PartMesh;
-use crate::shape::{Aabb, Conn};
+use crate::shape::{Aabb, Conn, MAX_BOX_CELLS, MAX_BOX_EXTENT_LDU};
 
 /// The pack format this build writes and reads.
 pub const PACK_FORMAT: u32 = 1;
@@ -368,6 +368,21 @@ impl Pack {
                 if lo > hi || lo.unsigned_abs() > 10_000_000 || hi.unsigned_abs() > 10_000_000 {
                     return Err(damaged(format!("part {} has a bad box", p.id)));
                 }
+                // The widest real part is 960 LDU. A box this wide is a hostile or damaged
+                // file, and would make the engine's spatial hash do absurd work.
+                if i64::from(*hi) - i64::from(*lo) > i64::from(MAX_BOX_EXTENT_LDU) {
+                    return Err(damaged(format!(
+                        "part {} has a box wider than {MAX_BOX_EXTENT_LDU} LDU (the widest part of the LDraw library is 960)",
+                        p.id
+                    )));
+                }
+            }
+            if p.body.lattice_cells() > MAX_BOX_CELLS {
+                return Err(damaged(format!(
+                    "part {} has a body covering {} lattice cells; the limit is {MAX_BOX_CELLS}",
+                    p.id,
+                    p.body.lattice_cells()
+                )));
             }
             for c in &p.connectors {
                 let axis = c.dir.iter().map(|v| v.abs()).sum::<i32>() == 1
@@ -473,6 +488,52 @@ mod tests {
         assert_eq!(q.mesh(1).unwrap().indices, vec![0, 1, 2]);
         assert_eq!(q.mesh(0).unwrap().positions[1], [1.0, 0.0, 0.0]);
         assert!(q.mesh(2).is_none());
+    }
+
+    /// A pack file whose first part is changed by `edit`, with the checksum fixed up.
+    fn forged(edit: impl FnOnce(&mut PackPart)) -> Vec<u8> {
+        let mut p = sample();
+        edit(&mut p.header.parts[0]);
+        p.to_bytes().unwrap()
+    }
+
+    #[test]
+    fn a_huge_box_is_refused_at_once() {
+        let t = std::time::Instant::now();
+        let big = 10_000_000;
+        let e = Pack::from_bytes(&forged(|p| {
+            p.body = Aabb {
+                min: [-big, -big, -big],
+                max: [big, big, big],
+            };
+            p.pick = p.body;
+        }))
+        .unwrap_err();
+        assert!(e.to_string().contains("wider than"), "{e}");
+        // One axis over the extent limit, the pick box alone, and a body over the cell limit
+        // with every axis within the extent limit.
+        assert!(Pack::from_bytes(&forged(|p| p.pick.max[0] = p.pick.min[0] + 8193)).is_err());
+        let e = Pack::from_bytes(&forged(|p| {
+            p.body = Aabb {
+                min: [-4000, -8000, -4000],
+                max: [4000, 0, 4000],
+            };
+            p.pick = p.body;
+        }))
+        .unwrap_err();
+        assert!(e.to_string().contains("lattice cells"), "{e}");
+        // The widest real part (960 LDU) and the limit itself still load.
+        assert!(Pack::from_bytes(&forged(|p| {
+            p.body = Aabb {
+                min: [-480, -4, -480],
+                max: [480, 0, 480],
+            };
+            p.pick = p.body;
+            p.studs = [48, 48];
+            p.height_ldu = 4;
+        }))
+        .is_ok());
+        assert!(t.elapsed().as_millis() < 1000);
     }
 
     #[test]

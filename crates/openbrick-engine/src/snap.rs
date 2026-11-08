@@ -267,7 +267,7 @@ impl Model<'_> {
                     let dist = d.iter().map(|v| v * v).sum::<f64>();
                     let mates = self.mates(part, &pose, None)?;
                     let grounded = b.max[1] == 0;
-                    let collides = self.collision(&b, None);
+                    let collides = self.collision(&b, None)?;
                     let valid = collides.is_none() && b.max[1] <= 0 && (mates > 0 || grounded);
                     let key = Key {
                         invalid: !valid,

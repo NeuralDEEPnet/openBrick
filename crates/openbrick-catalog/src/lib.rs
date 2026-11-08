@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 pub use builtin::{BuiltPart, BuiltinSpec, CatalogError, Lod, PartMesh, BUILTIN, CATALOG_ID};
 pub use pack::{Connectivity, Pack, PackError, PackHeader, PackPart, LDRAW_ID_PREFIX};
 pub use palette::{Colour, Palette};
-pub use shape::{Aabb, Conn, ConnKind, PartShape};
+pub use shape::{Aabb, Conn, ConnKind, PartShape, MAX_BOX_CELLS, MAX_BOX_EXTENT_LDU};
 
 /// A connector in the LDCad SNAP vocabulary.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

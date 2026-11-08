@@ -4,7 +4,15 @@
 //! Everything here is derived from the part evaluator's output
 //! ([`crate::builtin`]), never typed in by hand (CLAUDE.md).
 
-use openbrick_units::Rot24;
+use openbrick_units::{Rot24, PLATE_LDU, STUD_PITCH_LDU};
+
+/// The widest a part's box may be along any axis, in LDU (8,192 LDU is 3.3 m; the widest part of
+/// the 2026-10 LDraw library is 960). A pack that claims more is refused.
+pub const MAX_BOX_EXTENT_LDU: i32 = 8192;
+/// The most lattice cells (one stud by one plate by one stud) one body box may cover; the engine's
+/// spatial hash holds one entry per cell, so this bounds its work. The 2026-10 library's largest
+/// part covers about 21,000.
+pub const MAX_BOX_CELLS: u64 = 65_536;
 
 /// An axis-aligned box in integer LDU, `min` inclusive and `max` exclusive in
 /// the sense that two boxes that only touch (`a.max == b.min`) do not overlap.
@@ -38,6 +46,21 @@ impl Aabb {
             out.max[k] = a[k].max(b[k]).saturating_add(pos[k]);
         }
         out
+    }
+
+    /// How many lattice cells (one stud by one plate by one stud) the box covers: the cells from the
+    /// one of its minimum corner to the one just inside its maximum corner. Counted, never iterated,
+    /// so it is cheap for any box; an inverted box covers none.
+    pub fn lattice_cells(&self) -> u64 {
+        let cell = [STUD_PITCH_LDU, PLATE_LDU, STUD_PITCH_LDU];
+        let mut n = 1u64;
+        for ((lo, hi), c) in self.min.iter().zip(&self.max).zip(cell) {
+            let c = i64::from(c);
+            let lo = i64::from(*lo).div_euclid(c);
+            let hi = (i64::from(*hi) - 1).div_euclid(c);
+            n = n.saturating_mul((hi - lo + 1).max(0) as u64);
+        }
+        n
     }
 
     /// Size along each axis.
