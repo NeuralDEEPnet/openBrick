@@ -16,9 +16,12 @@
 //! configuration are not read.
 //!
 //! Everything read is untrusted: a file over [`MAX_FILE_BYTES`] is refused, a
-//! zip entry is inflated through a size-limited reader, entries with unsafe
-//! paths are not indexed, symbolic links in a directory are not followed, and
-//! the bytes read in one session are capped.
+//! zip entry is inflated through a size-limited reader and its CRC-32 and size
+//! are checked, entries with unsafe paths are not indexed, zip entries whose
+//! data overlap (one stream shared by many names), whose local header names
+//! another file, or whose sizes add up to more than [`MAX_DECLARED_BYTES`] are
+//! refused, symbolic links in a directory are not followed, and the bytes read
+//! in one session are capped.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -33,8 +36,12 @@ use super::parse::{parse, ParsedFile};
 /// megabytes.
 pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 /// The most bytes one [`Library`] reads in total (a guard against a zip whose
-/// entries inflate to far more than they claim).
-pub const MAX_TOTAL_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// entries inflate to far more than they claim). The files of the 2026-10 library that an import
+/// reads add up to 507 MB; a full import reads each once and a few parts twice.
+pub const MAX_TOTAL_BYTES: u64 = 640 * 1024 * 1024;
+/// The most the entries of a zip may claim to inflate to in all, checked when the zip is indexed
+/// (the library's own files are 507 MB).
+pub const MAX_DECLARED_BYTES: u64 = 1024 * 1024 * 1024;
 /// The most entries a zip index holds.
 pub const MAX_ZIP_ENTRIES: usize = 200_000;
 
@@ -86,6 +93,8 @@ pub enum LibraryError {
     },
     #[error("the library inflated to more than {0} bytes in all; refusing to read more")]
     TotalTooBig(u64),
+    #[error("the import did more than {0} units of work (sub-file references and triangles) in all; the library is damaged or hostile, or raise the budget")]
+    WorkBudget(u64),
     #[error("cannot read {name}: {message}")]
     Read { name: String, message: String },
 }
@@ -203,6 +212,32 @@ struct ZipEntry {
     comp_size: u64,
     size: u64,
     local_offset: u64,
+    crc: u32,
+    /// The entry's name as the central directory spells it; the local header must say the same.
+    name: Vec<u8>,
+}
+
+/// CRC-32 (IEEE, as zip uses it) of `data`.
+pub fn crc32(data: &[u8]) -> u32 {
+    static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let mut t = [0u32; 256];
+        for (i, e) in t.iter_mut().enumerate() {
+            let mut c = i as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    (c >> 1) ^ 0xEDB8_8320
+                } else {
+                    c >> 1
+                };
+            }
+            *e = c;
+        }
+        t
+    });
+    !data.iter().fold(0xFFFF_FFFFu32, |c, &b| {
+        table[((c ^ u32::from(b)) & 0xFF) as usize] ^ (c >> 8)
+    })
 }
 
 struct ZipSource {
@@ -272,6 +307,9 @@ impl ZipSource {
         file.read_exact(&mut cd)
             .map_err(|e| LibraryError::Zip(e.to_string()))?;
         let mut entries = HashMap::new();
+        // (offset, the least bytes its local header and data take) of every indexed entry.
+        let mut spans: Vec<(u64, u64)> = Vec::new();
+        let mut declared = 0u64;
         let mut i = 0usize;
         for _ in 0..count {
             if cd.get(i..i + 4) != Some(&[0x50, 0x4b, 0x01, 0x02]) {
@@ -280,6 +318,7 @@ impl ZipSource {
             let flags = le16(&cd, i + 8).ok_or_else(|| zip_err("short entry"))?;
             let method = le16(&cd, i + 10).ok_or_else(|| zip_err("short entry"))?;
             let comp_size = le32(&cd, i + 20).ok_or_else(|| zip_err("short entry"))?;
+            let crc = le32(&cd, i + 16).ok_or_else(|| zip_err("short entry"))?;
             let size = le32(&cd, i + 24).ok_or_else(|| zip_err("short entry"))?;
             let n = le16(&cd, i + 28).ok_or_else(|| zip_err("short entry"))? as usize;
             let m = le16(&cd, i + 30).ok_or_else(|| zip_err("short entry"))? as usize;
@@ -311,6 +350,16 @@ impl ZipSource {
                     "caread" | "careadme.txt" | "calicense.txt" | "calicense4.txt"
                 );
             if wanted {
+                declared += u64::from(size);
+                if declared > MAX_DECLARED_BYTES {
+                    return Err(LibraryError::Zip(format!(
+                        "the entries claim to inflate to more than {MAX_DECLARED_BYTES} bytes in all (the library's own are about 507 million); the zip is damaged or hostile"
+                    )));
+                }
+                spans.push((
+                    u64::from(off),
+                    30 + n as u64 + u64::from(comp_size),
+                ));
                 entries.insert(
                     rel,
                     ZipEntry {
@@ -318,9 +367,24 @@ impl ZipSource {
                         comp_size: u64::from(comp_size),
                         size: u64::from(size),
                         local_offset: u64::from(off),
+                        crc,
+                        name: name.as_bytes().to_vec(),
                     },
                 );
             }
+        }
+        // Each entry's local header and data must lie after the one before it and before the
+        // central directory. Entries that share data (one stream under many names) would make
+        // the importer inflate the same bytes again and again.
+        spans.sort_unstable();
+        let mut end = 0u64;
+        for (off, min_len) in spans {
+            if off < end || off + min_len > u64::from(cd_off) {
+                return Err(zip_err(
+                    "zip entries overlap each other or the directory; the zip is damaged or hostile",
+                ));
+            }
+            end = off + min_len;
         }
         Ok(ZipSource {
             file: RefCell::new(file),
@@ -352,26 +416,43 @@ impl ZipSource {
         if head[..4] != [0x50, 0x4b, 0x03, 0x04] {
             return Err(rd("the local header is damaged".into()));
         }
-        let skip =
-            u64::from(le16(&head, 26).unwrap_or(0)) + u64::from(le16(&head, 28).unwrap_or(0));
-        f.seek(SeekFrom::Current(skip as i64))
+        let (nlen, xlen) = (
+            usize::from(le16(&head, 26).unwrap_or(0)),
+            u64::from(le16(&head, 28).unwrap_or(0)),
+        );
+        let mut local_name = vec![0u8; nlen];
+        f.read_exact(&mut local_name)
+            .map_err(|x| rd(x.to_string()))?;
+        if local_name != e.name {
+            return Err(rd(
+                "the local header names another file than the directory does".into(),
+            ));
+        }
+        f.seek(SeekFrom::Current(xlen as i64))
             .map_err(|x| rd(x.to_string()))?;
         let raw = read_limited(Read::take(&mut *f, e.comp_size), rel, limit + 64 * 1024)?;
         drop(f);
-        match e.method {
-            0 => {
-                if raw.len() as u64 != e.size {
-                    return Err(rd("stored size does not match".into()));
-                }
-                Ok(raw)
-            }
-            _ => {
-                // The inflate limit is the file limit, never the size the entry claims.
-                let out = miniz_oxide::inflate::decompress_to_vec_with_limit(&raw, limit)
-                    .map_err(|x| rd(format!("cannot inflate: {x:?}")))?;
-                Ok(out)
-            }
+        if raw.len() as u64 != e.comp_size {
+            return Err(rd("the data is cut short".into()));
         }
+        let out = match e.method {
+            0 => raw,
+            _ => {
+                // The inflate limit is the file limit, never the size the entry claims. Only the
+                // status is reported: the error also holds the partial output.
+                miniz_oxide::inflate::decompress_to_vec_with_limit(&raw, limit)
+                    .map_err(|x| rd(format!("cannot inflate ({:?})", x.status)))?
+            }
+        };
+        if out.len() as u64 != e.size {
+            return Err(rd(
+                "the size after inflating is not the size the directory claims".into(),
+            ));
+        }
+        if crc32(&out) != e.crc {
+            return Err(rd("the CRC-32 does not match; the entry is damaged".into()));
+        }
+        Ok(out)
     }
 }
 

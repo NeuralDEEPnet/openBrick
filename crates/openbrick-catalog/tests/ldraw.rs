@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use openbrick_catalog::ldraw::connect::{self, classify, Prim};
 use openbrick_catalog::ldraw::flatten::{Collect, IndexedMesh, Limits, Mat, WalkError, Walker};
 use openbrick_catalog::ldraw::library::{
-    normalise_name, zip_entry_path, Library, LibraryError, Resolution,
+    crc32, normalise_name, zip_entry_path, Library, LibraryError, Resolution,
 };
 use openbrick_catalog::ldraw::{import, ImportOptions};
 use openbrick_catalog::{Catalog, ConnKind, Connectivity, Pack};
@@ -579,21 +579,6 @@ fn symlinks_in_a_library_folder_are_not_followed() {
 
 // ------------------------------------------------------------ zip
 
-fn crc32(data: &[u8]) -> u32 {
-    let mut c = 0xFFFF_FFFFu32;
-    for &b in data {
-        c ^= u32::from(b);
-        for _ in 0..8 {
-            c = if c & 1 != 0 {
-                (c >> 1) ^ 0xEDB8_8320
-            } else {
-                c >> 1
-            };
-        }
-    }
-    !c
-}
-
 /// A zip with the given (name, content, deflate) entries, written by hand.
 fn zip_bytes(entries: &[(&str, &[u8], bool)]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -705,6 +690,266 @@ fn a_damaged_zip_is_an_error() {
     std::fs::write(t.0.join("bomb.zip"), zip).unwrap();
     let lib = Library::open(&t.0.join("bomb.zip"), Resolution::Standard).unwrap();
     assert!(lib.load("parts/bomb.dat").is_err());
+}
+
+/// One entry of a hand-made hostile zip: what the local header, the directory and the data say.
+struct Spec<'a> {
+    central_name: &'a str,
+    local_name: &'a str,
+    data: &'a [u8],
+    deflate: bool,
+    /// Point the directory record at the local header of this entry (by index) instead of its own.
+    share_with: Option<usize>,
+    claimed_size: Option<u32>,
+    crc: Option<u32>,
+    /// Flip the first byte of the stored data after writing.
+    corrupt: bool,
+}
+
+impl<'a> Spec<'a> {
+    fn new(name: &'a str, data: &'a [u8]) -> Spec<'a> {
+        Spec {
+            central_name: name,
+            local_name: name,
+            data,
+            deflate: false,
+            share_with: None,
+            claimed_size: None,
+            crc: None,
+            corrupt: false,
+        }
+    }
+}
+
+fn hostile_zip(specs: &[Spec]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut offsets = Vec::new();
+    let mut comps = Vec::new();
+    for sp in specs {
+        let comp = if sp.deflate {
+            miniz_oxide::deflate::compress_to_vec(sp.data, 6)
+        } else {
+            sp.data.to_vec()
+        };
+        offsets.push(out.len() as u32);
+        let method: u16 = if sp.deflate { 8 } else { 0 };
+        out.extend([0x50, 0x4b, 3, 4, 20, 0, 0, 0]);
+        out.extend(method.to_le_bytes());
+        out.extend([0, 0, 0x21, 0]);
+        out.extend(crc32(sp.data).to_le_bytes());
+        out.extend((comp.len() as u32).to_le_bytes());
+        out.extend((sp.data.len() as u32).to_le_bytes());
+        out.extend((sp.local_name.len() as u16).to_le_bytes());
+        out.extend([0, 0]);
+        out.extend(sp.local_name.as_bytes());
+        let at = out.len();
+        out.extend(&comp);
+        if sp.corrupt {
+            out[at] ^= 0xFF;
+        }
+        comps.push(comp.len() as u32);
+    }
+    let mut cd = Vec::new();
+    for (i, sp) in specs.iter().enumerate() {
+        let method: u16 = if sp.deflate { 8 } else { 0 };
+        let off = sp.share_with.map_or(offsets[i], |j| offsets[j]);
+        cd.extend([0x50, 0x4b, 1, 2, 20, 0, 20, 0, 0, 0]);
+        cd.extend(method.to_le_bytes());
+        cd.extend([0, 0, 0x21, 0]);
+        cd.extend(sp.crc.unwrap_or_else(|| crc32(sp.data)).to_le_bytes());
+        cd.extend(comps[i].to_le_bytes());
+        cd.extend(
+            sp.claimed_size
+                .unwrap_or(sp.data.len() as u32)
+                .to_le_bytes(),
+        );
+        cd.extend((sp.central_name.len() as u16).to_le_bytes());
+        cd.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        cd.extend(off.to_le_bytes());
+        cd.extend(sp.central_name.as_bytes());
+    }
+    let cd_off = out.len() as u32;
+    out.extend(&cd);
+    out.extend([0x50, 0x4b, 5, 6, 0, 0, 0, 0]);
+    out.extend((specs.len() as u16).to_le_bytes());
+    out.extend((specs.len() as u16).to_le_bytes());
+    out.extend((cd.len() as u32).to_le_bytes());
+    out.extend(cd_off.to_le_bytes());
+    out.extend([0, 0]);
+    out
+}
+
+fn open_zip(t: &Tmp, name: &str, zip: Vec<u8>) -> Result<Library, LibraryError> {
+    std::fs::write(t.0.join(name), zip).unwrap();
+    Library::open(&t.0.join(name), Resolution::Standard)
+}
+
+#[test]
+fn zip_entries_that_share_data_are_refused_at_once() {
+    // 200 directory records, one local header and one 16 MiB deflate stream: the importer would
+    // inflate the same stream 200 times (32 s in a release build before the fix).
+    let t = Tmp::new("overlap");
+    let big = vec![b'0'; 64 * 1024];
+    let names: Vec<String> = (0..200).map(|i| format!("ldraw/parts/{i}.dat")).collect();
+    let mut specs: Vec<Spec> = names
+        .iter()
+        .map(|n| Spec {
+            share_with: Some(0),
+            local_name: "ldraw/parts/0.dat",
+            deflate: true,
+            ..Spec::new(n, &big)
+        })
+        .collect();
+    specs.push(Spec::new("ldraw/p/b.dat", b"0 b\n"));
+    let zip = hostile_zip(&specs);
+    let t0 = std::time::Instant::now();
+    let e = open_zip(&t, "share.zip", zip)
+        .err()
+        .expect("refused");
+    assert!(e.to_string().contains("overlap"), "{e}");
+    assert!(t0.elapsed().as_millis() < 1000, "{:?}", t0.elapsed());
+    // Two entries, one of them inside the other's data.
+    let specs = [
+        Spec::new("ldraw/parts/a.dat", b"0 a\n"),
+        Spec {
+            share_with: Some(0),
+            ..Spec::new("ldraw/parts/b.dat", b"0 a\n")
+        },
+    ];
+    assert!(open_zip(&t, "two.zip", hostile_zip(&specs)).is_err());
+    // Entries in a different order in the directory than in the file are fine.
+    let ok = [
+        Spec::new("ldraw/parts/a.dat", b"0 a\n"),
+        Spec::new("ldraw/parts/b.dat", b"0 b\n"),
+    ];
+    assert!(open_zip(&t, "ok.zip", hostile_zip(&ok)).is_ok());
+}
+
+#[test]
+fn a_local_header_that_names_another_file_is_refused() {
+    let t = Tmp::new("localname");
+    let specs = [
+        Spec {
+            local_name: "ldraw/parts/b.dat",
+            ..Spec::new("ldraw/parts/a.dat", b"0 a\n")
+        },
+        Spec::new("ldraw/p/p.dat", b"0 p\n"),
+    ];
+    let lib = open_zip(&t, "name.zip", hostile_zip(&specs)).unwrap();
+    let e = lib.load("parts/a.dat").err().expect("refused");
+    assert!(e.to_string().contains("local header"), "{e}");
+}
+
+#[test]
+fn zip_entries_that_claim_too_much_are_refused_when_indexed() {
+    let t = Tmp::new("declared");
+    // Five entries claiming 400 MB each: over 1 GiB in all, whatever they hold.
+    let specs: Vec<Spec> = ["a", "b", "c", "d", "e"]
+        .iter()
+        .map(|n| Spec {
+            claimed_size: Some(400_000_000),
+            ..Spec::new(Box::leak(format!("ldraw/parts/{n}.dat").into_boxed_str()), b"0 x\n")
+        })
+        .collect();
+    let e = open_zip(&t, "claims.zip", hostile_zip(&specs))
+        .err()
+        .expect("refused");
+    assert!(e.to_string().contains("claim"), "{e}");
+}
+
+#[test]
+fn the_crc_and_the_size_of_an_entry_are_checked() {
+    let t = Tmp::new("crc");
+    let brick = b"0 Brick\n0 Name: a.dat\n";
+    for (what, spec, want) in [
+        (
+            "flipped byte, stored",
+            Spec {
+                corrupt: true,
+                ..Spec::new("ldraw/parts/a.dat", brick)
+            },
+            "CRC-32",
+        ),
+        (
+            "wrong crc",
+            Spec {
+                crc: Some(0x1234_5678),
+                ..Spec::new("ldraw/parts/a.dat", brick)
+            },
+            "CRC-32",
+        ),
+        (
+            "wrong size, deflated",
+            Spec {
+                deflate: true,
+                claimed_size: Some(5),
+                ..Spec::new("ldraw/parts/a.dat", brick)
+            },
+            "size",
+        ),
+    ] {
+        let specs = [spec, Spec::new("ldraw/p/p.dat", b"0 p\n")];
+        let lib = open_zip(&t, "crc.zip", hostile_zip(&specs)).unwrap();
+        let e = lib.load("parts/a.dat").err().unwrap_or_else(|| panic!("{what}"));
+        assert!(e.to_string().contains(want), "{what}: {e}");
+    }
+    // An undamaged entry loads, and crc32 is the zip one.
+    let specs = [
+        Spec::new("ldraw/parts/a.dat", brick),
+        Spec::new("ldraw/p/p.dat", b"0 p\n"),
+    ];
+    let lib = open_zip(&t, "good.zip", hostile_zip(&specs)).unwrap();
+    assert!(lib.load("parts/a.dat").is_ok());
+    assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+}
+
+#[test]
+fn a_damaged_deflate_stream_error_is_short() {
+    let t = Tmp::new("inflate");
+    // A valid stream that stops half way inflates to a large partial output; the error must not
+    // carry it (63 MB of message before the fix).
+    let data = vec![b'0'; 8 * 1024 * 1024];
+    let mut comp = miniz_oxide::deflate::compress_to_vec(&data, 6);
+    let cut = comp.len() / 2;
+    comp.truncate(cut);
+    let mut zip = hostile_zip(&[
+        Spec::new("ldraw/parts/a.dat", b"x"),
+        Spec::new("ldraw/p/p.dat", b"0 p\n"),
+    ]);
+    // Replace entry a's stored data by the cut deflate stream (method 8) in both headers.
+    let local = 30 + "ldraw/parts/a.dat".len();
+    let mut patched = zip[..local].to_vec();
+    patched[8..10].copy_from_slice(&8u16.to_le_bytes());
+    patched[18..22].copy_from_slice(&(comp.len() as u32).to_le_bytes());
+    patched[22..26].copy_from_slice(&(data.len() as u32).to_le_bytes());
+    patched.extend(&comp);
+    let shift = comp.len() as i64 - 1;
+    let rest = zip.split_off(local + 1);
+    let mut rest = rest;
+    // Fix the directory: offsets, sizes and method of both records, and the end record.
+    let cd = rest.windows(4).position(|w| w == [0x50, 0x4b, 1, 2]).unwrap();
+    let mut i = cd;
+    for rec in 0..2 {
+        if rec == 0 {
+            rest[i + 10..i + 12].copy_from_slice(&8u16.to_le_bytes());
+            rest[i + 20..i + 24].copy_from_slice(&(comp.len() as u32).to_le_bytes());
+            rest[i + 24..i + 28].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        } else {
+            let off = u32::from_le_bytes(rest[i + 42..i + 46].try_into().unwrap());
+            rest[i + 42..i + 46].copy_from_slice(&((i64::from(off) + shift) as u32).to_le_bytes());
+        }
+        let n = u16::from_le_bytes([rest[i + 28], rest[i + 29]]) as usize;
+        i += 46 + n;
+    }
+    let eocd = rest.windows(4).rposition(|w| w == [0x50, 0x4b, 5, 6]).unwrap();
+    let cd_off = u32::from_le_bytes(rest[eocd + 16..eocd + 20].try_into().unwrap());
+    rest[eocd + 16..eocd + 20].copy_from_slice(&((i64::from(cd_off) + shift) as u32).to_le_bytes());
+    patched.extend(rest);
+    let lib = open_zip(&t, "cut-stream.zip", patched).unwrap();
+    let e = lib.load("parts/a.dat").err().expect("does not inflate");
+    let text = e.to_string();
+    assert!(text.contains("cannot inflate"), "{text}");
+    assert!(text.len() < 400, "{} bytes of error", text.len());
 }
 
 // ------------------------------------------------------------ properties
