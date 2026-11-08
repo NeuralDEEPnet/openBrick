@@ -19,6 +19,8 @@ openbrick-geom = { workspace = true }
 openbrick-part = { workspace = true }
 openbrick-print = { workspace = true }
 openbrick-io = { workspace = true }
+openbrick-catalog = { workspace = true }
+openbrick-engine = { workspace = true }
 
 [dev-dependencies]
 # tests/cli.rs checks the --json output against schemas/report.schema.json and

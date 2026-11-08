@@ -136,7 +136,7 @@ fn snapping_is_translation_invariant() {
             let mut shifted = ray;
             shifted.origin[0] += f64::from(dx);
             shifted.origin[2] += f64::from(dz);
-            let p = part(*rng.pick(&PARTS));
+            let p = part(rng.pick(&PARTS));
             let rot = Rot24(*rng.pick(&yaws()));
             let sa = a.snap(p, rot, &ray).unwrap();
             let sb = b.snap(p, rot, &shifted).unwrap();
@@ -167,7 +167,7 @@ fn placing_then_removing_restores_the_table() {
         let mut rng = Rng(seed + 31);
         for _ in 0..10 {
             let ray = ray_towards(&mut rng, 120);
-            if let Some(id) = place(&mut m, *rng.pick(&PARTS), 0, &ray, 4) {
+            if let Some(id) = place(&mut m, rng.pick(&PARTS), 0, &ray, 4) {
                 m.apply(&Command::Remove { id }).unwrap();
                 assert_eq!(m.instances(), &before, "seed {seed}");
             }
@@ -187,7 +187,7 @@ fn undoing_any_sequence_restores_the_document() {
         let mut applied = 0;
         for _ in 0..40 {
             let cmd = match rng.range(0, 5) {
-                0 | 1 | 2 => {
+                0..=2 => {
                     let ray = ray_towards(&mut rng, 100);
                     let part = *rng.pick(&PARTS);
                     let p = m.catalog().find(part).unwrap();

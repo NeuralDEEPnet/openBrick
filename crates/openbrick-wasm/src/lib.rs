@@ -42,6 +42,11 @@
 //!   [`save_part_json`] writes it with the edited values as defaults and
 //!   [`add_preset_json`] with the current values as a named preset, both in
 //!   the one saved layout of `openbrick_part::format`.
+//! - Assembler ([`assembler`], docs/plan/07): [`assembler_catalog_json`] and
+//!   [`assembler_part_mesh`] (the built-in parts, built by the evaluator), and
+//!   [`Assembler`], one model with snap and pick queries, commands, undo and
+//!   redo, `.obrick` save and load, the bill of materials and connection
+//!   statistics.
 //! - Calibration coupon ([`coupon`], docs/plan/05 section 4): [`build_coupon`],
 //!   [`coupon_layout_json`] and [`export_coupon`].
 //! - Calibration wizard ([`record`], docs/plan/05 section 4): [`record_fit`]
@@ -56,6 +61,7 @@
 //!   and the CC0 sample mark), the disclaimer, the display colours of the
 //!   colour roles and the asset size limit.
 
+pub mod assembler;
 pub mod coupon;
 pub mod data;
 pub mod doc;
@@ -63,6 +69,10 @@ mod layout;
 pub mod part;
 pub mod record;
 
+pub use assembler::{
+    assembler_catalog_json, assembler_part_mesh, assembler_sample, assembler_turn_rotation,
+    AsmMesh, Assembler,
+};
 pub use coupon::{build_coupon, coupon_layout_json, export_coupon, CouponOut};
 pub use data::{
     artwork_samples_json, bundled_parts_json, coupon_choices_json, disclaimer,

@@ -2577,6 +2577,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jsonschema",
+ "openbrick-catalog",
+ "openbrick-engine",
  "openbrick-geom",
  "openbrick-io",
  "openbrick-part",
@@ -2693,6 +2695,8 @@ dependencies = [
 name = "openbrick-wasm"
 version = "0.1.0"
 dependencies = [
+ "openbrick-catalog",
+ "openbrick-engine",
  "openbrick-geom",
  "openbrick-io",
  "openbrick-part",

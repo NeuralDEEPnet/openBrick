@@ -11,6 +11,7 @@
 //! or a command that is not implemented yet. With `--json`, stdout carries one
 //! JSON object (also on errors) and human text goes to stderr.
 
+mod bom;
 mod calibrate;
 mod export;
 mod files;
@@ -67,6 +68,11 @@ enum Cmd {
     ///
     /// Prints the validator report; the exit code is 1 when it has blockers.
     Validate(Box<part::PartArgs>),
+    /// Validate an assembler model (.obrick) and print its bill of materials.
+    ///
+    /// Prints part by colour counts and the connection statistics; floating
+    /// parts are a warning, an invalid file exits 2.
+    Bom(Box<bom::BomArgs>),
     /// Convert between .obrick, .ldr/.mpd, 3MF, STL, glTF (M3).
     Convert { file: PathBuf },
     /// Run a batch merch job (M4).
@@ -168,6 +174,7 @@ fn main() -> ExitCode {
     match cli.cmd {
         Cmd::Build(args) => run_json("build", args.part.json, |ui| part::build(&args, ui)),
         Cmd::Validate(args) => run_json("validate", args.json, |ui| part::validate_cmd(&args, ui)),
+        Cmd::Bom(args) => run_json("bom", args.json, |ui| bom::run(&args, ui)),
         Cmd::Calibrate(cmd) => run_json(cmd.name(), cmd.json(), |ui| cmd.run(ui)),
         Cmd::Standard { json } => {
             let s = openbrick_units::STANDARD.get();

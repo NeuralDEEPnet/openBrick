@@ -21,6 +21,9 @@ openbrick-part = { workspace = true }
 openbrick-print = { workspace = true }
 # The 3MF and STL writers behind export_part and export_coupon.
 openbrick-io = { workspace = true }
+# The assembler: built-in catalog and the engine behind `Assembler`.
+openbrick-catalog = { workspace = true }
+openbrick-engine = { workspace = true }
 
 [dev-dependencies]
 # examples/native_eval: SHA-256 of the native exports, which the smoke test
