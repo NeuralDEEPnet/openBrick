@@ -83,7 +83,11 @@
 //    /openBrick/ and checks that the page, worker, module and assets all load
 //    from there and give the native part.
 //
-// Usage: node smoke.mjs [--no-build] [--no-webgpu] [--no-base-check]
+// 4b. Build mode (buildRun, buildPhoneRun): the assembler on desktop and on a
+//    phone, with a 513-brick model for the performance numbers; see the comments
+//    on those functions. `--only-build` runs only these two steps.
+//
+// Usage: node smoke.mjs [--no-build] [--no-webgpu] [--no-base-check] [--only-build]
 //                       [--screenshots <dir>] [--downloads <dir>]
 //
 // Downloads go to apps/web/smoke-downloads/ unless --downloads names another
@@ -1143,6 +1147,376 @@ async function fullRun(browser, origin, native) {
   return [threemf.path, inlay.path, inlayParts.path, badge.path, coupon.path, recorded.tile.path];
 }
 
+/**
+ * A model of 16 layers of 32 bricks (2x4) on the baseplate, 513 parts, as .obrick
+ * text, for the performance numbers: the 16 x 16 baseplate is 320 LDU wide, and a
+ * 2x4 is 80 by 40, so 4 by 8 of them tile one layer. The core still checks every
+ * part when the page opens it.
+ */
+function bigModel() {
+  const instances = [{ id: 1, part: "ob.baseplate-16x16", pose: { pos: [0, -8, 0], rot: 0 }, colour: 2 }];
+  let id = 2;
+  for (let layer = 0; layer < 16; layer++) {
+    for (const x of [-120, -40, 40, 120]) {
+      for (let r = 0; r < 8; r++) {
+        instances.push({ id: id++, part: "ob.brick-2x4", pose: { pos: [x, -8 - 24 * (layer + 1), -140 + 40 * r], rot: 0 }, colour: [10000, 15, 4, 14][layer % 4] });
+      }
+    }
+  }
+  return JSON.stringify({
+    openbrick: "1.0",
+    kind: "model",
+    name: "Tower of 512 bricks",
+    credit: { author: "smoke test" },
+    units: "ldu",
+    frame: "ldraw-y-down",
+    catalog: "openbrick-builtin@1",
+    palette: [],
+    submodels: [{ id: "main", instances }],
+    bom: [],
+  });
+}
+
+const buildState = (page) => page.evaluate(() => JSON.parse(JSON.stringify({ ...window.__web.build, project: undefined, measure: undefined, bench: undefined })));
+
+async function buildWait(page, want, timeoutMs, what) {
+  try {
+    await page.waitForFunction(want, null, { timeout: timeoutMs, polling: 50 });
+  } catch {
+    throw new Error(`build: ${what} did not happen within ${timeoutMs / 1000} s (last: ${JSON.stringify(await buildState(page))})`);
+  }
+}
+
+/** Where a point of the model frame (LDU) is on screen. */
+const screenAt = (page, pos) => page.evaluate((p) => window.__web.build.project(p), pos);
+
+/**
+ * Build mode (docs/plan/07 section 10), desktop: the parts and colour palettes,
+ * a brick placed on the baseplate with the core's snapped ghost (valid), a plate
+ * on top of it (connected), R turns the ghost, Ctrl+Z and Ctrl+Shift+Z undo and
+ * redo, Delete removes the part under the pointer, the model saved as .obrick
+ * text (deterministic: save, open and save again is the same bytes), Clear keeps
+ * the baseplate, opening the file brings the model and its bill of materials
+ * back, the house sample stands (nothing floating), a file that is not a model
+ * is refused with a message, and a 513-brick model is drawn and stays
+ * interactive; the core's round trips and the frame times are printed.
+ */
+async function buildRun(browser, origin) {
+  const label = "build";
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light", acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the core's catalog and meshes");
+  let b = await buildState(page);
+  check((await web(page)).mode === "build", `${label}: the mode is not build`);
+  check((await page.getAttribute("#tab-build", "aria-selected")) === "true", `${label}: the Build tab is not selected`);
+  check(b.parts === 1 && b.stats.parts === 1, `${label}: a new model starts with the baseplate (${b.parts})`);
+  const partButtons = await page.$$eval('#build-parts [role="radio"]', (els) => els.map((e) => ({ name: e.getAttribute("aria-label"), checked: e.getAttribute("aria-checked") })));
+  check(partButtons.length === 14 && partButtons.filter((p) => p.checked === "true").length === 1, `${label}: ${partButtons.length} parts in the palette`);
+  const colourButtons = await page.$$eval('#build-colours [role="radio"]', (els) => els.map((e) => e.getAttribute("aria-label")));
+  check(colourButtons.length >= 8 && colourButtons.includes("Neuraldeep blue"), `${label}: colours ${colourButtons.join(", ")}`);
+  check((await page.$$('#build-parts canvas.thumb')).length === 14, `${label}: a thumbnail for every part`);
+  check((await page.getAttribute("#build-parts", "role")) === "radiogroup" && (await page.getAttribute("#build-colours", "role")) === "radiogroup", `${label}: the palettes are radio groups`);
+  const labelled = await page.$$eval("#panel-build button, #panel-build select, #panel-build input:not([type=file])", (els) => els.filter((e) => !(e.getAttribute("aria-label") || e.labels?.length || e.textContent.trim())).map((e) => e.id));
+  check(labelled.length === 0, `${label}: controls without a name: ${labelled.join(", ")}`);
+
+  // A brick on the baseplate: the ghost is the core's snapped pose.
+  const point = await screenAt(page, [0, -8, 0]);
+  await page.mouse.move(point.x, point.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, "a valid ghost over the baseplate");
+  b = await buildState(page);
+  check(JSON.stringify(b.ghostPos) === JSON.stringify([0, -32, 0]), `${label}: ghost at ${JSON.stringify(b.ghostPos)}`);
+  check(/click or tap to place \(8 studs connected\)/.test(await page.textContent("#build-hover")), `${label}: hover line ${await page.textContent("#build-hover")}`);
+  // The hover line is not a live region, and moving the pointer leaves the live status alone.
+  check(await page.$eval("#build-hover", (el) => !el.closest("[aria-live], [role=status], [role=alert]")), `${label}: the hover line is inside a live region`);
+  const liveBefore = await page.textContent("#status");
+  for (const [dx, dz] of [[20, 0], [40, 20], [-20, 40]]) {
+    const q = await screenAt(page, [dx, -8, dz]);
+    await page.mouse.move(q.x, q.y);
+    await page.waitForTimeout(80);
+  }
+  await page.waitForTimeout(300);
+  check((await page.textContent("#status")) === liveBefore, `${label}: the live status changed on pointer moves ("${liveBefore}" then "${await page.textContent("#status")}")`);
+  await page.mouse.move(point.x, point.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, "the ghost back at the first point");
+  if (shots) await page.screenshot({ path: join(shots, "build-ghost.png") });
+  await page.mouse.click(point.x, point.y);
+  await buildWait(page, () => window.__web.build.parts === 2, 20_000, "the brick placed");
+  b = await buildState(page);
+  check(b.stats.connections === 8 && b.stats.floating.length === 0, `${label}: brick connected on 8 studs (${JSON.stringify(b.stats)})`);
+  check(/Placed Brick 2 . 4/.test(b.message), `${label}: message ${b.message}`);
+
+  // A plate on top, found by the ray hitting the brick's top face.
+  await page.click('#build-parts [aria-label="Plate 1 x 2"]');
+  await page.click('#build-colours [aria-label="Red"]');
+  const top = await screenAt(page, [0, -32, 0]);
+  await page.mouse.move(top.x, top.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid" && window.__web.build.selected === "ob.plate-1x2", 20_000, "a valid ghost over the brick");
+  b = await buildState(page);
+  check(b.ghostPos[1] === -40, `${label}: the plate stands on the brick, its bottom at the brick's top (y ${b.ghostPos[1]})`);
+  await page.mouse.click(top.x, top.y);
+  await buildWait(page, () => window.__web.build.parts === 3, 20_000, "the plate placed");
+  b = await buildState(page);
+  check(b.stats.floating.length === 0 && b.stats.connections >= 8 + 2, `${label}: the plate is attached (${JSON.stringify(b.stats)})`);
+
+  // R turns the ghost (the core composes the rotation), Ctrl+Z / Ctrl+Shift+Z undo and redo.
+  const before = (await buildState(page)).rot;
+  await page.mouse.move(top.x + 1, top.y + 1);
+  await page.keyboard.press("r");
+  await page.waitForFunction((r) => window.__web.build.rot !== r, before, { timeout: 10_000 }).catch(() => failures.push(`${label}: R did not turn the ghost`));
+  await page.keyboard.press("Control+z");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Ctrl+Z");
+  check(await page.isEnabled("#build-redo"), `${label}: redo is available after undo`);
+  await page.keyboard.press("Control+Shift+Z");
+  await buildWait(page, () => window.__web.build.parts === 3, 10_000, "Ctrl+Shift+Z");
+
+  // Delete removes the part under the pointer; the baseplate stays.
+  await page.mouse.move(top.x, top.y);
+  await buildWait(page, () => window.__web.build.ghost !== "none", 10_000, "hovering the plate");
+  await page.keyboard.press("Delete");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Delete removing the plate");
+  // A baseplate is a part like another: Delete removes it, Ctrl+Z puts it back.
+  const floor = await screenAt(page, [100, -8, 100]);
+  await page.mouse.move(floor.x, floor.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid", 10_000, "hovering the baseplate");
+  await page.keyboard.press("Delete");
+  await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Delete removing the baseplate");
+  await page.keyboard.press("Control+z");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Ctrl+Z bringing the baseplate back");
+
+  // The keyboard path: the 3D view takes the focus; arrow keys move the aim a stud at a time and
+  // the core snaps the part there; Enter places; Shift+arrows and +/- move the camera.
+  await page.click('#build-parts [aria-label="Plate 1 x 1"]');
+  await page.focus("#stage");
+  check((await page.getAttribute("#stage", "tabindex")) === "0" && /Arrow keys move the aim/.test(await page.getAttribute("#stage", "aria-label")), `${label}: the 3D view is focusable and says how to use it`);
+  await page.keyboard.press("Enter");
+  await buildWait(page, () => window.__web.build.aim?.join() === "0,0" && window.__web.build.ghost !== "none", 10_000, "the first Enter showing the aim");
+  check((await buildState(page)).parts === 2, `${label}: the first Enter placed something`);
+  for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+  await buildWait(page, () => window.__web.build.aim?.join() === "100,0" && window.__web.build.ghost === "valid", 10_000, "five Right arrows");
+  const p0 = (await buildState(page)).ghostPos;
+  await page.keyboard.press("ArrowRight");
+  await buildWait(page, () => window.__web.build.aim?.join() === "120,0", 10_000, "one more Right arrow");
+  await page.waitForFunction((x) => window.__web.build.ghostPos?.[0] === x, p0[0] + 20, { timeout: 10_000, polling: 50 }).catch(() => {});
+  let b2 = await buildState(page);
+  check(b2.ghostPos[0] === p0[0] + 20 && b2.ghostPos[1] === p0[1] && b2.ghostPos[2] === p0[2], `${label}: Right moved the ghost from ${p0} to ${b2.ghostPos}, not one stud (the core snaps it)`);
+  await page.keyboard.press("ArrowUp");
+  await buildWait(page, () => window.__web.build.aim?.join() === "120,20", 10_000, "an Up arrow");
+  // The core's answer follows the key press: wait for the ghost to arrive.
+  await page.waitForFunction((z) => window.__web.build.ghostPos?.[2] === z, p0[2] + 20, { timeout: 10_000, polling: 50 }).catch(() => {});
+  b2 = await buildState(page);
+  check(b2.ghostPos[2] === p0[2] + 20, `${label}: Up moved the ghost to z ${b2.ghostPos[2]}, from ${p0[2]}`);
+  await page.keyboard.press("Enter");
+  await buildWait(page, () => window.__web.build.parts === 3, 10_000, "Enter placing at the aim");
+  check(/Placed Plate 1 . 1/.test((await buildState(page)).message), `${label}: message after a keyboard placement ${(await buildState(page)).message}`);
+  await page.keyboard.press("Delete");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Delete removing the part at the aim");
+  const camBefore = await page.evaluate(() => window.__web.stats().camera);
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.waitForTimeout(400);
+  const camTurned = await page.evaluate(() => window.__web.stats().camera);
+  check(camTurned.some((v, i) => Math.abs(v - camBefore[i]) > 1), `${label}: Shift+Left did not move the camera (${camBefore} then ${camTurned})`);
+  const dist = (c) => Math.hypot(...c);
+  await page.keyboard.press("+");
+  await page.waitForTimeout(400);
+  const camNear = await page.evaluate(() => window.__web.stats().camera);
+  check(dist(camNear) < dist(camTurned) - 1, `${label}: + did not bring the camera closer (${dist(camTurned)} then ${dist(camNear)})`);
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Escape");
+  await buildWait(page, () => window.__web.build.aim === null, 10_000, "Escape clearing the aim");
+
+  // Save: a download of .obrick text; save, open, save is byte-identical.
+  await page.fill("#build-name", "Smoke model");
+  const [saved] = await Promise.all([page.waitForEvent("download"), page.click("#build-save")]);
+  const savedPath = join(downloads, saved.suggestedFilename());
+  await saved.saveAs(savedPath);
+  const text = readFileSync(savedPath, "utf8");
+  check(saved.suggestedFilename() === "Smoke-model.obrick.json", `${label}: saved as ${saved.suggestedFilename()}`);
+  const doc = JSON.parse(text);
+  check(doc.kind === "model" && doc.catalog === "openbrick-builtin@1" && doc.submodels[0].instances.length === 2, `${label}: the saved model has ${doc.submodels?.[0]?.instances?.length} parts`);
+  check(doc.bom.reduce((n, l) => n + l.count, 0) === 2 && doc.palette.length === 2, `${label}: the saved bill of materials ${JSON.stringify(doc.bom)}`);
+  check(doc.submodels[0].instances.every((i) => Number.isInteger(i.pose.pos[0]) && i.pose.rot >= 0 && i.pose.rot < 24), `${label}: poses are integer LDU and a rotation index`);
+
+  await page.click("#build-clear");
+  await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Clear");
+  check(!(await page.isEnabled("#build-clear")), `${label}: Clear is disabled with nothing built`);
+  await page.click("#build-undo");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "undoing Clear");
+  await page.click("#build-clear");
+  await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Clear again");
+  // Clear was an edit, so opening a file asks first: Escape keeps the model, Replace opens the file.
+  check((await buildState(page)).dirty === true, `${label}: edits since the save are not noticed`);
+  await page.setInputFiles("#build-file", savedPath);
+  await buildWait(page, () => window.__web.build.confirming === true, 10_000, "the confirmation before replacing unsaved work");
+  check(await page.isVisible("#build-confirm") && (await page.evaluate(() => document.activeElement?.id)) === "build-confirm-cancel", `${label}: the focus is not on Cancel`);
+  check((await page.getAttribute("#build-confirm", "role")) === "alertdialog", `${label}: the confirmation is not an alertdialog`);
+  await page.keyboard.press("Escape");
+  await buildWait(page, () => window.__web.build.confirming === false, 10_000, "Escape cancelling");
+  check((await buildState(page)).parts === 1, `${label}: Cancel replaced the model anyway`);
+  await page.setInputFiles("#build-file", savedPath);
+  await buildWait(page, () => window.__web.build.confirming === true, 10_000, "the confirmation again");
+  await page.click("#build-confirm-replace");
+  await buildWait(page, () => window.__web.build.parts === 2, 20_000, "opening the saved model");
+  check((await buildState(page)).canRestore === true && (await page.isEnabled("#build-restore")), `${label}: no way back after replacing`);
+  await page.click("#build-restore");
+  await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Restore previous model");
+  await page.click("#build-restore");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Restore previous model again (the swap)");
+  const rows = await page.$$eval("#build-bom tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+  check(rows.length === 2 && rows.some((r) => r[0] === "1" && r[1] === "Brick 2 x 4"), `${label}: bill of materials ${JSON.stringify(rows)}`);
+  check((await page.textContent("#build-bom-total")).startsWith("2 parts"), `${label}: bill total ${await page.textContent("#build-bom-total")}`);
+  const [again] = await Promise.all([page.waitForEvent("download"), page.click("#build-save")]);
+  const againPath = join(downloads, "again-" + again.suggestedFilename());
+  await again.saveAs(againPath);
+  check(readFileSync(againPath, "utf8") === text, `${label}: save, open, save is not byte-identical`);
+
+  // A file that is not a model is refused, and the model stays.
+  writeFileSync(join(downloads, "not-a-model.obrick"), "{}");
+  await page.setInputFiles("#build-file", join(downloads, "not-a-model.obrick"));
+  await buildWait(page, () => /Could not open/.test(window.__web.build.message), 10_000, "the refusal of a file that is not a model");
+  check((await page.getAttribute("#build-message", "role")) === "alert" && (await buildState(page)).parts === 2, `${label}: the refusal is an alert and the model stays`);
+
+  // The worker is replaced when a slow Part build is cancelled (src/client.js): the model must
+  // survive that. Build, switch to Part, start a 16x16 tile, change it back while it runs,
+  // and return to Build.
+  {
+    const partsBefore = (await buildState(page)).parts;
+    const restartsBefore = (await web(page)).restarts;
+    const restoresBefore = (await buildState(page)).restores;
+    await page.click("#tab-tile");
+    const n = (await web(page)).evaluations;
+    await page.fill("#p-size-0", "16");
+    await page.fill("#p-size-1", "16");
+    const until = Date.now() + 10_000;
+    while (Date.now() < until && !/\d+ s/.test(await page.textContent("#status"))) await sleep(100);
+    await page.fill("#p-size-0", "2");
+    await page.fill("#p-size-1", "6");
+    await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x6" }, 90_000, `${label} the tile after the cancelled build`);
+    const restarted = (await web(page)).restarts > restartsBefore;
+    await page.click("#tab-build");
+    await buildWait(page, () => window.__web.build.ready && window.__web.mode === "build", 30_000, "returning to Build");
+    // Back in Build the page puts the model into the new worker (restores counts it) before it answers.
+    await page
+      .waitForFunction(([n0, r0, want]) => window.__web.build.parts === n0 && (!want || window.__web.build.restores > r0), [partsBefore, restoresBefore, restarted], { timeout: 30_000, polling: 50 })
+      .catch(() => failures.push(`${label}: the model is gone after a worker restart (${JSON.stringify({ restarted })})`));
+    b = await buildState(page);
+    check(b.stats.parts === partsBefore, `${label}: ${b.stats.parts} parts in the core after the restart, ${partsBefore} before`);
+    if (restarted) check(/restarted/.test(b.message) && b.message.includes("undo history"), `${label}: the restart was not announced: ${b.message}`);
+    // The model in the core is real: a snap onto the brick finds its studs, and the part is attached.
+    const topPoint = await screenAt(page, [0, -32, 0]);
+    await page.click('#build-parts [aria-label="Plate 1 x 2"]');
+    await page.mouse.move(topPoint.x, topPoint.y);
+    await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, "a ghost on the brick after the restart");
+    await page.mouse.click(topPoint.x, topPoint.y);
+    await buildWait(page, () => window.__web.build.parts === 3, 20_000, "placing after the restart");
+    b = await buildState(page);
+    check(b.stats.floating.length === 0 && b.stats.connections >= 10, `${label}: the part placed after the restart is not attached to the restored brick (${JSON.stringify(b.stats)})`);
+    await page.keyboard.press("Control+z");
+    await buildWait(page, () => window.__web.build.parts === 2, 10_000, "undo after the restart");
+    console.log(`# ${label}: the model survived ${restarted ? `${(await web(page)).restarts - restartsBefore} worker restart(s)` : "the Part detour (the 16x16 finished before it could be cancelled, so no restart was exercised)"}`);
+  }
+
+  // The samples.
+  // The model has edits since the last save, so a sample asks first (the confirmation is in the page).
+  check((await buildState(page)).dirty === true, `${label}: dirty before the sample`);
+  await page.selectOption("#build-samples", "house");
+  await buildWait(page, () => window.__web.build.confirming === true, 10_000, "the confirmation before a sample replaces unsaved work");
+  await page.click("#build-confirm-replace");
+  await buildWait(page, () => window.__web.build.parts === 49, 20_000, "the house sample");
+  b = await buildState(page);
+  check(b.stats.floating.length === 0 && b.stats.components === 1, `${label}: the house stands (${JSON.stringify(b.stats)})`);
+  await page.waitForTimeout(600);
+  if (shots) await page.screenshot({ path: join(shots, "build-house-desktop.png") });
+  await page.selectOption("#build-samples", "staircase");
+  await buildWait(page, () => window.__web.build.parts === 8, 20_000, "the staircase sample");
+  if (shots) await page.screenshot({ path: join(shots, "build-staircase-desktop.png") });
+
+  // Performance: 513 bricks.
+  writeFileSync(join(downloads, "tower-512.obrick"), bigModel());
+  const t0 = Date.now();
+  await page.setInputFiles("#build-file", join(downloads, "tower-512.obrick"));
+  await buildWait(page, () => window.__web.build.parts === 513, 60_000, "the 513-brick model");
+  const openMs = Date.now() - t0;
+  b = await buildState(page);
+  check(b.stats.floating.length === 0 && b.stats.components === 1 && b.counts.parts === 513, `${label}: the 513-brick model ${JSON.stringify(b.stats)} ${JSON.stringify(b.counts)}`);
+  check(b.counts.drawCalls <= 2, `${label}: ${b.counts.drawCalls} draw calls for 513 bricks`);
+  check(b.detail === false, `${label}: the 513-brick model should use the cheap mesh level`);
+  // Software rendering takes seconds per frame of half a million triangles: give the screenshot time.
+  if (shots) await page.screenshot({ path: join(shots, "build-513-desktop.png"), timeout: 180_000 });
+  // The top of the tower: a ray there hits the top layer's top face, so a part can be placed.
+  const centre = await screenAt(page, [0, -392, 0]);
+  await page.mouse.move(centre.x, centre.y);
+  const bench = await page.evaluate((at) => window.__web.build.bench(20, at), centre);
+  check(bench.placeUndoMs !== null, `${label}: nothing could be placed on top of the tower`);
+  const times = await page.evaluate(() => window.__web.build.measure(60));
+  const sum = (a) => ({ fps: 1000 / (a.reduce((x, y) => x + y, 0) / a.length), worst: Math.max(...a) });
+  const f = sum(times);
+  check(bench.snapMs < 50 && bench.pickMs < 50, `${label}: a snap takes ${bench.snapMs.toFixed(2)} ms, a pick ${bench.pickMs.toFixed(2)} ms with 513 parts`);
+  check(f.fps > 1, `${label}: ${f.fps.toFixed(1)} fps with 513 bricks`);
+  console.log(
+    `# build: 513 bricks (${b.counts.triangles} triangles, ${b.counts.drawCalls} draw calls): opened in ${openMs} ms, ` +
+      `snap ${bench.snapMs.toFixed(2)} ms, pick ${bench.pickMs.toFixed(2)} ms, place+undo ${bench.placeUndoMs?.toFixed(2)} ms per call (core round trips); ` +
+      `${f.fps.toFixed(1)} fps while orbiting (worst frame ${f.worst.toFixed(0)} ms, software rendering on this machine)`,
+  );
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(`# ${label}: palettes, snapped ghost, place, stack, rotate, undo, redo, delete, save, open, samples and 513 bricks work`);
+  await context.close();
+}
+
+/** Build mode on a phone: touch, dark theme, tap to place, nothing wider than the screen. */
+async function buildPhoneRun(browser, origin) {
+  const label = "build-phone";
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: "dark" });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the catalog on the phone");
+  const layout = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+    outside: [...document.querySelectorAll("#panel-build button, #panel-build select, #panel-build input:not([type=file]), [role=tab]")]
+      .filter((el) => el.offsetParent !== null)
+      .map((el) => ({ what: el.id || el.getAttribute("aria-label"), r: el.getBoundingClientRect() }))
+      .filter((x) => x.r.left < -0.5 || x.r.right > window.innerWidth + 0.5)
+      .map((x) => x.what),
+    small: [...document.querySelectorAll("#panel-build button")]
+      .filter((el) => el.offsetParent !== null && (el.getBoundingClientRect().height < 36 || el.getBoundingClientRect().width < 36))
+      .map((el) => el.id || el.getAttribute("aria-label")),
+  }));
+  check(layout.scrollWidth <= layout.innerWidth, `${label}: horizontal scroll (${layout.scrollWidth} > ${layout.innerWidth})`);
+  check(layout.outside.length === 0, `${label}: outside the width: ${layout.outside.join(", ")}`);
+  check(layout.small.length === 0, `${label}: touch targets under 36 px: ${layout.small.join(", ")}`);
+  if (shots) {
+    await page.screenshot({ path: join(shots, "build-phone-panel.png") });
+    await page.screenshot({ path: join(shots, "build-phone-full.png"), fullPage: true });
+  }
+  // Tap on the baseplate places a brick: the touch tap alone, with no hover first.
+  await page.evaluate(() => document.querySelector("#stage").scrollIntoView());
+  const at = await screenAt(page, [0, -8, 0]);
+  await page.touchscreen.tap(at.x, at.y);
+  await buildWait(page, () => window.__web.build.parts === 2, 20_000, "a tap placing a brick");
+  const b = await buildState(page);
+  check(b.stats.connections === 8 && b.stats.floating.length === 0, `${label}: the tapped brick is connected (${JSON.stringify(b.stats)})`);
+  // The rotate button (no keyboard on a phone), then another tap beside it.
+  await page.evaluate(() => document.querySelector("#build-rotate").scrollIntoView());
+  await page.tap("#build-rotate");
+  await page.waitForFunction(() => window.__web.build.rot !== 0, null, { timeout: 10_000 }).catch(() => failures.push(`${label}: the rotate button did not turn the part`));
+  await page.evaluate(() => document.querySelector("#stage").scrollIntoView());
+  const next = await screenAt(page, [100, -8, 100]);
+  await page.touchscreen.tap(next.x, next.y);
+  await buildWait(page, () => window.__web.build.parts === 3, 20_000, "a second tap");
+  await page.evaluate(() => document.querySelector("#build-undo").scrollIntoView());
+  await page.tap("#build-undo");
+  await buildWait(page, () => window.__web.build.parts === 2, 10_000, "the undo button");
+  await page.evaluate(() => document.querySelector("#stage").scrollIntoView());
+  await page.waitForTimeout(500);
+  if (shots) await page.screenshot({ path: join(shots, "build-phone-stage.png") });
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(`# ${label}: taps place, the rotate and undo buttons work, nothing is wider than 390 px`);
+  await context.close();
+}
+
 async function webgpuRun(browser, origin, native) {
   const label = "webgpu";
   const context = await browser.newContext({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1, colorScheme: "light" });
@@ -1513,8 +1887,9 @@ async function main() {
   if (shots) mkdirSync(shots, { recursive: true });
   rmSync(downloads, { recursive: true, force: true });
   mkdirSync(downloads, { recursive: true });
-  const native = nativeValues();
-  console.log(
+  const onlyBuild = args.has("--only-build");
+  const native = onlyBuild ? null : nativeValues();
+  if (native) console.log(
     `native (${native.kernel}): emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash}, ` +
       `deboss ${native.part.deboss.triangles}, inlay ${native.part.inlay.triangles}, badge ${native.part["badge-emboss"].triangles}, ` +
       `coupon ${native.coupon.triangles} triangles ${native.coupon.contentHash}`,
@@ -1523,29 +1898,40 @@ async function main() {
   const browser = await chromium.launch({ headless: true, args: browserArgs });
   let saved = [];
   try {
-    try {
-      saved = await fullRun(browser, origin, native);
-    } catch (err) {
-      failures.push(err.message);
+    if (!onlyBuild) {
+      try {
+        saved = await fullRun(browser, origin, native);
+      } catch (err) {
+        failures.push(err.message);
+      }
+      try {
+        await designerRun(browser, origin, native);
+      } catch (err) {
+        failures.push(err.message);
+      }
     }
-    try {
-      await designerRun(browser, origin, native);
-    } catch (err) {
-      failures.push(err.message);
+    for (const buildStep of [buildRun, buildPhoneRun]) {
+      try {
+        await buildStep(browser, origin);
+      } catch (err) {
+        failures.push(err.message);
+      }
     }
-    if (!args.has("--no-webgpu")) {
+    if (!onlyBuild && !args.has("--no-webgpu")) {
       try {
         await webgpuRun(browser, origin, native);
       } catch (err) {
         failures.push(err.message);
       }
     }
-    try {
-      await phoneRun(browser, origin, native);
-    } catch (err) {
-      failures.push(err.message);
+    if (!onlyBuild) {
+      try {
+        await phoneRun(browser, origin, native);
+      } catch (err) {
+        failures.push(err.message);
+      }
     }
-    if (!args.has("--no-base-check")) {
+    if (!onlyBuild && !args.has("--no-base-check")) {
       try {
         await baseRun(browser, native);
       } catch (err) {

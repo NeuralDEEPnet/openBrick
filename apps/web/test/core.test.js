@@ -270,3 +270,86 @@ test("the WebAssembly core opens, presets and saves the parts in parts/ as the p
   assert.equal(refused.ok, false);
   assert.match(refused.error, /reliefHeight/);
 });
+
+// ------------------------------------------------------------ the assembler
+
+test("the real core's assembler: catalog, snap, place, undo, save and load through dispatch()", { skip }, async () => {
+  const core = await loadCore();
+  let n = 0;
+  const ask = (request) => {
+    const { reply, transfer } = dispatch(core, { id: ++n, ...request });
+    return { reply, transfer };
+  };
+  const ok = (request) => {
+    const { reply, transfer } = ask(request);
+    assert.equal(reply.ok, true, `${request.type}: ${reply.error}`);
+    return { result: reply.result, transfer };
+  };
+  const catalog = ok({ type: "asmInit" }).result;
+  assert.equal(catalog.parts.length, 14);
+  assert.equal(catalog.rotations.length, 24);
+  assert.equal(catalog.lduMm, 0.4);
+  const base = catalog.parts.find((p) => p.base);
+  const down = (x, z) => ({ origin: [x, -1000, z], dir: [0, 1, 0] });
+
+  const meshes = ok({ type: "asmMeshes", detail: true });
+  assert.equal(meshes.result.meshes.length, 14);
+  assert.equal(meshes.transfer.length, 28, "every mesh array is transferred");
+  const brick = meshes.result.meshes.find((m) => m.id === "ob.brick-2x4");
+  const baseplate = meshes.result.meshes.find((m) => m.id === base.id);
+  assert.ok(brick.triangles > 1500, "the brick is detailed");
+  assert.ok(baseplate.triangles < 50000, "the baseplate is the cheap level");
+
+  let state = ok({
+    type: "asmApply",
+    command: { op: "add", part: base.id, pos: [0, -base.heightLdu, 0], rot: 0, colour: catalog.palette.defaultBase },
+  }).result;
+  assert.equal(state.stats.parts, 1);
+  assert.equal(state.instances instanceof Int32Array, true);
+  assert.equal(state.canUndo, true);
+
+  assert.equal(ok({ type: "asmPick", ray: { origin: [0, 100, 0], dir: [0, 1, 0] } }).result, null, "below the ground: nothing");
+  const snap = ok({ type: "asmSnap", part: "ob.brick-2x4", rot: 0, ray: down(3, 47) }).result;
+  assert.equal(snap.valid, true);
+  assert.deepEqual(snap.pos, [0, -32, 40]);
+  const placed = ok({ type: "asmApply", command: { op: "add", part: "ob.brick-2x4", pos: snap.pos, rot: snap.rot, colour: 4 } });
+  assert.equal(placed.result.id, 2);
+  assert.equal(placed.transfer.length, 1, "the instance array is transferred");
+  assert.deepEqual(placed.result.stats.floating, []);
+  assert.equal(placed.result.bom.length, 2);
+
+  // The engine refuses an overlap with a message that says what to do.
+  const refused = ask({ type: "asmApply", command: { op: "add", part: "ob.brick-2x4", pos: snap.pos, rot: 0, colour: 4 } });
+  assert.equal(refused.reply.ok, false);
+  assert.match(refused.reply.error, /only touch/);
+  assert.equal(refused.reply.fatal, undefined, "a refused edit is not a trap");
+
+  const turned = ok({ type: "asmTurn", rot: 0, quarterTurns: 1 }).result.rot;
+  assert.notEqual(turned, 0);
+  assert.equal(ok({ type: "asmTurn", rot: turned, quarterTurns: 3 }).result.rot, 0);
+
+  const saved = ok({ type: "asmSave", name: "Test model" }).result.text;
+  assert.match(saved, /"catalog": "openbrick-builtin@1"/);
+  state = ok({ type: "asmUndo" }).result;
+  assert.equal(state.stats.parts, 1);
+  assert.equal(state.canRedo, true);
+  state = ok({ type: "asmRedo" }).result;
+  assert.equal(state.stats.parts, 2);
+  state = ok({ type: "asmApply", command: { op: "clearBuilt" } }).result;
+  assert.equal(state.stats.parts, 1);
+  state = ok({ type: "asmLoad", text: saved }).result;
+  assert.equal(state.stats.parts, 2);
+  assert.equal(state.canUndo, false, "opening a file starts a new history");
+  assert.equal(ok({ type: "asmSave", name: "Test model" }).result.text, saved, "save, open, save is byte-identical");
+  assert.equal(ask({ type: "asmLoad", text: "{}" }).reply.ok, false);
+  assert.equal(ok({ type: "asmState" }).result.stats.parts, 2, "a failed open keeps the model");
+
+  for (const sample of catalog.samples) {
+    const text = ok({ type: "asmSample", id: sample.id }).result.text;
+    const s = ok({ type: "asmLoad", text }).result;
+    assert.deepEqual(s.stats.floating, [], sample.id);
+    assert.ok(s.stats.parts >= 8);
+  }
+  assert.equal(ask({ type: "asmSnap", part: "ob.nope", rot: 0, ray: down(0, 0) }).reply.ok, false);
+  assert.equal(ask({ type: "asmSnap", part: "ob.brick-2x4", rot: 0, ray: { origin: [0, 0, 0] } }).reply.ok, false);
+});

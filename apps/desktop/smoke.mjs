@@ -16,12 +16,14 @@
 // file over the core's limit is refused before it is read, a cancelled open
 // changes nothing, a part document opens from the open dialog and, given a
 // preset and saved through the save dialog, is byte-identical to what
-// `native_eval` saves, and a project link does not navigate the window away.
+// `native_eval` saves, Build mode places a brick, saves the model through the
+// save dialog and opens it again through the open dialog (open.obrick.json),
+// and a project link does not navigate the window away.
 //
 // WebDriver cannot reach a native dialog, so the debug app is started with
 // OPENBRICK_DESKTOP_TEST_DIALOGS set to a temporary folder: saves land there
 // under the suggested name, and an open picks open.svg, open.json (a fit
-// profile) or open.obpart.json (a part) from it
+// profile), open.obpart.json (a part) or open.obrick.json (a model) from it
 // (src-tauri/src/app.rs; release builds do not contain this). The native file
 // dialogs themselves are checked by hand on each OS (README.md).
 //
@@ -450,6 +452,37 @@ async function main() {
     check(savedNote.includes(join(dialogs, d.saved.name)), `${label}: the save note does not name the saved path: "${savedNote}"`);
     checkFile(fileOf(dialogs, d.saved.name), d.saved, `${label} saved part`);
     console.log(`# ${label}: opened a part from the open dialog, gave it a preset and saved it byte-identical to native (${d.saved.bytes} bytes)`);
+
+    // Build mode through the native dialogs: place a brick with the button (the
+    // pointer cannot aim in WebGL here), save the model through the save dialog,
+    // clear, and open the saved file again through the open dialog (scripted:
+    // open.obrick.json); the model and its bill of materials come back.
+    await session.click("#tab-build");
+    await session.waitFor("const b = window.__web.build; return b && b.ready && window.__web.mode === 'build' ? true : null;", `${label} build`, 120_000);
+    await session.click("#build-place-centre");
+    await session.waitFor("return window.__web.build.parts === 2 ? true : null;", `${label} build place`, 60_000);
+    await session.exec("const i = document.getElementById('build-name'); i.value = 'Desktop model'; i.dispatchEvent(new Event('input'));");
+    await session.click("#build-save");
+    await session.waitFor("return window.__web.build.saveCount > 0 ? true : null;", `${label} build save`, 60_000);
+    const modelFile = fileOf(dialogs, "Desktop-model.obrick.json");
+    check(modelFile !== null, `${label}: the model was not saved as Desktop-model.obrick.json`);
+    const modelDoc = JSON.parse(readFileSync(join(dialogs, "Desktop-model.obrick.json"), "utf8"));
+    check(modelDoc.kind === "model" && modelDoc.submodels[0].instances.length === 2, `${label}: the saved model is ${JSON.stringify(modelDoc.submodels?.[0]?.instances?.length)} parts`);
+    const buildNote = await session.exec("return document.getElementById('build-message').textContent;");
+    check(buildNote.includes(join(dialogs, "Desktop-model.obrick.json")), `${label}: the build note does not name the saved path: "${buildNote}"`);
+    copyFileSync(join(dialogs, "Desktop-model.obrick.json"), join(dialogs, "open.obrick.json"));
+    await session.click("#build-clear");
+    await session.waitFor("return window.__web.build.parts === 1 ? true : null;", `${label} build clear`, 60_000);
+    await session.click("#build-open");
+    // Clearing was an edit, so the page asks before the opened file replaces the model (in the page,
+    // not a dialog box: the webview and WebDriver could not answer one).
+    await session.waitFor("return window.__web.build.confirming === true ? true : null;", `${label} build confirm`, 60_000);
+    await session.click("#build-confirm-replace");
+    await session.waitFor("return window.__web.build.parts === 2 ? true : null;", `${label} build open`, 60_000);
+    const bomRows = await session.exec("return [...document.querySelectorAll('#build-bom tr')].map((tr) => tr.textContent.trim());");
+    check(bomRows.length === 2 && bomRows.some((r) => r.includes("Brick 2 x 4")), `${label}: bill of materials ${JSON.stringify(bomRows)}`);
+    if (shots) await screenshots(session, "desktop-build");
+    console.log(`# ${label}: Build mode placed a brick, saved the model through the save dialog and opened it again through the open dialog`);
 
     // A project link opens outside (the system browser, if there is one); the window stays on the app.
     await session.exec("document.querySelector('footer a[href^=\"https://github.com/\"]').click();");

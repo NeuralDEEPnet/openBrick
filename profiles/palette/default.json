@@ -1,0 +1,24 @@
+{
+  "openbrick": "1.0",
+  "kind": "palette",
+  "id": "default",
+  "name": "Assembler colours",
+  "credit": { "author": "OpenBrick3D contributors" },
+  "source": "Neutral colour names and sRGB display values chosen by OpenBrick3D contributors for the assembler alpha. Codes below 10000 are the LDraw colour numbers of the closest LDraw colour (the numbers only, for a later LDraw import and export, docs/plan/08 section 3); codes from 10000 are OpenBrick3D colours with no LDraw number.",
+  "defaultPart": 10000,
+  "defaultBase": 2,
+  "colours": [
+    { "code": 10000, "name": "Neuraldeep blue", "rgb": "#2f6db5" },
+    { "code": 15, "name": "White", "rgb": "#f2f1ec" },
+    { "code": 71, "name": "Light grey", "rgb": "#a3a8ad" },
+    { "code": 72, "name": "Dark grey", "rgb": "#62676d" },
+    { "code": 0, "name": "Black", "rgb": "#202226" },
+    { "code": 4, "name": "Red", "rgb": "#c4281f" },
+    { "code": 25, "name": "Orange", "rgb": "#ee8a1f" },
+    { "code": 14, "name": "Yellow", "rgb": "#f4c520" },
+    { "code": 2, "name": "Green", "rgb": "#2a7a45" },
+    { "code": 1, "name": "Blue", "rgb": "#1f4f9c" },
+    { "code": 19, "name": "Sand", "rgb": "#d9c591" },
+    { "code": 70, "name": "Brown", "rgb": "#5c3a24" }
+  ]
+}

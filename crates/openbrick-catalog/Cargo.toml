@@ -1,6 +1,6 @@
 [package]
 name = "openbrick-catalog"
-description = "OpenBrick3D catalog crate (skeleton; implementation per docs/plan)"
+description = "Part catalog: the built-in parts of the assembler (built by the part evaluator), their boxes and connectors, the colour palette; later the LDraw pack"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,8 +11,16 @@ publish = false
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 openbrick-units = { workspace = true }
+openbrick-geom = { workspace = true }
+# The built-in parts are built by the part evaluator on a bundled process profile.
+openbrick-part = { workspace = true }
+openbrick-print = { workspace = true }
+
+[dev-dependencies]
+# tests/builtin.rs fingerprints the built meshes with the kernel's mesh type.
 openbrick-geom = { workspace = true }
 
 [lints]

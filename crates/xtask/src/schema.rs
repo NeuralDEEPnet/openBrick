@@ -87,6 +87,24 @@ pub const DATA_SETS: &[DataSet] = &[
         reader: read_printer,
     },
     DataSet {
+        dir: "profiles/palette",
+        files: "",
+        kind: Some("palette"),
+        schema: "palette.schema.json",
+        prefix: "palette-",
+        reader_name: "openbrick_catalog::Palette",
+        reader: read_palette,
+    },
+    DataSet {
+        dir: "models",
+        files: "",
+        kind: Some("model"),
+        schema: "obrick.schema.json",
+        prefix: "obrick-",
+        reader_name: "openbrick_engine::ModelDoc",
+        reader: read_model,
+    },
+    DataSet {
         dir: "parts",
         files: "",
         kind: None,
@@ -147,6 +165,28 @@ fn read_printer(text: &str) -> Result<Value, String> {
         ));
     }
     written(serde_json::to_value(&p))
+}
+
+/// The palette, plus what its schema cannot state: unique codes and both
+/// defaults in the palette (`Palette::check`).
+fn read_palette(text: &str) -> Result<Value, String> {
+    let p: openbrick_catalog::Palette = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let problems = p.check();
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+    written(serde_json::to_value(&p))
+}
+
+/// A model document, plus what its schema cannot state: it loads as a model
+/// (known parts and colours, on the stud grid, nothing overlapping), and what
+/// the engine writes back for it is the document.
+fn read_model(text: &str) -> Result<Value, String> {
+    let catalog = openbrick_catalog::Catalog::builtin().map_err(|e| e.to_string())?;
+    let doc = openbrick_engine::ModelDoc::parse(text).map_err(|e| e.to_string())?;
+    let model = openbrick_engine::Model::from_doc(catalog, &doc).map_err(|e| e.to_string())?;
+    let back = model.to_doc(&doc.name, doc.credit.clone());
+    written(serde_json::to_value(&back))
 }
 
 fn read_fit(text: &str) -> Result<Value, String> {

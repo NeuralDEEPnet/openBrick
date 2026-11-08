@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/obrick.schema.json",
+  "title": "OpenBrick3D model",
+  "description": "An assembler model (.obrick, docs/plan/08 sections 1 and 2): the model.json of the native format as plain JSON text in the alpha. Positions are integer LDU in the LDraw frame (minus Y up), rotations one of the 24 lattice rotations. Read by openbrick-engine as ModelDoc; the part ids name the built-in catalog openbrick-builtin@1 (openbrick-catalog).",
+  "type": "object",
+  "required": [
+    "openbrick",
+    "kind",
+    "name",
+    "credit",
+    "units",
+    "frame",
+    "catalog",
+    "palette",
+    "submodels",
+    "bom"
+  ],
+  "properties": {
+    "openbrick": {
+      "$ref": "#/$defs/pragma"
+    },
+    "kind": {
+      "const": "model"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "credit": {
+      "$ref": "#/$defs/credit"
+    },
+    "units": {
+      "const": "ldu"
+    },
+    "frame": {
+      "const": "ldraw-y-down"
+    },
+    "catalog": {
+      "description": "The part catalog the part ids name; this build reads openbrick-builtin@1.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*@[0-9]+$"
+    },
+    "palette": {
+      "description": "The colours the model uses, for tools without the OpenBrick3D palette.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "rgb"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rgb": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          }
+        }
+      }
+    },
+    "submodels": {
+      "description": "Submodels; the alpha reads exactly one, main.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "instances"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "part",
+                "pose",
+                "colour"
+              ],
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4294967295
+                },
+                "part": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pose": {
+                  "description": "A lattice pose: integer LDU position in the LDraw frame (minus Y up) and a rotation index 0 to 23.",
+                  "type": "object",
+                  "required": [
+                    "pos",
+                    "rot"
+                  ],
+                  "properties": {
+                    "pos": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "integer",
+                        "minimum": -100000000,
+                        "maximum": 100000000
+                      }
+                    },
+                    "rot": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 23
+                    }
+                  }
+                },
+                "colour": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "bom": {
+      "description": "Bill of materials, written for people; readers recompute it.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "part",
+          "name",
+          "colour",
+          "colourName",
+          "count"
+        ],
+        "properties": {
+          "part": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "colour": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "colourName": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  },
+  "if": {
+    "$ref": "#/$defs/atThisMinor"
+  },
+  "then": {
+    "$ref": "#/$defs/knownFields"
+  },
+  "$defs": {
+    "knownFields": {
+      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error.",
+      "properties": {
+        "openbrick": true,
+        "kind": true,
+        "name": true,
+        "credit": {
+          "properties": {
+            "author": true,
+            "url": true
+          },
+          "additionalProperties": false
+        },
+        "units": true,
+        "frame": true,
+        "catalog": true,
+        "palette": {
+          "items": {
+            "properties": {
+              "code": true,
+              "name": true,
+              "rgb": true
+            },
+            "additionalProperties": false
+          }
+        },
+        "submodels": {
+          "items": {
+            "properties": {
+              "id": true,
+              "instances": {
+                "items": {
+                  "properties": {
+                    "id": true,
+                    "part": true,
+                    "pose": {
+                      "properties": {
+                        "pos": true,
+                        "rot": true
+                      },
+                      "additionalProperties": false
+                    },
+                    "colour": true
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "bom": {
+          "items": {
+            "properties": {
+              "part": true,
+              "name": true,
+              "colour": true,
+              "colourName": true,
+              "count": true
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "atThisMinor": {
+      "description": "Matches a document whose pragma names a minor version this schema knows, 1.0 (or a patch of it). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9). Unlike the other shared definitions this one follows the schema's own minor version (cargo xtask data checks it against $id).",
+      "required": [
+        "openbrick"
+      ],
+      "properties": {
+        "openbrick": {
+          "type": "string",
+          "pattern": "^1\\.0(\\.|$)"
+        }
+      }
+    },
+    "pragma": {
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Every 1.x is accepted: readers ignore fields from minors newer than they know, and this schema checks only the fields it names in documents newer than 1.0 (see atThisMinor).",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
+    },
+    "credit": {
+      "description": "Who made the document. Keeping it is a community norm, not a legal condition (LICENSE-POLICY.md).",
+      "type": "object",
+      "required": [
+        "author"
+      ],
+      "properties": {
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://\\S+$"
+        }
+      }
+    },
+    "profileId": {
+      "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+(\\.[a-z0-9]+)*)*$"
+    }
+  }
+}

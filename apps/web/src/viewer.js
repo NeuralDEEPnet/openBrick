@@ -100,6 +100,8 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
   let gridKey = "";
 
   let dirty = true;
+  /** Build mode: the assembly (src/assembly-view.js) replaces the part, its grid and its shadow. */
+  let buildActive = false;
   let frames = 0;
   /** How many parts were shown, and which of them the last frame drew. */
   let shown = 0;
@@ -191,8 +193,8 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
     // Seen from below, the grid would cut across the open underside and the
     // shadow would sit in front of it; both belong to the floor, so they hide.
     const below = camera.position.y < 0;
-    ground.visible = !below;
-    if (grid) grid.visible = !below;
+    ground.visible = !below && !buildActive;
+    if (grid) grid.visible = !below && !buildActive;
     renderer.render(scene, camera);
     frames++;
     // info is reset at the start of each animation frame, so this is the whole
@@ -302,6 +304,83 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
     },
 
     applyTheme,
+
+    /**
+     * What the assembly view (src/assembly-view.js) builds on: the scene, camera
+     * and canvas, a way to ask for a redraw, a switch that hides the part and its
+     * grid while Build mode shows, and the camera framing of a sphere given in
+     * the scene's units (millimetres).
+     */
+    internals: {
+      THREE,
+      scene,
+      camera,
+      canvas: renderer.domElement,
+      markDirty() {
+        dirty = true;
+      },
+      setBuildActive(on) {
+        buildActive = on;
+        part.visible = !on;
+        dirty = true;
+      },
+      /** The camera's horizontal view direction in the scene frame: [x, z], Y up. */
+      cameraForward() {
+        const d = controls.target.clone().sub(camera.position);
+        return [d.x, d.z];
+      },
+      /** Turn the camera about its target by degrees (azimuth about the vertical, polar from it). */
+      orbitBy(azimuthDeg, polarDeg) {
+        const offset = camera.position.clone().sub(controls.target);
+        const sph = new THREE.Spherical().setFromVector3(offset);
+        sph.theta += (azimuthDeg * Math.PI) / 180;
+        sph.phi = Math.min(Math.PI - 0.05, Math.max(0.05, sph.phi + (polarDeg * Math.PI) / 180));
+        camera.position.copy(controls.target).add(offset.setFromSpherical(sph));
+        camera.lookAt(controls.target);
+        controls.update();
+        dirty = true;
+      },
+      /** Scale the camera's distance from its target, within the controls' limits. */
+      zoomBy(factor) {
+        const offset = camera.position.clone().sub(controls.target);
+        const length = Math.min(controls.maxDistance, Math.max(controls.minDistance, offset.length() * factor));
+        camera.position.copy(controls.target).add(offset.setLength(length));
+        controls.update();
+        dirty = true;
+      },
+      frameSphere(center, radius, keepDirection = false) {
+        frame({ center, radius }, keepDirection);
+        dirty = true;
+      },
+    },
+
+    /**
+     * Draw `count` frames while turning the camera about its target, and
+     * resolve with the time of each frame in milliseconds (the gap between
+     * animation frames). Headless Chromium renders in software, so these say
+     * the page works, not how fast a device is.
+     */
+    measureFrames(count, degreesPerFrame = 1.5) {
+      return new Promise((resolve) => {
+        const times = [];
+        let last = 0;
+        const step = (now) => {
+          if (last) times.push(now - last);
+          last = now;
+          if (times.length >= count) {
+            resolve(times);
+            return;
+          }
+          const offset = camera.position.clone().sub(controls.target);
+          offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), (degreesPerFrame * Math.PI) / 180);
+          camera.position.copy(controls.target).add(offset);
+          camera.lookAt(controls.target);
+          dirty = true;
+          requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      });
+    },
 
     /**
      * For the smoke test: frames drawn; the last frame's renderer.info counts, the

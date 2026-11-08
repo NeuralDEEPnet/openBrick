@@ -153,7 +153,7 @@ test("the mode lives in the URL, the tile without a parameter", () => {
   assert.deepEqual(readMode(""), { mode: "tile", errors: [] });
   assert.deepEqual(readMode("?mode=coupon"), { mode: "coupon", errors: [] });
   assert.equal(readMode("?mode=brick").mode, "tile");
-  assert.match(readMode("?mode=brick").errors[0], /mode must be one of tile, coupon/);
+  assert.match(readMode("?mode=brick").errors[0], /mode must be one of tile, build, coupon/);
   assert.equal(writeMode("?backend=webgl2", "coupon"), "?backend=webgl2&mode=coupon");
   assert.equal(writeMode("?mode=coupon&backend=webgl2", "tile"), "?backend=webgl2");
   assert.equal(writeMode("?mode=coupon", "tile"), "");

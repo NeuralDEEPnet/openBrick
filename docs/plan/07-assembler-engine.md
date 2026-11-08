@@ -2,6 +2,23 @@
 
 **Purpose.** The data model, lattice and spatial indexes, the snapping algorithm, collision, the connection graph and structural checks, undo/redo and the collaboration path, rendering and performance, desktop versus touch interaction, play mode, build-instruction generation, and save/load. Dimensions and lattice rules come from [04](04-brick-geometry-spec.md); formats from [08](08-file-formats-and-interop.md).
 
+> **Status, 2026-11-08: the assembler alpha.** The first playable assembler is built on our own generated parts, with no LDraw download: the LDraw catalog import, LOD baking and the 10,000-part target are the rest of M3a ([11](11-roadmap.md), [14](14-lean-ai-agent-development.md) items 21 to 23).
+>
+> | Section | Built | Not yet |
+> |---------|-------|---------|
+> | 2 Data model | `openbrick-engine`: struct-of-arrays table (id, part, lattice pose, colour) in placement order; poses are integer LDU plus `Rot24`; ids are small integers, unique per document and never reused after an undo | free poses, flags, steps, submodels, ULIDs |
+> | 3 Catalog | `openbrick-catalog`: 13 bricks, plates and tiles and a 16 x 16 baseplate, built by the part evaluator from generated part documents at two levels of detail (24 and 8 segments per stud); the collision box, pick box and connectors (studs, and the receptacle under a body) are derived from the evaluator's features, and a test proves they do not depend on the level of detail; a neutral palette (`profiles/palette/default.json`) | the packed LDraw subset, the primitive scanner, LOD1 and LOD2 hulls, occupancy masks, content-addressed ids |
+> | 4 Indexes | lattice spatial hash on 20 x 8 x 20 LDU cells and a connector hash keyed on position | BVH for free poses |
+> | 5 Snapping | `Model::snap`: a pointer ray picks a face (top, bottom, side or ground), candidates are the lattice poses in a window of two studs around it, ranked by validity, distance of the contact face to the cursor, mates and offset, a total order; the user's rotation only (the page offers the four yaw turns, the engine takes all 24) | auto-orient, the other yaws and flips as fallbacks, half-stud tolerance for touch |
+> | 6 Collision | exact integer box overlap, touching allowed, the body box without its studs (a stud always sits in the cavity of the part above, which is what the stud-vs-cavity rule says for these parts) | occupancy-mask narrowphase for parts whose shape is not a box |
+> | 7 Graph | stud-to-receptacle edges, union-find components, floating parts (no chain to a part standing on the ground) | articulation points, weak and unstable tiers |
+> | 8 Undo | commands with explicit inverses (add, remove, move, turn, recolour, clear, clear built), undo and redo, batches that roll back | drag coalescing, the journal file |
+> | 9 Rendering | one InstancedMesh per part with per-instance colour (at most 14 draw calls), the cheap mesh level above 250 parts | chunking, LOD2, frustum culling per chunk, edges pass |
+> | 10 Interaction | pointer ghost, click or tap to place, R and Shift+R, Delete or Backspace, Ctrl or Cmd+Z, Ctrl or Cmd+Shift+Z or Ctrl+Y, Escape, remove mode, buttons for touch; the keyboard path: the focused 3D view takes arrow keys (an aim moved a stud at a time, snapped by the core like a pointer ray), Enter, Shift+arrows to orbit, plus and minus to zoom | marquee, two-finger twist, long-press, eyedropper |
+> | 13 Save and load | `.obrick.json`, the plain JSON `model.json` of [08](08-file-formats-and-interop.md) (see the note there), deterministic text, bill of materials; the reader refuses ids of 0, positions beyond 10^8 LDU and rotations outside 0 to 23; the page keeps a copy of the model so a replaced core worker gets it back (the undo history is lost), asks before Open or a sample replaces unsaved work, and can restore the replaced model | the zip container, `parts/`, thumbnail, journal; `.ldr` and `.mpd` |
+>
+> The engine's property tests (seeded random cases; `proptest` is not in the dependency tree): every snapped pose is on the fine lattice and its connectors on the stud grid; a valid snap never collides and is attached; snapping is deterministic and translation invariant; placing then removing restores the table; undoing any command sequence restores the document text; documents round-trip byte for byte.
+
 ## Contents
 
 1. One idea: bricks live on an integer lattice

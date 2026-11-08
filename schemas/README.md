@@ -10,9 +10,11 @@ One JSON Schema (draft 2020-12) per document kind, published with each release a
 | `fit-profile.schema.json` | `profiles/fit/*.json` (`kind: "fit"`); schema 1.1, which adds the optional `calibration.pocketSet` (the pocket set of the printed coupon, which `openbrick calibrate record` writes with the pocket cells) | `openbrick_print::FitProfile` |
 | `part.schema.json` | `parts/*.obpart.json` (`openbrick/part@1`) | `openbrick_part::PartDoc` |
 | `printer-profile.schema.json` | `profiles/printer/*.json` (`kind: "printer"`): a printer and tool setup with the build volume its maker publishes and the page it was read from (validator rule `SIZE.BED`) | `openbrick_print::PrinterProfile` |
+| `obrick.schema.json` | `models/*.obrick.json` (`kind: "model"`): an assembler model, the `model.json` of docs/plan/08 section 2 as plain JSON in the alpha; integer LDU poses in the LDraw frame, a rotation index 0 to 23, a bill of materials written for people | `openbrick_engine::ModelDoc` (and `Model::from_doc`, which also checks the stud grid, the ground and overlaps) |
+| `palette.schema.json` | `profiles/palette/*.json` (`kind: "palette"`): the assembler's colours, neutral names and sRGB display values | `openbrick_catalog::Palette` |
 | `report.schema.json` | validator reports, the output of `openbrick validate --json` (docs/plan/05 section 5); no data files, checked against the expected reports of the validator fixtures in `crates/openbrick-print/tests/fixtures/validator/` | `openbrick_print::Report` |
 
-Still to come, with their document kinds: `run.schema.json` (`.obrun.json`) and `model.schema.json` (`model.json` inside `.obrick`).
+Still to come, with their document kinds: `run.schema.json` (`.obrun.json`); the zip container of `.obrick` (docs/plan/08 section 1) needs no new schema, its `model.json` is `obrick.schema.json`.
 
 ## What `cargo xtask data` checks
 

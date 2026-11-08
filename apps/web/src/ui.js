@@ -4,7 +4,7 @@
 // and so does every unit.
 
 export const BACKENDS = ["auto", "webgpu", "webgl2"];
-export const MODES = ["tile", "coupon"];
+export const MODES = ["tile", "build", "coupon"];
 
 /** The repository, and the print-test guide the validation panel links to. */
 export const REPO_URL = "https://github.com/NeuralDEEPnet/openBrick";
@@ -17,7 +17,7 @@ export function readBackend(search) {
   return { backend: "auto", errors: [`backend must be one of ${BACKENDS.join(", ")}, got ${JSON.stringify(backend)}`] };
 }
 
-/** Read ?mode= (tile, the default, or coupon). */
+/** Read ?mode= (tile, the default, build or coupon). */
 export function readMode(search) {
   const mode = new URLSearchParams(search).get("mode") ?? "tile";
   if (MODES.includes(mode)) return { mode, errors: [] };

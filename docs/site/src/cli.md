@@ -19,6 +19,7 @@ The `openbrick` command line builds, validates and calibrates brick-compatible p
     - [`openbrick calibrate coupon`](#openbrick-calibrate-coupon)
     - [`openbrick calibrate record`](#openbrick-calibrate-record)
   - [`openbrick validate`](#openbrick-validate)
+  - [`openbrick bom`](#openbrick-bom)
   - [`openbrick convert`](#openbrick-convert)
   - [`openbrick run`](#openbrick-run)
   - [`openbrick serve`](#openbrick-serve)
@@ -38,6 +39,7 @@ Commands:
   build      Build a part into a printable 3MF or STL (validated first)
   calibrate  Print the calibration coupon and record the cells that fit best
   validate   Validate a part against a process and fit profile
+  bom        Validate an assembler model (.obrick) and print its bill of materials
   convert    Convert between .obrick, .ldr/.mpd, 3MF, STL, glTF (M3)
   run        Run a batch merch job (M4)
   serve      Serve the PWA on the LAN with a QR code (M4)
@@ -349,6 +351,27 @@ Options:
 
       --json
           Print one JSON object on stdout (report per schemas/report.schema.json, measurements, content hash, outputs, timings); human text goes to stderr
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `openbrick bom`
+
+```text
+Validate an assembler model (.obrick) and print its bill of materials.
+
+Prints part by colour counts and the connection statistics; floating parts are a warning, an invalid file exits 2.
+
+Usage: openbrick bom [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>
+          The model document (.obrick)
+
+Options:
+      --json
+          Print one JSON object on stdout instead of the table
 
   -h, --help
           Print help (see a summary with '-h')

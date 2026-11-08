@@ -2577,6 +2577,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jsonschema",
+ "openbrick-catalog",
+ "openbrick-engine",
  "openbrick-geom",
  "openbrick-io",
  "openbrick-part",
@@ -2591,8 +2593,11 @@ name = "openbrick-catalog"
 version = "0.1.0"
 dependencies = [
  "openbrick-geom",
+ "openbrick-part",
+ "openbrick-print",
  "openbrick-units",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -2612,8 +2617,10 @@ dependencies = [
 name = "openbrick-engine"
 version = "0.1.0"
 dependencies = [
+ "openbrick-catalog",
  "openbrick-units",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -2688,6 +2695,8 @@ dependencies = [
 name = "openbrick-wasm"
 version = "0.1.0"
 dependencies = [
+ "openbrick-catalog",
+ "openbrick-engine",
  "openbrick-geom",
  "openbrick-io",
  "openbrick-part",
@@ -5105,6 +5114,8 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "jsonschema",
+ "openbrick-catalog",
+ "openbrick-engine",
  "openbrick-part",
  "openbrick-print",
  "openbrick-units",

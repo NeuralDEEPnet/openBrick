@@ -4,14 +4,14 @@
 
 > **Disclaimer.** OpenBrick3D is an independent, community-driven open-source project published by Neural Deep Network Ltd (Malta). It is not affiliated with, sponsored by, authorized by, or endorsed by the LEGO Group. LEGO®, the LEGO® logo and the Minifigure are trademarks of the LEGO Group of companies, which does not sponsor, authorize or endorse this project. Works with LEGO®-compatible bricks. LDraw™ is a trademark of the Estate of James Jessiman. This software uses the LDraw Parts Library (https://www.ldraw.org).
 
-**Status:** milestone M1, the CLI alpha (0.1.0). The geometry kernel works (pure Rust, bit-identical on native and WebAssembly), data documents have JSON Schemas, and the M0 spikes are reported in [`docs/spikes/`](docs/spikes/). The `openbrick` command line installs with one command from the first release, v0.1.0, on (see [Install](#install)); the browser playground runs at https://neuraldeepnet.github.io/openBrick/ once GitHub Pages is switched on. There you design a logo tile, starting from the Neuraldeep.net demo tile (the playground's default artwork; its sample chooser also has a square badge and a CC0 sample mark) or from your own SVG, check it and download a 3MF or STL, or print the calibration coupon; see [apps/web/README.md](apps/web/README.md). The same playground runs as a desktop app alpha too (Tauri 2, native open and save dialogs, unsigned; build it from source with [apps/desktop/README.md](apps/desktop/README.md); from the next release on, each release tag also carries unsigned installers for macOS, Windows and Linux, see [Desktop app (alpha)](docs/guides/install.md#desktop-app-alpha)). The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
+**Status:** milestone M1, the CLI alpha (0.1.0). The geometry kernel works (pure Rust, bit-identical on native and WebAssembly), data documents have JSON Schemas, and the M0 spikes are reported in [`docs/spikes/`](docs/spikes/). The `openbrick` command line installs with one command from the first release, v0.1.0, on (see [Install](#install)); the browser playground runs at https://neuraldeepnet.github.io/openBrick/ once GitHub Pages is switched on. There you design a logo tile, starting from the Neuraldeep.net demo tile (the playground's default artwork; its sample chooser also has a square badge and a CC0 sample mark) or from your own SVG, check it and download a 3MF or STL, or print the calibration coupon; and a **Build** mode is the first playable assembler (snap generated bricks, plates and tiles onto a baseplate with a ghost at the core's snapped pose, undo, save and open `.obrick.json` (plain JSON in the alpha; the zipped `.obrick` comes later), load a sample house, build with the keyboard too; the LDraw parts catalog comes later); see [apps/web/README.md](apps/web/README.md#build-mode-a-place-to-play). The same playground runs as a desktop app alpha too (Tauri 2, native open and save dialogs, unsigned; build it from source with [apps/desktop/README.md](apps/desktop/README.md); from the next release on, each release tag also carries unsigned installers for macOS, Windows and Linux, see [Desktop app (alpha)](docs/guides/install.md#desktop-app-alpha)). The plan and its milestones are in [`docs/plan/`](docs/plan/README.md); start with the [executive summary](docs/plan/00-executive-summary.md).
 
 ## Three pillars, one core
 
 | Pillar | What it does | Where it lives |
 |--------|--------------|----------------|
 | **Part designer** | Parametric, print-first parts that do not exist in any catalogue: logo tiles, nameplates, keychains, mosaics, adapters. Artwork from SVG, raster or text. Connectivity is derived from features, so designed parts snap in the assembler and in LDCad. | `crates/openbrick-part`, `parts/` |
-| **Assembler** | Snap bricks on an integer-LDU lattice with the 24 lattice rotations; 10k to 100k instances; open text formats with lossless LDraw round-trip. | `crates/openbrick-engine`, `crates/openbrick-catalog` |
+| **Assembler** | Snap bricks on an integer-LDU lattice with the 24 lattice rotations; 10k to 100k instances; open text formats with lossless LDraw round-trip. Alpha today: Build mode on 13 generated parts and a baseplate, `openbrick bom model.obrick`; the LDraw catalog and the 10k target are next. | `crates/openbrick-engine`, `crates/openbrick-catalog` |
 | **Print pipeline** | Per-printer fit profiles written by a calibration coupon, compensation baked into geometry, a validator that blocks unprintable fit-critical parts (walls, roofs, bridges and overhangs, self-intersections, the face on the bed, and the bed size of your printer), vanilla 3MF with colours. | `crates/openbrick-print`, `profiles/`, `standards/` |
 
 ## Features (planned, see the roadmap for milestones)
@@ -28,9 +28,10 @@
 ```
 crates/        Rust workspace: units, geom, part, print, engine, catalog, io, openbrick (CLI), openbrick-wasm, xtask
 packages/      TypeScript packages: viewport (kernel-to-three.js frame so far); core-wasm, ui, state from M2
-apps/          web (the browser playground: part designer, which opens, edits and saves any part document with its presets, and calibration coupon; Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (the desktop app alpha: the same playground in a Tauri 2 window with native open and save dialogs)
+apps/          web (the browser playground: Build mode, the assembler alpha, and the part designer, which opens, edits and saves any part document with its presets, and calibration coupon; Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (the desktop app alpha: the same playground in a Tauri 2 window with native open and save dialogs)
 standards/     Dimensional Standard v1 (CC0) and measurement data
-profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla) and example fit profiles
+profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla), example fit profiles and the assembler's colour palette
+models/        sample assembler models (.obrick.json): a house and a staircase
 parts/         openBrick-native part documents (CC0; the Neuraldeep.net marks in parts/assets/brand/ are all rights reserved, see its NOTICE.md)
 schemas/       JSON Schemas for every document kind
 bench/         device render harness (bench/harness) and device results (bench/devices)
@@ -49,6 +50,7 @@ cargo run -p openbrick -- standard   # print the Dimensional Standard
 cargo install --path crates/openbrick --locked                      # the openbrick CLI from this clone
 openbrick calibrate coupon --out coupon.3mf --manifest coupon.json  # print it, then openbrick calibrate record ...
 openbrick build parts/ndn.logo-tile.obpart.json --fit my-fit.json --out tile.3mf
+openbrick bom models/house.obrick.json                              # an assembler model's bill of materials and connection stats
 ```
 
 Requires Rust 1.90 or newer (`rust-toolchain.toml` selects stable). Node 22 and pnpm are needed for the device render harness (`pnpm --dir bench/harness dev`) and the web app (`pnpm --dir apps/web start`, which first runs `cargo xtask wasm`; that needs the `wasm32-unknown-unknown` target and `cargo install wasm-bindgen-cli --version =0.2.129 --locked`). `pnpm test` runs their unit tests. See [apps/web/README.md](apps/web/README.md). The desktop app: `pnpm --dir apps/desktop dev` after `cargo xtask wasm`, with the Tauri prerequisites of your OS ([apps/desktop/README.md](apps/desktop/README.md)).
