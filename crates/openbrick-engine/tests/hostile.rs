@@ -249,7 +249,7 @@ fn hostile_poses_never_panic() {
                     *rng.pick(&extremes_f64),
                 ],
             };
-            let p = m.catalog().find(&parts[rng.range(0, 3) as usize]).unwrap();
+            let p = m.catalog().find(parts[rng.range(0, 3) as usize]).unwrap();
             let _ = m.snap(p, Rot24(*rng.pick(&[0u8, 5, 23])), &ray);
             let _ = m.pick(&ray);
             let _ = m.stats();
