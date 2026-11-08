@@ -11,6 +11,7 @@
 
 - [Install](guides/install.md)
 - [First print test](guides/print-test.md)
+- [Real LDraw parts in Build mode](guides/ldraw-parts.md)
 - [CLI reference](cli.md)
 
 # The plan

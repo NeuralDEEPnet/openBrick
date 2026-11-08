@@ -219,8 +219,10 @@ fn engine_snaps_a_pack_part_wherever_the_ray_goes_without_panicking() {
         let ray = ray_towards(&mut rng, 150);
         if let Some(s) = m.snap(part, rot, &ray).unwrap() {
             if s.valid {
+                // A valid snap is a pose the model accepts: snapping and adding agree.
                 let cmd = add(&c.parts[part as usize].id, s.pos, s.rot);
-                let _ = m.apply(&cmd);
+                m.apply(&cmd)
+                    .unwrap_or_else(|e| panic!("{}: {s:?}: {e}", c.parts[part as usize].id));
             }
         }
     }
@@ -230,4 +232,43 @@ fn engine_snaps_a_pack_part_wherever_the_ray_goes_without_panicking() {
         origin: [0.0; 3],
         dir: [0.0, 1.0, 0.0],
     };
+}
+
+#[test]
+fn a_pack_part_whose_studs_are_off_the_stud_grid_is_placed_where_it_snaps() {
+    // A brick with something hanging two units below it is 26 high, so on the ground its studs are
+    // at Y = -26, off the plate grid. A real library has many such parts (clips, brackets): the
+    // snap must not call a pose valid that the model then refuses.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../openbrick-catalog/tests/fixtures/ldraw/ldraw");
+    let dir = std::env::temp_dir().join(format!("openbrick-engine-offgrid-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for sub in ["p", "parts"] {
+        std::fs::create_dir_all(dir.join("ldraw").join(sub)).unwrap();
+    }
+    for f in ["cube.dat", "stud.dat"] {
+        std::fs::copy(src.join("p").join(f), dir.join("ldraw/p").join(f)).unwrap();
+    }
+    let part = "0 Brick  1 x  1 with Hanging Lug\n0 Name: 9001.dat\n0 !LDRAW_ORG Part UPDATE 2026-01\n0 BFC CERTIFY CCW\n\
+        1 16 0 0 0 10 0 0 0 24 0 0 0 10 cube.dat\n1 16 0 24 0 3 0 0 0 2 0 0 0 3 cube.dat\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 stud.dat\n";
+    std::fs::write(dir.join("ldraw/parts/9001.dat"), part).unwrap();
+    let opts = ImportOptions {
+        categories: Some(vec!["Brick".into()]),
+        ..ImportOptions::default()
+    };
+    let (p, _) = import(&dir, &opts, &mut |_, _, _| {}).expect("imports");
+    let c = Catalog::builtin().unwrap().with_pack(&p);
+    let _ = std::fs::remove_dir_all(&dir);
+    let id = c.find("ld.9001").unwrap();
+    assert_eq!(c.parts[id as usize].shape.body.max[1], 26);
+    let m = Model::new(&c);
+    let s = m.snap(id, Rot24::IDENTITY, &down(3, 3)).unwrap().unwrap();
+    assert!(s.valid && s.grounded, "{s:?}");
+    let mut m = Model::new(&c);
+    m.apply(&add("ld.9001", s.pos, s.rot)).unwrap();
+    // A built-in part is still held to the stud grid.
+    let e = Model::new(&c)
+        .apply(&add("ob.brick-1x1", [10, -4, 10], 0))
+        .unwrap_err();
+    assert!(matches!(e, EngineError::OffGrid { .. }), "{e}");
 }

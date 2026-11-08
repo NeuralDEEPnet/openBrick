@@ -22,6 +22,10 @@ function fakeClient() {
       client.worker = text;
       return { instances: [], stats: { parts: 1, floating: [] }, text };
     },
+    async assemblerLoadPack(bytes) {
+      log.push(["pack", bytes.length]);
+      return { pack: { library: "x" } };
+    },
     async assemblerSnap(...args) {
       log.push(["snap", client.worker]);
       return client.worker === null ? null : { args };
@@ -101,4 +105,29 @@ test("the replaced model is set aside, and only a well-formed one", () => {
   assert.equal(keeper.previous, null);
   keeper.setPrevious(null);
   assert.equal(keeper.previous, null);
+});
+
+test("a replaced worker gets the LDraw pack back before the model, so the model's pack parts load", async () => {
+  const client = fakeClient();
+  const keeper = new ModelKeeper({ client });
+  const asm = keeper.guarded();
+  keeper.rememberPack(new Uint8Array(7));
+  keeper.remember("m");
+  assert.equal(keeper.pack.length, 7);
+  client.restart();
+  await asm.assemblerSnap("p");
+  assert.deepEqual(
+    client.log.map(([k]) => k),
+    ["pack", "load", "snap"],
+    "pack, then model, then the request",
+  );
+  // Removing the pack: later restarts send none.
+  keeper.rememberPack(null);
+  assert.equal(keeper.pack, null);
+  client.log.length = 0;
+  client.restart();
+  await asm.assemblerSnap("p");
+  assert.deepEqual(client.log.map(([k]) => k), ["load", "snap"]);
+  keeper.rememberPack("not bytes");
+  assert.equal(keeper.pack, null, "only bytes are kept");
 });

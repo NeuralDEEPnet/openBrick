@@ -83,11 +83,19 @@
 //    /openBrick/ and checks that the page, worker, module and assets all load
 //    from there and give the native part.
 //
+// 4c. Build mode with an LDraw pack (buildPackRun, buildPackPhoneRun): the CLI builds
+//    a mini pack from the synthetic fixture library (crates/openbrick-catalog/tests/
+//    fixtures/ldraw, written for the tests), "Add parts from an LDraw library…"
+//    loads it, the palette gets search, categories and pages, the attribution and
+//    licence text show, two pack bricks snap together through the core, the saved model
+//    names the pack it needs and, opened without it, offers to add it and then opens.
+//    With OPENBRICK_SMOKE_PACK=<a real .obpack> the same page also runs a real pack
+//    (screenshots, draw calls, frame times; not part of CI). `--only-pack` runs only these.
 // 4b. Build mode (buildRun, buildPhoneRun): the assembler on desktop and on a
 //    phone, with a 513-brick model for the performance numbers; see the comments
 //    on those functions. `--only-build` runs only these two steps.
 //
-// Usage: node smoke.mjs [--no-build] [--no-webgpu] [--no-base-check] [--only-build]
+// Usage: node smoke.mjs [--no-build] [--no-webgpu] [--no-base-check] [--only-build] [--only-pack]
 //                       [--screenshots <dir>] [--downloads <dir>]
 //
 // Downloads go to apps/web/smoke-downloads/ unless --downloads names another
@@ -1517,6 +1525,204 @@ async function buildPhoneRun(browser, origin) {
   await context.close();
 }
 
+/** A mini pack made by the CLI from the synthetic fixture library. */
+function miniPack() {
+  run("cargo", ["build", "-q", "-p", "openbrick"]);
+  const out = join(downloads, "mini.obpack");
+  run(join(repo, "target/debug/openbrick"), ["catalog", "import", join(repo, "crates/openbrick-catalog/tests/fixtures/ldraw"), "--out", out, "--force", "--category-filter", "Brick,Plate,Tile,Technic"]);
+  return out;
+}
+
+/** The names of the part buttons on the palette page. */
+const paletteNames = (page) => page.$$eval('#build-parts [role="radio"]', (els) => els.map((e) => e.getAttribute("aria-label")));
+
+/**
+ * Build mode with an LDraw pack: add it, search and filter the palette, place two pack bricks that snap
+ * through the core, and see what a model that needs the pack does without it.
+ */
+async function buildPackRun(browser, origin) {
+  const label = "build-pack";
+  const pack = miniPack();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light", acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the core's catalog");
+  check((await paletteNames(page)).length === 14 && (await page.isHidden("#build-part-tools")), `${label}: the built-in palette has no search box (14 parts)`);
+  check(await page.isHidden("#build-pack-info"), `${label}: pack info shown before a pack is loaded`);
+  check((await page.textContent("#build-pack-open")).includes("Add parts from an LDraw library"), `${label}: the add button says "${await page.textContent("#build-pack-open")}"`);
+
+  await page.setInputFiles("#build-pack-file", pack);
+  await buildWait(page, () => window.__web.build.pack !== null && window.__web.build.list.total === 25, 30_000, "the pack's parts in the palette");
+  let b = await buildState(page);
+  check(b.pack.library === "2026-01" && b.pack.parts === 11, `${label}: pack ${JSON.stringify(b.pack)}`);
+  check(await page.isVisible("#build-part-tools"), `${label}: search and category are shown with more than a page of parts... (${b.list.total})`);
+  check((await page.textContent("#build-range")).startsWith("Showing 1 to 24 of 25"), `${label}: range "${await page.textContent("#build-range")}"`);
+  check((await page.isEnabled("#build-next")) && (await page.isDisabled("#build-prev")), `${label}: pager buttons`);
+  check((await paletteNames(page)).length === 24, `${label}: ${(await paletteNames(page)).length} parts on the first page`);
+  await page.click("#build-next");
+  await buildWait(page, () => window.__web.build.list.page === 1 && window.__web.build.list.shown === 1, 10_000, "the second page");
+  check((await page.isDisabled("#build-next")) && (await page.isEnabled("#build-prev")), `${label}: pager buttons on the last page`);
+  await page.click("#build-prev");
+
+  // Attribution and licence while the pack is loaded.
+  const attribution = await page.textContent("#build-attribution");
+  check(attribution.includes("LDraw Parts Library") && attribution.includes("2026-01") && attribution.includes("CC BY"), `${label}: attribution "${attribution}"`);
+  const licence = await page.textContent("#build-licences");
+  check(licence.includes("Synthetic test library") && licence.includes("Synthetic licence text"), `${label}: licence text "${licence.slice(0, 80)}"`);
+  check(/1 with joints/.test(await page.textContent("#build-pack-counts")) && /11 parts/.test(await page.textContent("#build-pack-counts")), `${label}: pack counts "${await page.textContent("#build-pack-counts")}"`);
+
+  // Search: words, a size, a category, nothing.
+  await page.fill("#build-search", "clip");
+  await buildWait(page, () => window.__web.build.list.total === 1, 10_000, "the search for clip");
+  let names = await paletteNames(page);
+  check(names.length === 1 && /Clip/.test(names[0]) && /joint not modelled/.test(names[0]), `${label}: search "clip" gives ${JSON.stringify(names)}`);
+  await page.click('#build-parts [role="radio"]');
+  check(/clip joint is not modelled/.test(await page.textContent("#build-part-note")), `${label}: part note "${await page.textContent("#build-part-note")}"`);
+  await page.fill("#build-search", "brick 2x2");
+  await buildWait(page, () => window.__web.build.list.total === 2, 10_000, "the search for brick 2x2 (the built-in and the pack's)");
+  await page.fill("#build-search", "zzzz");
+  await buildWait(page, () => window.__web.build.list.total === 0, 10_000, "a search with no match");
+  check((await page.textContent("#build-range")).includes("No part matches"), `${label}: the empty search says "${await page.textContent("#build-range")}"`);
+  await page.fill("#build-search", "");
+  await page.selectOption("#build-category", "Tile");
+  await buildWait(page, () => window.__web.build.list.total === 4 && window.__web.build.list.category === "Tile", 10_000, "the Tile category (2 built-in, 2 of the pack)");
+  names = await paletteNames(page);
+  check(names.every((n) => /Tile/.test(n)), `${label}: the Tile category lists ${JSON.stringify(names)}`);
+  await page.selectOption("#build-category", "");
+  await page.fill("#build-search", "ld.3003");
+  await buildWait(page, () => window.__web.build.list.total === 1, 10_000, "the search by id");
+  // Thumbnails are drawn lazily from the core's meshes.
+  await page.waitForFunction(() => document.querySelectorAll("#build-parts canvas.thumb").length === 1, null, { timeout: 20_000 }).catch(() => failures.push(`${label}: the pack part got no thumbnail`));
+  await page.click('#build-parts [role="radio"]');
+  await buildWait(page, () => window.__web.build.selected === "ld.3003", 10_000, "choosing the pack's 2x2 brick");
+
+  // Place two pack bricks: the second snaps onto the first's studs, which the core decides.
+  const base = await screenAt(page, [0, -8, 0]);
+  await page.mouse.move(base.x, base.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, "a valid ghost for a pack brick");
+  await page.mouse.click(base.x, base.y);
+  await buildWait(page, () => window.__web.build.parts === 2, 20_000, "the pack brick placed");
+  b = await buildState(page);
+  const top = await screenAt(page, [b.ghostPos?.[0] ?? 0, b.ghostPos?.[1] - 4 ?? -40, b.ghostPos?.[2] ?? 0]);
+  await page.mouse.move(top.x, top.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid" && /4 studs connected/.test(document.querySelector("#build-hover").textContent), 20_000, "a ghost on the first pack brick with 4 studs connected");
+  await page.mouse.click(top.x, top.y);
+  await buildWait(page, () => window.__web.build.parts === 3, 20_000, "the second pack brick placed");
+  b = await buildState(page);
+  check(b.stats.connections === 4 + 4 && b.stats.floating.length === 0, `${label}: baseplate and two pack bricks (a 2 x 2 has 4 receptacles): ${JSON.stringify(b.stats)}`);
+  check(b.counts.drawCalls === 2, `${label}: ${b.counts.drawCalls} draw calls for a baseplate and two bricks of one part`);
+  check(b.gpuParts <= 20, `${label}: ${b.gpuParts} part meshes uploaded`);
+  if (shots) {
+    await page.screenshot({ path: join(shots, "build-pack-minipack.png") });
+  }
+  const rows = await page.$$eval("#build-bom tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+  check(rows.some((r) => r[0] === "2" && r[1] === "Brick 2 x 2"), `${label}: bill of materials ${JSON.stringify(rows)}`);
+
+  // Save: the model names the pack it needs.
+  const [saved] = await Promise.all([page.waitForEvent("download"), page.click("#build-save")]);
+  const savedPath = join(downloads, "pack-model-" + saved.suggestedFilename());
+  await saved.saveAs(savedPath);
+  const text = readFileSync(savedPath, "utf8");
+  const doc = JSON.parse(text);
+  check(doc.requires?.length === 1 && doc.requires[0].pack === "ldraw" && doc.requires[0].library === "2026-01" && /^[0-9a-f]{64}$/.test(doc.requires[0].fingerprint), `${label}: requires ${JSON.stringify(doc.requires)}`);
+  check(doc.catalog === "openbrick-builtin@1" && doc.submodels[0].instances.some((i) => i.part === "ld.3003"), `${label}: the saved model does not hold the pack part`);
+
+  // A fresh page without the pack: opening the model offers to add the pack, then opens it.
+  const fresh = await context.newPage();
+  const freshErrors = watchErrors(fresh);
+  await fresh.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(fresh, () => window.__web?.build?.ready === true, 120_000, "the second page's catalog");
+  await fresh.setInputFiles("#build-file", savedPath);
+  await buildWait(fresh, () => window.__web.build.needs !== null, 20_000, "the notice for a model that needs a pack");
+  check(await fresh.isVisible("#build-needs"), `${label}: the notice is hidden`);
+  const needsText = await fresh.textContent("#build-needs-text");
+  check(needsText.includes("ldraw pack (library 2026-01)") && needsText.includes("ld.3003") && needsText.includes("Add parts from an LDraw library"), `${label}: notice "${needsText}"`);
+  check((await buildState(fresh)).parts === 1, `${label}: the model on screen changed while the pack was missing`);
+  check((await fresh.getAttribute("#build-needs", "role")) === "alertdialog", `${label}: the notice is not an alertdialog`);
+  if (shots) await fresh.screenshot({ path: join(shots, "build-pack-needs.png") });
+  // Adding the pack opens the model that was waiting.
+  await fresh.setInputFiles("#build-pack-file", pack);
+  await buildWait(fresh, () => window.__web.build.pack !== null && window.__web.build.parts === 3 && window.__web.build.needs === null, 30_000, "the waiting model opening once the pack is added");
+  const fb = await buildState(fresh);
+  check(fb.stats.connections === 8 && fb.stats.floating.length === 0, `${label}: the reopened model ${JSON.stringify(fb.stats)}`);
+  // A pack file that is not a pack is refused with a message, the pack stays.
+  writeFileSync(join(downloads, "not-a-pack.obpack"), "this is not a pack");
+  await fresh.setInputFiles("#build-pack-file", join(downloads, "not-a-pack.obpack"));
+  await buildWait(fresh, () => /Could not add/.test(window.__web.build.message), 10_000, "the refusal of a file that is not a pack");
+  check((await fresh.getAttribute("#build-message", "role")) === "alert" && (await buildState(fresh)).pack !== null && (await buildState(fresh)).parts === 3, `${label}: the refusal is an alert and the pack and model stay`);
+  check(/not an OpenBrick3D pack/.test(await fresh.textContent("#build-message")), `${label}: refusal text "${await fresh.textContent("#build-message")}"`);
+  // Removing the pack clears a model that used it, and says so.
+  await fresh.click("#build-pack-remove");
+  await buildWait(fresh, () => window.__web.build.pack === null && window.__web.build.parts <= 1, 20_000, "removing the pack");
+  check(/Removed the LDraw pack/.test(await fresh.textContent("#build-message")) && (await paletteNames(fresh)).length === 14, `${label}: after removing the pack "${await fresh.textContent("#build-message")}"`);
+  check(freshErrors.length === 0, `${label}: page errors on the fresh page: ${freshErrors.join(" | ")}`);
+
+  // A worker restart keeps the pack and the model (the page sends both again).
+  const restartsBefore = (await web(page)).restarts;
+  await page.click("#tab-tile");
+  const n = (await web(page)).evaluations;
+  await page.fill("#p-size-0", "16");
+  await page.fill("#p-size-1", "16");
+  const until = Date.now() + 10_000;
+  while (Date.now() < until && !/\d+ s/.test(await page.textContent("#status"))) await sleep(100);
+  await page.fill("#p-size-0", "2");
+  await page.fill("#p-size-1", "6");
+  await waitFor(page, { after: n, want: (p) => p.params.size.join("x") === "2x6" }, 90_000, `${label} the tile after the cancelled build`);
+  const restarted = (await web(page)).restarts > restartsBefore;
+  await page.click("#tab-build");
+  await buildWait(page, () => window.__web.build.ready && window.__web.mode === "build", 30_000, "returning to Build");
+  await page.waitForFunction(() => window.__web.build.parts === 3, null, { timeout: 30_000, polling: 50 }).catch(() => failures.push(`${label}: the pack model is gone after a worker restart`));
+  b = await buildState(page);
+  check(b.stats.connections === 8, `${label}: the restored pack model has ${b.stats.connections} connections`);
+  console.log(`# ${label}: pack added, ${b.list.total} parts searchable, two pack bricks snapped, the model names its pack, opens after adding it${restarted ? ", and survived a worker restart" : " (no worker restart happened)"}`);
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  await context.close();
+}
+
+/** A real pack, when OPENBRICK_SMOKE_PACK names one: screenshots and the numbers (not in CI). */
+async function buildRealPackRun(browser, origin, packPath) {
+  const label = "build-real-pack";
+  const out = (name) => (shots ? join(shots, name) : null);
+  for (const [name, viewport, mobile] of [["1280", { width: 1280, height: 800 }, false], ["390", { width: 390, height: 844 }, true]]) {
+    const context = await browser.newContext({ viewport, deviceScaleFactor: mobile ? 2 : 1, isMobile: mobile, hasTouch: mobile, colorScheme: "light" });
+    const page = await context.newPage();
+    const errors = watchErrors(page);
+    await page.goto(`${origin}/?backend=webgl2&mode=build`);
+    await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the catalog");
+    const t0 = Date.now();
+    await page.setInputFiles("#build-pack-file", packPath);
+    await buildWait(page, () => window.__web.build.pack !== null, 120_000, "the real pack");
+    const loadMs = Date.now() - t0;
+    await buildWait(page, () => window.__web.build.thumbnails >= 24, 60_000, "the first page's thumbnails");
+    const thumbMs = Date.now() - t0;
+    let b = await buildState(page);
+    console.log(`# ${label} ${name}: pack of ${b.pack.parts} parts loaded in ${loadMs} ms (file to palette), first page thumbnails after ${thumbMs} ms`);
+    if (!mobile) {
+      // Many different parts in one model: one draw call per part type, and the uploaded meshes stay bounded.
+      const t1 = Date.now();
+      const r = await page.evaluate(() => window.__web.build.spread(150));
+      const spreadMs = Date.now() - t1;
+      const times = await page.evaluate(() => window.__web.build.measure(30));
+      const mean = times.reduce((x, y) => x + y, 0) / times.length;
+      console.log(
+        `# ${label}: ${r.placed} different parts placed in ${spreadMs} ms: ${r.counts.parts} drawn, ${r.counts.drawCalls} draw calls, ${r.counts.triangles} triangles, ` +
+          `${r.gpuParts} meshes uploaded, ${r.cpuMeshes} CPU copies, ${(1000 / mean).toFixed(1)} fps while orbiting (software rendering)`,
+      );
+      check(r.counts.drawCalls <= r.placed + 2 && r.gpuParts <= r.placed + 40, `${label}: draw calls ${r.counts.drawCalls}, uploaded ${r.gpuParts} for ${r.placed} parts`);
+    }
+    if (out(`build-real-${name}-palette.png`)) await page.screenshot({ path: out(`build-real-${name}-palette.png`), fullPage: mobile });
+    await page.fill("#build-search", "slope");
+    await buildWait(page, () => window.__web.build.list.query === "slope", 10_000, "a search");
+    await page.waitForTimeout(1500);
+    b = await buildState(page);
+    console.log(`# ${label} ${name}: search "slope" lists ${b.list.total} parts on ${b.list.pages} pages`);
+    if (out(`build-real-${name}-search.png`)) await page.screenshot({ path: out(`build-real-${name}-search.png`), fullPage: mobile });
+    check(errors.length === 0, `${label} ${name}: page errors: ${errors.join(" | ")}`);
+    await context.close();
+  }
+}
+
 async function webgpuRun(browser, origin, native) {
   const label = "webgpu";
   const context = await browser.newContext({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1, colorScheme: "light" });
@@ -1887,7 +2093,8 @@ async function main() {
   if (shots) mkdirSync(shots, { recursive: true });
   rmSync(downloads, { recursive: true, force: true });
   mkdirSync(downloads, { recursive: true });
-  const onlyBuild = args.has("--only-build");
+  const onlyPack = args.has("--only-pack");
+  const onlyBuild = args.has("--only-build") || onlyPack;
   const native = onlyBuild ? null : nativeValues();
   if (native) console.log(
     `native (${native.kernel}): emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash}, ` +
@@ -1910,9 +2117,16 @@ async function main() {
         failures.push(err.message);
       }
     }
-    for (const buildStep of [buildRun, buildPhoneRun]) {
+    for (const buildStep of onlyPack ? [buildPackRun] : [buildRun, buildPhoneRun, buildPackRun]) {
       try {
         await buildStep(browser, origin);
+      } catch (err) {
+        failures.push(err.message);
+      }
+    }
+    if (process.env.OPENBRICK_SMOKE_PACK) {
+      try {
+        await buildRealPackRun(browser, origin, process.env.OPENBRICK_SMOKE_PACK);
       } catch (err) {
         failures.push(err.message);
       }

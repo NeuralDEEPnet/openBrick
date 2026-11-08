@@ -22,9 +22,11 @@
 | `.obpart.json` | one `openbrick/part@1` document (see [06](06-part-designer-and-dsl.md)); referenced assets (SVG) inline as data URIs or beside it in an `.obpart` zip | JSON or zip |
 | `.obprofile.json` | one `ProcessProfile` or `FitProfile` (see [05](05-3d-printing-pipeline.md)) | JSON |
 | `.obrun.json` | one batch run | JSON |
-| `.obpack` | a packed, versioned LDraw subset plus derived connectors and LODs (the catalog cache) | zip with index |
+| `.obpack` | a packed, versioned LDraw subset plus derived connectors (the catalog cache); see [the `.obpack` format](#the-obpack-format) | own binary container: JSON header, deflated mesh blob, SHA-256 |
 
 **Alpha note (2026-11-08).** The assembler alpha writes an `.obrick.json` file (the UI says so) as the plain JSON text of `model.json` (schema `schemas/obrick.schema.json`, validated by `cargo xtask data`; samples in `models/*.obrick.json`), not yet as a zip: the built-in catalog needs no embedded parts, so the container would only hold one file. A reader tells the two apart by the first bytes (`{` or the zip signature `PK`). Files are written deterministically (fixed field order, one instance per line, sorted bill of materials) and include a `bom` for people and other tools, which readers ignore and recompute. The `catalog` field is `openbrick-builtin@1` until the LDraw catalog exists. Poses are `{ "pos": [x, y, z], "rot": 0 to 23 }` in integer LDU in the LDraw frame.
+
+**Part packs (2026-11-08).** A model that places parts of an LDraw pack (ids `ld.<number>`) carries `"requires": [{ "pack": "ldraw", "library": "2026-10", "fingerprint": "<SHA-256 of the pack file>" }]` after `catalog`; the field is absent when only built-in parts are used, so those files are unchanged byte for byte. A reader that does not have the pack gets an error that names it (`DocError::MissingPack`) and the page offers to add one. A pack of another library version opens the model as long as it has every part the model uses. (`requires` is an optional field added to the 1.0 schema before its first release.)
 
 Every document starts with `"openbrick": "<schema semver>"` and a `kind` (optional on `openbrick/part@1` documents; when present it is `"part"`). JSON Schemas (draft 2020-12) are published in `schemas/`. In CI, `cargo xtask data` validates every data file and the schema fixtures against them, loads each with its Rust reader, and validates what the reader writes back.
 
@@ -54,6 +56,21 @@ Every document starts with `"openbrick": "<schema semver>"` and a `kind` (option
 
 Instances are keyed by ULID; `part` is an LDraw id or a content hash of a custom part; lattice poses are integer LDU plus a rotation index 0 to 23; free poses are explicit. Colours are LDraw codes with a palette table for display.
 
+### The `.obpack` format
+
+A pack is derived from the user's own copy of the LDraw Parts Library (CC BY 2.0 or CC BY 4.0 per file). It is user-local data: it is never committed to the repository nor bundled in a release ([12](12-legal-and-naming.md)), and it carries the library's attribution and licence text and each part's author and licence line, so a copy keeps its credits. Written by `openbrick catalog import`, read by the core (`openbrick_catalog::Pack`) in the CLI and in the WebAssembly build.
+
+| bytes | content |
+|-------|---------|
+| 8 | magic `OBPACK1\n` |
+| 4 | `header_len` (little-endian) |
+| `header_len` | the header, JSON: `openbrick`, `kind: "pack"`, `format` (1), `id` (`ldraw`), `library` (the newest `UPDATE` tag of the imported parts, `2026-10`), `resolution` (`low`, `standard`, `high`), `generator`, `attribution`, `licences` (the library's `CAreadme.txt`, `CAlicense.txt`, `CAlicense4.txt`), `counts` (scanned, eligible, in the chosen categories, with connectors, imported, free placement, with joints) and `parts` |
+| 4, 8 | the compressed and the inflated size of the mesh blob |
+| n | the mesh blob, raw DEFLATE: per part in header order, its vertices (`vertices` x 3 `f32`) then its indices (`triangles` x 3 `u32`) |
+| 32 | SHA-256 of every byte before it, the pack's fingerprint |
+
+Each entry of `parts`: `id` (`ld.3001`), `name` (the LDraw description), `category` (its `!CATEGORY`, else the first word of the description), `author`, `license`, `connectivity` (`derived` or `none`), `joints` (`clip`, `hinge`, `ball`, `socket`: found but not modelled), `studs` (footprint), `heightLdu`, `body` and `pick` (integer-LDU boxes in the part's LDraw frame, without and with the studs), `connectors` (`studM`, `tubeF`, `pinM`, `pinF`, `axleM`, `axleF` with an integer position and a lattice axis), `vertices`, `triangles` and `offset` into the blob. Writing is deterministic: the same library and options give the same bytes. Reading is bounded (256 MiB file, 32 MiB header, 20,000 parts, 512 MiB inflated, 200,000 triangles per part) and checks the hash, the header, every mesh range and index, every box and every connector axis before anything is used; a damaged or hostile file is an error. Format version 1; a reader refuses another version and says to update or import again. The version number changes with the layout, never with the library.
+
 ## 3. LDraw import and export
 
 | Aspect | Mapping |
@@ -66,8 +83,8 @@ Instances are keyed by ULID; `part` is an LDraw id or a content hash of a custom
 | Colours | `LDConfig.ldr` codes; unknown codes map to the nearest palette entry and are reported |
 | Mirrored placements | negative-determinant matrices supported on import; the renderer uses pre-baked mirrored geometry; the assembler warns that mirrored placement is not physically buildable for asymmetric parts |
 | Lossless guarantee | export then import of lattice poses reproduces the document bit for bit; a CI round-trip test enforces it on a corpus |
-| Library | downloaded at first run from ldraw.org with checksum; headers and `!LICENSE` lines preserved; attribution screen lists "The LDraw Parts Library" with link; derivative caches carry the attribution |
-| Parser | our own, from the 1.0.2 spec; no LeoCAD, LDView or LPub3D code (GPL) |
+| Library | downloaded at first run from ldraw.org with checksum (today: `openbrick catalog fetch`, pinned to the 2026-10 release, a later release needs `--sha256`); headers and `!LICENSE` lines preserved (each part's author and licence line travel in the pack); attribution screen lists "The LDraw Parts Library" with link; derivative caches carry the attribution |
+| Parser | our own, from the public file-format spec (https://www.ldraw.org/article/218.html; line types 0 to 5, colour and matrix fields, BFC); no LeoCAD, LDView or LPub3D code (GPL) and no LDCad shadow data; bounded and fuzzed. Today it feeds the pack importer; reading `.ldr` and `.mpd` models is still to do |
 | Decals | `!TEXMAP` parsed and stored; rendered in v1.x |
 
 ## 4. 3MF

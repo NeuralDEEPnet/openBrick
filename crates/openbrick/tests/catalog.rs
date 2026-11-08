@@ -62,7 +62,7 @@ fn import_writes_a_pack_and_reports_the_coverage() {
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     let j: Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(j["ok"], true);
-    assert_eq!(j["report"]["counts"]["scanned"], 17);
+    assert_eq!(j["report"]["counts"]["scanned"], 16);
     assert_eq!(j["report"]["counts"]["imported"], 11);
     assert_eq!(j["report"]["excluded"]["minifig"], 1);
     assert!(out.exists());

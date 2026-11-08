@@ -186,9 +186,27 @@ export class CoreClient {
     return this.#send({ type: "asmInit" });
   }
 
-  /** The render meshes of every catalog part ({ meshes }); `detail` false for the cheap level. */
-  assemblerMeshes(detail = true) {
-    return this.#send({ type: "asmMeshes", detail });
+  /**
+   * The render meshes ({ meshes }): the built-in parts, or the catalog part numbers in `parts`
+   * (at most 256 at a time); `detail` false for the cheap level of the built-in ones.
+   */
+  assemblerMeshes(detail = true, parts = undefined) {
+    return this.#send({ type: "asmMeshes", detail, parts });
+  }
+
+  /** Add an LDraw pack (the bytes of an .obpack) to the catalog: { pack, catalog, kept, ...state }. */
+  assemblerLoadPack(bytes) {
+    return this.#send({ type: "asmLoadPack", bytes });
+  }
+
+  /** Drop the pack: { kept, catalog, ...state }. */
+  assemblerUnloadPack() {
+    return this.#send({ type: "asmUnloadPack" });
+  }
+
+  /** What a .obrick document needs the core does not have: { requires, missing, missingCount }. */
+  assemblerNeeds(text) {
+    return this.#send({ type: "asmNeeds", text });
   }
 
   /** The engine's snapped pose for a part under a pointer ray (LDU, model frame), or null. */

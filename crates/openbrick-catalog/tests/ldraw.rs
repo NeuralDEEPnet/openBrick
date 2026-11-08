@@ -89,26 +89,19 @@ fn volume(m: &openbrick_catalog::builtin::PartMesh) -> f64 {
 #[test]
 fn the_fixture_imports_with_the_right_selection() {
     let (pack, report) = pack_of(&all_categories());
-    assert_eq!(report.counts.scanned, 17);
+    assert_eq!(report.counts.scanned, 16);
     // 3023 is an alias ("~Moved to"), 973 a minifigure part, 3003a a Duplo-compatible part,
-    // 3003p01 and 3100 a pattern and a word-mark name, 9999 another category.
+    // 3003p01 a pattern, 9999 another category.
     assert_eq!(report.excluded.not_a_part, 1);
     assert_eq!(report.excluded.minifig, 1);
     assert_eq!(report.excluded.other_systems, 1);
-    assert_eq!(report.excluded.prints_and_stickers, 2);
+    assert_eq!(report.excluded.prints_and_stickers, 1);
     assert_eq!(report.excluded.other_categories, 1);
     assert_eq!(report.counts.eligible, 12);
     assert_eq!(report.counts.imported, 11);
     assert_eq!(report.library, "2026-01");
     let ids: Vec<&str> = pack.header.parts.iter().map(|p| p.id.as_str()).collect();
-    for banned in [
-        "ld.973",
-        "ld.3003p01",
-        "ld.3023",
-        "ld.3003a",
-        "ld.3100",
-        "ld.9999",
-    ] {
+    for banned in ["ld.973", "ld.3003p01", "ld.3023", "ld.3003a", "ld.9999"] {
         assert!(!ids.contains(&banned), "{banned} must be left out: {ids:?}");
     }
     assert!(pack
@@ -299,6 +292,23 @@ fn limit_and_category_filter_and_determinism() {
         categories: Some(vec!["brick".into()]),
         ..ImportOptions::default()
     };
+    // A small limit over several categories takes some of each, not only the first category's parts.
+    let spread = ImportOptions {
+        limit: Some(4),
+        categories: Some(["Brick", "Plate", "Tile"].map(String::from).to_vec()),
+        ..ImportOptions::default()
+    };
+    let (s, _) = pack_of(&spread);
+    let cats: Vec<&str> = s.header.parts.iter().map(|p| p.category.as_str()).collect();
+    assert_eq!(cats.len(), 4);
+    assert!(
+        cats.contains(&"Brick") && cats.contains(&"Plate") && cats.contains(&"Tile"),
+        "{cats:?}"
+    );
+    assert!(
+        cats.windows(2).all(|w| w[0] <= w[1] || w[0] != "Tile"),
+        "palette order: {cats:?}"
+    );
     let (a, _) = pack_of(&one);
     assert_eq!(a.header.parts.len(), 2);
     assert!(a.header.parts.iter().all(|p| p.category == "Brick"));

@@ -100,7 +100,7 @@ pub struct ImportArgs {
     /// Windscreen, Panel, Cylinder, Cone, Fence, Bracket.
     #[arg(long, value_delimiter = ',', value_name = "A,B")]
     pub category_filter: Option<Vec<String>>,
-    /// The most parts to write (default 400; 0 for all that qualify).
+    /// The most parts to write (default 600, taken from every category in turn; 0 for all that qualify).
     #[arg(long, value_name = "N")]
     pub limit: Option<usize>,
     /// Which primitives round parts use: low (p/8), standard (p/) or high (p/48).
@@ -170,7 +170,7 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
         limit: match a.limit {
             Some(0) => None,
             Some(n) => Some(n),
-            None => Some(400),
+            None => Some(600),
         },
         include_unconnected: a.include_unconnected,
         ..ImportOptions::default()

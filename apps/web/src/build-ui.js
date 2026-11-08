@@ -8,6 +8,23 @@
 import { createAssemblyView } from "./assembly-view.js";
 import { ModelKeeper } from "./model-keeper.js";
 import {
+  MeshCache,
+  PAGE_SIZE,
+  attributionLine,
+  categoriesOf,
+  creditLine,
+  filterParts,
+  gpuPlan,
+  isPackFile,
+  missingPackText,
+  packFileLabel,
+  pageHolding,
+  pageOf,
+  partBadge,
+  partNote,
+  rangeText,
+} from "./parts-list.js";
+import {
   aimRay,
   aimStep,
   bomRows,
@@ -134,8 +151,18 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   let ready = null;
   let catalog = null;
   let view = null;
-  let meshes = null;
   let detail = true;
+  /** CPU copies of part meshes (for thumbnails and uploads), least recently used out first. */
+  const cpuMeshes = new MeshCache();
+  /** Thumbnail canvases by part number, drawn once when first listed. */
+  const thumbs = new Map();
+  /** The LDraw pack that is loaded: { info, bytes, name } or null. */
+  let pack = null;
+  /** The palette's search, category and page. */
+  const list = { query: "", category: "", page: 0, indexes: [] };
+  /** A model that needs a pack, kept until one is added: { text, name } or null. */
+  let pendingModel = null;
+  let partIndex = new Map();
 
   // What is chosen and shown.
   const choice = { part: null, colour: null, rot: 0, tool: "place" };
@@ -181,9 +208,35 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     confirming: false,
     counts: null,
     thumbnails: 0,
+    /** The palette: parts listed, the page shown, the pack loaded, mesh bookkeeping. */
+    list: { total: 0, shown: 0, page: 0, pages: 1, query: "", category: "" },
+    pack: null,
+    gpuParts: 0,
+    cpuMeshes: 0,
+    needs: null,
     /** Client coordinates of a point in the model frame (LDU), for tests. */
     project: (pos) => view?.project(pos),
     measure: (n) => viewer.measureFrames(n),
+    /**
+     * Place up to `n` different parts of the catalog, one at its own spot on the ground: each pose is the
+     * core's answer to a ray straight down (the page picks the spots, never the poses). For the smoke test
+     * and the numbers on draw calls and uploaded meshes with many part types.
+     */
+    async spread(n) {
+      const candidates = catalog.parts.map((p, i) => ({ p, i })).filter(({ p }) => !p.base && p.connectivity !== "none");
+      let placed = 0;
+      for (const { p } of candidates) {
+        if (placed >= n) break;
+        const x = (placed % 16) * 100 - 750;
+        const z = Math.floor(placed / 16) * 100 - 400;
+        const snap = await asm.assemblerSnap(p.id, 0, aimRay(x, z));
+        if (!snap?.valid) continue;
+        await asm.assemblerApply({ op: "add", part: p.id, pos: snap.pos, rot: snap.rot, colour: choice.colour });
+        placed += 1;
+      }
+      await refresh();
+      return { placed, counts: info.counts, gpuParts: info.gpuParts, cpuMeshes: info.cpuMeshes };
+    },
     /**
      * Time `n` of each core round trip a pointer causes, in ms per call, with
      * the model as it is: a snap query and a pick at `at` (client coordinates; the middle of the view by default),
@@ -221,7 +274,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     return chain;
   };
 
-  const partOf = (id) => catalog.parts.findIndex((p) => p.id === id);
+  const partOf = (id) => partIndex.get(id) ?? -1;
   const names = () => Object.fromEntries(instances.map((i) => [i.id, catalog.parts[i.part].name]));
 
   function message(text, { alert = false } = {}) {
@@ -244,7 +297,10 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     instances = decodeInstances(next.instances);
     byId.clear();
     for (const i of instances) byId.set(i.id, i);
-    view.setInstances(groupByPart(instances));
+    const groups = groupByPart(instances);
+    await uploadParts([...groups.keys()]);
+    view.setInstances(groups);
+    releaseSpare();
     info.parts = instances.length;
     info.stats = next.stats;
     info.revision = next.revision;
@@ -263,10 +319,44 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function syncDetail(count) {
     const want = wantDetail(count, detail);
     if (want === detail) return;
-    ({ meshes } = await asm.assemblerMeshes(want));
+    // Only the built-in parts have two levels: fetch them again at the new one (the view replaces the
+    // ones it holds, and the instances are drawn again by the setInstances that follows).
+    const { meshes } = await asm.assemblerMeshes(want);
     detail = want;
     info.detail = want;
-    view.setMeshes(meshes);
+    view.addMeshes(meshes);
+    for (const m of meshes) cpuMeshes.has(m.index) && cpuMeshes.set(m.index, m, keepMesh);
+  }
+
+  // ----------------------------------------------------------- meshes of hundreds of parts
+
+  /** Part numbers whose mesh must stay: the placed ones and the one chosen. */
+  const keepMesh = (index) => index === choice.part || instances.some((i) => i.part === index);
+
+  /** The CPU meshes of these part numbers, fetched in one request for the ones not held. */
+  async function meshesOf(indices) {
+    const missing = [...new Set(indices)].filter((i) => !cpuMeshes.has(i));
+    for (let at = 0; at < missing.length; at += 128) {
+      const { meshes } = await asm.assemblerMeshes(detail, missing.slice(at, at + 128));
+      for (const m of meshes) cpuMeshes.set(m.index, m, (k) => keepMesh(k) || indices.includes(k));
+    }
+    return new Map(indices.map((i) => [i, cpuMeshes.get(i)]));
+  }
+
+  /** Make sure the view has a mesh for each of these part numbers. */
+  async function uploadParts(indices) {
+    const need = [...new Set(indices)].filter((i) => !view.has(i));
+    if (need.length === 0) return;
+    const got = await meshesOf(need);
+    view.addMeshes(need.map((i) => got.get(i)));
+  }
+
+  /** Drop GPU meshes of parts that are neither placed nor chosen, beyond a small spare. */
+  function releaseSpare() {
+    const plan = gpuPlan({ placed: instances.map((i) => i.part), ghost: choice.part, held: view.resident() });
+    if (plan.drop.length) view.release(plan.drop);
+    info.gpuParts = view.resident().length;
+    info.cpuMeshes = cpuMeshes.size;
   }
 
   function renderStats() {
@@ -308,7 +398,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     }
   }
 
-  const partName = () => catalog.parts[choice.part].name;
+  const partName = () => displayName(catalog.parts[choice.part]);
 
   function setDirty(on) {
     dirty = on;
@@ -595,6 +685,19 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   async function loadText(text, name) {
     try {
+      // A model made with an LDraw pack says so: if the parts are not here, offer to add the pack
+      // instead of failing, and keep the model for when it is added.
+      const needs = await asm.assemblerNeeds(text);
+      const why = missingPackText(needs, pack !== null);
+      if (why) {
+        pendingModel = { text, name };
+        showNeeds(why);
+        message(`${name} needs parts that are not loaded. ${why}`, { alert: true });
+        status([`${name} needs an LDraw pack`, why], "bad");
+        return false;
+      }
+      showNeeds(null);
+      pendingModel = null;
       const next = await asm.assemblerLoad(text);
       modelName = name;
       $("build-name").value = name;
@@ -738,28 +841,101 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     updateHover();
   }
 
-  function selectPart(index) {
+  async function selectPart(index) {
     choice.part = index;
     info.selected = catalog.parts[index].id;
     partGroup?.setChecked(index);
+    $("build-part-note").textContent = partNote(catalog.parts[index]) ?? "";
     if (choice.tool !== "place") setTool("place");
     else updateHover();
     message(`${partName()} selected`);
+    // Its mesh may not be uploaded yet (the palette lists parts it has not drawn).
+    try {
+      await uploadParts([index]);
+      releaseSpare();
+    } catch (err) {
+      message(err.message ?? String(err), { alert: true });
+    }
+    updateHover();
   }
+
+  /** A thumbnail slot for part `index`: a placeholder now, the picture when its mesh arrives. */
+  function thumbSlot(index) {
+    // The canvas itself moves from page to page (a clone would not carry the picture); a part is listed once.
+    const cached = thumbs.get(index);
+    if (cached) return cached;
+    return h("span", { className: "thumb pending", "aria-hidden": "true", "data-part": String(index) });
+  }
+
+  let thumbChain = Promise.resolve();
+  /** Draw the thumbnails of parts on the page that have none yet, one request for all of them. */
+  function drawThumbs(indices) {
+    const todo = indices.filter((i) => !thumbs.has(i));
+    if (todo.length === 0) return thumbChain;
+    thumbChain = thumbChain
+      .then(async () => {
+        const got = await meshesOf(todo);
+        for (const i of todo) {
+          const m = got.get(i);
+          if (!m) continue;
+          const canvas = thumbnail(m, colourHex(catalog.palette, catalog.palette.defaultPart));
+          thumbs.set(i, canvas);
+          document.querySelector(`#build-parts [data-part="${i}"]`)?.replaceWith(canvas);
+        }
+        info.thumbnails = thumbs.size;
+        releaseSpare();
+      })
+      .catch(() => {});
+    return thumbChain;
+  }
+
+  /** The palette: the parts that match the search and category, one page of them, and its pager. */
+  function renderPartList({ keepPage = false } = {}) {
+    list.indexes = filterParts(catalog.parts, { query: list.query, category: list.category });
+    if (!keepPage) list.page = 0;
+    const { page, pages, items } = pageOf(list.indexes, list.page, PAGE_SIZE);
+    list.page = page;
+    const buttons = items.map((index) => {
+      const p = catalog.parts[index];
+      const badge = partBadge(p);
+      const label = displayName(p);
+      const node = h(
+        "span",
+        { className: "choice-body" },
+        thumbSlot(index),
+        h("span", { className: "choice-label", text: label.replace(/ x /g, "×") }),
+        badge ? h("span", { className: "choice-badge", text: badge }) : "",
+      );
+      return { value: index, label: badge ? `${label} (${badge})` : label, node };
+    });
+    partGroup = radioGroup($("build-parts"), buttons, (i) => selectPart(i));
+    if (choice.part !== null) partGroup.setChecked(choice.part);
+    $("build-range").textContent = rangeText(list.indexes.length, page, PAGE_SIZE);
+    $("build-prev").disabled = page === 0;
+    $("build-next").disabled = page >= pages - 1;
+    Object.assign(info.list, { total: list.indexes.length, shown: items.length, page, pages, query: list.query, category: list.category });
+    drawThumbs(items);
+  }
+
+  function fillCategories() {
+    const select = $("build-category");
+    const keep = list.category;
+    select.replaceChildren(h("option", { value: "", text: `All categories (${catalog.parts.length})` }), ...categoriesOf(catalog.parts).map((c) => h("option", { value: c.name, text: `${c.name} (${c.count})` })));
+    select.value = [...select.options].some((o) => o.value === keep) ? keep : "";
+    list.category = select.value;
+    // The category filter is only worth showing when there is more than a handful of parts.
+    $("build-part-tools").hidden = catalog.parts.length <= PAGE_SIZE;
+  }
+
+  const displayName = (p) => p.name.replace(/\s+/g, " ").trim();
 
   function buildPalettes() {
     const base = catalog.palette.defaultPart;
     choice.colour = base;
     info.colour = base;
-    const parts = catalog.parts.map((p, index) => {
-      const mesh = meshes.find((m) => m.index === index);
-      const node = h("span", { className: "choice-body" }, mesh ? thumbnail(mesh, colourHex(catalog.palette, base)) : "", h("span", { className: "choice-label", text: p.name.replace(/ x /g, "×") }));
-      return { value: index, label: p.name, node };
-    });
-    info.thumbnails = parts.length;
-    // The baseplate is the model's floor: it is listed last, so the first
-    // part chosen is a brick.
-    partGroup = radioGroup($("build-parts"), parts, (i) => selectPart(i));
+    partIndex = new Map(catalog.parts.map((p, i) => [p.id, i]));
+    fillCategories();
+    renderPartList();
     colourGroup = radioGroup(
       $("build-colours"),
       catalog.palette.colours.map((c) => {
@@ -774,7 +950,123 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       },
     );
     colourGroup.select(base);
-    partGroup.select(catalog.parts.findIndex((p) => p.id === "ob.brick-2x4"));
+    // The baseplate is the model's floor: it is listed last among the built-ins, so the first
+    // part chosen is a brick.
+    const first = partIndex.get("ob.brick-2x4");
+    // Show the page that holds it, and choose it.
+    list.page = pageHolding(list.indexes.indexOf(first), PAGE_SIZE);
+    renderPartList({ keepPage: true });
+    selectPart(first);
+  }
+
+  // ----------------------------------------------------------- LDraw packs
+
+  /** Show or hide the attribution and licence text for the loaded pack. */
+  function renderPackInfo() {
+    const box = $("build-pack-info");
+    box.hidden = !pack;
+    info.pack = pack ? { library: pack.info.library, parts: pack.info.parts, fingerprint: pack.info.fingerprint, name: pack.name } : null;
+    if (!pack) return;
+    $("build-attribution").textContent = attributionLine(pack.info);
+    $("build-licences").textContent = pack.info.licences.map((l) => `${l.name}\n\n${l.text}`).join("\n\n--------\n\n");
+    $("build-pack-counts").textContent = `Pack ${packFileLabel(pack.name)}: ${pack.info.counts.imported} parts from ${pack.info.counts.scanned.toLocaleString("en-US")} files of LDraw library ${pack.info.library}; ${pack.info.counts.freePlacement} free placement only; ${pack.info.counts.withJoints} with joints that are not modelled yet.`;
+  }
+
+  /** Show the credit of the chosen part (its author and licence line) when it comes from a pack. */
+  function renderCredit() {
+    const p = catalog.parts[choice.part];
+    $("build-credit").textContent = p && p.origin === "ldraw" ? creditLine(p) : "";
+  }
+
+  /** Take an LDraw pack file: the core checks it and joins its parts to the catalog. */
+  async function loadPackBytes(bytes, name) {
+    try {
+      message(`Reading ${name}…`);
+      const r = await asm.assemblerLoadPack(bytes);
+      pack = { info: r.pack, bytes, name };
+      keeper.rememberPack(bytes);
+      catalog = r.catalog;
+      view.setCatalog(catalog);
+      thumbs.clear();
+      cpuMeshes.clear();
+      info.error = null;
+      renderPackInfo();
+      buildPartsAgain();
+      await applyState(r);
+      message(`Added ${r.pack.parts} parts from the LDraw library ${r.pack.library}.${r.kept ? "" : " The model on screen uses parts the pack lacks, so it was cleared."}`);
+      status([`${name}: ${r.pack.parts} parts added`, packFileLabel(name)]);
+      if (pendingModel) {
+        const m = pendingModel;
+        pendingModel = null;
+        showNeeds(null);
+        await replaceModel(m.name, async () => m);
+      }
+      return true;
+    } catch (err) {
+      const text = err.message ?? String(err);
+      message(`Could not add ${name}: ${text}`, { alert: true });
+      status([`Could not add ${name}`, text], "bad");
+      info.error = text;
+      return false;
+    }
+  }
+
+  /** Rebuild the part list after the catalog changed, keeping the chosen part when it still exists. */
+  function buildPartsAgain() {
+    const keepId = choice.part !== null ? catalog.parts[choice.part]?.id : null;
+    partIndex = new Map(catalog.parts.map((p, i) => [p.id, i]));
+    fillCategories();
+    const stay = keepId && partIndex.has(keepId) ? partIndex.get(keepId) : partIndex.get("ob.brick-2x4");
+    choice.part = stay;
+    list.page = 0;
+    renderPartList();
+    selectPart(stay);
+  }
+
+  async function removePack() {
+    try {
+      const r = await asm.assemblerUnloadPack();
+      pack = null;
+      keeper.rememberPack(null);
+      catalog = r.catalog;
+      view.setCatalog(catalog);
+      thumbs.clear();
+      cpuMeshes.clear();
+      renderPackInfo();
+      buildPartsAgain();
+      await applyState(r);
+      message(r.kept ? "Removed the LDraw pack" : "Removed the LDraw pack. The model on screen used its parts, so it was cleared.");
+    } catch (err) {
+      message(err.message ?? String(err), { alert: true });
+    }
+  }
+
+  async function openPackFile(file) {
+    if (!file) return;
+    if (!isPackFile(file.name)) return message(`${file.name} is not a parts pack: choose an .obpack made by "openbrick catalog import" (see docs/guides/ldraw-parts.md)`, { alert: true });
+    const limit = catalog.maxPackBytes;
+    if (file.size > limit) return message(`${file.name} is ${file.size} bytes; a pack can be at most ${limit} bytes`, { alert: true });
+    await loadPackBytes(new Uint8Array(await file.arrayBuffer()), file.name);
+  }
+
+  async function choosePack() {
+    if (files.desktop) {
+      try {
+        await openPackFile(await files.open("pack", catalog.maxPackBytes));
+      } catch (err) {
+        message(String(err?.message ?? err), { alert: true });
+      }
+    } else {
+      $("build-pack-file").click();
+    }
+  }
+
+  /** The notice for a model that needs a pack: what it needs, and a button to add one. */
+  function showNeeds(text) {
+    info.needs = text;
+    $("build-needs").hidden = text === null;
+    $("build-needs-text").textContent = text ?? "";
+    if (text !== null) $("build-needs-add").focus();
   }
 
   function wireControls() {
@@ -799,6 +1091,36 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       }
     });
     $("build-open").addEventListener("click", () => chooseOpen());
+    $("build-pack-open").addEventListener("click", () => choosePack());
+    $("build-needs-add").addEventListener("click", () => choosePack());
+    $("build-needs-dismiss").addEventListener("click", () => {
+      pendingModel = null;
+      showNeeds(null);
+    });
+    $("build-pack-remove").addEventListener("click", () => enqueue(removePack));
+    $("build-pack-file").addEventListener("change", () => {
+      const file = $("build-pack-file").files?.[0];
+      $("build-pack-file").value = "";
+      enqueue(() => openPackFile(file));
+    });
+    let searchTimer = null;
+    $("build-search").addEventListener("input", () => {
+      list.query = $("build-search").value;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => renderPartList(), 120);
+    });
+    $("build-category").addEventListener("change", () => {
+      list.category = $("build-category").value;
+      renderPartList();
+    });
+    $("build-prev").addEventListener("click", () => {
+      list.page = Math.max(0, list.page - 1);
+      renderPartList({ keepPage: true });
+    });
+    $("build-next").addEventListener("click", () => {
+      list.page += 1;
+      renderPartList({ keepPage: true });
+    });
     $("build-file").addEventListener("change", () => {
       const file = $("build-file").files?.[0];
       $("build-file").value = "";
@@ -824,9 +1146,10 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     const first = await asm.assemblerState();
     detail = wantDetail(first.stats.parts, true);
     info.detail = detail;
-    ({ meshes } = await asm.assemblerMeshes(detail));
+    const { meshes } = await asm.assemblerMeshes(detail);
     view = createAssemblyView(viewer, { catalog, lduMm: catalog.lduMm });
-    view.setMeshes(meshes);
+    view.addMeshes(meshes);
+    for (const m of meshes) cpuMeshes.set(m.index, m, keepMesh);
     buildPalettes();
     wireControls();
     wirePointer();

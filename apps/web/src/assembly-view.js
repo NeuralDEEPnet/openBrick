@@ -1,6 +1,7 @@
 // The three.js side of Build mode (docs/plan/07 section 9): one InstancedMesh per
-// catalog part with the colour per instance (14 draw calls at most, however many
-// parts), a translucent ghost of the part being placed, and an outline of the
+// placed catalog part with the colour per instance (one draw call per part type in
+// the model, however many parts; a pack of hundreds of part types uploads a mesh only
+// for the ones placed or being placed, see addMeshes and release), a translucent ghost of the part being placed, and an outline of the
 // part under the pointer. It draws what the core says and turns pointer
 // positions into rays in the model's frame; it never decides where a part goes
 // (CLAUDE.md: the UI never computes geometry or connectivity).
@@ -21,7 +22,8 @@ const GHOST = { valid: "#2fbf71", invalid: "#e5484d" };
  * @param viewer  the viewer of src/viewer.js
  * @param options { catalog, lduMm }  the catalog JSON of the core
  */
-export function createAssemblyView(viewer, { catalog, lduMm }) {
+export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
+  let catalog = initialCatalog;
   const { THREE, scene, camera, canvas, markDirty, setBuildActive, frameSphere } = viewer.internals;
   const root = new THREE.Group();
   root.name = "assembly (LDraw frame, LDU)";
@@ -100,19 +102,61 @@ export function createAssemblyView(viewer, { catalog, lduMm }) {
     }
   }
 
-  /** The render meshes of the catalog parts: [{ index, positions, indices, triangles }]. */
-  function setMeshes(meshes) {
-    // The ghost still holds one of the geometries about to be disposed: let go of it first.
-    ghost.visible = false;
-    ghost.geometry = new THREE.BufferGeometry();
-    ghostPart = -1;
-    for (const entry of parts.values()) {
+  /** Use another catalog (a part pack was added or removed); part numbers of the parts already here are unchanged. */
+  function setCatalog(next) {
+    catalog = next;
+    // A part number may name another part now (the pack was replaced): forget what was uploaded.
+    for (const [index, entry] of [...parts]) {
+      if (!next.parts[index] || entry.id !== next.parts[index].id) release([index]);
+    }
+  }
+
+  /** Whether a mesh of catalog part `index` is uploaded. */
+  function has(index) {
+    return parts.has(index);
+  }
+
+  /**
+   * Upload render meshes ([{ index, positions, indices, triangles }]); a part that is already here gets the new
+   * one (a mesh level change), and its instances are drawn again by the next setInstances.
+   */
+  function addMeshes(meshes) {
+    for (const m of meshes) {
+      const old = parts.get(m.index);
+      if (old) {
+        if (ghostPart === m.index) {
+          ghost.visible = false;
+          ghost.geometry = new THREE.BufferGeometry();
+          ghostPart = -1;
+        }
+        dropMesh(old);
+        old.geometry.dispose();
+      }
+      parts.set(m.index, { geometry: geometryOf(m), triangles: m.triangles, mesh: null, capacity: 0, id: catalog.parts[m.index]?.id });
+    }
+    markDirty();
+  }
+
+  /** Let go of the uploaded meshes of these part numbers (GPU memory); not the ghost's. */
+  function release(indices) {
+    for (const index of indices) {
+      const entry = parts.get(index);
+      if (!entry) continue;
+      if (ghostPart === index) {
+        ghost.visible = false;
+        ghost.geometry = new THREE.BufferGeometry();
+        ghostPart = -1;
+      }
       dropMesh(entry);
       entry.geometry.dispose();
+      parts.delete(index);
     }
-    parts.clear();
-    for (const m of meshes) parts.set(m.index, { geometry: geometryOf(m), triangles: m.triangles, mesh: null, capacity: 0 });
     markDirty();
+  }
+
+  /** The part numbers with an uploaded mesh, oldest upload first. */
+  function resident() {
+    return [...parts.keys()];
   }
 
   function ensureMesh(index, count) {
@@ -169,8 +213,10 @@ export function createAssemblyView(viewer, { catalog, lduMm }) {
       }
       return;
     }
+    const entry = parts.get(g.part);
+    if (!entry) return; // its mesh is still on the way
     if (g.part !== ghostPart) {
-      ghost.geometry = parts.get(g.part).geometry;
+      ghost.geometry = entry.geometry;
       ghostPart = g.part;
     }
     ghost.matrix.fromArray(instanceMatrix(catalog.rotations, g.rot, g.pos));
@@ -244,7 +290,11 @@ export function createAssemblyView(viewer, { catalog, lduMm }) {
   }
 
   return {
-    setMeshes,
+    setCatalog,
+    addMeshes,
+    release,
+    has,
+    resident,
     setInstances,
     setGhost,
     setOutline,

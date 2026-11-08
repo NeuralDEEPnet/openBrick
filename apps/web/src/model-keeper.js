@@ -12,6 +12,7 @@ export class ModelKeeper {
   #client;
   #seen;
   #text = null;
+  #pack = null;
   #previous = null;
   #onRestored;
 
@@ -37,9 +38,19 @@ export class ModelKeeper {
     if (typeof text === "string") this.#text = text;
   }
 
+  /** Remember the bytes of the LDraw pack that is loaded (or null), to send them again to a replaced worker. */
+  rememberPack(bytes) {
+    this.#pack = bytes instanceof Uint8Array ? bytes : null;
+  }
+
+  /** The bytes of the loaded pack, or null. */
+  get pack() {
+    return this.#pack;
+  }
+
   /**
-   * If the worker was replaced since the last request, load the remembered model into the
-   * new one. Resolves with true when it did. The restart is noted before anything is
+   * If the worker was replaced since the last request, load the loaded pack and then the remembered
+   * model into the new one. Resolves with true when it did. The restart is noted before anything is
    * awaited, and the load is sent in the same turn, so a request made right after goes
    * behind it in the worker's queue.
    */
@@ -47,6 +58,7 @@ export class ModelKeeper {
     const now = this.#client.restarts ?? 0;
     if (now === this.#seen) return false;
     this.#seen = now;
+    if (this.#pack !== null) await this.#client.assemblerLoadPack(this.#pack);
     if (this.#text === null) return false;
     const state = await this.#client.assemblerLoad(this.#text);
     await this.#onRestored(state);
@@ -75,6 +87,9 @@ export class ModelKeeper {
         "assemblerRedo",
         "assemblerState",
         "assemblerLoad",
+        "assemblerLoadPack",
+        "assemblerUnloadPack",
+        "assemblerNeeds",
         "assemblerSave",
         "assemblerSample",
         "assemblerTurn",

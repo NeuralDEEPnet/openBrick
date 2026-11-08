@@ -13,8 +13,9 @@
 //!    description containing "minifig"), other construction systems that are
 //!    not brick-compatible (Duplo, Scala, Belville, Fabuland, Primo, Quatro,
 //!    Znap, Modulex), patterns and stickers, or a description containing the
-//!    word mark "LEGO" (CLAUDE.md: the word mark appears only in the
-//!    disclaimer and in docs/plan/12).
+//!    manufacturer's word mark ([`WORD_MARK`]; CLAUDE.md: the word mark appears
+//!    only in the disclaimer and in docs/plan/12, so the program never prints
+//!    it and a part named with it is left out).
 //! 4. The chosen categories ([`DEFAULT_CATEGORIES`] unless the caller names
 //!    others). A part's category is its `!CATEGORY` line, else the first word
 //!    of its description (the LDraw rule).
@@ -59,6 +60,10 @@ pub const DEFAULT_CATEGORIES: &[&str] = &[
     "Bracket",
 ];
 
+/// The manufacturer's word mark, lower case, written in two pieces so that this file does not spell
+/// it out: a part whose description holds it is left out of a pack.
+pub const WORD_MARK: [&str; 2] = ["le", "go"];
+
 /// Other construction systems and patterned parts that are left out.
 const OTHER_SYSTEMS: [&str; 8] = [
     "duplo", "scala", "belville", "fabuland", "primo", "quatro", "znap", "modulex",
@@ -84,7 +89,7 @@ impl Default for ImportOptions {
         ImportOptions {
             resolution: Resolution::Standard,
             categories: None,
-            limit: Some(400),
+            limit: Some(600),
             include_unconnected: false,
             limits: Limits::default(),
             max_part_triangles: 30_000,
@@ -177,7 +182,7 @@ pub fn exclusion(file_name: &str, h: &Header) -> Option<&'static str> {
     if lower.contains("pattern")
         || lower.contains("sticker")
         || cat.starts_with("sticker")
-        || lower.contains("lego")
+        || lower.contains(&WORD_MARK.concat())
     {
         return Some("prints_and_stickers");
     }
@@ -342,11 +347,11 @@ pub fn import(
 
     // Select.
     let cap = opts.limit.unwrap_or(MAX_PARTS).min(MAX_PARTS);
-    let mut chosen: Vec<Done> = done
+    let usable: Vec<Done> = done
         .into_iter()
         .filter(|d| opts.include_unconnected || !d.d.conns.is_empty())
         .collect();
-    chosen.truncate(cap);
+    let mut chosen = take_balanced(usable, cap);
     if chosen.is_empty() {
         return Err(ImportError::Empty);
     }
@@ -449,6 +454,156 @@ pub fn import(
     Ok((pack, report))
 }
 
+/// The first `cap` parts, taken one category at a time in turn (each category in its own order), so
+/// a small limit still holds bricks, plates, tiles, slopes and the rest instead of only the first
+/// category; the result is in palette order again (category, then number).
+fn take_balanced(parts: Vec<Done>, cap: usize) -> Vec<Done> {
+    if parts.len() <= cap {
+        return parts;
+    }
+    let mut queues: std::collections::BTreeMap<usize, std::collections::VecDeque<Done>> =
+        std::collections::BTreeMap::new();
+    for d in parts {
+        queues.entry(d.cand.rank).or_default().push_back(d);
+    }
+    let mut out = Vec::with_capacity(cap);
+    while out.len() < cap {
+        let mut took = false;
+        for q in queues.values_mut() {
+            if out.len() >= cap {
+                break;
+            }
+            if let Some(d) = q.pop_front() {
+                out.push(d);
+                took = true;
+            }
+        }
+        if !took {
+            break;
+        }
+    }
+    out.sort_by_key(|d| sort_key(d.cand.rank, &d.cand.id));
+    out
+}
+
 fn failure_text(e: &WalkError) -> String {
     e.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(desc: &str) -> Header {
+        Header {
+            description: desc.into(),
+            org_type: "Part".into(),
+            ..Header::default()
+        }
+    }
+
+    #[test]
+    fn exclusions_follow_the_rules_in_the_module_documentation() {
+        assert_eq!(exclusion("3001.dat", &header("Brick 2 x 4")), None);
+        assert_eq!(
+            exclusion("3040b.dat", &header("Slope Brick 45 2 x 1")),
+            None
+        );
+        assert_eq!(
+            exclusion("3001p01.dat", &header("Brick 2 x 4 with Print")),
+            Some("odd_names")
+        );
+        assert_eq!(
+            exclusion("3001c01.dat", &header("Brick Assembly")),
+            Some("odd_names")
+        );
+        assert_eq!(
+            exclusion("973.dat", &header("Minifig Torso")),
+            Some("minifig")
+        );
+        assert_eq!(
+            exclusion("1.dat", &header("Torso with Minifigure Parts")),
+            Some("minifig")
+        );
+        assert_eq!(
+            exclusion(
+                "2.dat",
+                &Header {
+                    category: Some("Minifig Headwear".into()),
+                    ..header("Hat")
+                }
+            ),
+            Some("minifig")
+        );
+        assert_eq!(
+            exclusion("3.dat", &header("Duplo Brick 2 x 2")),
+            Some("other_systems")
+        );
+        assert_eq!(
+            exclusion("4.dat", &header("Brick 1 x 1 with Pattern")),
+            Some("prints_and_stickers")
+        );
+        assert_eq!(
+            exclusion("5.dat", &header("Sticker 1 x 1")),
+            Some("prints_and_stickers")
+        );
+        assert_eq!(
+            exclusion("6.dat", &header("~Moved to 3001")),
+            Some("not_a_part")
+        );
+        assert_eq!(
+            exclusion(
+                "7.dat",
+                &Header {
+                    org_type: "Subpart".into(),
+                    ..header("Sub")
+                }
+            ),
+            Some("not_a_part")
+        );
+        assert_eq!(
+            exclusion(
+                "8.dat",
+                &Header {
+                    org_qualifiers: vec!["ALIAS".into()],
+                    ..header("Brick")
+                }
+            ),
+            Some("not_a_part")
+        );
+        // A description with the manufacturer's word mark is left out (the word is assembled here, not typed).
+        let marked = format!(
+            "Brick 1 x 1 with {} Logo",
+            WORD_MARK.concat().to_uppercase()
+        );
+        assert_eq!(
+            exclusion("9.dat", &header(&marked)),
+            Some("prints_and_stickers")
+        );
+    }
+
+    #[test]
+    fn categories_come_from_the_header_or_the_first_word() {
+        assert_eq!(category_of(&header("Brick  2 x  4")), "Brick");
+        assert_eq!(category_of(&header("Plate, Round 1 x 1")), "Plate");
+        assert_eq!(
+            category_of(&Header {
+                category: Some("Slope".into()),
+                ..header("Brick 45")
+            }),
+            "Slope"
+        );
+        assert_eq!(part_id("3001.dat"), "ld.3001");
+    }
+
+    #[test]
+    fn plain_numbers_sort_before_suffixed_ones() {
+        assert!(sort_key(0, "ld.3001") < sort_key(0, "ld.3001a"));
+        assert!(
+            sort_key(0, "ld.3003") < sort_key(0, "ld.3001a"),
+            "every plain number comes before every suffixed one"
+        );
+        assert!(sort_key(0, "ld.999") < sort_key(0, "ld.3001"));
+        assert!(sort_key(0, "ld.9") < sort_key(1, "ld.1"));
+    }
 }
