@@ -70,8 +70,8 @@ pub mod part;
 pub mod record;
 
 pub use assembler::{
-    assembler_catalog_json, assembler_part_mesh, assembler_sample, assembler_turn_rotation,
-    AsmMesh, Assembler,
+    assembler_catalog_json, assembler_part_lod, assembler_part_mesh, assembler_sample,
+    assembler_turn_rotation, AsmMesh, Assembler,
 };
 pub use coupon::{build_coupon, coupon_layout_json, export_coupon, CouponOut};
 pub use data::{

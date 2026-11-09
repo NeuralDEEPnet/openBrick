@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use openbrick_catalog::{builtin, Catalog, Lod, Origin, Pack, PartMesh, BUILTIN, CATALOG_ID};
-use openbrick_engine::{Command, Model, ModelDoc, Ray};
-use openbrick_units::{Credit, Rot24, STANDARD};
+use openbrick_engine::{Command, Instance, Loader, Model, ModelDoc, Ray};
+use openbrick_units::{Credit, LatticePose, Rot24, STANDARD};
 use serde_json::json;
 
 #[cfg(target_arch = "wasm32")]
@@ -283,6 +283,22 @@ fn cached(index: u32, lod: Lod) -> Result<Arc<PartMesh>, CoreError> {
 /// (chosen at import), so `detail` does not matter for it.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn assembler_part_mesh(index: u32, detail: bool) -> Result<AsmMesh, CoreError> {
+    assembler_part_lod(index, if detail { 0 } else { 1 })
+}
+
+/// The render mesh of catalog part number `index` at render level `lod`, nearest first: 0 full
+/// studs (24 segments), 1 cheap studs with the tubes under the body (8 segments), 2 cheap studs on a
+/// solid underside, 3 the stud-less hull of the body (12 triangles, [`openbrick_catalog::body_hull`],
+/// made from the part's own mesh). The shapes the engine collides and snaps with are the same
+/// whatever level is drawn. A part of the loaded LDraw pack has one mesh from import: levels 0 to 2
+/// give it, level 3 its body hull.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn assembler_part_lod(index: u32, lod: u8) -> Result<AsmMesh, CoreError> {
+    if lod > 3 {
+        return Err(CoreError(format!(
+            "render level {lod} is not one of 0 (full), 1 (cheap), 2 (solid underside) and 3 (hull)"
+        )));
+    }
     if index as usize >= BUILTIN.len() {
         let pack = loaded_pack()?.ok_or_else(|| {
             CoreError(format!(
@@ -292,13 +308,32 @@ pub fn assembler_part_mesh(index: u32, detail: bool) -> Result<AsmMesh, CoreErro
         let m = pack
             .mesh(index as usize - BUILTIN.len())
             .ok_or_else(|| CoreError(format!("there is no catalog part number {index}")))?;
+        if lod == 3 {
+            let body = catalog()?
+                .get(index)
+                .ok_or_else(|| CoreError(format!("there is no catalog part number {index}")))?
+                .shape
+                .body;
+            let hull = builtin::body_hull(
+                &PartMesh {
+                    positions: m.positions.clone(),
+                    indices: m.indices.clone(),
+                },
+                &body,
+            );
+            return Ok(AsmMesh {
+                positions: hull.positions.iter().flatten().copied().collect(),
+                triangles: (hull.indices.len() / 3) as u32,
+                indices: hull.indices,
+            });
+        }
         return Ok(AsmMesh {
             positions: m.positions.iter().flatten().copied().collect(),
             triangles: (m.indices.len() / 3) as u32,
             indices: m.indices,
         });
     }
-    let m = cached(index, if detail { Lod::Detail } else { Lod::Low })?;
+    let m = cached(index, Lod::RENDER[lod as usize])?;
     Ok(AsmMesh {
         positions: m.positions.iter().flatten().copied().collect(),
         indices: m.indices.clone(),
@@ -312,6 +347,8 @@ pub struct Assembler {
     model: Model<'static>,
     /// Bumped by every change, so the page can tell its copy is current.
     revision: u32,
+    /// A document being read in steps ([`Assembler::load_begin`]).
+    loading: Option<Loader<'static>>,
 }
 
 fn ray(o: [f64; 3], d: [f64; 3]) -> Result<Ray, CoreError> {
@@ -336,6 +373,7 @@ impl Assembler {
         Ok(Assembler {
             model: Model::new(catalog()?),
             revision: 0,
+            loading: None,
         })
     }
 
@@ -344,6 +382,22 @@ impl Assembler {
     /// model that opened but with a pack other than the one it was made with, as a JSON array
     /// of sentences (`[]` for none).
     pub fn load(&mut self, text: &str) -> Result<String, CoreError> {
+        let total = self.load_begin(text)?;
+        let step = self.load_step(total.max(1));
+        match step {
+            Ok(_) => self.load_finish(),
+            Err(e) => {
+                self.load_cancel();
+                Err(e)
+            }
+        }
+    }
+
+    /// Start reading a document in steps, so the page can show progress and cancel: parses the
+    /// text and checks the header and the part count; no part is read yet. Returns how many parts
+    /// the document has. The model stays as it was until [`Assembler::load_finish`].
+    pub fn load_begin(&mut self, text: &str) -> Result<u32, CoreError> {
+        self.loading = None;
         if text.len() > MAX_MODEL_BYTES {
             return Err(CoreError(format!(
                 "the file is {} bytes; a model file can be at most {MAX_MODEL_BYTES} bytes ({} MiB)",
@@ -351,10 +405,85 @@ impl Assembler {
                 MAX_MODEL_BYTES / (1024 * 1024)
             )));
         }
-        let (m, notices) = Model::from_text_with_notices(catalog()?, text).map_err(engine)?;
+        let loader = Model::loader(catalog()?, text).map_err(engine)?;
+        let total = loader.total() as u32;
+        self.loading = Some(loader);
+        Ok(total)
+    }
+
+    /// Read up to `count` more parts of the document being loaded; returns how many have been read
+    /// in all. A part that is refused (an error whose message says which) ends the load and leaves
+    /// the model as it was.
+    pub fn load_step(&mut self, count: u32) -> Result<u32, CoreError> {
+        let loader = self
+            .loading
+            .as_mut()
+            .ok_or_else(|| CoreError("no document is being loaded".into()))?;
+        match loader.step(count as usize) {
+            Ok(done) => Ok(done as u32),
+            Err(e) => {
+                self.loading = None;
+                Err(engine(e))
+            }
+        }
+    }
+
+    /// Make the document read so far the model (every part must have been read); the history starts
+    /// empty. Returns the notices as [`Assembler::load`] does.
+    pub fn load_finish(&mut self) -> Result<String, CoreError> {
+        let loader = self
+            .loading
+            .take()
+            .ok_or_else(|| CoreError("no document is being loaded".into()))?;
+        if loader.done() != loader.total() {
+            return Err(CoreError(format!(
+                "only {} of {} parts have been read",
+                loader.done(),
+                loader.total()
+            )));
+        }
+        let (m, notices) = loader.finish().map_err(engine)?;
         self.model = m;
         self.revision += 1;
         Ok(json!(notices).to_string())
+    }
+
+    /// Forget a document being loaded.
+    pub fn load_cancel(&mut self) {
+        self.loading = None;
+    }
+
+    /// Replace the model with the table the page holds (seven numbers a part, as
+    /// [`Assembler::instances`] gives them), each part checked as if placed by hand. The history
+    /// starts empty. This is how the page puts its copy back into a replaced core, with no text to
+    /// write or read.
+    pub fn load_rows(&mut self, rows: &[i32]) -> Result<(), CoreError> {
+        if rows.len() % 7 != 0 {
+            return Err(CoreError(format!(
+                "{} numbers are not a table of parts of 7 numbers each",
+                rows.len()
+            )));
+        }
+        let parts = rows.as_chunks::<7>().0.iter().map(|r| {
+            Ok(Instance {
+                id: r[0] as u32,
+                part: u32::try_from(r[1])
+                    .map_err(|_| CoreError(format!("part number {} is not a part", r[1])))?,
+                pose: LatticePose {
+                    pos: [r[2], r[3], r[4]],
+                    rot: Rot24(u8::try_from(r[5]).map_err(|_| {
+                        CoreError(format!("rotation {} is not one of the 24", r[5]))
+                    })?),
+                },
+                colour: u16::try_from(r[6])
+                    .map_err(|_| CoreError(format!("colour {} is not in the palette", r[6])))?,
+            })
+        });
+        let parts: Result<Vec<Instance>, CoreError> = parts.collect();
+        let m = Model::from_instances(catalog()?, parts?).map_err(engine)?;
+        self.model = m;
+        self.revision += 1;
+        Ok(())
     }
 
     /// The model as `.obrick` text named `name` (deterministic).
@@ -375,17 +504,60 @@ impl Assembler {
     pub fn instances(&self) -> Vec<i32> {
         let mut out = Vec::with_capacity(self.model.len() * 7);
         for i in self.model.instances().iter() {
-            out.extend([
-                i.id as i32,
-                i.part as i32,
-                i.pose.pos[0],
-                i.pose.pos[1],
-                i.pose.pos[2],
-                i32::from(i.pose.rot.0),
-                i32::from(i.colour),
-            ]);
+            out.extend(row(&i));
         }
         out
+    }
+
+    /// What changed since the last call (or since the model was loaded or replaced): the first
+    /// number is 0 for "these parts only" or 1 for "everything"; after it come seven numbers per
+    /// part as [`Assembler::instances`] gives them. In mode 0 a part that is gone has the catalog
+    /// part number -1 and zeros after its id; every id appears once, ascending. Mode 1 is the whole
+    /// table in placement order (after a clear, an open, or so many changes that listing them costs
+    /// more than the table). The page patches its copy and redraws only what changed.
+    pub fn delta(&mut self) -> Vec<i32> {
+        let changes = self.model.take_changes();
+        let len = self.model.len();
+        if changes.overflow || changes.ids.len() * 2 > len + 64 {
+            let mut out = Vec::with_capacity(1 + len * 7);
+            out.push(1);
+            for i in self.model.instances().iter() {
+                out.extend(row(&i));
+            }
+            return out;
+        }
+        let mut out = Vec::with_capacity(1 + changes.ids.len() * 7);
+        out.push(0);
+        for id in changes.ids {
+            match self.model.instance(id) {
+                Some(i) => out.extend(row(&i)),
+                None => out.extend([id as i32, -1, 0, 0, 0, 0, 0]),
+            }
+        }
+        out
+    }
+
+    /// The number of placed parts.
+    pub fn len(&self) -> u32 {
+        self.model.len() as u32
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.model.is_empty()
+    }
+
+    /// Sizes of the model's indexes as JSON, for the performance numbers: `{ parts,
+    /// spatialEntries, connectorEntries, historyDepth, revision }`.
+    pub fn diagnostics(&self) -> String {
+        let (spatial, conns) = self.model.index_entries();
+        json!({
+            "parts": self.model.len(),
+            "spatialEntries": spatial,
+            "connectorEntries": conns,
+            "historyDepth": self.model.history().depth(),
+            "revision": self.model.revision(),
+        })
+        .to_string()
     }
 
     /// The best pose for catalog part `part` turned by rotation index `rot`
@@ -467,13 +639,28 @@ impl Assembler {
     }
 
     /// Parts, connections, components, grounded and floating parts as JSON
-    /// (`openbrick_engine::Stats`).
-    pub fn stats(&self) -> String {
-        serde_json::to_string(&self.model.stats()).expect("stats serialise")
+    /// (`openbrick_engine::Stats`). Kept until the next edit, so asking again costs nothing; after
+    /// a removal it is counted again from the whole model (about 30 ms for 100,000 parts, which is
+    /// why the page asks for it when editing pauses, not with every edit).
+    pub fn stats(&mut self) -> String {
+        serde_json::to_string(self.model.stats_cached()).expect("stats serialise")
     }
 }
 
-/// The largest model file the page opens: 16 MiB, about 100,000 parts.
+/// One part as the seven numbers of [`Assembler::instances`].
+fn row(i: &Instance) -> [i32; 7] {
+    [
+        i.id as i32,
+        i.part as i32,
+        i.pose.pos[0],
+        i.pose.pos[1],
+        i.pose.pos[2],
+        i32::from(i.pose.rot.0),
+        i32::from(i.colour),
+    ]
+}
+
+/// The largest model file the page opens: 16 MiB, which holds the engine's limit of 150,000 parts.
 pub const MAX_MODEL_BYTES: usize = 16 * 1024 * 1024;
 
 /// The rotation index of `rot` turned `quarter_turns` about the vertical axis.

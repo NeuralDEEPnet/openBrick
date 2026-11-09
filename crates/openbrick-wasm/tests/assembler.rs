@@ -111,3 +111,145 @@ fn loading_a_model_returns_its_notices_as_json() {
     let notices = a.load(&assembler_sample("staircase").unwrap()).unwrap();
     assert_eq!(notices, "[]", "built-in parts only: nothing to say");
 }
+
+/// The page keeps its own copy of the table and patches it with deltas: after every edit, the copy
+/// patched with the delta equals the table the core holds.
+#[test]
+fn deltas_patch_a_copy_into_the_table() {
+    let mut a = Assembler::create().unwrap();
+    let mut copy: std::collections::BTreeMap<i32, Vec<i32>> = Default::default();
+    let mut order: Vec<i32> = Vec::new();
+    let mut sync = |a: &mut Assembler| {
+        let d = a.delta();
+        if d[0] == 1 {
+            copy.clear();
+            order.clear();
+            for r in d[1..].chunks_exact(7) {
+                copy.insert(r[0], r.to_vec());
+                order.push(r[0]);
+            }
+        } else {
+            for r in d[1..].chunks_exact(7) {
+                if r[1] < 0 {
+                    copy.remove(&r[0]);
+                } else {
+                    copy.insert(r[0], r.to_vec());
+                }
+            }
+        }
+        let table = a.instances();
+        let expected: Vec<Vec<i32>> = table.chunks_exact(7).map(|r| r.to_vec()).collect();
+        let mut have: Vec<Vec<i32>> = copy.values().cloned().collect();
+        have.sort_by_key(|r| r[0]);
+        let mut want = expected.clone();
+        want.sort_by_key(|r| r[0]);
+        assert_eq!(have, want);
+    };
+    sync(&mut a);
+    let add = |a: &mut Assembler, x: i32, y: i32| {
+        a.apply(&format!(
+            r#"{{"op":"add","part":"ob.plate-2x2","pos":[{x},{y},0],"rot":0,"colour":4}}"#
+        ))
+        .unwrap();
+    };
+    add(&mut a, 20, -8);
+    add(&mut a, 60, -8);
+    sync(&mut a);
+    a.apply(r#"{"op":"recolour","id":1,"colour":15}"#).unwrap();
+    sync(&mut a);
+    a.apply(r#"{"op":"remove","id":1}"#).unwrap();
+    sync(&mut a);
+    a.undo().unwrap();
+    sync(&mut a);
+    a.undo().unwrap();
+    a.undo().unwrap();
+    sync(&mut a);
+    a.redo().unwrap();
+    sync(&mut a);
+    add(&mut a, 100, -8);
+    a.apply(r#"{"op":"clear"}"#).unwrap();
+    let d = a.delta();
+    assert_eq!(d[0], 0);
+    assert!(
+        d[1..].chunks_exact(7).all(|r| r[1] == -1),
+        "a clear lists the parts gone: {d:?}"
+    );
+    // Nothing changed since: an empty delta.
+    assert_eq!(a.delta(), vec![0]);
+    // So many new parts that listing them costs more than the table: the whole table, mode 1.
+    for n in 0..140 {
+        add(&mut a, 40 * (n % 20), -8 * (1 + n / 20));
+    }
+    let d = a.delta();
+    assert_eq!(d[0], 1);
+    assert_eq!((d.len() - 1) / 7, 140);
+}
+
+#[test]
+fn a_document_loads_in_steps_and_the_table_loads_from_rows() {
+    let mut a = Assembler::create().unwrap();
+    let text = assembler_sample("house").unwrap();
+    let total = a.load_begin(&text).unwrap();
+    assert_eq!(total, 49);
+    assert!(
+        a.is_empty(),
+        "the model is untouched until the load finishes"
+    );
+    assert_eq!(a.load_step(10).unwrap(), 10);
+    assert_eq!(a.load_step(1000).unwrap(), 49);
+    a.load_finish().unwrap();
+    assert_eq!(a.len(), 49);
+    assert!(
+        a.delta() == vec![0] || a.delta()[0] == 0,
+        "an open leaves no change list"
+    );
+    let rows = a.instances();
+    // A second assembler gets the same model from the table.
+    let mut b = Assembler::create().unwrap();
+    b.load_rows(&rows).unwrap();
+    assert_eq!(b.save("x"), a.save("x"));
+    assert_eq!(json_of(&b.stats()), json_of(&a.stats()));
+    // Bad rows are refused with a message and change nothing.
+    let mut bad = rows.clone();
+    bad[5] = 99; // rotation
+    let e = b.load_rows(&bad).unwrap_err();
+    assert!(e.to_string().contains("rotation"), "{e}");
+    assert!(b.load_rows(&rows[..6]).is_err());
+    assert_eq!(b.len(), 49);
+    // A cancelled load changes nothing, and a step without a load is an error.
+    b.load_begin(&text).unwrap();
+    b.load_cancel();
+    assert!(b.load_step(1).is_err());
+    assert_eq!(b.len(), 49);
+    // A refused part ends the load.
+    let broken =
+        text.replacen("\"rot\": 0", "\"rot\": 77", 1)
+            .replacen("\"rot\":0", "\"rot\":77", 1);
+    let n = b.load_begin(&broken).unwrap();
+    assert_eq!(n, 49);
+    assert!(b.load_step(100).is_err());
+    assert!(b.load_finish().is_err());
+    assert_eq!(b.len(), 49);
+}
+
+#[test]
+fn every_render_level_comes_from_the_core() {
+    let hull = assembler_part_lod(4, 3).unwrap();
+    assert_eq!(hull.triangle_count(), 12);
+    let tris: Vec<u32> = (0..4)
+        .map(|lod| assembler_part_lod(4, lod).unwrap().triangle_count())
+        .collect();
+    assert!(tris.windows(2).all(|w| w[0] > w[1]), "{tris:?}");
+    assert!(assembler_part_lod(4, 4).is_err());
+    // The levels never change what snaps and collides.
+    let a = Assembler::create().unwrap();
+    let before = a
+        .snap("ob.brick-2x4", 0, 0.0, -300.0, 0.0, 0.0, 1.0, 0.0)
+        .unwrap();
+    let _ = assembler_part_lod(4, 3).unwrap();
+    assert_eq!(
+        before,
+        a.snap("ob.brick-2x4", 0, 0.0, -300.0, 0.0, 0.0, 1.0, 0.0)
+            .unwrap()
+    );
+}

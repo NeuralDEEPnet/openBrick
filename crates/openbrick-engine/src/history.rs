@@ -7,6 +7,8 @@
 //! Operations address parts by id, so the same log could later replay into a
 //! collaborative document.
 
+use std::collections::VecDeque;
+
 use openbrick_units::{LatticePose, Rot24};
 
 use crate::model::{EngineError, Instance, InstanceId, Model};
@@ -70,10 +72,14 @@ struct Entry {
     inverse: Op,
 }
 
+/// The most commands kept for undo; older ones are forgotten, so a long session on a big model
+/// does not grow without bound (a "Clear" of a 100,000-part model is one entry of 200,000 steps).
+pub const MAX_HISTORY: usize = 5_000;
+
 /// Done and undone commands.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct History {
-    done: Vec<Entry>,
+    done: VecDeque<Entry>,
     undone: Vec<Entry>,
 }
 
@@ -191,10 +197,9 @@ impl Model<'_> {
             Command::Clear => (
                 Op::Batch(
                     self.instances
-                        .id
                         .iter()
                         .rev()
-                        .map(|&id| Op::Delete { id })
+                        .map(|i| Op::Delete { id: i.id })
                         .collect(),
                 ),
                 None,
@@ -215,17 +220,24 @@ impl Model<'_> {
         };
         // Inserting raises the next id past the new part's.
         let inverse = self.run(&op)?;
-        self.history.done.push(Entry {
+        self.history.done.push_back(Entry {
             forward: op,
             inverse,
         });
+        if self.history.done.len() > MAX_HISTORY {
+            self.history.done.pop_front();
+        }
         self.history.undone.clear();
         Ok(target)
     }
 
     /// Take back the last command.
     pub fn undo(&mut self) -> Result<(), EngineError> {
-        let entry = self.history.done.pop().ok_or(EngineError::NothingToUndo)?;
+        let entry = self
+            .history
+            .done
+            .pop_back()
+            .ok_or(EngineError::NothingToUndo)?;
         self.run(&entry.inverse).expect("an inverse applies");
         self.history.undone.push(entry);
         Ok(())
@@ -240,7 +252,7 @@ impl Model<'_> {
             .ok_or(EngineError::NothingToRedo)?;
         self.run(&entry.forward)
             .expect("a command that applied once applies again");
-        self.history.done.push(entry);
+        self.history.done.push_back(entry);
         Ok(())
     }
 

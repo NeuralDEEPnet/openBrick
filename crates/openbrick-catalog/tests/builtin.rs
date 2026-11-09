@@ -105,6 +105,93 @@ fn shapes_do_not_depend_on_the_level_of_detail() {
     }
 }
 
+/// The render levels (docs/plan/07 sections 3 and 6): LOD changes what is drawn, never what
+/// collides or connects ("never derive collision from the render LOD").
+#[test]
+fn every_render_level_has_the_same_shape_and_fewer_triangles() {
+    let catalog = Catalog::builtin().expect("builds");
+    for (spec, part) in BUILTIN.iter().zip(&catalog.parts) {
+        let low = builtin::build(spec, Lod::Low).expect("builds");
+        let simple = builtin::build(spec, Lod::Simple).expect("builds");
+        let hull = builtin::build(spec, Lod::Hull).expect("builds");
+        // Same collision box, pick box and connectors as the catalog holds, whichever level is drawn.
+        for built in [&low, &simple, &hull] {
+            assert_eq!(built.shape, part.shape, "{}", spec.id);
+            assert_eq!(built.height_ldu, low.height_ldu, "{}", spec.id);
+        }
+        let (l, s, h) = (
+            low.mesh.triangle_count(),
+            simple.mesh.triangle_count(),
+            hull.mesh.triangle_count(),
+        );
+        assert!(h == 12 && s < l && h < s, "{}: {l} {s} {h}", spec.id);
+        if !spec.base {
+            let detail = builtin::build(spec, Lod::Detail).expect("builds");
+            assert!(l < detail.mesh.triangle_count(), "{}", spec.id);
+        }
+        // The hull is the body's box, from the mesh: it sits inside the pick box and, apart from the
+        // undersize gap, fills the body box; it has no stud.
+        let shape = &part.shape;
+        let (lo, hi) = hull.mesh.positions.iter().fold(
+            ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]),
+            |(mut lo, mut hi), p| {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+                (lo, hi)
+            },
+        );
+        for k in 0..3 {
+            assert!(
+                f64::from(lo[k]) >= f64::from(shape.pick.min[k]) - 1.0,
+                "{} {k}",
+                spec.id
+            );
+            assert!(
+                f64::from(hi[k]) <= f64::from(shape.pick.max[k]) + 1.0,
+                "{} {k}",
+                spec.id
+            );
+        }
+        assert!(
+            f64::from(lo[1]) >= f64::from(shape.body.min[1]) - 0.5,
+            "{}: no studs on the hull",
+            spec.id
+        );
+        for k in [0, 2] {
+            assert!(
+                (f64::from(lo[k]) - f64::from(shape.body.min[k])).abs() < 1.0,
+                "{}",
+                spec.id
+            );
+            assert!(
+                (f64::from(hi[k]) - f64::from(shape.body.max[k])).abs() < 1.0,
+                "{}",
+                spec.id
+            );
+        }
+        // Counter-clockwise from outside: every triangle's normal points away from the centre.
+        let centre = [0, 1, 2].map(|k| (lo[k] + hi[k]) / 2.0);
+        for t in hull.mesh.indices.chunks_exact(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| hull.mesh.positions[i as usize]);
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let out = [a[0] - centre[0], a[1] - centre[1], a[2] - centre[2]];
+            assert!(
+                n[0] * out[0] + n[1] * out[1] + n[2] * out[2] > 0.0,
+                "{}",
+                spec.id
+            );
+        }
+    }
+}
+
 #[test]
 fn meshes_sit_in_their_boxes_with_studs_over_the_connectors() {
     let spec = BUILTIN.iter().find(|s| s.id == "ob.brick-2x4").unwrap();
@@ -157,6 +244,9 @@ fn golden_meshes() {
         ("ob.plate-1x2", Lod::Detail, 642, 0x1a2d_849f_a3cd_9aff),
         ("ob.tile-2x2", Lod::Detail, 528, 0xef31_b1d5_bb43_5b30),
         ("ob.brick-1x1", Lod::Low, 186, 0x7e29_fc72_94a2_a850),
+        ("ob.brick-2x4", Lod::Simple, 472, 0xbc60_b276_bd8d_d48d),
+        ("ob.brick-2x4", Lod::Hull, 12, 0xccd4_8067_dbb2_7725),
+        ("ob.plate-1x2", Lod::Hull, 12, 0x945c_62b4_ddeb_2f79),
     ];
     for &(id, lod, triangles, canonical) in golden {
         let spec = BUILTIN.iter().find(|s| s.id == id).unwrap();
