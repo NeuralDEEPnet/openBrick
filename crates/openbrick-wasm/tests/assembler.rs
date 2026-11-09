@@ -124,12 +124,12 @@ fn deltas_patch_a_copy_into_the_table() {
         if d[0] == 1 {
             copy.clear();
             order.clear();
-            for r in d[1..].chunks_exact(7) {
+            for r in d[1..].as_chunks::<7>().0.iter() {
                 copy.insert(r[0], r.to_vec());
                 order.push(r[0]);
             }
         } else {
-            for r in d[1..].chunks_exact(7) {
+            for r in d[1..].as_chunks::<7>().0.iter() {
                 if r[1] < 0 {
                     copy.remove(&r[0]);
                 } else {
@@ -138,7 +138,12 @@ fn deltas_patch_a_copy_into_the_table() {
             }
         }
         let table = a.instances();
-        let expected: Vec<Vec<i32>> = table.chunks_exact(7).map(|r| r.to_vec()).collect();
+        let expected: Vec<Vec<i32>> = table
+            .as_chunks::<7>()
+            .0
+            .iter()
+            .map(|r| r.to_vec())
+            .collect();
         let mut have: Vec<Vec<i32>> = copy.values().cloned().collect();
         have.sort_by_key(|r| r[0]);
         let mut want = expected.clone();
@@ -171,7 +176,7 @@ fn deltas_patch_a_copy_into_the_table() {
     let d = a.delta();
     assert_eq!(d[0], 0);
     assert!(
-        d[1..].chunks_exact(7).all(|r| r[1] == -1),
+        d[1..].as_chunks::<7>().0.iter().all(|r| r[1] == -1),
         "a clear lists the parts gone: {d:?}"
     );
     // Nothing changed since: an empty delta.
@@ -252,4 +257,74 @@ fn every_render_level_comes_from_the_core() {
         a.snap("ob.brick-2x4", 0, 0.0, -300.0, 0.0, 0.0, 1.0, 0.0)
             .unwrap()
     );
+}
+
+/// Hostile input through the stepped open and through the table: refused with a message, quickly,
+/// and the model on screen is untouched.
+#[test]
+fn hostile_documents_and_tables_are_refused_through_the_stepped_path_and_load_rows() {
+    let mut a = Assembler::create().unwrap();
+    let house = assembler_sample("house").unwrap();
+    a.load(&house).unwrap();
+    let before = a.save("x");
+    let part = |id: u64, x: i64| {
+        format!(
+            r#"{{"id":{id},"part":"ob.plate-2x2","pose":{{"pos":[{x},-8,0],"rot":0}},"colour":4}}"#
+        )
+    };
+    let doc = |instances: &str| {
+        format!(
+            r#"{{"openbrick":"1.0","kind":"model","name":"h","units":"ldu","frame":"ldraw-y-down","catalog":"openbrick-builtin@1","palette":[],"bom":[],"submodels":[{{"id":"main","instances":[{instances}]}}]}}"#
+        )
+    };
+    let t = std::time::Instant::now();
+    for (what, text, want) in [
+        (
+            "duplicate ids",
+            doc(&format!("{},{}", part(1, 0), part(1, 40))),
+            "used by two",
+        ),
+        ("id zero", doc(&part(0, 0)), "id 0"),
+        ("far away", doc(&part(1, 2_000_000_000)), "beyond"),
+        (
+            "overlap",
+            doc(&format!("{},{}", part(1, 0), part(2, 20))),
+            "overlap",
+        ),
+    ] {
+        let begun = a.load_begin(&text);
+        let err = match begun {
+            Err(e) => e,
+            Ok(_) => a.load_step(1000).expect_err(what),
+        };
+        assert!(err.to_string().contains(want), "{what}: {err}");
+        assert!(
+            a.load_finish().is_err(),
+            "{what}: nothing is left to finish"
+        );
+        assert_eq!(a.save("x"), before, "{what}: the model is untouched");
+    }
+    // Too many parts: refused before any is read.
+    let many = (0..150_001u64)
+        .map(|i| part(i + 1, 0))
+        .collect::<Vec<_>>()
+        .join(",");
+    let err = a.load_begin(&doc(&many)).unwrap_err();
+    assert!(err.to_string().contains("150000"), "{err}");
+    // The same through the table.
+    let ok_row = [1, 8, 0, -8, 0, 0, 4];
+    let mut dup = ok_row.to_vec();
+    dup.extend([1, 8, 40, -8, 0, 0, 4]);
+    for (what, rows, want) in [
+        ("duplicate ids", dup, "used by two"),
+        ("id zero", vec![0, 8, 0, -8, 0, 0, 4], "id 0"),
+        ("far away", vec![1, 8, 2_000_000_000, -8, 0, 0, 4], "beyond"),
+        ("unknown part", vec![1, 9999, 0, -8, 0, 0, 4], "part"),
+        ("unknown colour", vec![1, 8, 0, -8, 0, 0, 31337], "colour"),
+    ] {
+        let err = a.load_rows(&rows).expect_err(what);
+        assert!(err.to_string().contains(want), "{what}: {err}");
+        assert_eq!(a.save("x"), before, "{what}: the model is untouched");
+    }
+    assert!(t.elapsed().as_secs() < 30, "refused quickly");
 }

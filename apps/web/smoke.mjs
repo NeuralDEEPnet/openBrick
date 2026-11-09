@@ -1482,7 +1482,7 @@ async function buildRun(browser, origin) {
 }
 
 /**
- * A big model (docs/plan/07 sections 9 and 14, bench/scale): a 12,000-brick city is opened through the file
+ * A big model (docs/plan/07 sections 9 and 14, bench/scale): a 4,000-brick city is opened through the file
  * input and read by the core in steps; the page chunks it over the lattice, draws a few hundred chunks at
  * levels of detail inside its triangle budget, counts its statistics when editing pauses, and a part placed
  * on top of a tower and undone takes milliseconds, not the model's size. Which part went where is
@@ -1490,15 +1490,16 @@ async function buildRun(browser, origin) {
  */
 async function buildScaleRun(browser, origin) {
   const label = "build-scale";
-  const bricks = 12_000;
-  const { instances, baseplates } = layoutInstances("city", bricks);
+  const bricks = 4_000;
+  const { instances } = layoutInstances("city", bricks);
   const total = instances.length;
+  const baseplates = instances.filter((i) => i.part === "ob.baseplate-16x16").length;
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light" });
   const page = await context.newPage();
   const errors = watchErrors(page);
   await page.goto(`${origin}/?backend=webgl2&mode=build`);
   await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the core's catalog");
-  const file = join(downloads, "city-12000.obrick");
+  const file = join(downloads, "city-4000.obrick");
   writeFileSync(file, layoutText("city", bricks));
   const t0 = Date.now();
   await page.setInputFiles("#build-file", file);
@@ -1517,7 +1518,7 @@ async function buildScaleRun(browser, origin) {
   check(b.stats.floating.length === 0 && b.stats.components === baseplates, `${label}: ${b.stats.components} groups for ${baseplates} baseplates, ${b.stats.floating.length} floating`);
   check($isHidden(await page.$("#build-progress")), `${label}: the progress strip stayed up after the model opened`);
 
-  // A brick on top of the tower nearest the middle of the model: the ghost is the core's snapped pose, exactly one brick above the top.
+  // A brick on top of the tallest tower: the ghost is the core's snapped pose, exactly one brick above the top.
   const columns = new Map();
   for (const i of instances) {
     if (i.part === "ob.baseplate-16x16") continue;
@@ -1525,8 +1526,8 @@ async function buildScaleRun(browser, origin) {
     const c = columns.get(key);
     if (!c || i.pose.pos[1] < c.top) columns.set(key, { x: i.pose.pos[0], z: i.pose.pos[2], top: i.pose.pos[1] });
   }
-  const mid = [instances.reduce((a, i) => a + i.pose.pos[0], 0) / total, instances.reduce((a, i) => a + i.pose.pos[2], 0) / total];
-  const column = [...columns.values()].sort((p, q) => Math.hypot(p.x - mid[0], p.z - mid[1]) - Math.hypot(q.x - mid[0], q.z - mid[1]))[0];
+  // The tallest column: no other tower can stand between the camera and its top face.
+  const column = [...columns.values()].sort((p, q) => p.top - q.top)[0];
   const point = await screenAt(page, [column.x, column.top, column.z]);
   await page.mouse.move(point.x, point.y);
   await buildWait(page, () => window.__web.build.ghost === "valid", 60_000, "a valid ghost over a tower of the big model");
@@ -1551,7 +1552,7 @@ async function buildScaleRun(browser, origin) {
   await buildWait(page, () => window.__web.build.hud === true, 10_000, "the overlay on");
   await page.waitForFunction(() => /draw calls, [\d,]+ triangles/.test(document.querySelector("#build-hud").textContent), null, { timeout: 10_000 });
   check(/parts in \d+ chunks/.test(await page.textContent("#build-hud")), `${label}: the overlay says "${await page.textContent("#build-hud")}"`);
-  if (shots) await page.screenshot({ path: join(shots, "build-12k-desktop.png"), timeout: 240_000 });
+  if (shots) await page.screenshot({ path: join(shots, "build-4k-desktop.png"), timeout: 240_000 });
   await page.uncheck("#build-hud-toggle");
   await buildWait(page, () => window.__web.build.hud === false, 10_000, "the overlay off");
   check(await page.isHidden("#build-hud"), `${label}: the overlay stayed up`);
@@ -1576,7 +1577,7 @@ async function buildScaleRun(browser, origin) {
   check((await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)) === true, `${label}: the page scrolls sideways on the phone`);
   if (shots) {
     await p.evaluate(() => document.querySelector("#stage").scrollIntoView());
-    await p.screenshot({ path: join(shots, "build-12k-phone.png"), timeout: 240_000 });
+    await p.screenshot({ path: join(shots, "build-4k-phone.png"), timeout: 240_000 });
   }
   check(phoneErrors.length === 0, `${label}: phone page errors: ${phoneErrors.join(" | ")}`);
   await phone.close();

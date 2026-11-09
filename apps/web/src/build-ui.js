@@ -629,7 +629,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     }
     snapBusy = true;
     hoverNow()
-      .catch(() => {})
+      .catch((e) => console.warn("hover failed:", e?.stack ?? e))
       .finally(() => {
         snapBusy = false;
         if (snapAgain) {

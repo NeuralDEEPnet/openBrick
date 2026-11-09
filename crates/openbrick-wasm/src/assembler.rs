@@ -458,7 +458,7 @@ impl Assembler {
     /// starts empty. This is how the page puts its copy back into a replaced core, with no text to
     /// write or read.
     pub fn load_rows(&mut self, rows: &[i32]) -> Result<(), CoreError> {
-        if rows.len() % 7 != 0 {
+        if !rows.len().is_multiple_of(7) {
             return Err(CoreError(format!(
                 "{} numbers are not a table of parts of 7 numbers each",
                 rows.len()

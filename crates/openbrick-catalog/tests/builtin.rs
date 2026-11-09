@@ -173,7 +173,7 @@ fn every_render_level_has_the_same_shape_and_fewer_triangles() {
         }
         // Counter-clockwise from outside: every triangle's normal points away from the centre.
         let centre = [0, 1, 2].map(|k| (lo[k] + hi[k]) / 2.0);
-        for t in hull.mesh.indices.chunks_exact(3) {
+        for t in hull.mesh.indices.as_chunks::<3>().0 {
             let [a, b, c] = [t[0], t[1], t[2]].map(|i| hull.mesh.positions[i as usize]);
             let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
             let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];

@@ -19,7 +19,7 @@
 // that frame; the group turns half a revolution about X (a proper rotation: LDraw's minus Y is three.js's
 // plus Y) and scales LDU to the millimetres the lighting of src/viewer.js is set up in.
 
-import { colourHex } from "./build.js";
+import { colourHex, instanceMatrix } from "./build.js";
 import { chunkCell, chunkKey, nextBias, pickLevel, studPixels, thresholds, triangleBudget, wantGrid } from "./lod.js";
 
 /** Rotation of the LDraw frame into three.js's Y-up frame: half a turn about X. */

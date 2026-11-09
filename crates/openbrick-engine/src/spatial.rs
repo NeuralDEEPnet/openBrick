@@ -114,7 +114,9 @@ pub fn check_box(b: &Aabb) -> Result<(), EngineError> {
 /// stored box (`closed`) also covers the cell its maximum face lies on when that face is on a cell
 /// border, so a ray that only grazes it there still finds it; a query box does not (boxes that only
 /// touch share no cell). At most [`MAX_BOX_CELLS`] fine cells are covered, else an error.
-fn hash_range(b: &Aabb, closed: bool) -> Result<Option<([i32; 3], [i32; 3])>, EngineError> {
+type CellRange = ([i32; 3], [i32; 3]);
+
+fn hash_range(b: &Aabb, closed: bool) -> Result<Option<CellRange>, EngineError> {
     check_box(b)?;
     if (0..3).any(|k| b.min[k] >= b.max[k]) {
         return Ok(None);
