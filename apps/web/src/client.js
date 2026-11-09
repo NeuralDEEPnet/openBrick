@@ -24,6 +24,14 @@
 
 import { BUILD_TYPES, EXPORT_TYPES } from "./protocol.js";
 
+/**
+ * Requests whose answer depends on the model in the worker. A replaced worker starts with an empty model, so one of
+ * these owed by the old worker is not sent again (it would be answered from an empty model, and an edit's delta
+ * would patch the page's table with rows from it): it fails with a message, and the page, which puts its copy of
+ * the model back into the new worker before its next request (src/model-keeper.js), asks again.
+ */
+export const MODEL_TYPES = ["asmSnap", "asmPick", "asmApply", "asmUndo", "asmRedo", "asmState", "asmStats", "asmLoad", "asmLoadRows", "asmSave", "asmCancel", "asmLoadPack", "asmUnloadPack"];
+
 export class CoreError extends Error {
   constructor(message) {
     super(message);
@@ -420,8 +428,13 @@ export class CoreClient {
         running.resolve(null);
       }
     }
-    const owed = [...this.#pending.values()].filter((entry) => !(cancelBuild && BUILD_TYPES.includes(entry.request.type)));
+    const all = [...this.#pending.values()];
+    const stale = all.filter((entry) => MODEL_TYPES.includes(entry.request.type));
+    const owed = all.filter((entry) => !stale.includes(entry) && !(cancelBuild && BUILD_TYPES.includes(entry.request.type)));
     this.#pending.clear();
+    for (const entry of stale) {
+      entry.reject(new CoreError("the core was restarted while this was running, so it was not repeated on an empty model; your model is put back before the next request, then try again"));
+    }
     this.#worker.terminate();
     this.restarts++;
     this.#spawn();

@@ -412,3 +412,26 @@ test("recordFit is a plain request with the wizard's choices, never superseded b
   assert.deepEqual(await rec, { ok: true, fileName: "prusa-mini-pla-fdm-0.4.json" });
   assert.deepEqual(await build, { ok: 1 });
 });
+
+test("a restart does not repeat a request about the model on the new, empty worker", async () => {
+  const env = await started({ restartAfterMs: 0 });
+  const apply = env.client.assemblerApply({ op: "add", part: "ob.brick-1x1", pos: [10, -24, 10], rot: 0, colour: 4 });
+  const undo = env.client.assemblerUndo();
+  const open = env.client.assemblerLoad("{}");
+  const turn = env.client.assemblerTurn(0, 1); // about no model: safe to repeat
+  const caught = [apply, undo, open].map((p) => p.then(() => "resolved", (e) => e.message));
+  // A slow Part build is superseded and cancelled: the worker is replaced while those were in flight.
+  const big = env.client.buildBrick(16, 16);
+  env.client.buildBrick(1, 1);
+  assert.equal(await big, null);
+  const fresh = env.worker;
+  assert.deepEqual(
+    fresh.sent.map((m) => m.type).filter((t) => t.startsWith("asm")),
+    ["asmTurn"],
+    "only the request that does not depend on the model is sent again",
+  );
+  for (const message of await Promise.all(caught)) assert.match(message, /not repeated on an empty model/);
+  fresh.reply("init", INFO);
+  fresh.reply("asmTurn", { rot: 1 });
+  assert.deepEqual(await turn, { rot: 1 });
+});
