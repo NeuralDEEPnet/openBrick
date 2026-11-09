@@ -11,7 +11,7 @@ use openbrick_units::{LatticePose, Rot24};
 use crate::graph::Stats;
 use crate::history::History;
 use crate::on_stud_grid;
-use crate::spatial::{ConnHash, FastMap, SpatialHash};
+use crate::spatial::{ConnHash, FastMap, SpatialHash, MAX_SPATIAL_ENTRIES};
 
 /// Id of a placed part, unique within a model and kept by `.obrick` files.
 /// Small integers in placement order; ULIDs arrive with collaboration (docs/plan/07
@@ -213,6 +213,12 @@ pub enum EngineError {
     BoxTooLarge { cells: u64, limit: u64 },
     #[error("position {pos:?} is beyond {limit} LDU from the origin; keep every coordinate within plus or minus {limit}")]
     OutOfRange { pos: [i32; 3], limit: i32 },
+    #[error("the part would add {cells} entries to the spatial index, which holds {have} of the {limit} it can; use smaller parts, or split the model")]
+    TooManyCells {
+        cells: usize,
+        have: usize,
+        limit: usize,
+    },
     #[error("the model already has {limit} parts, the most this program holds; split it into smaller models, or remove parts first")]
     TooManyParts { limit: usize },
 }
@@ -421,6 +427,29 @@ impl<'c> Model<'c> {
         }
         let b = self.body_box(part, pose)?;
         crate::spatial::check_box(&b)?;
+        // The box the hash will store (the body and the pick box together) is checked here, before anything
+        // is changed, so inserting it cannot fail halfway: its size, and the room left in the hash.
+        let shape = &cat_part.shape;
+        let cover = b.union(&shape.pick.transformed(pose.rot, pose.pos));
+        crate::spatial::check_box(&cover)?;
+        let cells = SpatialHash::cells_of(&cover)?;
+        let freed = match skip.and_then(|id| self.index.get(&id).copied()) {
+            Some(slot) => SpatialHash::cells_of(
+                &self
+                    .instances
+                    .body_at(slot)
+                    .union(self.instances.pick_at(slot)),
+            )?,
+            None => 0,
+        };
+        let have = self.spatial.entries().saturating_sub(freed);
+        if have + cells > MAX_SPATIAL_ENTRIES {
+            return Err(EngineError::TooManyCells {
+                cells,
+                have,
+                limit: MAX_SPATIAL_ENTRIES,
+            });
+        }
         if b.max[1] > 0 {
             return Err(EngineError::BelowGround { depth: b.max[1] });
         }

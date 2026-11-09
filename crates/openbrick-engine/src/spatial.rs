@@ -6,7 +6,7 @@
 //!
 //! The lattice cell of the Dimensional Standard (`CELL`, one stud by one plate by one stud) is the
 //! unit of the fine lattice and of the [`MAX_BOX_CELLS`] limit; the hash itself uses a coarser cell,
-//! [`HASH_CELL`] (8 studs by 12 plates by 8 studs), so a 2 x 4 brick touches one to four cells and
+//! [`HASH_CELL`] (4 studs by 6 plates by 4 studs, 80 x 48 x 80 LDU), so a 2 x 4 brick touches one to four cells and
 //! a cell holds a handful of parts. Collision is always decided by the exact integer boxes; the
 //! hash only narrows the candidates, so the cell size changes speed, never an answer.
 
@@ -27,15 +27,26 @@ pub const CELL: [i32; 3] = [STUD_PITCH_LDU, PLATE_LDU, STUD_PITCH_LDU];
 /// touches one to eight cells and a cell of a dense model holds a few parts.
 pub const HASH_CELL: [i32; 3] = [4 * STUD_PITCH_LDU, 6 * PLATE_LDU, 4 * STUD_PITCH_LDU];
 
+/// The most entries the spatial hash holds (a part counts once per hash cell its boxes cover): 4,000,000.
+/// A model of 150,000 ordinary parts holds about 700,000 (4.6 a part); a flat pack plate of 256 x 256 studs
+/// covers 8,450 cells, so this admits about 470 of those. A part that would pass it is refused with a message
+/// and the model is unchanged; without the cap a crafted pack and file could make the hash grow past the
+/// 4 GiB the WebAssembly build can address (16.9 million entries from 2,000 such plates).
+pub const MAX_SPATIAL_ENTRIES: usize = 4_000_000;
+
 /// End of a chain.
 const NIL: u32 = u32::MAX;
 
-/// A fast hasher for the engine's small integer keys (cells, positions, ids): a multiply-rotate
-/// fold and a final mix. The keys are lattice coordinates the engine derives from parts, not secrets;
-/// SipHash (the standard hasher) cost more than the rest of a connector lookup. A crafted file
-/// could still make many keys collide, but the number of parts (150,000) and of connectors per
-/// part is bounded, so the worst case is bounded too, and the worst a file can do is slow its own
-/// reader.
+/// A fast, unkeyed hasher for the engine's small integer keys (cells, positions, ids): a
+/// multiply-rotate fold and a final mix. SipHash (the standard hasher) cost more than the rest of a
+/// connector lookup. **What this accepts, exactly:** the keys are lattice coordinates a file chooses,
+/// and the hasher has no secret, so a crafted file can make many keys share a bucket. What is bounded
+/// is the damage: at most [`crate::MAX_INSTANCES`] parts and [`MAX_SPATIAL_ENTRIES`] spatial entries per
+/// model, so a map of 150,000 colliding keys costs a quadratic number of probes, measured by the review at
+/// about 1.5 to 2 s per map natively for that many inserts (5 to 10 s over all the maps a load fills).
+/// The page opens a document in steps and can cancel between them, so that cost is the
+/// reader's own time and never a hang; the command line has no such limit. A keyed hasher needs a random seed
+/// from the host (none exists in the WebAssembly build without a new dependency); see docs/plan/07 section 4.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct Mix(u64);
 
@@ -252,6 +263,16 @@ impl SpatialHash {
         Ok(())
     }
 
+    /// How many entries a stored box adds (the hash cells it covers), counted and not iterated.
+    pub fn cells_of(b: &Aabb) -> Result<usize, EngineError> {
+        Ok(match hash_range(b, true)? {
+            None => 0,
+            Some((lo, hi)) => (0..3)
+                .map(|k| (i64::from(hi[k]) - i64::from(lo[k]) + 1) as usize)
+                .product(),
+        })
+    }
+
     /// Calls `f` with every slot whose cells meet the cells of `b` (a slot in several of them is
     /// called several times; the caller tests the boxes themselves).
     pub fn for_each_near(&self, b: &Aabb, mut f: impl FnMut(u32)) -> Result<(), EngineError> {
@@ -369,14 +390,52 @@ impl SpatialHash {
             } else {
                 2
             };
-            if step[k] == 0 || t_max[k] > t1 || t_max[k] > best {
+            // The distances are computed a different way for the box, the cell border and the ray's end, so a
+            // border exactly at the end or at the best hit differs from it in the last bits: stop only beyond a margin.
+            let slack = 1e-9 * (1.0 + t_max[k].abs());
+            if step[k] == 0
+                || !t_max[k].is_finite()
+                || t_max[k] > t1 + slack
+                || t_max[k] > best + slack
+            {
                 break;
             }
-            cell[k] += step[k];
-            if cell[k] < lo[k] || cell[k] > hi[k] {
+            // Where the ray crosses a cell's edge or corner (two or three axes at the same distance) it
+            // also touches the cells between, which a box can reach only there: visit them too.
+            let tie: Vec<usize> = (0..3)
+                .filter(|&a| {
+                    step[a] != 0 && (t_max[a] - t_max[k]).abs() <= 1e-9 * (1.0 + t_max[k].abs())
+                })
+                .collect();
+            if tie.len() > 1 {
+                for mask in 1..(1usize << tie.len()) - 1 {
+                    let mut c = cell;
+                    for (bit, &a) in tie.iter().enumerate() {
+                        if mask & (1 << bit) != 0 {
+                            c[a] += step[a];
+                        }
+                    }
+                    if (0..3).all(|a| c[a] >= lo[a] && c[a] <= hi[a]) {
+                        let mut at_node = self.heads.get(&c).copied().unwrap_or(NIL);
+                        while at_node != NIL {
+                            let n = self.nodes[at_node as usize];
+                            best = best.min(visit(n.slot));
+                            at_node = n.next;
+                        }
+                    }
+                }
+            }
+            let mut out = false;
+            for &a in &tie {
+                cell[a] += step[a];
+                if cell[a] < lo[a] || cell[a] > hi[a] {
+                    out = true;
+                }
+                t_max[a] += t_delta[a];
+            }
+            if out {
                 break;
             }
-            t_max[k] += t_delta[k];
         }
         true
     }
@@ -633,6 +692,39 @@ mod tests {
         };
         assert_eq!(inverted.lattice_cells(), 0);
         assert!(h.insert(2, &inverted).is_ok() && h.is_empty());
+    }
+
+    #[test]
+    fn removing_one_of_two_overlapping_connectors_leaves_the_other() {
+        // Two parts of a pack can have a connector of the same kind at the same point (their boxes
+        // do not overlap, their connectors may). Removal is by slot, kind and axis.
+        let c = |kind| Conn {
+            kind,
+            pos: [10, 0, 10],
+            dir: [0, -1, 0],
+        };
+        let mut h = ConnHash::default();
+        h.insert(1, [c(ConnKind::StudM)]);
+        h.insert(2, [c(ConnKind::StudM), c(ConnKind::TubeF)]);
+        h.insert(3, [c(ConnKind::StudM)]);
+        h.remove(2, [c(ConnKind::StudM)]);
+        assert_eq!(
+            h.snapshot().len(),
+            3,
+            "slots 1 and 3 keep their studs, slot 2 its tube"
+        );
+        assert!(h
+            .snapshot()
+            .iter()
+            .any(|e| e.1 == 2 && e.2 == ConnKind::TubeF));
+        assert!(!h
+            .snapshot()
+            .iter()
+            .any(|e| e.1 == 2 && e.2 == ConnKind::StudM));
+        // A tube there mates with the lowest remaining stud, never the removed one.
+        assert_eq!(h.mate_of(&c(ConnKind::TubeF), Some(2)), Some(1));
+        h.remove(1, [c(ConnKind::StudM)]);
+        assert_eq!(h.mate_of(&c(ConnKind::TubeF), None), Some(3));
     }
 
     #[test]

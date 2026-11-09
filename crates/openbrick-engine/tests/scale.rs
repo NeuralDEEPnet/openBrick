@@ -216,6 +216,11 @@ fn the_changes_since_the_last_read_are_exactly_what_differs() {
             let after: Vec<_> = m.instances().iter().collect();
             let changes = m.take_changes();
             assert!(!changes.overflow);
+            assert!(
+                changes.ids.windows(2).all(|w| w[0] < w[1]),
+                "seed {seed} step {step}: every id appears once, ascending: {:?}",
+                changes.ids
+            );
             if m.revision() == revision {
                 assert!(
                     changes.ids.is_empty(),
@@ -326,4 +331,146 @@ fn a_model_at_the_limit_opens_and_one_more_part_is_refused() {
     assert!(seconds < 120.0, "{seconds} s");
     assert!(m.stats_cached().parts == MAX_INSTANCES);
     let _ = Rot24::IDENTITY;
+}
+
+/// Rays aimed exactly at the corners and edges of hash cells (80 x 48 x 80 LDU), started on the ray's line
+/// at integer distances, inside boxes, on a cell border and along the axes at boundaries: the walk of the
+/// spatial hash must equal testing every part, tie-breaks included, however the ray meets a cell's corner.
+#[test]
+fn the_ray_walk_equals_testing_every_part_through_cell_corners_edges_and_borders() {
+    use openbrick_engine::Ray;
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed * 6_700_417 + 11);
+        let mut m = on_baseplate();
+        for _ in 0..120 {
+            random_edit(&mut m, &mut rng);
+        }
+        let mut checked = 0;
+        for k in 0..1500 {
+            let corner = [
+                80 * rng.range(-3, 3),
+                -48 * rng.range(0, 2),
+                80 * rng.range(-3, 3),
+            ];
+            // Sometimes only an edge: one coordinate off the grid.
+            let aim = match k % 3 {
+                0 => corner,
+                1 => [corner[0], corner[1] - rng.range(0, 47), corner[2]],
+                _ => [corner[0] + rng.range(0, 79), corner[1], corner[2]],
+            };
+            let dir = [rng.range(-9, 9), rng.range(-9, 9), rng.range(-9, 9)];
+            if dir == [0, 0, 0] {
+                continue;
+            }
+            let back = rng.range(0, 40); // 0: starts on the point itself
+            let origin = [
+                aim[0] - dir[0] * back,
+                aim[1] - dir[1] * back,
+                aim[2] - dir[2] * back,
+            ];
+            let ray = Ray {
+                origin: origin.map(f64::from),
+                dir: dir.map(f64::from),
+            };
+            assert_eq!(m.pick(&ray), m.pick_linear(&ray), "seed {seed}: {ray:?}");
+            checked += 1;
+        }
+        assert!(checked > 1000);
+        // Along an axis, on the plane of a cell border and on the line of a cell edge.
+        for _ in 0..400 {
+            let on = [
+                80 * rng.range(-3, 3),
+                -48 * rng.range(0, 2),
+                80 * rng.range(-3, 3),
+            ];
+            let axis = rng.range(0, 2) as usize;
+            let mut origin = on.map(f64::from);
+            origin[axis] = -1500.0;
+            let mut dir = [0.0; 3];
+            dir[axis] = 1.0;
+            let ray = Ray { origin, dir };
+            assert_eq!(m.pick(&ray), m.pick_linear(&ray), "seed {seed}: {ray:?}");
+        }
+    }
+}
+
+/// Bigger worlds: far from the origin (the hash cells far out), spread wide, with parts of a pack whose
+/// connectors and boxes differ from the built-ins'. The indexes still equal ones built again.
+#[test]
+fn the_indexes_hold_in_a_big_world_far_from_the_origin() {
+    for seed in 0..6u64 {
+        let mut rng = Rng(seed * 977 + 1);
+        let mut m = Model::new(catalog());
+        let far = [
+            rng.range(-90_000_000, 90_000_000),
+            0,
+            rng.range(-90_000_000, 90_000_000),
+        ];
+        let far = [
+            far[0] - far[0].rem_euclid(80),
+            0,
+            far[2] - far[2].rem_euclid(80),
+        ];
+        // Baseplates on the ground far away, bricks and plates stacked and moved about on and beside them.
+        for b in 0..6 {
+            let _ = m.apply(&Command::Add {
+                part: "ob.baseplate-16x16".into(),
+                pos: [far[0] + 320 * (b % 3), -8, far[2] + 320 * (b / 3)],
+                rot: 0,
+                colour: 2,
+            });
+        }
+        for _ in 0..150 {
+            let part = *rng.pick(&PARTS);
+            let ray = openbrick_engine::Ray {
+                origin: [
+                    f64::from(far[0] + rng.range(-100, 900)),
+                    -600.0,
+                    f64::from(far[2] + rng.range(-100, 600)),
+                ],
+                dir: [0.1, 1.0, 0.05],
+            };
+            place(&mut m, part, *rng.pick(&yaws()), &ray, 4);
+            random_edit_far(&mut m, &mut rng);
+        }
+        assert_eq!(
+            m.index_snapshot(),
+            m.index_snapshot_from_scratch(),
+            "seed {seed}"
+        );
+        let fresh = m.stats();
+        assert_eq!(m.stats_cached(), &fresh, "seed {seed}");
+        for _ in 0..300 {
+            let ray = openbrick_engine::Ray {
+                origin: [
+                    f64::from(far[0] + rng.range(-200, 1000)),
+                    -800.0,
+                    f64::from(far[2] + rng.range(-200, 700)),
+                ],
+                dir: [
+                    f64::from(rng.range(-3, 3)),
+                    1.0,
+                    f64::from(rng.range(-3, 3)),
+                ],
+            };
+            assert_eq!(m.pick(&ray), m.pick_linear(&ray), "seed {seed}: {ray:?}");
+        }
+        let _ = m.apply(&Command::Clear);
+        assert!(m.indexes_are_empty(), "seed {seed}");
+    }
+}
+
+fn random_edit_far(m: &mut Model<'static>, rng: &mut Rng) {
+    let max_id = m.next_id().max(2) as i32;
+    let _ = match rng.range(0, 3) {
+        0 => m.apply(&Command::Remove {
+            id: rng.range(1, max_id) as u32,
+        }),
+        1 => m.apply(&Command::Recolour {
+            id: rng.range(1, max_id) as u32,
+            colour: 14,
+        }),
+        2 => m.undo().map(|_| None),
+        _ => m.redo().map(|_| None),
+    };
 }

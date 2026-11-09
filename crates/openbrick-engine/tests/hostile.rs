@@ -266,6 +266,14 @@ fn hostile_poses_never_panic() {
 /// A pack built in memory (the builder does not validate, as a hostile reader could not be
 /// trusted to) whose only part has the given body box.
 fn catalog_with_box(body: openbrick_catalog::Aabb) -> openbrick_catalog::Catalog {
+    catalog_with_boxes(body, body)
+}
+
+/// The same with a pick box that differs from the body box.
+fn catalog_with_boxes(
+    body: openbrick_catalog::Aabb,
+    pick: openbrick_catalog::Aabb,
+) -> openbrick_catalog::Catalog {
     use openbrick_catalog::pack::{PackCounts, PackHeader, PACK_FORMAT};
     use openbrick_catalog::{Connectivity, Pack, PackPart, PartMesh};
     let part = PackPart {
@@ -279,7 +287,7 @@ fn catalog_with_box(body: openbrick_catalog::Aabb) -> openbrick_catalog::Catalog
         studs: [1, 1],
         height_ldu: 24,
         body,
-        pick: body,
+        pick,
         connectors: vec![],
         vertices: 0,
         triangles: 0,
@@ -333,4 +341,102 @@ fn a_part_with_a_huge_box_is_refused_not_iterated() {
         "refused in {:?}",
         t.elapsed()
     );
+}
+
+#[test]
+fn a_part_whose_pick_box_is_too_big_for_the_hash_is_refused_before_anything_changes() {
+    use openbrick_catalog::Aabb;
+    // The body is one stud; the pick box (body and studs) is wider than the hash limit allows.
+    let c = catalog_with_boxes(
+        Aabb {
+            min: [-10, 0, -10],
+            max: [10, 8, 10],
+        },
+        Aabb {
+            min: [-5_000, -4, -5_000],
+            max: [5_000, 8, 5_000],
+        },
+    );
+    let mut m = Model::new(&c);
+    let e = m
+        .apply(&Command::Add {
+            part: "ld.1".into(),
+            pos: [0, -8, 0],
+            rot: 0,
+            colour: 4,
+        })
+        .unwrap_err();
+    assert!(matches!(e, EngineError::BoxTooLarge { .. }), "{e}");
+    assert!(m.is_empty() && m.indexes_are_empty());
+    assert_eq!(m.index_snapshot(), m.index_snapshot_from_scratch());
+}
+
+#[test]
+fn the_spatial_index_has_a_total_limit_and_a_refused_part_changes_nothing() {
+    use openbrick_catalog::Aabb;
+    use openbrick_engine::MAX_SPATIAL_ENTRIES;
+    // A flat plate of 256 x 256 studs (the largest the pack format allows): thousands of hash cells each.
+    let plate = Aabb {
+        min: [-2_560, 0, -2_560],
+        max: [2_560, 8, 2_560],
+    };
+    let c = catalog_with_box(plate);
+    let mut m = Model::new(&c);
+    let t = std::time::Instant::now();
+    let mut placed = 0;
+    let refused = loop {
+        let x = (placed % 100) * 6_000;
+        let z = (placed / 100) * 6_000;
+        match m.apply(&Command::Add {
+            part: "ld.1".into(),
+            pos: [x, -8, z],
+            rot: 0,
+            colour: 4,
+        }) {
+            Ok(_) => placed += 1,
+            Err(e) => break e,
+        }
+        assert!(placed < 2_000, "the limit never came");
+    };
+    assert!(
+        matches!(refused, EngineError::TooManyCells { limit, .. } if limit == MAX_SPATIAL_ENTRIES),
+        "{refused}"
+    );
+    assert!(refused.to_string().contains("spatial index"), "{refused}");
+    assert!(placed > 100, "{placed} plates fit");
+    assert!(m.index_entries().0 <= MAX_SPATIAL_ENTRIES);
+    // Nothing was half done: the refused part left no entry behind, and the refused move changes nothing.
+    // (The full comparison of the indexes with ones built again is for the small models of scale.rs: at
+    // four million entries a debug build takes minutes to sort them.)
+    let entries = m.index_entries();
+    let before = m.to_text("t", None);
+    let moved = m.apply(&Command::Move {
+        id: 1,
+        pos: [3_330, -8, 3_330],
+        rot: 0,
+    });
+    // (a move to a pose that needs more cells than the part frees is refused; one that fits is allowed)
+    if moved.is_err() {
+        assert_eq!(m.to_text("t", None), before);
+    }
+    assert_eq!(
+        m.index_entries(),
+        entries,
+        "no entry was added or lost by the refused edits"
+    );
+    // Through a document the same limit holds, quickly, and names the part.
+    let instances: Vec<String> = (0..=placed + 5)
+        .map(|n| {
+            format!(
+                r#"{{"id":{},"part":"ld.1","pose":{{"pos":[{},-8,{}],"rot":0}},"colour":4}}"#,
+                n + 1,
+                (n % 100) * 6_000,
+                (n / 100) * 6_000
+            )
+        })
+        .collect();
+    let text = doc(&instances.join(","));
+    let e = Model::from_text(&c, &text).map(|_| ()).unwrap_err();
+    assert!(e.to_string().contains("spatial index"), "{e}");
+    assert!(t.elapsed().as_secs() < 60, "{:?}", t.elapsed());
 }
