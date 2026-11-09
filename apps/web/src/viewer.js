@@ -100,6 +100,13 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
   let gridKey = "";
 
   let dirty = true;
+  /** Called before each frame is drawn (Build mode: levels of detail per chunk). */
+  const beforeRender = new Set();
+  /** Frame times while the camera moves, and the pixel ratio the frames are drawn at (adaptive resolution). */
+  let pixelRatio = Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO);
+  let lastRenderAt = 0;
+  let frameMsEma = 0;
+  const frameListeners = new Set();
   /** Build mode: the assembly (src/assembly-view.js) replaces the part, its grid and its shadow. */
   let buildActive = false;
   let frames = 0;
@@ -172,6 +179,7 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
   function resize() {
     const width = Math.max(1, container.clientWidth);
     const height = Math.max(1, container.clientHeight);
+    renderer.setPixelRatio(pixelRatio);
     renderer.setSize(width, height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
@@ -195,8 +203,18 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
     const below = camera.position.y < 0;
     ground.visible = !below && !buildActive;
     if (grid) grid.visible = !below && !buildActive;
+    const started = performance.now();
+    for (const fn of beforeRender) fn();
     renderer.render(scene, camera);
     frames++;
+    // Frames that follow each other closely (the camera is moving) give the frame time; a frame after a pause
+    // does not (it is the first of a movement or a still picture).
+    if (lastRenderAt && started - lastRenderAt < 120) {
+      const ms = started - lastRenderAt;
+      frameMsEma = frameMsEma === 0 ? ms : frameMsEma * 0.9 + ms * 0.1;
+      for (const fn of frameListeners) fn(ms);
+    }
+    lastRenderAt = started;
     // info is reset at the start of each animation frame, so this is the whole
     // frame: shadow pass, scene and the output pass.
     lastFrame = { triangles: renderer.info.render.triangles, drawCalls: renderer.info.render.drawCalls, drawn: shown, below };
@@ -319,6 +337,34 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
       markDirty() {
         dirty = true;
       },
+      /** Run `fn` before every frame is drawn. */
+      onBeforeRender(fn) {
+        beforeRender.add(fn);
+        return () => beforeRender.delete(fn);
+      },
+      /** Run `fn(ms)` after each frame that followed another closely (while the camera moves). */
+      onFrameTime(fn) {
+        frameListeners.add(fn);
+        return () => frameListeners.delete(fn);
+      },
+      /** Draw at this device pixel ratio from the next frame (adaptive resolution, src/lod.js). */
+      setPixelRatio(ratio) {
+        const next = Math.max(0.25, ratio);
+        if (Math.abs(next - pixelRatio) < 1e-3) return;
+        pixelRatio = next;
+        resize();
+      },
+      get pixelRatio() {
+        return pixelRatio;
+      },
+      /** The smoothed time of a frame while the camera moves, in ms (0 before one was seen). */
+      get frameMs() {
+        return frameMsEma;
+      },
+      /** The 3D view's height in CSS pixels, for the size of a stud on screen. */
+      stageSize() {
+        return { widthPx: container.clientWidth, heightPx: Math.max(1, container.clientHeight) };
+      },
       setBuildActive(on) {
         buildActive = on;
         part.visible = !on;
@@ -368,6 +414,34 @@ export async function createViewer(container, { backend = "auto", onDeviceLost }
           if (last) times.push(now - last);
           last = now;
           if (times.length >= count) {
+            resolve(times);
+            return;
+          }
+          const offset = camera.position.clone().sub(controls.target);
+          offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), (degreesPerFrame * Math.PI) / 180);
+          camera.position.copy(controls.target).add(offset);
+          camera.lookAt(controls.target);
+          dirty = true;
+          requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      });
+    },
+
+    /**
+     * Orbit the camera for `ms` milliseconds and resolve with the gaps between animation frames: on a device
+     * with a display, frames at its refresh rate (16.7 ms at 60 Hz) or slower when the page cannot keep up. This
+     * is what `?bench=1` measures (src/bench.js); in headless software rendering it only counts compositor ticks.
+     */
+    measureFor(ms, degreesPerFrame = 0.6) {
+      return new Promise((resolve) => {
+        const times = [];
+        let last = 0;
+        const end = performance.now() + ms;
+        const step = (now) => {
+          if (last) times.push(now - last);
+          last = now;
+          if (performance.now() >= end) {
             resolve(times);
             return;
           }

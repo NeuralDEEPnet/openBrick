@@ -13,10 +13,8 @@
 //! changed. The bill of materials is written for people and other tools; the
 //! reader recomputes it rather than trusting it.
 
-use std::collections::BTreeMap;
-
 use openbrick_catalog::text::{has_unsafe, safe_msg};
-use openbrick_catalog::{Catalog, Colour, Origin, Palette, CATALOG_ID, LDRAW_ID_PREFIX};
+use openbrick_catalog::{Catalog, Colour, Origin, Palette, PartId, CATALOG_ID, LDRAW_ID_PREFIX};
 use openbrick_units::{Credit, LatticePose, Rot24};
 
 use crate::model::{EngineError, Instance, InstanceId, Model};
@@ -134,6 +132,8 @@ pub enum DocError {
     },
     #[error("the model has {0} submodels; this build reads exactly one, `main`")]
     Submodels(usize),
+    #[error("the model has {count} parts; this build holds at most {limit}. Split it into smaller models")]
+    TooManyInstances { count: usize, limit: usize },
     #[error(
         "instance {id}: part `{}` is not in the catalog `{CATALOG_ID}`",
         safe_msg(part)
@@ -151,6 +151,12 @@ impl ModelDoc {
 
     /// The deterministic text form (module documentation), ending in a newline.
     pub fn to_text(&self) -> String {
+        self.text_with(None)
+    }
+
+    /// [`ModelDoc::to_text`], with the instances of the one submodel written by `instances` when
+    /// given (the model streams them without making a document of them first).
+    fn text_with(&self, instances: Option<&dyn Fn(&mut String)>) -> String {
         let mut out = String::from("{\n");
         let mut field = |name: &str, value: String, last: bool| {
             out.push_str(&format!(
@@ -172,17 +178,27 @@ impl ModelDoc {
             field("requires", list(&self.requires, "    ", "  "), false);
         }
         field("palette", list(&self.palette, "    ", "  "), false);
-        let submodels: Vec<String> = self
-            .submodels
-            .iter()
-            .map(|s| {
-                format!(
-                    "{{\n      \"id\": {},\n      \"instances\": {}\n    }}",
-                    j(&s.id),
-                    list(&s.instances, "        ", "      ")
-                )
-            })
-            .collect();
+        let submodels: Vec<String> = match instances {
+            Some(write) => {
+                let mut body = String::new();
+                write(&mut body);
+                vec![format!(
+                    "{{\n      \"id\": {},\n      \"instances\": {body}\n    }}",
+                    j(MAIN)
+                )]
+            }
+            None => self
+                .submodels
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{{\n      \"id\": {},\n      \"instances\": {}\n    }}",
+                        j(&s.id),
+                        list(&s.instances, "        ", "      ")
+                    )
+                })
+                .collect(),
+        };
         field("submodels", items(&submodels, "    ", "  "), false);
         field("bom", list(&self.bom, "    ", "  "), true);
         out.push_str("}\n");
@@ -239,9 +255,8 @@ fn pack_notices(catalog: &Catalog, doc: &ModelDoc, model: &Model) -> Vec<String>
     };
     let uses_pack = model
         .instances()
-        .part
-        .iter()
-        .any(|&p| catalog.parts[p as usize].origin == Origin::Ldraw);
+        .parts()
+        .any(|p| catalog.parts[p as usize].origin == Origin::Ldraw);
     if !uses_pack {
         return Vec::new();
     }
@@ -285,15 +300,11 @@ fn j<T: serde::Serialize + ?Sized>(v: &T) -> String {
 }
 
 impl<'c> Model<'c> {
-    /// The bill of materials: parts by catalog order, then colour code.
+    /// The bill of materials: parts by catalog order, then colour code. Kept in step by every
+    /// edit, so this is a walk over the distinct (part, colour) pairs, not over the parts.
     pub fn bom(&self) -> Bom {
         let palette = Palette::bundled();
-        let mut counts: BTreeMap<(u32, u16), u32> = BTreeMap::new();
-        for i in self.instances.iter() {
-            *counts.entry((i.part, i.colour)).or_default() += 1;
-        }
-        counts
-            .into_iter()
+        self.bom_counts()
             .map(|((part, colour), count)| {
                 let p = &self.catalog().parts[part as usize];
                 BomLine {
@@ -314,10 +325,8 @@ impl<'c> Model<'c> {
     pub fn requirements(&self) -> Vec<PackRequirement> {
         let catalog = self.catalog();
         let uses_pack = self
-            .instances
-            .part
-            .iter()
-            .any(|&p| catalog.parts[p as usize].origin == Origin::Ldraw);
+            .bom_counts()
+            .any(|((p, _), _)| catalog.parts[p as usize].origin == Origin::Ldraw);
         match (&catalog.pack, uses_pack) {
             (Some(pack), true) => vec![PackRequirement {
                 pack: pack.id.clone(),
@@ -328,27 +337,15 @@ impl<'c> Model<'c> {
         }
     }
 
-    /// The model as a document named `name`.
-    pub fn to_doc(&self, name: &str, credit: Option<Credit>) -> ModelDoc {
+    /// The document without its instances (the header, the palette, the bill of materials and
+    /// an empty `main` submodel).
+    fn doc_header(&self, name: &str, credit: Option<Credit>) -> ModelDoc {
         let palette = Palette::bundled();
         let used: Vec<Colour> = palette
             .colours
             .iter()
-            .filter(|c| self.instances.colour.contains(&c.code))
+            .filter(|c| self.bom_counts().any(|((_, colour), _)| colour == c.code))
             .cloned()
-            .collect();
-        let instances = self
-            .instances
-            .iter()
-            .map(|i| InstanceDoc {
-                id: i.id,
-                part: self.catalog().parts[i.part as usize].id.clone(),
-                pose: PoseDoc {
-                    pos: i.pose.pos,
-                    rot: i.pose.rot.0,
-                },
-                colour: i.colour,
-            })
             .collect();
         ModelDoc {
             openbrick: MODEL_PRAGMA.into(),
@@ -362,10 +359,55 @@ impl<'c> Model<'c> {
             palette: used,
             submodels: vec![Submodel {
                 id: MAIN.into(),
-                instances,
+                instances: Vec::new(),
             }],
             bom: self.bom(),
         }
+    }
+
+    /// The model as a document named `name`.
+    pub fn to_doc(&self, name: &str, credit: Option<Credit>) -> ModelDoc {
+        let mut doc = self.doc_header(name, credit);
+        doc.submodels[0].instances = self
+            .instances
+            .iter()
+            .map(|i| InstanceDoc {
+                id: i.id,
+                part: self.catalog().parts[i.part as usize].id.clone(),
+                pose: PoseDoc {
+                    pos: i.pose.pos,
+                    rot: i.pose.rot.0,
+                },
+                colour: i.colour,
+            })
+            .collect();
+        doc
+    }
+
+    /// The instances as the text of the `instances` array, one per line in table order, exactly
+    /// as the document form writes them but without making a document of 100,000 parts first.
+    fn write_instances(&self, out: &mut String) {
+        use std::fmt::Write;
+        if self.instances.is_empty() {
+            out.push_str("[]");
+            return;
+        }
+        out.reserve(self.len() * 96);
+        let mut part_json: Vec<Option<String>> = vec![None; self.catalog().len()];
+        out.push_str("[\n");
+        for (n, i) in self.instances.iter().enumerate() {
+            if n > 0 {
+                out.push_str(",\n");
+            }
+            let part = part_json[i.part as usize]
+                .get_or_insert_with(|| j(&self.catalog().parts[i.part as usize].id));
+            let _ = write!(
+                out,
+                "        {{\"id\":{},\"part\":{part},\"pose\":{{\"pos\":[{},{},{}],\"rot\":{}}},\"colour\":{}}}",
+                i.id, i.pose.pos[0], i.pose.pos[1], i.pose.pos[2], i.pose.rot.0, i.colour
+            );
+        }
+        out.push_str("\n      ]");
     }
 
     /// A model from a document: every instance is checked as if placed by
@@ -385,6 +427,74 @@ impl<'c> Model<'c> {
         catalog: &'c Catalog,
         doc: &ModelDoc,
     ) -> Result<(Model<'c>, Vec<String>), DocError> {
+        let mut loader = Loader::new(catalog, doc.clone())?;
+        loader.step(usize::MAX)?;
+        loader.finish()
+    }
+
+    /// Read a `.obrick` document's text.
+    pub fn from_text(catalog: &'c Catalog, text: &str) -> Result<Model<'c>, DocError> {
+        Model::from_doc(catalog, &ModelDoc::parse(text)?)
+    }
+
+    /// Read a `.obrick` document's text, with the notices of [`Model::from_doc_with_notices`].
+    pub fn from_text_with_notices(
+        catalog: &'c Catalog,
+        text: &str,
+    ) -> Result<(Model<'c>, Vec<String>), DocError> {
+        Model::from_doc_with_notices(catalog, &ModelDoc::parse(text)?)
+    }
+
+    /// The `.obrick` text of this model.
+    pub fn to_text(&self, name: &str, credit: Option<Credit>) -> String {
+        self.doc_header(name, credit)
+            .text_with(Some(&|out| self.write_instances(out)))
+    }
+
+    /// A model with these parts in this order (a page putting back the table it holds): each is
+    /// checked as if placed by hand, as in [`Model::from_doc`]. The history starts empty.
+    pub fn from_instances(
+        catalog: &'c Catalog,
+        instances: impl IntoIterator<Item = Instance>,
+    ) -> Result<Model<'c>, DocError> {
+        let mut model = Model::new(catalog);
+        for (n, inst) in instances.into_iter().enumerate() {
+            if n >= crate::MAX_INSTANCES {
+                return Err(DocError::TooManyInstances {
+                    count: n + 1,
+                    limit: crate::MAX_INSTANCES,
+                });
+            }
+            model
+                .insert(n, inst)
+                .map_err(|error| DocError::Instance { id: inst.id, error })?;
+        }
+        model.take_changes();
+        Ok(model)
+    }
+
+    /// Start reading a `.obrick` document's text in steps ([`Loader`]): the page shows progress and
+    /// a cancelled open costs nothing.
+    pub fn loader(catalog: &'c Catalog, text: &str) -> Result<Loader<'c>, DocError> {
+        Loader::new(catalog, ModelDoc::parse(text)?)
+    }
+}
+
+/// A document being read into a model, a few instances at a time. Every instance is checked as if
+/// placed by hand, in document order (see [`Model::from_doc`]); a failure names the instance and
+/// drops the loader, and nothing else changed.
+pub struct Loader<'c> {
+    catalog: &'c Catalog,
+    doc: ModelDoc,
+    model: Model<'c>,
+    next: usize,
+    /// Part names already looked up (a pack's catalog is searched by name, which costs a scan).
+    parts: std::collections::HashMap<String, PartId>,
+}
+
+impl<'c> Loader<'c> {
+    /// Check the document's header and size; no instance is read yet.
+    pub fn new(catalog: &'c Catalog, doc: ModelDoc) -> Result<Loader<'c>, DocError> {
         if doc.openbrick.split('.').next() != Some("1") {
             return Err(DocError::Version(doc.openbrick.clone()));
         }
@@ -410,33 +520,74 @@ impl<'c> Model<'c> {
         if main.id != MAIN {
             return Err(DocError::Submodels(doc.submodels.len()));
         }
+        if main.instances.len() > crate::MAX_INSTANCES {
+            return Err(DocError::TooManyInstances {
+                count: main.instances.len(),
+                limit: crate::MAX_INSTANCES,
+            });
+        }
         let mut model = Model::new(catalog);
-        for (index, i) in main.instances.iter().enumerate() {
-            let part = catalog.find(&i.part).ok_or_else(|| {
-                if i.part.starts_with(LDRAW_ID_PREFIX) {
-                    let need = doc.requires.first();
-                    DocError::MissingPack {
-                        id: i.id,
-                        part: i.part.clone(),
-                        pack: need.map_or_else(|| "ldraw".into(), |r| r.pack.clone()),
-                        library: need.map_or_else(|| "unknown".into(), |r| r.library.clone()),
-                    }
-                } else {
-                    DocError::UnknownPart {
-                        id: i.id,
-                        part: i.part.clone(),
-                    }
+        if main.instances.len() > 2_000 {
+            model.reserve(main.instances.len());
+        }
+        Ok(Loader {
+            catalog,
+            doc,
+            model,
+            next: 0,
+            parts: std::collections::HashMap::new(),
+        })
+    }
+
+    /// How many instances the document has.
+    pub fn total(&self) -> usize {
+        self.doc.submodels[0].instances.len()
+    }
+
+    /// How many have been read.
+    pub fn done(&self) -> usize {
+        self.next
+    }
+
+    /// Read up to `max` more instances; returns how many have been read in all.
+    pub fn step(&mut self, max: usize) -> Result<usize, DocError> {
+        let instances = &self.doc.submodels[0].instances;
+        let end = self.next.saturating_add(max).min(instances.len());
+        while self.next < end {
+            let i = &instances[self.next];
+            let part = match self.parts.get(i.part.as_str()) {
+                Some(&p) => p,
+                None => {
+                    let p = self.catalog.find(&i.part).ok_or_else(|| {
+                        if i.part.starts_with(LDRAW_ID_PREFIX) {
+                            let need = self.doc.requires.first();
+                            DocError::MissingPack {
+                                id: i.id,
+                                part: i.part.clone(),
+                                pack: need.map_or_else(|| "ldraw".into(), |r| r.pack.clone()),
+                                library: need
+                                    .map_or_else(|| "unknown".into(), |r| r.library.clone()),
+                            }
+                        } else {
+                            DocError::UnknownPart {
+                                id: i.id,
+                                part: i.part.clone(),
+                            }
+                        }
+                    })?;
+                    self.parts.insert(i.part.clone(), p);
+                    p
                 }
-            })?;
+            };
             if i.pose.rot >= 24 {
                 return Err(DocError::Instance {
                     id: i.id,
                     error: EngineError::UnknownRotation(i.pose.rot),
                 });
             }
-            model
+            self.model
                 .insert(
-                    index,
+                    self.next,
                     Instance {
                         id: i.id,
                         part,
@@ -448,26 +599,21 @@ impl<'c> Model<'c> {
                     },
                 )
                 .map_err(|error| DocError::Instance { id: i.id, error })?;
+            self.next += 1;
         }
-        let notices = pack_notices(catalog, doc, &model);
-        Ok((model, notices))
+        Ok(self.next)
     }
 
-    /// Read a `.obrick` document's text.
-    pub fn from_text(catalog: &'c Catalog, text: &str) -> Result<Model<'c>, DocError> {
-        Model::from_doc(catalog, &ModelDoc::parse(text)?)
-    }
-
-    /// Read a `.obrick` document's text, with the notices of [`Model::from_doc_with_notices`].
-    pub fn from_text_with_notices(
-        catalog: &'c Catalog,
-        text: &str,
-    ) -> Result<(Model<'c>, Vec<String>), DocError> {
-        Model::from_doc_with_notices(catalog, &ModelDoc::parse(text)?)
-    }
-
-    /// The `.obrick` text of this model.
-    pub fn to_text(&self, name: &str, credit: Option<Credit>) -> String {
-        self.to_doc(name, credit).to_text()
+    /// The model, once every instance has been read, and the notices of
+    /// [`Model::from_doc_with_notices`]. The history starts empty and the change list too.
+    pub fn finish(mut self) -> Result<(Model<'c>, Vec<String>), DocError> {
+        debug_assert_eq!(
+            self.next,
+            self.total(),
+            "finish before every instance was read"
+        );
+        let notices = pack_notices(self.catalog, &self.doc, &self.model);
+        self.model.take_changes();
+        Ok((self.model, notices))
     }
 }

@@ -139,8 +139,21 @@ fn nearest_phase(v: f64, phase: i32, step: i32) -> i32 {
 
 impl Model<'_> {
     /// The first thing `ray` hits: a placed part (lowest id on a tie) or the
-    /// ground plane Y = 0 seen from above.
+    /// ground plane Y = 0 seen from above. The ray walks the spatial hash cell by cell and stops
+    /// at the first cell that cannot hold anything nearer, so the cost depends on what is near the
+    /// ray, not on how many parts the model has.
     pub fn pick(&self, ray: &Ray) -> Option<Hit> {
+        self.pick_with(ray, true)
+    }
+
+    /// [`Model::pick`] testing every part's box one by one: the answer the walk must equal (the
+    /// property tests compare them), and what the walk falls back to for a ray that would cross
+    /// more cells than the hash holds entries.
+    pub fn pick_linear(&self, ray: &Ray) -> Option<Hit> {
+        self.pick_with(ray, false)
+    }
+
+    fn pick_with(&self, ray: &Ray, walk: bool) -> Option<Hit> {
         // A ray that is not finite, or starts absurdly far away, hits nothing.
         let sane = ray
             .origin
@@ -155,16 +168,39 @@ impl Model<'_> {
             return None;
         }
         let mut best: Option<Hit> = None;
-        for inst in self.instances.iter() {
-            if let Some((t, normal)) = ray_box(ray, &self.pick_box(&inst)) {
-                if best.is_none_or(|b| t < b.t) {
-                    best = Some(Hit {
-                        instance: Some(inst.id),
-                        point: ray.at(t),
-                        normal,
-                        t,
-                    });
-                }
+        let test = |id: InstanceId, b: &Aabb, best: &mut Option<Hit>| -> f64 {
+            let Some((t, normal)) = ray_box(ray, b) else {
+                return f64::INFINITY;
+            };
+            let better = match best {
+                None => true,
+                Some(h) => t < h.t || (t == h.t && h.instance.is_some_and(|other| id < other)),
+            };
+            if better {
+                *best = Some(Hit {
+                    instance: Some(id),
+                    point: ray.at(t),
+                    normal,
+                    t,
+                });
+            }
+            t
+        };
+        let walked = walk
+            && self.spatial().walk_ray(ray.origin, ray.dir, |slot| {
+                test(
+                    self.instances.id_of(slot),
+                    self.instances.pick_at(slot),
+                    &mut best,
+                )
+            });
+        if !walked {
+            for &slot in self.instances.slots() {
+                test(
+                    self.instances.id_of(slot),
+                    self.instances.pick_at(slot),
+                    &mut best,
+                );
             }
         }
         if ray.dir[1] > 1e-12 && ray.origin[1] < 0.0 {

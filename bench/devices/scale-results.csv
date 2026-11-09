@@ -1,0 +1,1 @@
+date,device,user_agent,gpu,backend,device_pixel_ratio,pixel_ratio_end,viewport,layout,bricks,parts,open_core_ms,open_page_ms,chunks,draw_calls,triangles,chunks_full,chunks_cheap,chunks_solid,chunks_hull,frames,frame_ms_p50,frame_ms_p95,fps_mean,snap_ms,pick_ms,place_undo_ms,heap_mib,warnings

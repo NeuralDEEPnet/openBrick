@@ -3,14 +3,15 @@
 //! the body boxes and the connector hash, kept in step by [`Model`]'s
 //! primitive operations, which check collision and the lattice first.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use openbrick_catalog::{Aabb, Catalog, CatalogPart, Conn, Palette, PartId};
 use openbrick_units::{LatticePose, Rot24};
 
+use crate::graph::Stats;
 use crate::history::History;
 use crate::on_stud_grid;
-use crate::spatial::{ConnHash, SpatialHash};
+use crate::spatial::{ConnHash, FastMap, SpatialHash, MAX_SPATIAL_ENTRIES};
 
 /// Id of a placed part, unique within a model and kept by `.obrick` files.
 /// Small integers in placement order; ULIDs arrive with collaboration (docs/plan/07
@@ -27,53 +28,157 @@ pub struct Instance {
     pub colour: u16,
 }
 
-/// Struct-of-arrays instance table, in placement order.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Struct-of-arrays instance table in placement order (docs/plan/07 section 2).
+///
+/// The columns are indexed by *slot*, which never changes while a part is placed (a removed part's
+/// slot is reused by a later one), and `order` lists the slots in placement order. So adding or
+/// removing a part moves 4 bytes in `order`, not a row of every column, and the indexes (the id
+/// map, the spatial and connector hashes) keep their slots without renumbering: the cost of an edit
+/// does not grow with the number of parts beyond one small memmove (about 20 microseconds for
+/// 100,000 parts; bench/scale).
+#[derive(Clone, Debug, Default)]
 pub struct Instances {
-    pub id: Vec<InstanceId>,
-    pub part: Vec<PartId>,
-    pub pose: Vec<LatticePose>,
-    pub colour: Vec<u16>,
+    ids: Vec<InstanceId>,
+    parts: Vec<PartId>,
+    poses: Vec<LatticePose>,
+    colours: Vec<u16>,
+    /// The body box and the pick box of each placed part, kept so a collision or a ray test is a
+    /// comparison, not a transform of the part's box.
+    bodies: Vec<Aabb>,
+    picks: Vec<Aabb>,
+    /// Slots in placement order.
+    order: Vec<u32>,
+    /// Slots of removed parts, free for reuse.
+    free: Vec<u32>,
 }
 
 impl Instances {
     pub fn len(&self) -> usize {
-        self.id.len()
+        self.order.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.id.is_empty()
+        self.order.is_empty()
     }
 
+    /// The part at table position `index` (placement order).
     pub fn get(&self, index: usize) -> Instance {
+        self.at_slot(self.order[index])
+    }
+
+    pub(crate) fn at_slot(&self, slot: u32) -> Instance {
+        let s = slot as usize;
         Instance {
-            id: self.id[index],
-            part: self.part[index],
-            pose: self.pose[index],
-            colour: self.colour[index],
+            id: self.ids[s],
+            part: self.parts[s],
+            pose: self.poses[s],
+            colour: self.colours[s],
         }
     }
 
-    fn insert(&mut self, index: usize, i: Instance) {
-        self.id.insert(index, i.id);
-        self.part.insert(index, i.part);
-        self.pose.insert(index, i.pose);
-        self.colour.insert(index, i.colour);
+    /// Slots in placement order.
+    pub(crate) fn slots(&self) -> &[u32] {
+        &self.order
     }
 
-    fn remove(&mut self, index: usize) -> Instance {
-        Instance {
-            id: self.id.remove(index),
-            part: self.part.remove(index),
-            pose: self.pose.remove(index),
-            colour: self.colour.remove(index),
+    /// Slots ever used (the length of the columns): the size of a table indexed by slot.
+    pub(crate) fn slot_capacity(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub(crate) fn id_of(&self, slot: u32) -> InstanceId {
+        self.ids[slot as usize]
+    }
+
+    /// Where in placement order the part in `slot` is: a binary search when ids ascend (they do
+    /// in every file this program writes), a scan from the end otherwise.
+    pub(crate) fn position_of(&self, slot: u32) -> usize {
+        let id = self.ids[slot as usize];
+        let guess = self.order.partition_point(|&s| self.ids[s as usize] < id);
+        if self.order.get(guess) == Some(&slot) {
+            return guess;
         }
+        self.order
+            .iter()
+            .rposition(|&s| s == slot)
+            .expect("a placed slot is in the order")
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = Instance> + '_ {
-        (0..self.len()).map(|i| self.get(i))
+    pub(crate) fn insert(&mut self, position: usize, i: Instance, body: Aabb, pick: Aabb) -> u32 {
+        let slot = if let Some(slot) = self.free.pop() {
+            let s = slot as usize;
+            self.ids[s] = i.id;
+            self.parts[s] = i.part;
+            self.poses[s] = i.pose;
+            self.colours[s] = i.colour;
+            self.bodies[s] = body;
+            self.picks[s] = pick;
+            slot
+        } else {
+            self.ids.push(i.id);
+            self.parts.push(i.part);
+            self.poses.push(i.pose);
+            self.colours.push(i.colour);
+            self.bodies.push(body);
+            self.picks.push(pick);
+            (self.ids.len() - 1) as u32
+        };
+        self.order.insert(position.min(self.order.len()), slot);
+        slot
+    }
+
+    /// Remove the part in `slot`; returns its table position and the part.
+    pub(crate) fn remove_slot(&mut self, slot: u32) -> (usize, Instance) {
+        let position = self.position_of(slot);
+        let inst = self.at_slot(slot);
+        self.order.remove(position);
+        self.ids[slot as usize] = 0;
+        self.free.push(slot);
+        (position, inst)
+    }
+
+    pub(crate) fn set_pose_at(&mut self, slot: u32, pose: LatticePose, body: Aabb, pick: Aabb) {
+        self.poses[slot as usize] = pose;
+        self.bodies[slot as usize] = body;
+        self.picks[slot as usize] = pick;
+    }
+
+    pub(crate) fn body_at(&self, slot: u32) -> &Aabb {
+        &self.bodies[slot as usize]
+    }
+
+    pub(crate) fn pick_at(&self, slot: u32) -> &Aabb {
+        &self.picks[slot as usize]
+    }
+
+    pub(crate) fn set_colour_at(&mut self, slot: u32, colour: u16) -> u16 {
+        std::mem::replace(&mut self.colours[slot as usize], colour)
+    }
+
+    /// The placed parts in placement order.
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = Instance> + ExactSizeIterator + '_ {
+        self.order.iter().map(|&s| self.at_slot(s))
+    }
+
+    /// The part numbers of the placed parts (any order).
+    pub fn parts(&self) -> impl Iterator<Item = PartId> + '_ {
+        self.order.iter().map(|&s| self.parts[s as usize])
+    }
+
+    /// The colour codes of the placed parts (any order).
+    pub fn colours(&self) -> impl Iterator<Item = u16> + '_ {
+        self.order.iter().map(|&s| self.colours[s as usize])
     }
 }
+
+impl PartialEq for Instances {
+    /// Two tables are equal when they hold the same parts in the same order.
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for Instances {}
 
 /// Why an edit was refused. Every message says what to do instead.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -108,6 +213,14 @@ pub enum EngineError {
     BoxTooLarge { cells: u64, limit: u64 },
     #[error("position {pos:?} is beyond {limit} LDU from the origin; keep every coordinate within plus or minus {limit}")]
     OutOfRange { pos: [i32; 3], limit: i32 },
+    #[error("the part would add {cells} entries to the spatial index, which holds {have} of the {limit} it can; use smaller parts, or split the model")]
+    TooManyCells {
+        cells: usize,
+        have: usize,
+        limit: usize,
+    },
+    #[error("the model already has {limit} parts, the most this program holds; split it into smaller models, or remove parts first")]
+    TooManyParts { limit: usize },
 }
 
 /// A model: the catalog it places parts from, the instance table and its
@@ -116,11 +229,39 @@ pub enum EngineError {
 pub struct Model<'c> {
     catalog: &'c Catalog,
     pub(crate) instances: Instances,
-    index: HashMap<InstanceId, usize>,
+    /// Table slot of each placed part by id.
+    index: FastMap<InstanceId, u32>,
     spatial: SpatialHash,
     pub(crate) conns: ConnHash,
     next_id: InstanceId,
     pub(crate) history: History,
+    /// Parts placed by (catalog part number, colour code): the bill of materials, kept in step by
+    /// every primitive instead of counted again on request.
+    bom: BTreeMap<(PartId, u16), u32>,
+    /// Ids of the parts changed since [`Model::take_changes`], with the flag for "too many to list".
+    changes: Vec<InstanceId>,
+    changes_overflow: bool,
+    /// Bumped by every primitive edit: the change tick results are cached against.
+    revision: u64,
+    pub(crate) stats_cache: Option<(u64, Stats)>,
+}
+
+/// The parts changed since the last [`Model::take_changes`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Changes {
+    /// Ids touched (added, removed, moved or recoloured), ascending, each once. Empty with
+    /// `overflow` when more changed than are worth listing: read the table again.
+    pub ids: Vec<InstanceId>,
+    pub overflow: bool,
+}
+
+/// The indexes as lists, for the property tests: they compare the incrementally kept hashes with
+/// ones built from scratch from the instance table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexSnapshot {
+    pub cells: Vec<([i32; 3], InstanceId)>,
+    pub connectors: Vec<([i32; 3], InstanceId, openbrick_catalog::ConnKind, [i8; 3])>,
+    pub bom: Vec<((PartId, u16), u32)>,
 }
 
 impl<'c> Model<'c> {
@@ -129,16 +270,29 @@ impl<'c> Model<'c> {
         Model {
             catalog,
             instances: Instances::default(),
-            index: HashMap::new(),
+            index: FastMap::default(),
             spatial: SpatialHash::default(),
             conns: ConnHash::default(),
             next_id: 1,
             history: History::default(),
+            bom: BTreeMap::new(),
+            changes: Vec::new(),
+            changes_overflow: false,
+            revision: 0,
+            stats_cache: None,
         }
     }
 
     pub fn catalog(&self) -> &'c Catalog {
         self.catalog
+    }
+
+    /// Make room for about `parts` more parts in the indexes (opening a big file).
+    pub fn reserve(&mut self, parts: usize) {
+        let parts = parts.min(crate::MAX_INSTANCES);
+        self.index.reserve(parts);
+        self.spatial.reserve(parts);
+        self.conns.reserve(parts);
     }
 
     pub fn instances(&self) -> &Instances {
@@ -153,10 +307,16 @@ impl<'c> Model<'c> {
         self.instances.is_empty()
     }
 
+    /// The change tick: bumped by every edit (and by undo and redo). Two reads with the same
+    /// revision saw the same model.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// True when the spatial and connector hashes hold nothing: after every
     /// part is removed they must be empty again (a property test checks it).
     pub fn indexes_are_empty(&self) -> bool {
-        self.spatial.is_empty() && self.conns.is_empty()
+        self.spatial.is_empty() && self.conns.is_empty() && self.bom.is_empty()
     }
 
     /// The id the next added part gets.
@@ -166,10 +326,10 @@ impl<'c> Model<'c> {
 
     /// The placed part with this id.
     pub fn instance(&self, id: InstanceId) -> Option<Instance> {
-        self.index.get(&id).map(|&i| self.instances.get(i))
+        self.index.get(&id).map(|&s| self.instances.at_slot(s))
     }
 
-    pub(crate) fn index_of(&self, id: InstanceId) -> Result<usize, EngineError> {
+    pub(crate) fn slot_of(&self, id: InstanceId) -> Result<u32, EngineError> {
         self.index
             .get(&id)
             .copied()
@@ -197,6 +357,16 @@ impl<'c> Model<'c> {
     pub fn pick_box(&self, i: &Instance) -> Aabb {
         let shape = &self.catalog.parts[i.part as usize].shape;
         shape.pick.transformed(i.pose.rot, i.pose.pos)
+    }
+
+    /// The box the spatial hash stores for a part: its pick box and its body box together (the
+    /// pick box holds the body box for every part, but the hash must not depend on it).
+    fn cover_box(&self, part: PartId, pose: &LatticePose) -> Result<Aabb, EngineError> {
+        let shape = &self.part(part)?.shape;
+        Ok(shape
+            .body
+            .transformed(pose.rot, pose.pos)
+            .union(&shape.pick.transformed(pose.rot, pose.pos)))
     }
 
     /// The connectors of `part` at `pose`.
@@ -242,8 +412,14 @@ impl<'c> Model<'c> {
         // below its plate, so its connectors are not required to be on the grid: they mate only
         // where they coincide with another part's, which is exact whatever the grid. A part turned
         // on its side is checked by its box alone, and pins and axles have no grid of their own.
-        if self.part(part)?.origin == openbrick_catalog::Origin::Builtin {
-            for c in self.placed_connectors(part, pose)? {
+        let cat_part = self.part(part)?;
+        if cat_part.origin == openbrick_catalog::Origin::Builtin {
+            for c in cat_part
+                .shape
+                .connectors
+                .iter()
+                .map(|c| c.transformed(pose.rot, pose.pos))
+            {
                 if c.kind.is_stud_kind() && c.dir[1] != 0 && !on_stud_grid(c.pos) {
                     return Err(EngineError::OffGrid { pos: c.pos });
                 }
@@ -251,6 +427,29 @@ impl<'c> Model<'c> {
         }
         let b = self.body_box(part, pose)?;
         crate::spatial::check_box(&b)?;
+        // The box the hash will store (the body and the pick box together) is checked here, before anything
+        // is changed, so inserting it cannot fail halfway: its size, and the room left in the hash.
+        let shape = &cat_part.shape;
+        let cover = b.union(&shape.pick.transformed(pose.rot, pose.pos));
+        crate::spatial::check_box(&cover)?;
+        let cells = SpatialHash::cells_of(&cover)?;
+        let freed = match skip.and_then(|id| self.index.get(&id).copied()) {
+            Some(slot) => SpatialHash::cells_of(
+                &self
+                    .instances
+                    .body_at(slot)
+                    .union(self.instances.pick_at(slot)),
+            )?,
+            None => 0,
+        };
+        let have = self.spatial.entries().saturating_sub(freed);
+        if have + cells > MAX_SPATIAL_ENTRIES {
+            return Err(EngineError::TooManyCells {
+                cells,
+                have,
+                limit: MAX_SPATIAL_ENTRIES,
+            });
+        }
         if b.max[1] > 0 {
             return Err(EngineError::BelowGround { depth: b.max[1] });
         }
@@ -270,16 +469,17 @@ impl<'c> Model<'c> {
         b: &Aabb,
         skip: Option<InstanceId>,
     ) -> Result<Option<InstanceId>, EngineError> {
-        Ok(self.spatial.near(b)?.into_iter().find(|&id| {
-            Some(id) != skip && {
-                let i = self.instance(id).expect("indexed");
-                self.catalog.parts[i.part as usize]
-                    .shape
-                    .body
-                    .transformed(i.pose.rot, i.pose.pos)
-                    .overlaps(b)
+        let mut best: Option<InstanceId> = None;
+        self.spatial.for_each_near(b, |slot| {
+            let id = self.instances.id_of(slot);
+            if Some(id) != skip
+                && best.is_none_or(|other| id < other)
+                && self.instances.body_at(slot).overlaps(b)
+            {
+                best = Some(id);
             }
-        }))
+        })?;
+        Ok(best)
     }
 
     /// How many connectors of `part` at `pose` mate with placed parts (other
@@ -290,9 +490,13 @@ impl<'c> Model<'c> {
         pose: &LatticePose,
         skip: Option<InstanceId>,
     ) -> Result<u32, EngineError> {
+        let skip = skip.and_then(|id| self.index.get(&id).copied());
         Ok(self
-            .placed_connectors(part, pose)?
+            .part(part)?
+            .shape
+            .connectors
             .iter()
+            .map(|c| c.transformed(pose.rot, pose.pos))
             .filter(|c| self.conns.mate_of(c, skip).is_some())
             .count() as u32)
     }
@@ -307,6 +511,27 @@ impl<'c> Model<'c> {
 
     // ------------------------------------------------------------ primitives
 
+    fn touch(&mut self, id: InstanceId) {
+        self.revision += 1;
+        self.stats_cache = None;
+        if self.changes.len() >= 2 * crate::MAX_INSTANCES {
+            self.changes.clear();
+            self.changes_overflow = true;
+        }
+        if !self.changes_overflow {
+            self.changes.push(id);
+        }
+    }
+
+    /// The parts changed since the last call, and forget them. See [`Changes`].
+    pub fn take_changes(&mut self) -> Changes {
+        let overflow = std::mem::take(&mut self.changes_overflow);
+        let mut ids = std::mem::take(&mut self.changes);
+        ids.sort_unstable();
+        ids.dedup();
+        Changes { ids, overflow }
+    }
+
     /// Insert `inst` at table position `index` (clamped to the end), after
     /// checking it. The building block of add and of undoing a removal.
     pub(crate) fn insert(&mut self, index: usize, inst: Instance) -> Result<(), EngineError> {
@@ -316,30 +541,68 @@ impl<'c> Model<'c> {
         if self.index.contains_key(&inst.id) {
             return Err(EngineError::DuplicateId(inst.id));
         }
+        if self.instances.len() >= crate::MAX_INSTANCES {
+            return Err(EngineError::TooManyParts {
+                limit: crate::MAX_INSTANCES,
+            });
+        }
         Model::check_colour(inst.colour)?;
         self.check_pose(inst.part, &inst.pose, None)?;
-        let index = index.min(self.instances.len());
-        let b = self.body_box(inst.part, &inst.pose)?;
-        let conns = self.placed_connectors(inst.part, &inst.pose)?;
-        self.instances.insert(index, inst);
-        self.reindex_from(index);
-        self.spatial.insert(inst.id, &b)?;
-        self.conns.insert(inst.id, &conns);
+        let shape = &self.part(inst.part)?.shape;
+        let body = shape.body.transformed(inst.pose.rot, inst.pose.pos);
+        let pick = shape.pick.transformed(inst.pose.rot, inst.pose.pos);
+        let cover = body.union(&pick);
+        let slot = self.instances.insert(index, inst, body, pick);
+        if let Err(e) = self.spatial.insert(slot, &cover) {
+            self.instances.remove_slot(slot);
+            return Err(e);
+        }
+        self.index.insert(inst.id, slot);
+        let shape = &self.catalog.parts[inst.part as usize].shape;
+        self.conns.insert(
+            slot,
+            shape
+                .connectors
+                .iter()
+                .map(|c| c.transformed(inst.pose.rot, inst.pose.pos)),
+        );
+        *self.bom.entry((inst.part, inst.colour)).or_default() += 1;
         self.next_id = self.next_id.max(inst.id.saturating_add(1));
+        self.touch(inst.id);
         Ok(())
     }
 
     /// Remove the placed part `id`; returns it and where it was in the table.
     pub(crate) fn delete(&mut self, id: InstanceId) -> Result<(usize, Instance), EngineError> {
-        let index = self.index_of(id)?;
-        let inst = self.instances.remove(index);
+        let slot = self.slot_of(id)?;
+        let inst = self.instances.at_slot(slot);
+        let cover = self
+            .instances
+            .body_at(slot)
+            .union(self.instances.pick_at(slot));
+        self.spatial.remove(slot, &cover)?;
+        let shape = &self.catalog.parts[inst.part as usize].shape;
+        self.conns.remove(
+            slot,
+            shape
+                .connectors
+                .iter()
+                .map(|c| c.transformed(inst.pose.rot, inst.pose.pos)),
+        );
+        let (position, inst) = self.instances.remove_slot(slot);
         self.index.remove(&id);
-        self.reindex_from(index);
-        let b = self.body_box(inst.part, &inst.pose)?;
-        let conns = self.placed_connectors(inst.part, &inst.pose)?;
-        self.spatial.remove(id, &b)?;
-        self.conns.remove(id, &conns);
-        Ok((index, inst))
+        self.bom_take(inst.part, inst.colour);
+        self.touch(id);
+        Ok((position, inst))
+    }
+
+    fn bom_take(&mut self, part: PartId, colour: u16) {
+        if let Some(n) = self.bom.get_mut(&(part, colour)) {
+            *n -= 1;
+            if *n == 0 {
+                self.bom.remove(&(part, colour));
+            }
+        }
     }
 
     /// Move the placed part `id` to `pose`; returns the old pose.
@@ -348,33 +611,141 @@ impl<'c> Model<'c> {
         id: InstanceId,
         pose: LatticePose,
     ) -> Result<LatticePose, EngineError> {
-        let index = self.index_of(id)?;
-        let inst = self.instances.get(index);
+        let slot = self.slot_of(id)?;
+        let inst = self.instances.at_slot(slot);
         self.check_pose(inst.part, &pose, Some(id))?;
-        let (old_box, old_conns) = (
-            self.body_box(inst.part, &inst.pose)?,
-            self.placed_connectors(inst.part, &inst.pose)?,
+        let old_cover = self
+            .instances
+            .body_at(slot)
+            .union(self.instances.pick_at(slot));
+        let shape = &self.catalog.parts[inst.part as usize].shape;
+        let body = shape.body.transformed(pose.rot, pose.pos);
+        let pick = shape.pick.transformed(pose.rot, pose.pos);
+        let new_cover = body.union(&pick);
+        self.spatial.remove(slot, &old_cover)?;
+        self.conns.remove(
+            slot,
+            shape
+                .connectors
+                .iter()
+                .map(|c| c.transformed(inst.pose.rot, inst.pose.pos)),
         );
-        self.spatial.remove(id, &old_box)?;
-        self.conns.remove(id, &old_conns);
-        self.instances.pose[index] = pose;
-        self.spatial.insert(id, &self.body_box(inst.part, &pose)?)?;
-        let conns = self.placed_connectors(inst.part, &pose)?;
-        self.conns.insert(id, &conns);
+        self.instances.set_pose_at(slot, pose, body, pick);
+        self.spatial.insert(slot, &new_cover)?;
+        self.conns.insert(
+            slot,
+            shape
+                .connectors
+                .iter()
+                .map(|c| c.transformed(pose.rot, pose.pos)),
+        );
+        self.touch(id);
         Ok(inst.pose)
     }
 
     /// Recolour the placed part `id`; returns the old colour.
     pub(crate) fn set_colour(&mut self, id: InstanceId, colour: u16) -> Result<u16, EngineError> {
         Model::check_colour(colour)?;
-        let index = self.index_of(id)?;
-        Ok(std::mem::replace(&mut self.instances.colour[index], colour))
+        let slot = self.slot_of(id)?;
+        let inst = self.instances.at_slot(slot);
+        let old = self.instances.set_colour_at(slot, colour);
+        self.bom_take(inst.part, old);
+        *self.bom.entry((inst.part, colour)).or_default() += 1;
+        self.touch(id);
+        Ok(old)
     }
 
-    fn reindex_from(&mut self, from: usize) {
-        for i in from..self.instances.len() {
-            self.index.insert(self.instances.id[i], i);
+    /// The parts by (catalog part number, colour code), ascending, with their counts.
+    pub(crate) fn bom_counts(&self) -> impl Iterator<Item = ((PartId, u16), u32)> + '_ {
+        self.bom.iter().map(|(&k, &n)| (k, n))
+    }
+
+    /// The same counts as [`Model::bom_counts`], counted again from the instance table (the
+    /// property tests compare the two).
+    pub fn bom_counts_from_scratch(&self) -> Vec<((PartId, u16), u32)> {
+        let mut counts: BTreeMap<(PartId, u16), u32> = BTreeMap::new();
+        for i in self.instances.iter() {
+            *counts.entry((i.part, i.colour)).or_default() += 1;
         }
+        counts.into_iter().collect()
+    }
+
+    /// The incrementally kept indexes as lists (see [`IndexSnapshot`]).
+    pub fn index_snapshot(&self) -> IndexSnapshot {
+        let mut cells: Vec<_> = self
+            .spatial
+            .snapshot()
+            .into_iter()
+            .map(|(c, s)| (c, self.instances.id_of(s)))
+            .collect();
+        cells.sort_unstable();
+        let mut connectors: Vec<_> = self
+            .conns
+            .snapshot()
+            .into_iter()
+            .map(|(p, s, k, d)| (p, self.instances.id_of(s), k, d))
+            .collect();
+        connectors.sort_unstable();
+        IndexSnapshot {
+            cells,
+            connectors,
+            bom: self.bom.iter().map(|(&k, &n)| (k, n)).collect(),
+        }
+    }
+
+    /// The indexes built again from the instance table, for the property tests.
+    pub fn index_snapshot_from_scratch(&self) -> IndexSnapshot {
+        let mut spatial = SpatialHash::default();
+        let mut conns = ConnHash::default();
+        for (slot, i) in self.instances.iter().enumerate() {
+            let slot = slot as u32;
+            spatial
+                .insert(slot, &self.cover_box(i.part, &i.pose).expect("placed"))
+                .expect("placed");
+            conns.insert(
+                slot,
+                self.placed_connectors(i.part, &i.pose).expect("placed"),
+            );
+        }
+        let ids: Vec<InstanceId> = self.instances.iter().map(|i| i.id).collect();
+        let mut cells: Vec<_> = spatial
+            .snapshot()
+            .into_iter()
+            .map(|(c, s)| (c, ids[s as usize]))
+            .collect();
+        cells.sort_unstable();
+        let mut connectors: Vec<_> = conns
+            .snapshot()
+            .into_iter()
+            .map(|(p, s, k, d)| (p, ids[s as usize], k, d))
+            .collect();
+        connectors.sort_unstable();
+        IndexSnapshot {
+            cells,
+            connectors,
+            bom: self.bom_counts_from_scratch(),
+        }
+    }
+
+    /// Slots near `b` (candidates for overlap), as ids ascending: for the property tests.
+    pub fn candidates_near(&self, b: &Aabb) -> Result<Vec<InstanceId>, EngineError> {
+        let mut ids: Vec<_> = self
+            .spatial
+            .near(b)?
+            .into_iter()
+            .map(|s| self.instances.id_of(s))
+            .collect();
+        ids.sort_unstable();
+        Ok(ids)
+    }
+
+    /// Entries of the spatial hash and of the connector hash: how big the indexes are.
+    pub fn index_entries(&self) -> (usize, usize) {
+        (self.spatial.entries(), self.conns.entries())
+    }
+
+    pub(crate) fn spatial(&self) -> &SpatialHash {
+        &self.spatial
     }
 
     /// The pose of placed part `id` turned by `quarter_turns` about the

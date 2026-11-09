@@ -1,15 +1,87 @@
-//! The lattice spatial hash (docs/plan/07 section 4) and the connector hash.
+//! The spatial hash (docs/plan/07 section 4) and the connector hash.
+//!
+//! Both store small integers (table slots) in pooled singly linked chains, one chain per cell or
+//! per position, so an entry costs 8 or 12 bytes and no allocation of its own: a 100,000-part model
+//! needs a few tens of megabytes, not hundreds (docs/plan/07 section 14, bench/scale).
+//!
+//! The lattice cell of the Dimensional Standard (`CELL`, one stud by one plate by one stud) is the
+//! unit of the fine lattice and of the [`MAX_BOX_CELLS`] limit; the hash itself uses a coarser cell,
+//! [`HASH_CELL`] (4 studs by 6 plates by 4 studs, 80 x 48 x 80 LDU), so a 2 x 4 brick touches one to four cells and
+//! a cell holds a handful of parts. Collision is always decided by the exact integer boxes; the
+//! hash only narrows the candidates, so the cell size changes speed, never an answer.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
-use openbrick_catalog::{Aabb, Conn, MAX_BOX_CELLS};
+use openbrick_catalog::{Aabb, Conn, ConnKind, MAX_BOX_CELLS};
 use openbrick_units::{PLATE_LDU, STUD_PITCH_LDU};
 
-use crate::model::{EngineError, InstanceId};
+use crate::model::EngineError;
 
-/// Lattice cell size for the spatial hash: one stud by one plate by one stud
-/// (docs/plan/07 section 4), from the Dimensional Standard's lattice constants.
+/// Fine lattice cell: one stud by one plate by one stud (docs/plan/07 section 4), from the
+/// Dimensional Standard's lattice constants.
 pub const CELL: [i32; 3] = [STUD_PITCH_LDU, PLATE_LDU, STUD_PITCH_LDU];
+
+/// The cell of the spatial hash: 4 studs by 6 plates (two bricks) by 4 studs, so a 2 x 4 brick
+/// touches one to eight cells and a cell of a dense model holds a few parts.
+pub const HASH_CELL: [i32; 3] = [4 * STUD_PITCH_LDU, 6 * PLATE_LDU, 4 * STUD_PITCH_LDU];
+
+/// The most entries the spatial hash holds (a part counts once per hash cell its boxes cover): 4,000,000.
+/// A model of 150,000 ordinary parts holds about 700,000 (4.6 a part); a flat pack plate of 256 x 256 studs
+/// covers 8,450 cells, so this admits about 470 of those. A part that would pass it is refused with a message
+/// and the model is unchanged; without the cap a crafted pack and file could make the hash grow past the
+/// 4 GiB the WebAssembly build can address (16.9 million entries from 2,000 such plates).
+pub const MAX_SPATIAL_ENTRIES: usize = 4_000_000;
+
+/// End of a chain.
+const NIL: u32 = u32::MAX;
+
+/// A fast, unkeyed hasher for the engine's small integer keys (cells, positions, ids): a
+/// multiply-rotate fold and a final mix. SipHash (the standard hasher) cost more than the rest of a
+/// connector lookup. **What this accepts, exactly:** the keys are lattice coordinates a file chooses,
+/// and the hasher has no secret, so a crafted file can make many keys share a bucket. What is bounded
+/// is the damage: at most [`crate::MAX_INSTANCES`] parts and [`MAX_SPATIAL_ENTRIES`] spatial entries per
+/// model, so a map of 150,000 colliding keys costs a quadratic number of probes, measured by the review at
+/// about 1.5 to 2 s per map natively for that many inserts (5 to 10 s over all the maps a load fills).
+/// The page opens a document in steps and can cancel between them, so that cost is the
+/// reader's own time and never a hang; the command line has no such limit. A keyed hasher needs a random seed
+/// from the host (none exists in the WebAssembly build without a new dependency); see docs/plan/07 section 4.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Mix(u64);
+
+impl Hasher for Mix {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(u64::from(v));
+    }
+
+    fn write_i32(&mut self, v: i32) {
+        self.write_u64(u64::from(v as u32));
+    }
+
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+
+    fn finish(&self) -> u64 {
+        let mut z = self.0;
+        z ^= z >> 32;
+        z = z.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        z ^ (z >> 29)
+    }
+}
+
+pub(crate) type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<Mix>>;
 
 /// Teschner et al. 2003 hash of a lattice cell.
 pub fn cell_hash(cell: [i32; 3]) -> u64 {
@@ -18,7 +90,7 @@ pub fn cell_hash(cell: [i32; 3]) -> u64 {
         as u64
 }
 
-/// Cell containing an LDU position.
+/// Fine lattice cell containing an LDU position.
 pub fn cell_of(pos: [i32; 3]) -> [i32; 3] {
     [
         pos[0].div_euclid(CELL[0]),
@@ -27,8 +99,17 @@ pub fn cell_of(pos: [i32; 3]) -> [i32; 3] {
     ]
 }
 
-/// Refuse a box that covers more than [`MAX_BOX_CELLS`] cells: the hash holds one entry per cell,
-/// so an unbounded box (a hostile pack or document) would be unbounded work. Counted, not iterated.
+fn hash_cell_of(pos: [i32; 3]) -> [i32; 3] {
+    [
+        pos[0].div_euclid(HASH_CELL[0]),
+        pos[1].div_euclid(HASH_CELL[1]),
+        pos[2].div_euclid(HASH_CELL[2]),
+    ]
+}
+
+/// Refuse a box that covers more than [`MAX_BOX_CELLS`] lattice cells: the hash holds one entry
+/// per cell it covers, so an unbounded box (a hostile pack or document) would be unbounded work.
+/// Counted, not iterated.
 pub fn check_box(b: &Aabb) -> Result<(), EngineError> {
     let cells = b.lattice_cells();
     if cells > MAX_BOX_CELLS {
@@ -40,103 +121,494 @@ pub fn check_box(b: &Aabb) -> Result<(), EngineError> {
     Ok(())
 }
 
-/// The cells a box covers: from the cell of its minimum corner to the cell of
-/// the point just inside its maximum corner (a box that ends on a cell border
-/// does not reach into the next cell). At most [`MAX_BOX_CELLS`] of them, else an error.
-fn cells(b: &Aabb) -> Result<impl Iterator<Item = [i32; 3]>, EngineError> {
+/// The hash cells of a box, `lo..=hi` on each axis, or `None` for an empty (inverted) box. A
+/// stored box (`closed`) also covers the cell its maximum face lies on when that face is on a cell
+/// border, so a ray that only grazes it there still finds it; a query box does not (boxes that only
+/// touch share no cell). At most [`MAX_BOX_CELLS`] fine cells are covered, else an error.
+type CellRange = ([i32; 3], [i32; 3]);
+
+fn hash_range(b: &Aabb, closed: bool) -> Result<Option<CellRange>, EngineError> {
     check_box(b)?;
-    let lo = cell_of(b.min);
-    let hi = cell_of([
-        b.max[0].saturating_sub(1),
-        b.max[1].saturating_sub(1),
-        b.max[2].saturating_sub(1),
-    ]);
-    Ok((lo[0]..=hi[0]).flat_map(move |x| {
-        (lo[1]..=hi[1]).flat_map(move |y| (lo[2]..=hi[2]).map(move |z| [x, y, z]))
-    }))
+    if (0..3).any(|k| b.min[k] >= b.max[k]) {
+        return Ok(None);
+    }
+    let lo = hash_cell_of(b.min);
+    let hi = hash_cell_of([0, 1, 2].map(|k| {
+        if closed {
+            b.max[k]
+        } else {
+            b.max[k].saturating_sub(1)
+        }
+    }));
+    Ok(Some((lo, hi)))
 }
 
-/// Instances by the cells their body boxes cover.
-#[derive(Clone, Debug, Default)]
+fn each_cell(lo: [i32; 3], hi: [i32; 3], mut f: impl FnMut([i32; 3])) {
+    for x in lo[0]..=hi[0] {
+        for y in lo[1]..=hi[1] {
+            for z in lo[2]..=hi[2] {
+                f([x, y, z]);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Node {
+    slot: u32,
+    next: u32,
+}
+
+/// Table slots by the hash cells their boxes cover.
+#[derive(Clone, Debug)]
 pub struct SpatialHash {
-    cells: HashMap<[i32; 3], Vec<InstanceId>>,
+    heads: FastMap<[i32; 3], u32>,
+    nodes: Vec<Node>,
+    free: u32,
+    live: usize,
+    /// The hash cells any box has covered since the hash was last empty (only grows).
+    extent: Option<([i32; 3], [i32; 3])>,
+}
+
+impl Default for SpatialHash {
+    fn default() -> Self {
+        SpatialHash {
+            heads: FastMap::default(),
+            nodes: Vec::new(),
+            free: NIL,
+            live: 0,
+            extent: None,
+        }
+    }
 }
 
 impl SpatialHash {
-    pub fn insert(&mut self, id: InstanceId, b: &Aabb) -> Result<(), EngineError> {
-        for c in cells(b)? {
-            self.cells.entry(c).or_default().push(id);
-        }
-        Ok(())
+    /// Room for about `parts` more parts, so opening a big model does not rehash again and again.
+    pub fn reserve(&mut self, parts: usize) {
+        self.heads.reserve(parts.saturating_mul(3));
+        self.nodes.reserve(parts.saturating_mul(4));
     }
 
-    pub fn remove(&mut self, id: InstanceId, b: &Aabb) -> Result<(), EngineError> {
-        for c in cells(b)? {
-            if let Some(v) = self.cells.get_mut(&c) {
-                v.retain(|&i| i != id);
-                if v.is_empty() {
-                    self.cells.remove(&c);
+    fn new_node(&mut self, slot: u32, next: u32) -> u32 {
+        self.live += 1;
+        if self.free != NIL {
+            let at = self.free;
+            self.free = self.nodes[at as usize].next;
+            self.nodes[at as usize] = Node { slot, next };
+            at
+        } else {
+            self.nodes.push(Node { slot, next });
+            (self.nodes.len() - 1) as u32
+        }
+    }
+
+    pub fn insert(&mut self, slot: u32, b: &Aabb) -> Result<(), EngineError> {
+        let Some((lo, hi)) = hash_range(b, true)? else {
+            return Ok(());
+        };
+        self.extent = Some(match self.extent {
+            None => (lo, hi),
+            Some((a, z)) => (
+                [0, 1, 2].map(|k| a[k].min(lo[k])),
+                [0, 1, 2].map(|k| z[k].max(hi[k])),
+            ),
+        });
+        each_cell(lo, hi, |c| {
+            let at = self.new_node(slot, NIL);
+            match self.heads.entry(c) {
+                Entry::Occupied(mut e) => {
+                    self.nodes[at as usize].next = std::mem::replace(e.get_mut(), at);
+                }
+                Entry::Vacant(v) => {
+                    v.insert(at);
                 }
             }
+        });
+        Ok(())
+    }
+
+    pub fn remove(&mut self, slot: u32, b: &Aabb) -> Result<(), EngineError> {
+        let Some((lo, hi)) = hash_range(b, true)? else {
+            return Ok(());
+        };
+        each_cell(lo, hi, |c| {
+            let Some(&head) = self.heads.get(&c) else {
+                return;
+            };
+            let (mut prev, mut at) = (NIL, head);
+            while at != NIL {
+                let Node { slot: s, next } = self.nodes[at as usize];
+                if s == slot {
+                    if prev == NIL {
+                        if next == NIL {
+                            self.heads.remove(&c);
+                        } else {
+                            self.heads.insert(c, next);
+                        }
+                    } else {
+                        self.nodes[prev as usize].next = next;
+                    }
+                    self.nodes[at as usize].next = self.free;
+                    self.free = at;
+                    self.live -= 1;
+                    break;
+                }
+                prev = at;
+                at = next;
+            }
+        });
+        if self.heads.is_empty() {
+            self.extent = None;
         }
         Ok(())
     }
 
-    /// Instances whose cells meet the cells of `b`, each once, in id order
-    /// (candidates: the caller tests the boxes themselves).
-    pub fn near(&self, b: &Aabb) -> Result<Vec<InstanceId>, EngineError> {
-        let mut out: Vec<InstanceId> = cells(b)?
-            .filter_map(|c| self.cells.get(&c))
-            .flatten()
-            .copied()
-            .collect();
+    /// How many entries a stored box adds (the hash cells it covers), counted and not iterated.
+    pub fn cells_of(b: &Aabb) -> Result<usize, EngineError> {
+        Ok(match hash_range(b, true)? {
+            None => 0,
+            Some((lo, hi)) => (0..3)
+                .map(|k| (i64::from(hi[k]) - i64::from(lo[k]) + 1) as usize)
+                .product(),
+        })
+    }
+
+    /// Calls `f` with every slot whose cells meet the cells of `b` (a slot in several of them is
+    /// called several times; the caller tests the boxes themselves).
+    pub fn for_each_near(&self, b: &Aabb, mut f: impl FnMut(u32)) -> Result<(), EngineError> {
+        if let Some((lo, hi)) = hash_range(b, false)? {
+            each_cell(lo, hi, |c| {
+                let mut at = self.heads.get(&c).copied().unwrap_or(NIL);
+                while at != NIL {
+                    let n = &self.nodes[at as usize];
+                    f(n.slot);
+                    at = n.next;
+                }
+            });
+        }
+        Ok(())
+    }
+
+    /// Slots whose cells meet the cells of `b`, each once, ascending (candidates: the caller tests
+    /// the boxes themselves).
+    pub fn near(&self, b: &Aabb) -> Result<Vec<u32>, EngineError> {
+        let mut out = Vec::new();
+        if let Some((lo, hi)) = hash_range(b, false)? {
+            each_cell(lo, hi, |c| {
+                let mut at = self.heads.get(&c).copied().unwrap_or(NIL);
+                while at != NIL {
+                    out.push(self.nodes[at as usize].slot);
+                    at = self.nodes[at as usize].next;
+                }
+            });
+        }
         out.sort_unstable();
         out.dedup();
         Ok(out)
     }
 
+    /// Visit the slots along a ray, cell by cell in the order the ray enters them, until no later
+    /// cell can hold something nearer than the best hit so far. `visit` returns the distance `t`
+    /// at which the ray hits that slot's box, or `f64::INFINITY` for a miss. Returns false when the
+    /// ray would cross more cells than the hash holds entries (a ray across a model spread over an
+    /// absurd extent): the caller then tests every part instead, which costs no more.
+    pub fn walk_ray(
+        &self,
+        origin: [f64; 3],
+        dir: [f64; 3],
+        mut visit: impl FnMut(u32) -> f64,
+    ) -> bool {
+        let Some((lo, hi)) = self.extent else {
+            return true;
+        };
+        let size = HASH_CELL.map(f64::from);
+        // The ray's span inside the extent's box (slab test), from t = 0.
+        let (mut t0, mut t1) = (0.0_f64, f64::INFINITY);
+        for k in 0..3 {
+            let (a, b) = (
+                f64::from(lo[k]) * size[k],
+                (f64::from(hi[k]) + 1.0) * size[k],
+            );
+            if dir[k].abs() < 1e-12 {
+                if origin[k] < a || origin[k] >= b {
+                    return true;
+                }
+                continue;
+            }
+            let (mut s, mut e) = ((a - origin[k]) / dir[k], (b - origin[k]) / dir[k]);
+            if s > e {
+                std::mem::swap(&mut s, &mut e);
+            }
+            t0 = t0.max(s);
+            t1 = t1.min(e);
+        }
+        if t0 > t1 {
+            return true;
+        }
+        let at = |t: f64, k: usize| origin[k] + t * dir[k];
+        let clamp_cell = |v: f64, k: usize| {
+            (v / size[k])
+                .floor()
+                .clamp(f64::from(lo[k]), f64::from(hi[k])) as i32
+        };
+        let start: [i32; 3] = [0, 1, 2].map(|k| clamp_cell(at(t0, k), k));
+        let end: [i32; 3] = [0, 1, 2].map(|k| clamp_cell(at(t1, k), k));
+        let crossings: i64 = (0..3)
+            .map(|k| i64::from((end[k] - start[k]).abs()))
+            .sum::<i64>()
+            + 1;
+        if crossings > self.heads.len() as i64 + 64 {
+            return false;
+        }
+        let mut cell = start;
+        let mut step = [0i32; 3];
+        let mut t_max = [f64::INFINITY; 3];
+        let mut t_delta = [f64::INFINITY; 3];
+        for k in 0..3 {
+            if dir[k] > 0.0 {
+                step[k] = 1;
+                t_max[k] = ((f64::from(cell[k]) + 1.0) * size[k] - origin[k]) / dir[k];
+                t_delta[k] = size[k] / dir[k];
+            } else if dir[k] < 0.0 {
+                step[k] = -1;
+                t_max[k] = (f64::from(cell[k]) * size[k] - origin[k]) / dir[k];
+                t_delta[k] = -size[k] / dir[k];
+            }
+        }
+        let mut best = f64::INFINITY;
+        loop {
+            let mut at_node = self.heads.get(&cell).copied().unwrap_or(NIL);
+            while at_node != NIL {
+                let n = self.nodes[at_node as usize];
+                best = best.min(visit(n.slot));
+                at_node = n.next;
+            }
+            let k = if t_max[0] <= t_max[1] && t_max[0] <= t_max[2] {
+                0
+            } else if t_max[1] <= t_max[2] {
+                1
+            } else {
+                2
+            };
+            // The distances are computed a different way for the box, the cell border and the ray's end, so a
+            // border exactly at the end or at the best hit differs from it in the last bits: stop only beyond a margin.
+            let slack = 1e-9 * (1.0 + t_max[k].abs());
+            if step[k] == 0
+                || !t_max[k].is_finite()
+                || t_max[k] > t1 + slack
+                || t_max[k] > best + slack
+            {
+                break;
+            }
+            // Where the ray crosses a cell's edge or corner (two or three axes at the same distance) it
+            // also touches the cells between, which a box can reach only there: visit them too.
+            let tie: Vec<usize> = (0..3)
+                .filter(|&a| {
+                    step[a] != 0 && (t_max[a] - t_max[k]).abs() <= 1e-9 * (1.0 + t_max[k].abs())
+                })
+                .collect();
+            if tie.len() > 1 {
+                for mask in 1..(1usize << tie.len()) - 1 {
+                    let mut c = cell;
+                    for (bit, &a) in tie.iter().enumerate() {
+                        if mask & (1 << bit) != 0 {
+                            c[a] += step[a];
+                        }
+                    }
+                    if (0..3).all(|a| c[a] >= lo[a] && c[a] <= hi[a]) {
+                        let mut at_node = self.heads.get(&c).copied().unwrap_or(NIL);
+                        while at_node != NIL {
+                            let n = self.nodes[at_node as usize];
+                            best = best.min(visit(n.slot));
+                            at_node = n.next;
+                        }
+                    }
+                }
+            }
+            let mut out = false;
+            for &a in &tie {
+                cell[a] += step[a];
+                if cell[a] < lo[a] || cell[a] > hi[a] {
+                    out = true;
+                }
+                t_max[a] += t_delta[a];
+            }
+            if out {
+                break;
+            }
+        }
+        true
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.cells.is_empty()
+        self.heads.is_empty() && self.live == 0
+    }
+
+    /// Entries held (a part counts once per cell): for tests and the benchmark.
+    pub fn entries(&self) -> usize {
+        self.live
+    }
+
+    /// Every (cell, slot) pair, sorted: for the property tests, which compare it with a hash
+    /// built from scratch.
+    pub fn snapshot(&self) -> Vec<([i32; 3], u32)> {
+        let mut out = Vec::with_capacity(self.live);
+        for (&c, &head) in &self.heads {
+            let mut at = head;
+            while at != NIL {
+                out.push((c, self.nodes[at as usize].slot));
+                at = self.nodes[at as usize].next;
+            }
+        }
+        out.sort_unstable();
+        out
     }
 }
 
-/// Placed connectors by position, so a mate is one lookup (docs/plan/07
-/// section 4: the connector hash).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
+struct ConnNode {
+    slot: u32,
+    next: u32,
+    kind: ConnKind,
+    dir: [i8; 3],
+}
+
+impl ConnNode {
+    fn conn(&self, pos: [i32; 3]) -> Conn {
+        Conn {
+            kind: self.kind,
+            pos,
+            dir: self.dir.map(i32::from),
+        }
+    }
+}
+
+fn small(dir: [i32; 3]) -> [i8; 3] {
+    dir.map(|v| v.clamp(-127, 127) as i8)
+}
+
+/// Placed connectors by position, so a mate is one lookup (docs/plan/07 section 4: the connector
+/// hash). A node keeps the part's table slot, the kind and the axis; the position is the key.
+#[derive(Clone, Debug)]
 pub struct ConnHash {
-    at: HashMap<[i32; 3], Vec<(InstanceId, Conn)>>,
+    heads: FastMap<[i32; 3], u32>,
+    nodes: Vec<ConnNode>,
+    free: u32,
+    live: usize,
+}
+
+impl Default for ConnHash {
+    fn default() -> Self {
+        ConnHash {
+            heads: FastMap::default(),
+            nodes: Vec::new(),
+            free: NIL,
+            live: 0,
+        }
+    }
 }
 
 impl ConnHash {
-    pub fn insert(&mut self, id: InstanceId, conns: &[Conn]) {
-        for c in conns {
-            self.at.entry(c.pos).or_default().push((id, *c));
-        }
+    /// Room for about `parts` more parts of a dozen or so connectors each.
+    pub fn reserve(&mut self, parts: usize) {
+        self.heads.reserve(parts.saturating_mul(10));
+        self.nodes.reserve(parts.saturating_mul(17));
     }
 
-    pub fn remove(&mut self, id: InstanceId, conns: &[Conn]) {
+    pub fn insert(&mut self, slot: u32, conns: impl IntoIterator<Item = Conn>) {
         for c in conns {
-            if let Some(v) = self.at.get_mut(&c.pos) {
-                v.retain(|(i, _)| *i != id);
-                if v.is_empty() {
-                    self.at.remove(&c.pos);
+            let node = ConnNode {
+                slot,
+                next: NIL,
+                kind: c.kind,
+                dir: small(c.dir),
+            };
+            self.live += 1;
+            let at = if self.free != NIL {
+                let at = self.free;
+                self.free = self.nodes[at as usize].next;
+                self.nodes[at as usize] = node;
+                at
+            } else {
+                self.nodes.push(node);
+                (self.nodes.len() - 1) as u32
+            };
+            match self.heads.entry(c.pos) {
+                Entry::Occupied(mut e) => {
+                    self.nodes[at as usize].next = std::mem::replace(e.get_mut(), at);
+                }
+                Entry::Vacant(v) => {
+                    v.insert(at);
                 }
             }
         }
     }
 
-    /// The instance whose placed connector mates with `c`, other than `skip`.
-    pub fn mate_of(&self, c: &Conn, skip: Option<InstanceId>) -> Option<InstanceId> {
-        self.at
-            .get(&c.pos)?
-            .iter()
-            .filter(|(i, _)| Some(*i) != skip)
-            .find(|(_, other)| c.mates(other))
-            .map(|(i, _)| *i)
+    pub fn remove(&mut self, slot: u32, conns: impl IntoIterator<Item = Conn>) {
+        for c in conns {
+            let Some(&head) = self.heads.get(&c.pos) else {
+                continue;
+            };
+            let (mut prev, mut at) = (NIL, head);
+            while at != NIL {
+                let n = self.nodes[at as usize];
+                if n.slot == slot && n.kind == c.kind && n.dir == small(c.dir) {
+                    if prev == NIL {
+                        if n.next == NIL {
+                            self.heads.remove(&c.pos);
+                        } else {
+                            self.heads.insert(c.pos, n.next);
+                        }
+                    } else {
+                        self.nodes[prev as usize].next = n.next;
+                    }
+                    self.nodes[at as usize].next = self.free;
+                    self.free = at;
+                    self.live -= 1;
+                    break;
+                }
+                prev = at;
+                at = n.next;
+            }
+        }
+    }
+
+    /// The slot of the part whose placed connector mates with `c`, other than `skip`; the lowest
+    /// slot when several do (so the answer does not depend on the order parts were placed in).
+    pub fn mate_of(&self, c: &Conn, skip: Option<u32>) -> Option<u32> {
+        let mut at = self.heads.get(&c.pos).copied().unwrap_or(NIL);
+        let mut found: Option<u32> = None;
+        while at != NIL {
+            let n = &self.nodes[at as usize];
+            if Some(n.slot) != skip && c.mates(&n.conn(c.pos)) && found.is_none_or(|f| n.slot < f) {
+                found = Some(n.slot);
+            }
+            at = n.next;
+        }
+        found
     }
 
     pub fn is_empty(&self) -> bool {
-        self.at.is_empty()
+        self.heads.is_empty() && self.live == 0
+    }
+
+    pub fn entries(&self) -> usize {
+        self.live
+    }
+
+    /// Every (position, slot, kind, axis), sorted: for the property tests.
+    pub fn snapshot(&self) -> Vec<([i32; 3], u32, ConnKind, [i8; 3])> {
+        let mut out = Vec::with_capacity(self.live);
+        for (&pos, &head) in &self.heads {
+            let mut at = head;
+            while at != NIL {
+                let n = &self.nodes[at as usize];
+                out.push((pos, n.slot, n.kind, n.dir));
+                at = n.next;
+            }
+        }
+        out.sort_unstable();
+        out
     }
 }
 
@@ -150,27 +622,36 @@ mod tests {
         assert_eq!(cell_of([19, 7, 19]), [0, 0, 0]);
         assert_eq!(cell_of([20, 8, -1]), [1, 1, -1]);
         assert_ne!(cell_hash([0, 0, 0]), cell_hash([1, 0, 0]));
+        assert_eq!(hash_cell_of([79, 47, 79]), [0, 0, 0]);
+        assert_eq!(hash_cell_of([80, 48, -1]), [1, 1, -1]);
     }
 
     #[test]
-    fn a_box_covers_only_the_cells_it_reaches_into() {
+    fn a_stored_box_is_found_from_every_cell_it_reaches_and_touching_boxes_share_none() {
         let b = Aabb {
             min: [-40, -24, -20],
             max: [40, 0, 20],
         };
-        assert_eq!(cells(&b).unwrap().count(), 4 * 3 * 2);
         let mut h = SpatialHash::default();
         h.insert(7, &b).unwrap();
+        // A query in a cell the stored box does not reach shares no cell with it, while one that
+        // overlaps does.
         let touching = Aabb {
-            min: [40, -24, -20],
-            max: [60, 0, 20],
+            min: [160, -24, -20],
+            max: [200, 0, 20],
         };
         assert!(
             h.near(&touching).unwrap().is_empty(),
-            "touching boxes share no cell"
+            "a box in the next hash cell is not a candidate"
         );
+        let overlapping = Aabb {
+            min: [30, -24, -20],
+            max: [60, 0, 20],
+        };
+        assert_eq!(h.near(&overlapping).unwrap(), vec![7]);
         h.remove(7, &b).unwrap();
         assert!(h.is_empty());
+        assert_eq!(h.entries(), 0);
     }
 
     #[test]
@@ -210,5 +691,83 @@ mod tests {
             max: [0, 8, 20],
         };
         assert_eq!(inverted.lattice_cells(), 0);
+        assert!(h.insert(2, &inverted).is_ok() && h.is_empty());
+    }
+
+    #[test]
+    fn removing_one_of_two_overlapping_connectors_leaves_the_other() {
+        // Two parts of a pack can have a connector of the same kind at the same point (their boxes
+        // do not overlap, their connectors may). Removal is by slot, kind and axis.
+        let c = |kind| Conn {
+            kind,
+            pos: [10, 0, 10],
+            // A stud points up, the receptacle that takes it down.
+            dir: if kind == ConnKind::StudM {
+                [0, -1, 0]
+            } else {
+                [0, 1, 0]
+            },
+        };
+        let mut h = ConnHash::default();
+        h.insert(1, [c(ConnKind::StudM)]);
+        h.insert(2, [c(ConnKind::StudM), c(ConnKind::TubeF)]);
+        h.insert(3, [c(ConnKind::StudM)]);
+        h.remove(2, [c(ConnKind::StudM)]);
+        assert_eq!(
+            h.snapshot().len(),
+            3,
+            "slots 1 and 3 keep their studs, slot 2 its tube"
+        );
+        assert!(h
+            .snapshot()
+            .iter()
+            .any(|e| e.1 == 2 && e.2 == ConnKind::TubeF));
+        assert!(!h
+            .snapshot()
+            .iter()
+            .any(|e| e.1 == 2 && e.2 == ConnKind::StudM));
+        // A tube there mates with the lowest remaining stud, never the removed one.
+        assert_eq!(h.mate_of(&c(ConnKind::TubeF), Some(2)), Some(1));
+        h.remove(1, [c(ConnKind::StudM)]);
+        assert_eq!(h.mate_of(&c(ConnKind::TubeF), None), Some(3));
+    }
+
+    #[test]
+    fn a_ray_walk_finds_the_boxes_it_passes_and_stops_early() {
+        let mut h = SpatialHash::default();
+        // Three boxes in a row along X, one far off to the side.
+        for (slot, x) in [(0u32, 0), (1, 400), (2, 800)] {
+            h.insert(
+                slot,
+                &Aabb {
+                    min: [x - 10, -8, -10],
+                    max: [x + 10, 0, 10],
+                },
+            )
+            .unwrap();
+        }
+        let mut seen = Vec::new();
+        let ok = h.walk_ray([-100.0, -4.0, 0.0], [1.0, 0.0, 0.0], |s| {
+            seen.push(s);
+            // Pretend only slot 0 is hit, at t = 90.
+            if s == 0 {
+                90.0
+            } else {
+                f64::INFINITY
+            }
+        });
+        assert!(ok);
+        assert!(seen.contains(&0));
+        assert!(
+            !seen.contains(&2),
+            "the walk stops once the hit is nearer than the next cell: {seen:?}"
+        );
+        // A ray that misses the extent visits nothing.
+        let mut none = 0;
+        assert!(h.walk_ray([0.0, -500.0, 5000.0], [1.0, 0.0, 0.0], |_| {
+            none += 1;
+            f64::INFINITY
+        }));
+        assert_eq!(none, 0);
     }
 }

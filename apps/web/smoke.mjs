@@ -116,6 +116,7 @@ import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
+import { layoutInstances, layoutText } from "../../bench/scale/layouts.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = resolve(here, "../..");
@@ -1187,9 +1188,9 @@ function bigModel() {
 
 const buildState = (page) => page.evaluate(() => JSON.parse(JSON.stringify({ ...window.__web.build, project: undefined, measure: undefined, bench: undefined })));
 
-async function buildWait(page, want, timeoutMs, what) {
+async function buildWait(page, want, timeoutMs, what, arg = null) {
   try {
-    await page.waitForFunction(want, null, { timeout: timeoutMs, polling: 50 });
+    await page.waitForFunction(want, arg, { timeout: timeoutMs, polling: 50 });
   } catch {
     throw new Error(`build: ${what} did not happen within ${timeoutMs / 1000} s (last: ${JSON.stringify(await buildState(page))})`);
   }
@@ -1479,6 +1480,141 @@ async function buildRun(browser, origin) {
   console.log(`# ${label}: palettes, snapped ghost, place, stack, rotate, undo, redo, delete, save, open, samples and 513 bricks work`);
   await context.close();
 }
+
+/**
+ * Parts placed one at a time are all drawn: a chunk of one part type is rebuilt when it grows past its
+ * capacity (16), and every part must still be in a drawn mesh after each placement. The scene's own instance
+ * count (`build.drawn`, from the visible meshes) is compared with the parts after every click.
+ */
+async function buildGrowRun(browser, origin) {
+  const label = "build-grow";
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light" });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the core's catalog");
+  await buildWait(page, () => window.__web.build.selected === "ob.brick-2x4" && window.__web.build.drawn === 1, 60_000, "the baseplate drawn");
+  let n = 1;
+  for (const z of [-140, -100, -60, -20, 20]) {
+    for (const x of [-120, -40, 40, 120]) {
+      const at = await screenAt(page, [x, -8, z]);
+      await page.mouse.move(at.x, at.y);
+      await buildWait(page, () => window.__web.build.ghost === "valid", 60_000, `a valid ghost at ${x}, ${z}`);
+      await page.mouse.click(at.x, at.y);
+      n += 1;
+      await buildWait(page, (want) => window.__web.build.parts === want && window.__web.build.drawn === want, 60_000, `${n} parts placed and drawn`, n);
+    }
+  }
+  const b = await buildState(page);
+  check(b.drawn === 21 && b.counts.parts === 21, `${label}: ${b.drawn} instances drawn, the counts say ${b.counts.parts}, 21 are placed`);
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(`# ${label}: 20 bricks placed one by one, all 21 parts drawn after each (a chunk grows past 16)`);
+  await context.close();
+}
+
+/**
+ * A big model (docs/plan/07 sections 9 and 14, bench/scale): a 4,000-brick city is opened through the file
+ * input and read by the core in steps; the page chunks it over the lattice, draws a few hundred chunks at
+ * levels of detail inside its triangle budget, counts its statistics when editing pauses, and a part placed
+ * on top of a tower and undone takes milliseconds, not the model's size. Which part went where is
+ * asserted (the ghost's pose, the part count after each step), never just a count.
+ */
+async function buildScaleRun(browser, origin) {
+  const label = "build-scale";
+  const bricks = 4_000;
+  const { instances } = layoutInstances("city", bricks);
+  const total = instances.length;
+  const baseplates = instances.filter((i) => i.part === "ob.baseplate-16x16").length;
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light" });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the core's catalog");
+  const file = join(downloads, "city-4000.obrick");
+  writeFileSync(file, layoutText("city", bricks));
+  const t0 = Date.now();
+  await page.setInputFiles("#build-file", file);
+  await buildWait(page, (n) => window.__web.build.parts === n && window.__web.build.loading === false, 240_000, `the ${total}-part model`, total);
+  const openMs = Date.now() - t0;
+  let b = await buildState(page);
+  check(b.parts === total && b.counts.chunked === true, `${label}: ${b.parts} parts, chunked ${b.counts.chunked}`);
+  check(b.counts.drawCalls > 2 && b.counts.drawCalls <= b.counts.chunks, `${label}: ${b.counts.drawCalls} draw calls for ${b.counts.chunks} chunks`);
+  check(b.counts.lod.reduce((x, y) => x + y, 0) === b.counts.visibleChunks, `${label}: levels ${JSON.stringify(b.counts.lod)} for ${b.counts.visibleChunks} chunks in view`);
+  check(b.counts.triangles < 12_000_000, `${label}: ${b.counts.triangles} triangles in a frame, over the budget`);
+  check(b.detail === false, `${label}: a big model should not use full detail everywhere`);
+  check(b.openTiming && b.openTiming.coreMs < 20_000, `${label}: the core took ${JSON.stringify(b.openTiming)} to read ${total} parts`);
+  // The statistics come when editing pauses: every column of bricks is on its baseplate, and each baseplate is its own group.
+  await buildWait(page, (n) => window.__web.build.stats?.parts === n && window.__web.build.statsFor === window.__web.build.revision, 120_000, "the statistics of the big model", total);
+  b = await buildState(page);
+  check(b.stats.floating.length === 0 && b.stats.components === baseplates, `${label}: ${b.stats.components} groups for ${baseplates} baseplates, ${b.stats.floating.length} floating`);
+  check($isHidden(await page.$("#build-progress")), `${label}: the progress strip stayed up after the model opened`);
+
+  // A brick on top of the tallest tower: the ghost is the core's snapped pose, exactly one brick above the top.
+  const columns = new Map();
+  for (const i of instances) {
+    if (i.part === "ob.baseplate-16x16") continue;
+    const key = `${i.pose.pos[0]},${i.pose.pos[2]}`;
+    const c = columns.get(key);
+    if (!c || i.pose.pos[1] < c.top) columns.set(key, { x: i.pose.pos[0], z: i.pose.pos[2], top: i.pose.pos[1] });
+  }
+  // The tallest column: no other tower can stand between the camera and its top face.
+  const column = [...columns.values()].sort((p, q) => p.top - q.top)[0];
+  const point = await screenAt(page, [column.x, column.top, column.z]);
+  await page.mouse.move(point.x, point.y);
+  await buildWait(page, () => window.__web.build.ghost === "valid", 60_000, "a valid ghost over a tower of the big model");
+  b = await buildState(page);
+  check(b.ghostPos[1] === column.top - 24, `${label}: the ghost is at y ${b.ghostPos[1]}, a brick above the tower's top (${column.top - 24})`);
+  const edit0 = Date.now();
+  await page.mouse.click(point.x, point.y);
+  await buildWait(page, (n) => window.__web.build.parts === n + 1, 60_000, "the brick placed on the big model", total);
+  const placeMs = Date.now() - edit0;
+  await page.keyboard.press("Control+z");
+  await buildWait(page, (n) => window.__web.build.parts === n, 60_000, "undo on the big model", total);
+  await buildWait(page, (n) => window.__web.build.stats?.parts === n && window.__web.build.statsFor === window.__web.build.revision, 120_000, "the statistics after the undo", total);
+  b = await buildState(page);
+  check(b.stats.floating.length === 0 && b.stats.components === baseplates, `${label}: after place and undo ${JSON.stringify({ components: b.stats.components, floating: b.stats.floating.length })}`);
+  const bench = await page.evaluate(() => window.__web.build.bench(15));
+  check(bench.placeUndoMs !== null && bench.placeUndoMs < 250, `${label}: place + undo took ${bench.placeUndoMs} ms on ${total} parts`);
+  check(bench.snapMs < 250 && bench.pickMs < 250, `${label}: snap ${bench.snapMs} ms, pick ${bench.pickMs} ms on ${total} parts`);
+
+  // The performance overlay: off until asked for, then the numbers of the frame.
+  check(await page.isHidden("#build-hud"), `${label}: the overlay is on by default`);
+  await page.check("#build-hud-toggle");
+  await buildWait(page, () => window.__web.build.hud === true, 10_000, "the overlay on");
+  await page.waitForFunction(() => /draw calls, [\d,]+ triangles/.test(document.querySelector("#build-hud").textContent), null, { timeout: 10_000 });
+  check(/parts in \d+ chunks/.test(await page.textContent("#build-hud")), `${label}: the overlay says "${await page.textContent("#build-hud")}"`);
+  if (shots) await page.screenshot({ path: join(shots, "build-4k-desktop.png"), timeout: 240_000 });
+  await page.uncheck("#build-hud-toggle");
+  await buildWait(page, () => window.__web.build.hud === false, 10_000, "the overlay off");
+  check(await page.isHidden("#build-hud"), `${label}: the overlay stayed up`);
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(
+    `# ${label}: ${total} parts opened in ${openMs} ms wall clock (core ${b.openTiming.coreMs} ms, page ${b.openTiming.pageMs} ms), ${b.counts.chunks} chunks, ${b.counts.drawCalls} draw calls, ` +
+      `${b.counts.triangles} triangles in the frame (levels ${JSON.stringify(b.counts.lod)}); place ${placeMs} ms wall clock, place+undo ${bench.placeUndoMs.toFixed(1)} ms, snap ${bench.snapMs.toFixed(2)} ms, pick ${bench.pickMs.toFixed(2)} ms (software rendering on this machine)`,
+  );
+  await context.close();
+
+  // The same model on a phone: the pixel ratio is capped lower and the page fits the width.
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, colorScheme: "dark" });
+  const p = await phone.newPage();
+  const phoneErrors = watchErrors(p);
+  await p.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(p, () => window.__web?.build?.ready === true, 120_000, "the catalog on the phone");
+  await p.setInputFiles("#build-file", file);
+  await buildWait(p, (n) => window.__web.build.parts === n && window.__web.build.loading === false, 240_000, "the big model on the phone", total);
+  const pb = await buildState(p);
+  check(pb.pixelRatioBase === 1.5, `${label}: the phone starts at pixel ratio ${pb.pixelRatioBase}, not 1.5`);
+  check(pb.counts.chunked === true && pb.counts.triangles < 12_000_000, `${label}: phone ${JSON.stringify({ chunked: pb.counts.chunked, triangles: pb.counts.triangles })}`);
+  check((await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)) === true, `${label}: the page scrolls sideways on the phone`);
+  if (shots) {
+    await p.evaluate(() => document.querySelector("#stage").scrollIntoView());
+    await p.screenshot({ path: join(shots, "build-4k-phone.png"), timeout: 240_000 });
+  }
+  check(phoneErrors.length === 0, `${label}: phone page errors: ${phoneErrors.join(" | ")}`);
+  await phone.close();
+}
+
+const $isHidden = (handle) => handle === null || handle.evaluate((el) => el.hidden);
 
 /**
  * Delete right after a placement, with a slow core: every message to the core's worker is held back
@@ -2170,6 +2306,21 @@ async function baseRun(browser, native) {
       check(requests.some((p) => /\/assets\/openbrick_wasm_bg-[\w-]+\.wasm$/.test(p)), `${label}: the module was not loaded from ${PAGES_BASE}assets/`);
       check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
       console.log(`# ${label}: ${requests.length} requests, all under ${PAGES_BASE}; the first part equals native`);
+      // ?bench=1 on the published path: the benchmark page opens a generated model in Build mode, orbits for a
+      // second and prints one CSV row; its code (the layout generator is a separate chunk) loads from the base path too.
+      const before = requests.length;
+      await page.goto(`${origin}${PAGES_BASE}?bench=1&sizes=500&seconds=1&device=smoke&backend=webgl2`);
+      try {
+        await page.waitForFunction(() => document.documentElement.dataset.benchDone !== undefined, null, { timeout: 240_000, polling: 200 });
+      } catch {
+        throw new Error(`${label}: the ?bench=1 page did not finish (status: ${await page.textContent("#bench-status").catch(() => "no panel")})`);
+      }
+      check((await page.evaluate(() => document.documentElement.dataset.benchDone)) === "1", `${label}: ?bench=1 stopped: ${await page.textContent("#bench-status")}`);
+      const csv = (await page.textContent("#bench-csv")).split("\n");
+      check(csv.length === 2 && csv[1].includes(",smoke,") && csv[1].includes(",500,"), `${label}: ?bench=1 printed ${JSON.stringify(csv)}`);
+      const outsideBench = requests.slice(before).filter((p) => !p.startsWith(PAGES_BASE));
+      check(outsideBench.length === 0 && failed.length === 0, `${label}: ?bench=1 requested outside ${PAGES_BASE}: ${outsideBench.join(", ")} ${failed.join(", ")}`);
+      console.log(`# ${label}: ?bench=1 ran under ${PAGES_BASE} and printed ${csv[1].slice(0, 120)}…`);
       await context.close();
     } finally {
       server.close();
@@ -2190,7 +2341,8 @@ async function main() {
   mkdirSync(downloads, { recursive: true });
   const onlyPack = args.has("--only-pack");
   const onlyRace = args.has("--only-race");
-  const onlyBuild = args.has("--only-build") || onlyPack || onlyRace;
+  const onlyScale = args.has("--only-scale");
+  const onlyBuild = args.has("--only-build") || onlyPack || onlyRace || onlyScale;
   const native = onlyBuild ? null : nativeValues();
   if (native) console.log(
     `native (${native.kernel}): emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash}, ` +
@@ -2213,7 +2365,7 @@ async function main() {
         failures.push(err.message);
       }
     }
-    for (const buildStep of onlyRace ? [buildRaceRun] : onlyPack ? [buildPackRun] : [buildRun, buildRaceRun, buildPhoneRun, buildPackRun]) {
+    for (const buildStep of onlyRace ? [buildRaceRun] : onlyPack ? [buildPackRun] : onlyScale ? [buildScaleRun, buildGrowRun] : [buildRun, buildRaceRun, buildGrowRun, buildScaleRun, buildPhoneRun, buildPackRun]) {
       try {
         await buildStep(browser, origin);
       } catch (err) {

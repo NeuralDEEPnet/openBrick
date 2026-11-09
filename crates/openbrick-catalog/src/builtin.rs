@@ -110,8 +110,14 @@ pub enum Lod {
     /// Close-up rendering: 24 segments, round enough at a few studs' distance.
     Detail,
     /// Far away, large parts (the baseplate) and the catalog's own shape
-    /// derivation: 8 segments, the cheapest build.
+    /// derivation: 8 segments, the cheapest build with everything under the body too.
     Low,
+    /// Mid distance (render level 2 of the page): studs of 8 segments, a solid underside (no tubes,
+    /// pins or ribs), so nothing a person sees from above or the side is lost.
+    Simple,
+    /// Far away (render level 3): the stud-less hull of the body, a box of 12 triangles made from
+    /// the body vertices of the [`Lod::Low`] mesh ([`body_hull`]).
+    Hull,
 }
 
 impl Lod {
@@ -119,18 +125,50 @@ impl Lod {
     pub fn segments(self) -> u32 {
         match self {
             Lod::Detail => 24,
-            Lod::Low => 8,
+            Lod::Low | Lod::Simple | Lod::Hull => 8,
         }
     }
+
+    /// The four render levels the page draws, nearest first: full studs, cheap studs and tubes,
+    /// cheap studs on a solid body, and the stud-less hull.
+    pub const RENDER: [Lod; 4] = [Lod::Detail, Lod::Low, Lod::Simple, Lod::Hull];
 }
 
 /// The part document of a built-in part: one body, a stud field on top unless
 /// it is a tile, and the tube field underneath (tubes, pins and wall ribs).
 pub fn part_doc_json(spec: &BuiltinSpec) -> String {
+    part_doc_json_with(spec, true)
+}
+
+/// [`part_doc_json`], with or without the tube field under the body (the [`Lod::Simple`] mesh
+/// leaves it out; the connectors never come from that build).
+fn part_doc_json_with(spec: &BuiltinSpec, bottom: bool) -> String {
     let studs = if spec.body == Body::Tile {
         String::new()
     } else {
         r#"{ "id": "studs", "op": "stud.field", "on": "body.top" },"#.to_string()
+    };
+    let features = if bottom {
+        format!(
+            r#"{{ "id": "body", "op": "{op}", "size": [{x}, {z}] }},
+    {studs}
+    {{ "id": "bottom", "op": "tube.field", "on": "body.bottom" }}"#,
+            op = spec.body.op(),
+            x = spec.studs[0],
+            z = spec.studs[1],
+        )
+    } else {
+        let tail = if studs.is_empty() {
+            String::new()
+        } else {
+            format!(",\n    {}", studs.trim_end_matches(','))
+        };
+        format!(
+            r#"{{ "id": "body", "op": "{op}", "size": [{x}, {z}] }}{tail}"#,
+            op = spec.body.op(),
+            x = spec.studs[0],
+            z = spec.studs[1],
+        )
     };
     format!(
         r#"{{
@@ -142,16 +180,11 @@ pub fn part_doc_json(spec: &BuiltinSpec) -> String {
   "license": "CC0-1.0",
   "credit": {{ "author": "OpenBrick3D contributors" }},
   "features": [
-    {{ "id": "body", "op": "{op}", "size": [{x}, {z}] }},
-    {studs}
-    {{ "id": "bottom", "op": "tube.field", "on": "body.bottom" }}
+    {features}
   ]
 }}"#,
         id = spec.id,
         name = spec.name,
-        op = spec.body.op(),
-        x = spec.studs[0],
-        z = spec.studs[1],
     )
 }
 
@@ -198,13 +231,41 @@ fn process(lod: Lod) -> ProcessProfile {
     p
 }
 
-/// Build one built-in part with the evaluator.
+/// Build one built-in part with the evaluator. Every level has the same `shape` (the collision box,
+/// pick box and connectors come from the [`Lod::Low`] build and never from what is drawn); only the
+/// mesh differs.
 pub fn build(spec: &BuiltinSpec, lod: Lod) -> Result<BuiltPart, CatalogError> {
+    match lod {
+        Lod::Detail | Lod::Low => build_full(spec, lod, true, None),
+        Lod::Simple => {
+            let low = build_full(spec, Lod::Low, true, None)?;
+            let solid = build_full(spec, Lod::Low, false, Some(low.height_ldu))?;
+            Ok(BuiltPart {
+                mesh: solid.mesh,
+                ..low
+            })
+        }
+        Lod::Hull => {
+            let low = build_full(spec, Lod::Low, true, None)?;
+            Ok(BuiltPart {
+                mesh: body_hull(&low.mesh, &low.shape.body),
+                ..low
+            })
+        }
+    }
+}
+
+fn build_full(
+    spec: &BuiltinSpec,
+    lod: Lod,
+    bottom: bool,
+    height: Option<i32>,
+) -> Result<BuiltPart, CatalogError> {
     let err = |message: String| CatalogError {
         id: spec.id.to_string(),
         message,
     };
-    let doc = PartDoc::parse(&part_doc_json(spec)).map_err(|e| err(e.to_string()))?;
+    let doc = PartDoc::parse(&part_doc_json_with(spec, bottom)).map_err(|e| err(e.to_string()))?;
     let process = process(lod);
     let params = ParamValues::new();
     let assets = MemoryAssets::new();
@@ -238,12 +299,15 @@ pub fn build(spec: &BuiltinSpec, lod: Lod) -> Result<BuiltPart, CatalogError> {
     }
     // The body height is where the receptacles are: every built-in part has
     // a tube field on its bottom face.
-    let height_ldu = connectors
-        .iter()
-        .filter(|c| c.kind == ConnKind::TubeF)
-        .map(|c| c.pos[1])
-        .max()
-        .ok_or_else(|| err("the part has no receptacle under it".into()))?;
+    let height_ldu = match height {
+        Some(h) => h,
+        None => connectors
+            .iter()
+            .filter(|c| c.kind == ConnKind::TubeF)
+            .map(|c| c.pos[1])
+            .max()
+            .ok_or_else(|| err("the part has no receptacle under it".into()))?,
+    };
     let mesh = to_ldraw(&body.mesh, spec.studs, height_ldu);
     let (lo, hi) = bounds(&mesh);
     // The pick box is the mesh bounds rounded to whole LDU (the body is inset
@@ -313,4 +377,68 @@ fn bounds(mesh: &PartMesh) -> ([f64; 3], [f64; 3]) {
         }
     }
     (lo, hi)
+}
+
+/// The stud-less hull of a part: the box around the vertices of its body (those at or below the
+/// stud base line `body.min[1]`), 8 vertices and 12 triangles, counter-clockwise from outside like
+/// every mesh here. This is the lowest render level ([`Lod::Hull`], docs/plan/07 section 3: "LOD2
+/// stud-less hull, about 12 triangles"); it is made from the mesh, never typed in, and it is never
+/// used for collision (the engine's boxes come from the part's features, not from any mesh).
+pub fn body_hull(mesh: &PartMesh, body: &Aabb) -> PartMesh {
+    let floor = body.min[1] as f32 - 0.25;
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for p in mesh.positions.iter().filter(|p| p[1] >= floor) {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    if lo[0] > hi[0] {
+        lo = body.min.map(|v| v as f32);
+        hi = body.max.map(|v| v as f32);
+    }
+    let corner = |i: usize| {
+        [
+            if i & 1 == 0 { lo[0] } else { hi[0] },
+            if i & 2 == 0 { lo[1] } else { hi[1] },
+            if i & 4 == 0 { lo[2] } else { hi[2] },
+        ]
+    };
+    let positions: Vec<[f32; 3]> = (0..8).map(corner).collect();
+    // Two triangles per face; each is turned round when its normal points into the box.
+    let faces: [[u32; 4]; 6] = [
+        [0, 1, 3, 2],
+        [4, 6, 7, 5],
+        [0, 4, 5, 1],
+        [2, 3, 7, 6],
+        [0, 2, 6, 4],
+        [1, 5, 7, 3],
+    ];
+    let centre = [
+        (lo[0] + hi[0]) / 2.0,
+        (lo[1] + hi[1]) / 2.0,
+        (lo[2] + hi[2]) / 2.0,
+    ];
+    let mut indices = Vec::with_capacity(36);
+    for f in faces {
+        for tri in [[f[0], f[1], f[2]], [f[0], f[2], f[3]]] {
+            let [a, b, c] = tri.map(|i| positions[i as usize]);
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let out = [a[0] - centre[0], a[1] - centre[1], a[2] - centre[2]];
+            let outward = n[0] * out[0] + n[1] * out[1] + n[2] * out[2] > 0.0;
+            if outward {
+                indices.extend(tri);
+            } else {
+                indices.extend([tri[0], tri[2], tri[1]]);
+            }
+        }
+    }
+    PartMesh { positions, indices }
 }

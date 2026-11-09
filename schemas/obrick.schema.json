@@ -117,6 +117,7 @@
           },
           "instances": {
             "type": "array",
+            "maxItems": 150000,
             "items": {
               "type": "object",
               "required": [

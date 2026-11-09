@@ -391,3 +391,50 @@ fn error_messages_repeat_only_a_short_printable_part_of_the_document() {
         .unwrap_err();
     assert!(e.to_string().len() < 400, "{} bytes", e.to_string().len());
 }
+
+/// Pack parts (boxes and connectors drawn by the library's authors, studs half a stud apart, connectors that can
+/// coincide) through random edits with undo and redo: the incremental indexes equal ones built again, the cached
+/// statistics equal fresh ones, and the ray walk equals testing every part.
+#[test]
+fn pack_parts_keep_every_index_equal_to_a_computation_from_scratch() {
+    let c = with_pack();
+    let ids: Vec<String> = c
+        .parts
+        .iter()
+        .filter(|p| p.origin == openbrick_catalog::Origin::Ldraw)
+        .map(|p| p.id.clone())
+        .collect();
+    assert!(ids.len() >= 5);
+    for seed in 0..12u64 {
+        let mut rng = Rng(seed * 4_099 + 2);
+        let mut m = Model::new(c);
+        for step in 0..150 {
+            let part = rng.pick(&ids).clone();
+            let ray = ray_towards(&mut rng, 160);
+            match rng.range(0, 6) {
+                0..=3 => {
+                    place(&mut m, &part, *rng.pick(&yaws()), &ray, 4);
+                }
+                4 => {
+                    let _ = m.apply(&Command::Remove {
+                        id: rng.range(1, m.next_id().max(2) as i32) as u32,
+                    });
+                }
+                5 => {
+                    let _ = m.undo();
+                }
+                _ => {
+                    let _ = m.redo();
+                }
+            }
+            let at = format!("seed {seed} step {step}");
+            assert_eq!(m.index_snapshot(), m.index_snapshot_from_scratch(), "{at}");
+            let fresh = m.stats();
+            assert_eq!(m.stats_cached(), &fresh, "{at}");
+            let r = ray_towards(&mut rng, 160);
+            assert_eq!(m.pick(&r), m.pick_linear(&r), "{at}: {r:?}");
+        }
+        m.apply(&Command::Clear).ok();
+        assert!(m.indexes_are_empty(), "seed {seed}");
+    }
+}

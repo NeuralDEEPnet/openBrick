@@ -70,6 +70,7 @@ import {
 import { forgetRecordedFit, loadPrinter, loadRecordedFit, savePrinter, saveRecordedFit } from "./storage.js";
 import { sampleFile, sampleLabel, sizeForSample, sizeNote } from "./samples.js";
 import { createBuildMode } from "./build-ui.js";
+import { benchOptions, mountBench } from "./bench.js";
 import { createViewer } from "./viewer.js";
 
 const $ = (id) => document.getElementById(id);
@@ -2408,7 +2409,12 @@ async function main() {
 
   // The first bundled part (the logo tile) is the one designed first.
   await openBundled(0);
-  setMode(firstMode);
+  // ?bench=1 opens Build mode and runs the scale benchmark on this device (src/bench.js).
+  const bench = benchOptions(location.search);
+  setMode(bench.enabled ? "build" : firstMode);
+  if (bench.enabled) {
+    page.benchRun = mountBench({ options: bench, run: (options, onRow, onStatus) => build.runScale(options, onRow, onStatus) }).catch((err) => fail(err));
+  }
 }
 
 main().catch(fail);

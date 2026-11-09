@@ -302,6 +302,14 @@
         background: color-mix(in srgb, var(--panel) 85%, transparent);
       }
       .hover:empty { display: none !important; }
+      #build-hud {
+        position: absolute; z-index: 2; right: 10px; bottom: 10px; margin: 0; padding: 6px 8px; max-width: calc(100% - 20px); overflow: hidden;
+        border-radius: 6px; font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; pointer-events: none;
+        background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--text, inherit); white-space: pre-wrap;
+      }
+      #build-progress { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--muted); border-radius: 8px; }
+      #build-progress progress { width: 100%; }
+      #build-progress p { margin: 0 0 6px; font-size: 13px; }
       #build-confirm { margin: 8px 0; padding: 10px 12px; border: 2px solid var(--warn); border-radius: 8px; background: var(--warn-bg); }
       #build-confirm p { margin: 0 0 8px; }
       .tile-only { display: block; }
@@ -364,6 +372,7 @@
         <p class="hint tile-only" aria-hidden="true">Drag to orbit, also underneath · pinch or scroll to zoom</p>
         <p class="hover build-only" id="build-hover"></p>
         <p class="hint build-only" id="build-hint" aria-hidden="true"></p>
+        <div id="build-hud" role="group" aria-label="Performance numbers: draw calls, triangles, frame time" hidden></div>
       </main>
       <aside>
         <div id="panel-tile" role="tabpanel" aria-labelledby="tab-tile">
@@ -523,6 +532,11 @@
               <button type="button" id="build-restore" disabled>Restore previous model</button>
               <input type="file" id="build-file" accept=".obrick,.json,application/json" hidden />
             </div>
+            <div id="build-progress" hidden>
+              <p id="build-progress-text" role="status"></p>
+              <progress id="build-progress-bar" max="1" value="0" aria-labelledby="build-progress-text"></progress>
+              <div class="tools"><button type="button" id="build-progress-cancel">Cancel opening</button></div>
+            </div>
             <div id="build-confirm" role="alertdialog" aria-labelledby="build-confirm-text" hidden>
               <p id="build-confirm-text"></p>
               <div class="tools">
@@ -530,6 +544,10 @@
                 <button type="button" id="build-confirm-replace">Replace</button>
                 <button type="button" id="build-confirm-cancel" class="primary">Cancel</button>
               </div>
+            </div>
+            <div class="field check">
+              <input type="checkbox" id="build-hud-toggle" />
+              <label for="build-hud-toggle">Show performance numbers (draw calls, triangles, frame time)</label>
             </div>
             <p class="note">The alpha saves the model as plain JSON, <code>.obrick.json</code>; the zipped <code>.obrick</code> of the plan comes later.</p>
             <p id="build-message" role="status" aria-live="polite"></p>

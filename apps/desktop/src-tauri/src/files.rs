@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 /// only keeps a wrong choice (a disk image, a video) from being read whole.
 pub const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
 
+/// The same for an assembler model: the core opens at most 64 MiB (`openbrick-wasm`'s `MAX_MODEL_BYTES`, the writer's worst case for 150,000 parts).
+pub const MAX_MODEL_READ_BYTES: u64 = 64 * 1024 * 1024;
+
 /// The same bound for a part pack (`openbrick-catalog`'s `MAX_PACK_BYTES`, 128 MiB).
 pub const MAX_PACK_READ_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -135,6 +138,7 @@ impl OpenKind {
     pub fn max_read_bytes(self) -> u64 {
         match self {
             Self::Pack => MAX_PACK_READ_BYTES,
+            Self::Model => MAX_MODEL_READ_BYTES,
             _ => MAX_READ_BYTES,
         }
     }
@@ -388,7 +392,8 @@ mod tests {
         assert_eq!(OpenKind::Part.extensions(), ["json"]);
         assert_eq!(OpenKind::Model.extensions(), ["obrick", "json"]);
         assert_eq!(OpenKind::Pack.extensions(), ["obpack"]);
-        assert_eq!(OpenKind::Model.max_read_bytes(), MAX_READ_BYTES);
+        assert_eq!(OpenKind::Model.max_read_bytes(), MAX_MODEL_READ_BYTES);
+        assert_eq!(OpenKind::Svg.max_read_bytes(), MAX_READ_BYTES);
         assert_eq!(OpenKind::Pack.max_read_bytes(), 128 * 1024 * 1024);
         // Each kind has its own scripted file, so a test folder can hold all of them.
         let names = [
