@@ -35,6 +35,21 @@ test("the CSV has one header and one line per row, quoting what needs it", () =>
   assert.equal(new Set(CSV_COLUMNS).size, CSV_COLUMNS.length, "no column twice");
 });
 
+test("text that a spreadsheet would run as a formula is neutralised, numbers are not", () => {
+  for (const bad of ['=HYPERLINK("http://evil","x")', "@SUM(1+1)", "+1", "-1", "\tcmd", "\rcmd", "=1+1"]) {
+    const field = csvField(bad);
+    assert.ok(field.replace(/^"/, "").startsWith("'"), `${JSON.stringify(bad)} became ${JSON.stringify(field)}`);
+  }
+  assert.equal(csvField('=HYPERLINK("a,b","x")'), `"'=HYPERLINK(""a,b"",""x"")"`);
+  assert.equal(csvField("Pixel 8a"), "Pixel 8a");
+  assert.equal(csvField("a=b"), "a=b", "only a leading character makes a formula");
+  assert.equal(csvField(-1), "-1", "a negative number stays a number");
+  assert.equal(csvField(0.5), "0.5");
+  // Through a whole line: device and user agent come from outside.
+  const line = csvLine({ device: "=cmd|' /C calc'!A0", user_agent: "@evil", bricks: 1000, warnings: "-x" });
+  assert.ok(line.includes("'=cmd") && line.includes("'@evil") && line.includes("'-x") && line.includes(",1000,"));
+});
+
 test("frame statistics and percentiles", () => {
   assert.deepEqual(frameStats([]), { frames: 0, p50: 0, p95: 0, fps: 0 });
   const s = frameStats(Array.from({ length: 100 }, (_, i) => (i < 95 ? 16.7 : 40)));

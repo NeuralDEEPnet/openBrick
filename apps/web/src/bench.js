@@ -80,9 +80,15 @@ export function frameStats(times) {
   return { frames: times.length, p50: percentile(times, 0.5), p95: percentile(times, 0.95), fps: 1000 / mean };
 }
 
-/** One CSV field: quoted when it holds a comma, a quote or a line break. */
+/**
+ * One CSV field: quoted when it holds a comma, a quote or a line break. Text (a string: the device label from the
+ * URL, the browser's user agent, the GPU name, warnings) that starts with `=`, `+`, `-`, `@`, a tab or a carriage
+ * return would be a formula in a spreadsheet, so it gets a leading `'` (which a spreadsheet shows as nothing). Numbers
+ * are never touched.
+ */
 export function csvField(value) {
-  const text = value === null || value === undefined ? "" : String(value);
+  let text = value === null || value === undefined ? "" : String(value);
+  if (typeof value === "string" && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
