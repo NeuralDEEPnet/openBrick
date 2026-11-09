@@ -2275,6 +2275,21 @@ async function baseRun(browser, native) {
       check(requests.some((p) => /\/assets\/openbrick_wasm_bg-[\w-]+\.wasm$/.test(p)), `${label}: the module was not loaded from ${PAGES_BASE}assets/`);
       check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
       console.log(`# ${label}: ${requests.length} requests, all under ${PAGES_BASE}; the first part equals native`);
+      // ?bench=1 on the published path: the benchmark page opens a generated model in Build mode, orbits for a
+      // second and prints one CSV row; its code (the layout generator is a separate chunk) loads from the base path too.
+      const before = requests.length;
+      await page.goto(`${origin}${PAGES_BASE}?bench=1&sizes=500&seconds=1&device=smoke&backend=webgl2`);
+      try {
+        await page.waitForFunction(() => document.documentElement.dataset.benchDone !== undefined, null, { timeout: 240_000, polling: 200 });
+      } catch {
+        throw new Error(`${label}: the ?bench=1 page did not finish (status: ${await page.textContent("#bench-status").catch(() => "no panel")})`);
+      }
+      check((await page.evaluate(() => document.documentElement.dataset.benchDone)) === "1", `${label}: ?bench=1 stopped: ${await page.textContent("#bench-status")}`);
+      const csv = (await page.textContent("#bench-csv")).split("\n");
+      check(csv.length === 2 && csv[1].includes(",smoke,") && csv[1].includes(",500,"), `${label}: ?bench=1 printed ${JSON.stringify(csv)}`);
+      const outsideBench = requests.slice(before).filter((p) => !p.startsWith(PAGES_BASE));
+      check(outsideBench.length === 0 && failed.length === 0, `${label}: ?bench=1 requested outside ${PAGES_BASE}: ${outsideBench.join(", ")} ${failed.join(", ")}`);
+      console.log(`# ${label}: ?bench=1 ran under ${PAGES_BASE} and printed ${csv[1].slice(0, 120)}…`);
       await context.close();
     } finally {
       server.close();
