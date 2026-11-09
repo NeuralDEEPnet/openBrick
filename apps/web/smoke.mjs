@@ -1482,6 +1482,37 @@ async function buildRun(browser, origin) {
 }
 
 /**
+ * Parts placed one at a time are all drawn: a chunk of one part type is rebuilt when it grows past its
+ * capacity (16), and every part must still be in a drawn mesh after each placement. The scene's own instance
+ * count (`build.drawn`, from the visible meshes) is compared with the parts after every click.
+ */
+async function buildGrowRun(browser, origin) {
+  const label = "build-grow";
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light" });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the core's catalog");
+  await buildWait(page, () => window.__web.build.selected === "ob.brick-2x4" && window.__web.build.drawn === 1, 60_000, "the baseplate drawn");
+  let n = 1;
+  for (const z of [-140, -100, -60, -20, 20]) {
+    for (const x of [-120, -40, 40, 120]) {
+      const at = await screenAt(page, [x, -8, z]);
+      await page.mouse.move(at.x, at.y);
+      await buildWait(page, () => window.__web.build.ghost === "valid", 60_000, `a valid ghost at ${x}, ${z}`);
+      await page.mouse.click(at.x, at.y);
+      n += 1;
+      await buildWait(page, (want) => window.__web.build.parts === want && window.__web.build.drawn === want, 60_000, `${n} parts placed and drawn`, n);
+    }
+  }
+  const b = await buildState(page);
+  check(b.drawn === 21 && b.counts.parts === 21, `${label}: ${b.drawn} instances drawn, the counts say ${b.counts.parts}, 21 are placed`);
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(`# ${label}: 20 bricks placed one by one, all 21 parts drawn after each (a chunk grows past 16)`);
+  await context.close();
+}
+
+/**
  * A big model (docs/plan/07 sections 9 and 14, bench/scale): a 4,000-brick city is opened through the file
  * input and read by the core in steps; the page chunks it over the lattice, draws a few hundred chunks at
  * levels of detail inside its triangle budget, counts its statistics when editing pauses, and a part placed
@@ -2334,7 +2365,7 @@ async function main() {
         failures.push(err.message);
       }
     }
-    for (const buildStep of onlyRace ? [buildRaceRun] : onlyPack ? [buildPackRun] : onlyScale ? [buildScaleRun] : [buildRun, buildRaceRun, buildScaleRun, buildPhoneRun, buildPackRun]) {
+    for (const buildStep of onlyRace ? [buildRaceRun] : onlyPack ? [buildPackRun] : onlyScale ? [buildScaleRun, buildGrowRun] : [buildRun, buildRaceRun, buildGrowRun, buildScaleRun, buildPhoneRun, buildPackRun]) {
       try {
         await buildStep(browser, origin);
       } catch (err) {

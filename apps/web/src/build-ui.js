@@ -289,6 +289,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   // The catalog ids of the placed parts in id order (for the smoke test; empty for a big model), and what the view draws now.
   Object.defineProperty(info, "placed", { enumerable: true, get: () => (catalog ? table.placed(catalog.parts) : []) });
+  /** Instances in the meshes the scene draws, counted from the scene itself (for the smoke test: it must equal the parts). */
+  Object.defineProperty(info, "drawn", { enumerable: true, get: () => view?.drawnInstances() ?? 0 });
   Object.defineProperty(info, "counts", { enumerable: true, get: () => view?.counts() ?? null });
 
   const enqueue = createTaskQueue();

@@ -142,6 +142,8 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
       mesh.dispose?.();
     }
     chunk.meshes = [null, null, null, null];
+    // No mesh is drawn for this chunk now: the next selectLevels makes the one it wants (a stale `shown` would skip that).
+    chunk.shown = -1;
   }
 
   function dropAllChunks() {
@@ -442,16 +444,20 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
       chunk.level = level;
       const show = visible ? level : -1;
       if (show !== chunk.shown) {
-        if (chunk.shown >= 0) chunk.meshes[chunk.shown].visible = false;
+        if (chunk.shown >= 0 && chunk.meshes[chunk.shown]) chunk.meshes[chunk.shown].visible = false;
         if (show >= 0) meshOf(chunk, show).visible = true;
         chunk.shown = show;
       }
       if (visible) {
-        view.drawCalls++;
-        view.visibleChunks++;
-        view.parts += chunk.count;
-        view.lod[level]++;
-        view.triangles += chunk.count * entry.tris[level];
+        // Counted from the mesh that is drawn (its instance count), never from the table.
+        const drawn = chunk.meshes[level];
+        if (drawn?.visible && drawn.count > 0) {
+          view.drawCalls++;
+          view.visibleChunks++;
+          view.parts += drawn.count;
+          view.lod[level]++;
+          view.triangles += drawn.count * entry.tris[level];
+        }
       }
     }
     stats = view;
@@ -584,6 +590,14 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
     project,
     frameLdu,
     show,
+    /** Instances in the meshes that are drawn, counted from the scene itself (for tests and the smoke). */
+    drawnInstances() {
+      let n = 0;
+      root.traverse((o) => {
+        if (o.isInstancedMesh && o.visible) n += o.count;
+      });
+      return n;
+    },
     /** What the last frame draws: triangles, parts, draw calls (chunks in view), and the render levels of those chunks. */
     counts: () => ({ triangles: stats.triangles, parts: stats.parts, drawCalls: stats.drawCalls, chunks: chunks.size, visibleChunks: stats.visibleChunks, lod: [...stats.lod], bias, chunked, small }),
   };
