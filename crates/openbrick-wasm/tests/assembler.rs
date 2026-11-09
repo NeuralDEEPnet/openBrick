@@ -366,10 +366,12 @@ fn a_model_of_the_most_parts_with_the_longest_numbers_saves_and_opens_again() {
         saved.len()
     );
     // The worst line of any part, times the most parts, is within the limit with room for the rest.
-    assert!(
-        openbrick_wasm::assembler::MAX_PART_TEXT_BYTES * 150_000 + 8 * 1024 * 1024
-            <= MAX_MODEL_BYTES
-    );
+    const {
+        assert!(
+            openbrick_wasm::assembler::MAX_PART_TEXT_BYTES * 150_000 + 8 * 1024 * 1024
+                <= MAX_MODEL_BYTES
+        )
+    };
     let mut b = Assembler::create().unwrap();
     b.load(&saved).unwrap();
     assert_eq!(b.len(), 150_000);
