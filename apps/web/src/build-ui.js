@@ -7,6 +7,9 @@
 
 import { createAssemblyView } from "./assembly-view.js";
 import { ModelKeeper } from "./model-keeper.js";
+import { ModelTable, ROW } from "./model-table.js";
+import { basePixelRatio, createAdaptiveResolution, hudLines, isPhone, triangleBudget } from "./lod.js";
+import { benchWarnings, frameStats } from "./bench.js";
 import {
   MeshCache,
   PAGE_SIZE,
@@ -30,10 +33,8 @@ import {
   bomRows,
   colourHex,
   colourName,
-  decodeInstances,
   frameSummary,
   ghostState,
-  groupByPart,
   isClick,
   isModelFile,
   keyAction,
@@ -170,9 +171,15 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   // What is chosen and shown.
   const choice = { part: null, colour: null, rot: 0, tool: "place" };
-  let instances = [];
-  const byId = new Map();
+  /** The page's copy of the model (src/model-table.js), patched with the core's deltas. */
+  const table = new ModelTable();
+  /** Parts placed, by catalog part number. */
+  let partCounts = new Map();
+  /** What the core last said besides the parts: { canUndo, canRedo, revision, parts, stats, bom }. */
   let state = null;
+  /** True while the model is small enough for full detail everywhere (src/build.js wantDetail). */
+  let small = true;
+  const hud = { on: false, timer: null };
   let hovered = null;
   let lastPointer = null;
   /** The keyboard's aim: a ground point of the model frame in LDU, or null when the pointer aims. */
@@ -189,7 +196,6 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   const info = (page.build = {
     ready: false,
     parts: 0,
-    placed: [],
     selected: null,
     colour: null,
     rot: 0,
@@ -212,8 +218,14 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     dirty: false,
     canRestore: false,
     confirming: false,
-    counts: null,
     thumbnails: 0,
+    /** True while a model is being opened in steps, and how far it is. */
+    loading: false,
+    progress: null,
+    hud: false,
+    pixelRatio: 1,
+    /** The revision the statistics shown are for (the model's own, `revision`, when they are up to date). */
+    statsFor: -1,
     /** The palette: parts listed, the page shown, the pack loaded, mesh bookkeeping. */
     list: { total: 0, shown: 0, page: 0, pages: 1, query: "", category: "" },
     pack: null,
@@ -271,14 +283,25 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
         });
       }
       await refresh();
-      return { n, snapMs, pickMs, placeUndoMs, parts: instances.length };
+      return { n, snapMs, pickMs, placeUndoMs, parts: table.size };
     },
   });
+
+  // The catalog ids of the placed parts in id order (for the smoke test; empty for a big model), and what the view draws now.
+  Object.defineProperty(info, "placed", { enumerable: true, get: () => (catalog ? table.placed(catalog.parts) : []) });
+  Object.defineProperty(info, "counts", { enumerable: true, get: () => view?.counts() ?? null });
 
   const enqueue = createTaskQueue();
 
   const partOf = (id) => partIndex.get(id) ?? -1;
-  const names = () => Object.fromEntries(instances.map((i) => [i.id, catalog.parts[i.part].name]));
+  /** Part names by id, looked up when asked (a hover line names one part, not all of them). */
+  const names = new Proxy({}, { get: (_, id) => (table.has(Number(id)) ? catalog.parts[table.get(Number(id)).part].name : undefined) });
+  /** The status sentence: the statistics when they are for this model, else just the count. */
+  function sentence(s = state) {
+    const stats = s?.stats ?? state?.stats;
+    if (stats && stats.parts === table.size) return stateSentence(stats);
+    return `${table.size} part${table.size === 1 ? "" : "s"}`;
+  }
 
   function message(text, { alert = false } = {}) {
     const node = $("build-message");
@@ -293,50 +316,107 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   // ----------------------------------------------------------- state from the core
 
-  async function applyState(next) {
-    state = next;
-    keeper.remember(next.text);
-    await syncDetail(next.stats.parts);
-    instances = decodeInstances(next.instances);
-    byId.clear();
-    for (const i of instances) byId.set(i.id, i);
-    const groups = groupByPart(instances);
-    await uploadParts([...groups.keys()]);
-    view.setInstances(groups);
-    releaseSpare();
-    info.parts = instances.length;
-    /** The catalog id of every placed part, in placement order (for the smoke test). */
-    info.placed = instances.map((i) => catalog.parts[i.part].id);
-    info.stats = next.stats;
-    info.revision = next.revision;
-    info.counts = view.counts();
-    renderStats();
-    $("build-undo").disabled = !next.canUndo;
-    $("build-redo").disabled = !next.canRedo;
-    $("build-clear").disabled = !clearable(instances, catalog.parts);
-    $("build-restore").disabled = keeper.previous === null;
-    info.canRestore = keeper.previous !== null;
-    const sizeNote = instances.length > 0 && !detail ? " (simple studs: the model is large)" : "";
-    status([stateSentence(next.stats) + sizeNote]);
+  /** Whether Clear has anything to remove (src/build.js clearable, over the table): any part but a baseplate on the ground. */
+  function clearableNow() {
+    for (const [part, n] of partCounts) if (n > 0 && !catalog.parts[part].base) return true;
+    let any = false;
+    table.forEachSlot((slot) => {
+      const p = catalog.parts[table.partAt(slot)];
+      if (!(p.base && table.posAt(slot, 1) + p.heightLdu === 0)) any = true;
+    });
+    return any;
   }
 
-  /** Switch the meshes to the other level when the model crossed the limit (src/build.js wantDetail). */
-  async function syncDetail(count) {
-    const want = wantDetail(count, detail);
-    if (want === detail) return;
-    // Only the built-in parts have two levels: fetch them again at the new one (the view replaces the
-    // ones it holds, and the instances are drawn again by the setInstances that follows).
-    const { meshes } = await asm.assemblerMeshes(want);
-    detail = want;
-    info.detail = want;
-    view.addMeshes(meshes);
-    for (const m of meshes) cpuMeshes.has(m.index) && cpuMeshes.set(m.index, m, keepMesh);
+  /**
+   * Take what the core says: a whole table (`instances`, after an open, a pack change or a restore) or what an
+   * edit changed (`delta`), and the summary beside it. Only the chunks an edit touched are redrawn.
+   */
+  async function applyState(next) {
+    let full = false;
+    let ids = [];
+    if (next.instances) {
+      table.replaceAll(next.instances);
+      partCounts = table.countsByPart();
+      full = true;
+    } else if (next.delta) {
+      const rows = next.delta;
+      const before = new Map();
+      for (let at = 1; at < rows.length; at += ROW) before.set(rows[at], table.get(rows[at])?.part);
+      const r = table.applyDelta(rows);
+      if (r.full) {
+        partCounts = table.countsByPart();
+        full = true;
+      } else {
+        ids = r.ids;
+        for (const id of ids) {
+          const was = before.get(id);
+          const now = table.get(id)?.part;
+          if (was === now) continue;
+          if (was !== undefined) partCounts.set(was, (partCounts.get(was) ?? 1) - 1);
+          if (now !== undefined) partCounts.set(now, (partCounts.get(now) ?? 0) + 1);
+        }
+        for (const [part, n] of partCounts) if (n <= 0) partCounts.delete(part);
+      }
+    } else {
+      throw new TypeError("the core's reply has neither a table nor a delta");
+    }
+    // Stats and the bill of materials come with the edit for a small model, later for a big one.
+    state = {
+      canUndo: next.canUndo,
+      canRedo: next.canRedo,
+      revision: next.revision,
+      parts: next.parts ?? table.size,
+      stats: next.stats ?? state?.stats ?? null,
+      bom: next.bom ?? state?.bom ?? [],
+    };
+    small = wantDetail(table.size, small);
+    info.detail = small;
+    view.setPolicy({ small });
+    await uploadParts([...partCounts.keys()]);
+    if (full) view.setModel(table);
+    else view.update(ids);
+    releaseSpare();
+    info.parts = table.size;
+    info.stats = state.stats;
+    info.revision = next.revision;
+    renderStats();
+    if (next.stats) info.statsFor = next.revision;
+    else wantStats();
+    $("build-undo").disabled = !next.canUndo;
+    $("build-redo").disabled = !next.canRedo;
+    $("build-clear").disabled = !clearableNow();
+    $("build-restore").disabled = keeper.previous === null;
+    info.canRestore = keeper.previous !== null;
+    const sizeNote = table.size > 0 && !small ? " (simple studs: the model is large)" : "";
+    status([sentence(next) + sizeNote]);
+  }
+
+  let statsTimer = null;
+  /**
+   * The statistics of a big model are asked for when editing pauses: the core counts connections again after a
+   * removal (30 ms or more for 100,000 parts), so doing it after every edit would queue the pointer's snap behind it.
+   */
+  function wantStats() {
+    clearTimeout(statsTimer);
+    statsTimer = setTimeout(async () => {
+      try {
+        const r = await asm.assemblerStats();
+        if (r.revision !== info.revision) return wantStats(); // edited since: a later one will ask
+        state = { ...state, stats: r.stats, bom: r.bom };
+        info.statsFor = r.revision;
+        info.stats = r.stats;
+        renderStats();
+        if (active) status([sentence(state)]);
+      } catch {
+        // the core was replaced or the page left: the next edit asks again
+      }
+    }, 250);
   }
 
   // ----------------------------------------------------------- meshes of hundreds of parts
 
   /** Part numbers whose mesh must stay: the placed ones and the one chosen. */
-  const keepMesh = (index) => index === choice.part || instances.some((i) => i.part === index);
+  const keepMesh = (index) => index === choice.part || (partCounts.get(index) ?? 0) > 0;
 
   /** The CPU meshes of these part numbers, fetched in one request for the ones not held. */
   async function meshesOf(indices) {
@@ -348,17 +428,25 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     return new Map(indices.map((i) => [i, cpuMeshes.get(i)]));
   }
 
-  /** Make sure the view has a mesh for each of these part numbers. */
+  /** Make sure the view has the meshes of every render level for each of these part numbers. */
   async function uploadParts(indices) {
     const need = [...new Set(indices)].filter((i) => !view.has(i));
     if (need.length === 0) return;
-    const got = await meshesOf(need);
-    view.addMeshes(need.map((i) => got.get(i)));
+    // A part of a pack has one mesh and its hull; the built-in parts have four levels (src/assembly-view.js).
+    for (const [group, lods] of [
+      [need.filter((i) => catalog.parts[i].origin !== "ldraw"), [0, 1, 2, 3]],
+      [need.filter((i) => catalog.parts[i].origin === "ldraw"), [0, 3]],
+    ]) {
+      for (let at = 0; at < group.length; at += 32) {
+        const { meshes } = await asm.assemblerLodMeshes(group.slice(at, at + 32), lods);
+        view.addMeshes(meshes);
+      }
+    }
   }
 
   /** Drop GPU meshes of parts that are neither placed nor chosen, beyond a small spare. */
   function releaseSpare() {
-    const plan = gpuPlan({ placed: instances.map((i) => i.part), ghost: choice.part, held: view.resident() });
+    const plan = gpuPlan({ placed: [...partCounts.keys()], ghost: choice.part, held: view.resident() });
     if (plan.drop.length) view.release(plan.drop);
     info.gpuParts = view.resident().length;
     info.cpuMeshes = cpuMeshes.size;
@@ -367,8 +455,13 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   function renderStats() {
     const stats = $("build-stats");
     stats.replaceChildren();
-    for (const [k, v] of statsRows(state.stats)) stats.append(h("dt", { text: k }), h("dd", { text: v }));
-    const { rows, total } = bomRows(state.bom);
+    if (state?.stats) {
+      for (const [k, v] of statsRows(state.stats)) stats.append(h("dt", { text: k }), h("dd", { text: v }));
+      if (state.stats.parts !== table.size) stats.append(h("dt", { text: "Counting" }), h("dd", { text: "connections are being counted again" }));
+    } else {
+      stats.append(h("dt", { text: "Parts" }), h("dd", { text: String(table.size) }), h("dt", { text: "Counting" }), h("dd", { text: "connections are being counted" }));
+    }
+    const { rows, total } = bomRows(state?.bom ?? []);
     const body = $("build-bom");
     body.replaceChildren();
     for (const r of rows) {
@@ -415,18 +508,18 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     const snap = await asm.assemblerSnap(catalog.parts[choice.part].id, choice.rot, ray);
     showSnap(snap);
     if (!snap) return message("Point at the baseplate or a part first");
-    if (!snap.valid) return message(snapText(snap, partName(), names()).join(". "), { alert: true });
+    if (!snap.valid) return message(snapText(snap, partName(), names).join(". "), { alert: true });
     await command(
       { op: "add", part: catalog.parts[choice.part].id, pos: snap.pos, rot: snap.rot, colour: choice.colour },
-      (s) => `Placed ${partName()}, ${colourName(catalog.palette, choice.colour)}. ${stateSentence(s.stats)}`,
+      (s) => `Placed ${partName()}, ${colourName(catalog.palette, choice.colour)}. ${sentence(s)}`,
     );
   }
 
   async function removeWith(ray) {
-    const inst = await removalTarget((r) => asm.assemblerPick(r), ray, byId);
+    const inst = await removalTarget((r) => asm.assemblerPick(r), ray, table);
     if (!inst) return message("Nothing to remove there");
     const name = catalog.parts[inst.part].name;
-    await command({ op: "remove", id: inst.id }, (s) => `Removed ${name}. ${stateSentence(s.stats)}`);
+    await command({ op: "remove", id: inst.id }, (s) => `Removed ${name}. ${sentence(s)}`);
   }
 
   /**
@@ -445,7 +538,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     try {
       await applyState(await asm.assemblerUndo());
       setDirty(true);
-      message(`Undone. ${stateSentence(state.stats)}`);
+      message(`Undone. ${sentence(state)}`);
     } catch (err) {
       message(err.message, { alert: true });
     }
@@ -457,7 +550,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     try {
       await applyState(await asm.assemblerRedo());
       setDirty(true);
-      message(`Redone. ${stateSentence(state.stats)}`);
+      message(`Redone. ${sentence(state)}`);
     } catch (err) {
       message(err.message, { alert: true });
     }
@@ -493,11 +586,11 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     info.ghost = g;
     info.ghostPos = snap ? snap.pos : null;
     hovered = snap?.target ?? null;
-    const target = hovered && byId.get(hovered);
+    const target = hovered && table.get(hovered);
     view.setOutline(target ? target : null);
     if (choice.tool === "place" && snap) view.setGhost({ part: choice.part, rot: snap.rot, pos: snap.pos, state: g });
     else view.setGhost(null);
-    const text = snapText(snap, partName(), names());
+    const text = snapText(snap, partName(), names);
     setHover(text.join(". "));
     // Only a change to a different problem is announced, never each pointer move.
     const reason = g === "invalid" ? `${snap.collides ?? ""}|${snap.mates === 0 && !snap.grounded}` : "";
@@ -519,7 +612,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       const hit = await asm.assemblerPick(ray);
       if (!active || !currentRay()) return;
       hovered = hit?.instance ?? null;
-      const target = hovered && byId.get(hovered);
+      const target = hovered && table.get(hovered);
       view.setGhost(null);
       view.setOutline(target ? target : null);
       info.ghost = "none";
@@ -691,10 +784,62 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     }
   }
 
-  async function loadText(text, name) {
+  /** Show how far a big document is read (only above a few thousand parts, so a small one does not flash it). */
+  function showProgress(p) {
+    if (!p || p.total < 3000 || p.done >= p.total) {
+      $("build-progress").hidden = true;
+      info.progress = null;
+      return;
+    }
+    $("build-progress").hidden = false;
+    $("build-progress-bar").max = p.total;
+    $("build-progress-bar").value = p.done;
+    $("build-progress-text").textContent = `Opening: ${p.done.toLocaleString("en-US")} of ${p.total.toLocaleString("en-US")} parts checked`;
+    info.progress = { done: p.done, total: p.total };
+  }
+
+  /**
+   * Make the model what `produce()` reads: a document in steps (with progress and a Cancel button) or the
+   * table of a model set aside. Resolves true when it opened.
+   */
+  async function openModel(name, produce) {
+    info.loading = true;
+    const t0 = performance.now();
     try {
-      // A model made with an LDraw pack says so: if the parts are not here, offer to add the pack
-      // instead of failing, and keep the model for when it is added.
+      const next = await produce();
+      const t1 = performance.now();
+      // The model opened, with another build of the pack it was made with: say so.
+      const notices = next.notices ?? [];
+      info.notices = notices;
+      modelName = name;
+      $("build-name").value = name;
+      await applyState(next);
+      /** Where the time of an open went, in ms: the core reading the document, and the page taking it in. */
+      info.openTiming = { coreMs: Math.round(t1 - t0), pageMs: Math.round(performance.now() - t1) };
+      setDirty(false);
+      view.frameLdu(...modelFrame());
+      choice.rot = 0;
+      info.rot = 0;
+      message(`Opened ${name}: ${sentence(next)}${notices.length ? ` Notice: ${notices.join(" ")}` : ""}`);
+      if (notices.length) status([`Opened ${name}`, ...notices]);
+      return true;
+    } catch (err) {
+      const cancelled = /was cancelled/.test(err.message);
+      message(cancelled ? `Opening ${name} was cancelled; your model is as it was` : `Could not open ${name}: ${err.message}`, { alert: !cancelled });
+      status([cancelled ? `Opening ${name} was cancelled` : `Could not open ${name}`, ...(cancelled ? [] : [err.message])], cancelled ? "" : "bad");
+      info.error = cancelled ? null : err.message;
+      return false;
+    } finally {
+      info.loading = false;
+      showProgress(null);
+      updateHover();
+    }
+  }
+
+  async function loadText(text, name) {
+    // A model made with an LDraw pack says so: if the parts are not here, offer to add the pack
+    // instead of failing, and keep the model for when it is added.
+    try {
       const needs = await asm.assemblerNeeds(text);
       const why = missingPackText(needs, pack !== null);
       if (why) {
@@ -704,30 +849,15 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
         status([`${name} needs an LDraw pack`, why], "bad");
         return false;
       }
-      showNeeds(null);
-      pendingModel = null;
-      const next = await asm.assemblerLoad(text);
-      // The model opened, with another build of the pack it was made with: say so.
-      const notices = next.notices ?? [];
-      info.notices = notices;
-      modelName = name;
-      $("build-name").value = name;
-      await applyState(next);
-      setDirty(false);
-      view.frameLdu(...modelFrame());
-      choice.rot = 0;
-      info.rot = 0;
-      message(`Opened ${name}: ${stateSentence(next.stats)}${notices.length ? ` Notice: ${notices.join(" ")}` : ""}`);
-      if (notices.length) status([`Opened ${name}`, ...notices]);
-      return true;
     } catch (err) {
       message(`Could not open ${name}: ${err.message}`, { alert: true });
       status([`Could not open ${name}`, err.message], "bad");
       info.error = err.message;
       return false;
-    } finally {
-      updateHover();
     }
+    showNeeds(null);
+    pendingModel = null;
+    return openModel(name, () => asm.assemblerLoad(text, showProgress));
   }
 
   // The in-page confirmation (a dialog box would block the desktop webview and a test
@@ -762,7 +892,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       }
       if (reply === "save" && !(await save())) return false;
     }
-    const prior = { text: state.text, name: modelName, dirty };
+    const prior = { rows: table.toRows(), name: modelName, dirty };
     const made = await produce();
     if (!made) return false;
     if (!(await loadText(made.text, made.name))) return false;
@@ -775,15 +905,15 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function restorePrevious() {
     const prev = keeper.previous;
     if (!prev) return;
-    const current = { text: state.text, name: modelName, dirty };
-    if (await loadText(prev.text, prev.name)) {
+    const current = { rows: table.toRows(), name: modelName, dirty };
+    if (await openModel(prev.name, () => asm.assemblerLoadRows(prev.rows))) {
       setDirty(prev.dirty);
       keeper.setPrevious(current);
       message(`Restored ${prev.name}.${info.notices.length ? ` Notice: ${info.notices.join(" ")}` : ""}`);
     }
   }
 
-  /** Keep `prior` ({ text, name, dirty }) for "Restore previous model". */
+  /** Keep `prior` ({ rows, name, dirty }) for "Restore previous model". */
   function setAside(prior) {
     keeper.setPrevious(prior);
     $("build-restore").disabled = false;
@@ -796,7 +926,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
    * set aside afterwards if the core had to clear it, so nothing is lost silently.
    */
   async function confirmPackChange(what) {
-    if (!usesPackParts(instances, catalog.parts) || !replaceNeedsConfirm({ dirty })) return true;
+    if (![...partCounts.keys()].some((i) => catalog.parts[i]?.origin === "ldraw") || !replaceNeedsConfirm({ dirty })) return true;
     const reply = await confirmReplace(
       what,
       `${what} may take away parts your unsaved model uses, and the model would be set aside (Restore previous model brings it back). The changes you made since the last save could be lost. Continue?`,
@@ -847,14 +977,14 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   function modelFrame() {
     let lo = [-160, -120, -160];
     let hi = [160, 0, 160];
-    for (const i of instances) {
-      const b = catalog.parts[i.part].pickBox;
+    table.forEachSlot((slot) => {
+      const b = catalog.parts[table.partAt(slot)].pickBox;
       for (const k of [0, 2]) {
-        lo[k] = Math.min(lo[k], i.pos[k] + b.min[k]);
-        hi[k] = Math.max(hi[k], i.pos[k] + b.max[k]);
+        lo[k] = Math.min(lo[k], table.posAt(slot, k) + b.min[k]);
+        hi[k] = Math.max(hi[k], table.posAt(slot, k) + b.max[k]);
       }
-      lo[1] = Math.min(lo[1], i.pos[1] + b.min[1]);
-    }
+      lo[1] = Math.min(lo[1], table.posAt(slot, 1) + b.min[1]);
+    });
     const centre = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
     const radius = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2;
     return [centre, radius];
@@ -1019,7 +1149,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     try {
       if (!(await confirmPackChange(`Adding ${name}`))) return false;
       // What the model was, to set aside if the new pack lacks parts it uses and the core clears it.
-      const prior = { text: state.text, name: modelName, dirty };
+      const prior = { rows: table.toRows(), name: modelName, dirty };
       message(`Reading ${name}…`);
       const r = await asm.assemblerLoadPack(bytes);
       pack = { info: r.pack, bytes, name };
@@ -1069,7 +1199,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function removePack() {
     try {
       if (!(await confirmPackChange("Removing the LDraw pack"))) return;
-      const prior = { text: state.text, name: modelName, dirty };
+      const prior = { rows: table.toRows(), name: modelName, dirty };
       const r = await asm.assemblerUnloadPack();
       pack = null;
       keeper.rememberPack(null);
@@ -1127,7 +1257,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     $("build-remove-mode").addEventListener("click", () => setTool(choice.tool === "remove" ? "place" : "remove"));
     $("build-undo").addEventListener("click", () => enqueue(undo));
     $("build-redo").addEventListener("click", () => enqueue(redo));
-    $("build-clear").addEventListener("click", () => enqueue(() => command({ op: "clearBuilt" }, (s) => `Cleared. ${stateSentence(s.stats)}`)));
+    $("build-clear").addEventListener("click", () => enqueue(() => command({ op: "clearBuilt" }, (s) => `Cleared. ${sentence(s)}`)));
     $("build-save").addEventListener("click", () => enqueue(save));
     $("build-restore").addEventListener("click", () => enqueue(restorePrevious));
     $("build-confirm-save").addEventListener("click", () => answer?.("save"));
@@ -1138,6 +1268,10 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
         e.stopPropagation();
         answer?.("cancel");
       }
+    });
+    $("build-progress-cancel").addEventListener("click", () => {
+      // Not queued: the open itself is the task being waited for.
+      asm.assemblerCancel().catch(() => {});
     });
     $("build-open").addEventListener("click", () => chooseOpen());
     $("build-pack-open").addEventListener("click", () => choosePack());
@@ -1193,27 +1327,160 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     status(["Building the parts with the core…"]);
     catalog = await asm.assemblerCatalog();
     const first = await asm.assemblerState();
-    detail = wantDetail(first.stats.parts, true);
-    info.detail = detail;
-    const { meshes } = await asm.assemblerMeshes(detail);
     view = createAssemblyView(viewer, { catalog, lduMm: catalog.lduMm });
-    view.addMeshes(meshes);
-    for (const m of meshes) cpuMeshes.set(m.index, m, keepMesh);
+    // The page's table is its copy of the model: a replaced core is given it back (src/model-keeper.js), no text to write or read.
+    keeper.remember(() => table.toRows());
+    wireDisplay();
     buildPalettes();
     wireControls();
     wirePointer();
     wireKeys();
-    if (first.stats.parts === 0) {
+    if (first.parts === 0) {
       // A new model starts on a baseplate, as one undoable command.
-      const baseId = catalog.parts.find((p) => p.base).id;
-      const next = await asm.assemblerApply({ op: "add", part: baseId, pos: [0, -catalog.parts.find((p) => p.base).heightLdu, 0], rot: 0, colour: catalog.palette.defaultBase });
+      const base = catalog.parts.find((p) => p.base);
+      const next = await asm.assemblerApply({ op: "add", part: base.id, pos: [0, -base.heightLdu, 0], rot: 0, colour: catalog.palette.defaultBase });
       await applyState(next);
-      // The baseplate is part of the start, not an edit to undo.
-      await asm.assemblerLoad((await asm.assemblerSave(modelName)).text);
-      await refresh();
+      // The baseplate is part of the start, not an edit to undo: the core takes the table as it is, with no history.
+      await applyState(await asm.assemblerLoadRows(table.toRows()));
     } else await applyState(first);
     info.ready = true;
-    info.parts = instances.length;
+    info.parts = table.size;
+  }
+
+  // ----------------------------------------------------------- the display: pixel ratio, overlay
+
+  /**
+   * Adaptive resolution and the performance overlay (docs/plan/07 section 9): the pixel ratio starts at the
+   * device's, capped at 1.5 on a phone, and drops while frames of a moving camera are over budget, with a dead
+   * band so it does not hunt; a still picture is drawn at the full ratio. The overlay is off until asked for.
+   */
+  function wireDisplay() {
+    const phone = isPhone({ coarse: matchMedia?.("(pointer: coarse)").matches ?? false, width: window.innerWidth });
+    const base = basePixelRatio({ devicePixelRatio: window.devicePixelRatio, phone });
+    const params = new URLSearchParams(location.search);
+    const adaptive = createAdaptiveResolution({ max: base, targetMs: phone ? 1000 / 30 : 1000 / 60 });
+    view.setPolicy({ trianglesBudget: triangleBudget({ phone }) });
+    let settle = null;
+    viewer.internals.onFrameTime((ms) => {
+      if (!active || params.get("adaptive") === "0") return;
+      viewer.internals.setPixelRatio(adaptive.frame(ms));
+      clearTimeout(settle);
+      settle = setTimeout(() => viewer.internals.setPixelRatio(adaptive.settle()), 400);
+    });
+    info.pixelRatioBase = base;
+    displayBase = base;
+    const toggle = $("build-hud-toggle");
+    const show = (on) => {
+      hud.on = on;
+      info.hud = on;
+      toggle.checked = on;
+      $("build-hud").hidden = !on;
+      clearInterval(hud.timer);
+      if (on) {
+        const draw = () => {
+          const c = view.counts();
+          $("build-hud").textContent = hudLines({
+            drawCalls: c.drawCalls,
+            triangles: c.triangles,
+            frameMs: viewer.internals.frameMs,
+            parts: table.size,
+            chunks: c.chunks,
+            visibleChunks: c.visibleChunks,
+            lod: c.lod,
+            pixelRatio: viewer.internals.pixelRatio,
+            bias: c.bias,
+          }).join("\n");
+          info.pixelRatio = viewer.internals.pixelRatio;
+        };
+        draw();
+        hud.timer = setInterval(draw, 250);
+      }
+    };
+    toggle.addEventListener("change", () => show(toggle.checked));
+    if (params.get("hud") === "1") show(true);
+  }
+  let displayBase = 1;
+
+  // ----------------------------------------------------------- the scale benchmark (?bench=1, src/bench.js)
+
+  /** The GPU's name as the browser reports it, or "" when it hides it. */
+  function gpuName() {
+    try {
+      const gl = document.createElement("canvas").getContext("webgl2");
+      const ext = gl?.getExtension("WEBGL_debug_renderer_info");
+      return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : "";
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * Open generated models of increasing size and measure each on this device: how long the core and the page took
+   * to take it in, what a frame draws, frame times while the camera orbits (real animation frames: only a number
+   * of a device when this is a device), and the core round trips of a pointer. One row per size, in the columns of
+   * src/bench.js CSV_COLUMNS.
+   */
+  async function runScale({ sizes, layout, seconds, device }, onRow, onStatus) {
+    await ready; // Build mode's first start (the catalog, the palettes)
+    const { layoutText } = await import("../../../bench/scale/layouts.mjs");
+    const gpu = gpuName();
+    const rows = [];
+    for (const bricks of sizes) {
+      onStatus(`${layout} ${bricks.toLocaleString("en-US")}: opening…`);
+      const text = layoutText(layout, bricks);
+      const ok = await enqueue(() => openModel(`${layout} ${bricks}`, () => asm.assemblerLoad(text, (p) => onStatus(`${layout} ${bricks.toLocaleString("en-US")}: ${p.done.toLocaleString("en-US")} of ${p.total.toLocaleString("en-US")} parts checked`))));
+      const row = {
+        date: new Date().toISOString(),
+        device,
+        user_agent: navigator.userAgent,
+        gpu,
+        backend: viewer.backend,
+        device_pixel_ratio: window.devicePixelRatio,
+        viewport: `${window.innerWidth}x${window.innerHeight}`,
+        layout,
+        bricks,
+      };
+      let error = null;
+      let stats = { frames: 0, p50: 0, p95: 0, fps: 0 };
+      if (!ok) error = info.error ?? "the model did not open";
+      else {
+        row.parts = table.size;
+        row.open_core_ms = info.openTiming?.coreMs;
+        row.open_page_ms = info.openTiming?.pageMs;
+        onStatus(`${layout} ${bricks.toLocaleString("en-US")}: orbiting for ${seconds} s…`);
+        // Two frames to settle the first draw, then the orbit.
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const hiddenBefore = document.hidden;
+        stats = frameStats(await viewer.measureFor(seconds * 1000));
+        row.hiddenDuring = hiddenBefore || document.hidden;
+        const c = view.counts();
+        Object.assign(row, {
+          pixel_ratio_end: viewer.internals.pixelRatio,
+          chunks: c.chunks,
+          draw_calls: c.drawCalls,
+          triangles: c.triangles,
+          chunks_full: c.lod[0],
+          chunks_cheap: c.lod[1],
+          chunks_solid: c.lod[2],
+          chunks_hull: c.lod[3],
+          frames: stats.frames,
+          frame_ms_p50: +stats.p50.toFixed(1),
+          frame_ms_p95: +stats.p95.toFixed(1),
+          fps_mean: +stats.fps.toFixed(1),
+        });
+        try {
+          const r = await info.bench(20);
+          Object.assign(row, { snap_ms: +r.snapMs.toFixed(2), pick_ms: +r.pickMs.toFixed(2), place_undo_ms: r.placeUndoMs === null ? "" : +r.placeUndoMs.toFixed(2) });
+        } catch (err) {
+          error = err.message;
+        }
+        row.heap_mib = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : "";
+      }
+      row.warnings = benchWarnings({ hidden: row.hiddenDuring, gpu, backend: viewer.backend, fpsMean: stats.fps, frames: stats.frames, error }).join("; ");
+      rows.push(row);
+      onRow(row);
+    }
+    return rows;
   }
 
   return {
@@ -1234,7 +1501,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       stage.tabIndex = 0;
       stage.setAttribute("aria-label", "3D view of the model. Arrow keys move the aim by one stud, Enter places a part at the aim, Shift and arrow keys orbit, plus and minus zoom, Home frames the model.");
       setTool(choice.tool);
-      status([stateSentence(state.stats)]);
+      status([sentence(state)]);
+      viewer.internals.setPixelRatio(displayBase);
     },
     leave() {
       active = false;
@@ -1244,10 +1512,13 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       view?.setGhost(null);
       view?.setOutline(null);
       view?.show(false);
+      viewer.internals.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       const stage = $("stage");
       stage.removeAttribute("tabindex");
       stage.setAttribute("aria-label", stageLabel);
     },
     summary: frameSummary,
+    /** The scale benchmark of `?bench=1` (src/bench.js): resolves with one row per size. */
+    runScale,
   };
 }

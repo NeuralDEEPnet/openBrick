@@ -28,18 +28,25 @@
 //   savePart       doc, params, process                     { text }: the document with params as defaults
 //   addPreset      doc, name, params, process               { text }: the document with a preset `name`
 //   asmInit        -                                        the assembler catalog (assemblerCatalog() below)
-//   asmMeshes      detail, parts?                           { meshes: [{ index, positions, indices, triangles }] }:
-//                                                           the listed catalog part numbers, else the built-in ones
+//   asmMeshes      detail, parts?, lods?                    { meshes: [{ index, lod?, positions, indices, triangles }] }:
+//                                                           the listed catalog part numbers, else the built-in ones;
+//                                                           `lods` (0 to 3) asks for those render levels of each
 //   asmLoadPack    bytes                                    { pack, kept, ...state }: an LDraw pack (.obpack) joins the
 //                                                           catalog; the model is carried over when it still loads
 //   asmUnloadPack  -                                        { kept, ...state }
 //   asmNeeds       text                                     { requires, missing, missingCount } of a .obrick document
 //   asmSnap        part, rot, ray                           a snap or null (the engine's Snap)
 //   asmPick        ray                                      a hit or null
-//   asmApply       command                                  { id, ...state }; the engine refuses with a message
-//   asmUndo, asmRedo, asmState                              the state (assemblerState() below)
-//   asmLoad        text                                     the state of the model in a .obrick document, and `notices`
-//                                                            (sentences: the model opened with another build of its pack)
+//   asmApply       command, lean?                           { id, ...state }; the engine refuses with a message
+//   asmUndo, asmRedo, asmState  lean?                       the state (assemblerState() below); with `lean` what the
+//                                                           edit changed, not the model (assemblerEdit() below)
+//   asmStats       -                                        { stats, bom, parts, revision } (lean replies leave them out of big models)
+//   asmLoad        text, lean?                              the state of the model in a .obrick document, and `notices`
+//                                                            (sentences: the model opened with another build of its pack);
+//                                                            with `lean` it is read in steps, with { id, progress: { done,
+//                                                            total } } messages between them
+//   asmLoadRows    rows                                     the model from the table (Int32Array, seven numbers a part)
+//   asmCancel      -                                        stops a document being opened in steps
 //   asmSave        name                                     { text }
 //   asmSample      id                                       { text } of a sample model
 //   asmTurn        rot, quarterTurns                        { rot }: the rotation index turned about the vertical axis
@@ -452,6 +459,71 @@ export function assemblerState(core) {
 }
 
 /**
+ * Models up to this many parts get their statistics and bill of materials in every edit's reply (they cost
+ * milliseconds); bigger ones are asked for with asmStats when editing pauses, because the statistics are
+ * counted from the whole model again after a removal (about 30 ms for 100,000 parts).
+ */
+export const STATS_INLINE_LIMIT = 5000;
+
+/** The parts a delta's rows are for, in the unit of the core's table. */
+function leanSummary(a) {
+  const parts = a.len();
+  const out = { parts, canUndo: a.can_undo(), canRedo: a.can_redo(), revision: a.revision() };
+  if (parts <= STATS_INLINE_LIMIT) {
+    out.stats = JSON.parse(a.stats());
+    out.bom = JSON.parse(a.bom());
+  }
+  return out;
+}
+
+/** What an edit changed, without the model: { delta (Int32Array: mode, rows), parts, canUndo, canRedo, revision, stats?, bom? }. */
+export function assemblerEdit(core) {
+  const a = assembler(core);
+  return { delta: a.delta(), ...leanSummary(a) };
+}
+
+/** The whole table without the model text: { instances (Int32Array), parts, canUndo, canRedo, revision, stats?, bom? }. */
+export function assemblerTable(core) {
+  const a = assembler(core);
+  a.delta(); // a whole table is being sent: forget the change list
+  return { instances: a.instances(), ...leanSummary(a) };
+}
+
+/** The statistics and bill of materials of the model as it is: { stats, bom, parts, revision }. */
+export function assemblerStats(core) {
+  const a = assembler(core);
+  return { stats: JSON.parse(a.stats()), bom: JSON.parse(a.bom()), parts: a.len(), revision: a.revision() };
+}
+
+/** Parts the core reads per step when it opens a document: about 25 ms of work, so a cancel or a snap is answered between steps. */
+export const LOAD_STEP = 4000;
+
+/**
+ * Open a document in steps, telling the page how far it is after each (`post({ id, progress: { done, total } })`)
+ * and giving other requests (a cancel, a snap) a turn in between. Resolves with the reply to send.
+ */
+export async function assemblerLoadSteps(core, request, id, post, yieldToEvents) {
+  const a = assembler(core);
+  const total = a.load_begin(request.text);
+  post({ id, progress: { done: 0, total } }, []);
+  let done = 0;
+  try {
+    while (done < total) {
+      done = a.load_step(LOAD_STEP);
+      post({ id, progress: { done, total } }, []);
+      await yieldToEvents();
+    }
+  } catch (err) {
+    a.load_cancel();
+    // A cancel ends the loop from outside: the next step finds no document being loaded.
+    if (/no document is being loaded/.test(errorMessage(err))) throw new Error("opening was cancelled");
+    throw err;
+  }
+  const notices = JSON.parse(a.load_finish());
+  return { ...assemblerTable(core), notices };
+}
+
+/**
  * The render meshes of catalog parts: the baseplate always at the cheap level, the others at `detail`
  * or not. `request.parts` lists the part numbers wanted (at most MAX_MESHES_PER_REQUEST); without it
  * the answer is the built-in parts, so a loaded pack's hundreds of parts are never all built at once.
@@ -467,6 +539,28 @@ export function assemblerMeshes(core, request) {
     });
   } else {
     wanted = catalog.parts.flatMap((p, i) => (p.origin === "ldraw" ? [] : [i]));
+  }
+  // `request.lods` asks for render levels 0 to 3 (0 full studs, 1 cheap, 2 solid underside, 3 hull) of each
+  // part: one mesh per part and level, with `lod` on it. The baseplate is never built at level 0 (it takes a
+  // second); its level 0 is level 1.
+  if (Array.isArray(request?.lods)) {
+    const lods = request.lods.map((l) => {
+      if (!Number.isInteger(l) || l < 0 || l > 3) throw new RangeError(`render level ${l} is not one of 0 to 3`);
+      return l;
+    });
+    if (wanted.length * lods.length > MAX_MESHES_PER_REQUEST * 4) throw new RangeError("too many meshes in one request");
+    const meshes = wanted.flatMap((index) => {
+      const part = catalog.parts[index];
+      return lods.map((lod) => {
+        const mesh = core.assembler_part_lod(index, part.base ? Math.max(1, lod) : lod);
+        try {
+          return { index, lod, id: part.id, positions: mesh.take_positions(), indices: mesh.take_indices(), triangles: mesh.triangle_count() };
+        } finally {
+          mesh.free();
+        }
+      });
+    });
+    return { meshes };
   }
   const meshes = wanted.map((index) => {
     const part = catalog.parts[index];
@@ -508,13 +602,13 @@ export function assemblerLoadPack(core, request) {
   core.assembler_load_pack(request.bytes);
   const { kept } = renewAssembler(core);
   const catalog = assemblerCatalog(core);
-  return { pack: catalog.pack, catalog, kept, ...assemblerState(core) };
+  return { pack: catalog.pack, catalog, kept, ...(request.lean ? assemblerTable(core) : assemblerState(core)) };
 }
 
-export function assemblerUnloadPack(core) {
+export function assemblerUnloadPack(core, request) {
   core.assembler_unload_pack();
   const { kept } = renewAssembler(core);
-  return { kept, catalog: assemblerCatalog(core), ...assemblerState(core) };
+  return { kept, catalog: assemblerCatalog(core), ...(request?.lean ? assemblerTable(core) : assemblerState(core)) };
 }
 
 /** The buffers of a result to transfer instead of copying: mesh arrays and file bytes. */
@@ -528,6 +622,7 @@ export function transferables(result) {
   mesh(result?.overlay);
   if (result?.bytes instanceof Uint8Array) out.push(result.bytes.buffer);
   if (result?.instances instanceof Int32Array) out.push(result.instances.buffer);
+  if (result?.delta instanceof Int32Array) out.push(result.delta.buffer);
   // A buffer listed twice cannot be transferred; keep each once.
   return [...new Set(out)];
 }
@@ -602,7 +697,7 @@ export function dispatch(core, request, now) {
         result = assemblerLoadPack(core, request);
         break;
       case "asmUnloadPack":
-        result = assemblerUnloadPack(core);
+        result = assemblerUnloadPack(core, request);
         break;
       case "asmNeeds":
         if (typeof request.text !== "string") throw new TypeError("asmNeeds needs the .obrick document as text");
@@ -618,19 +713,32 @@ export function dispatch(core, request, now) {
         break;
       case "asmApply": {
         const { id } = JSON.parse(assembler(core).apply(JSON.stringify(request.command)));
-        result = { id, ...assemblerState(core) };
+        // `lean`: what changed, not the model (a big model is not sent back with every edit).
+        result = { id, ...(request.lean ? assemblerEdit(core) : assemblerState(core)) };
         break;
       }
       case "asmUndo":
         assembler(core).undo();
-        result = assemblerState(core);
+        result = request.lean ? assemblerEdit(core) : assemblerState(core);
         break;
       case "asmRedo":
         assembler(core).redo();
-        result = assemblerState(core);
+        result = request.lean ? assemblerEdit(core) : assemblerState(core);
         break;
       case "asmState":
-        result = assemblerState(core);
+        result = request.lean ? assemblerTable(core) : assemblerState(core);
+        break;
+      case "asmStats":
+        result = assemblerStats(core);
+        break;
+      case "asmLoadRows":
+        if (!(request.rows instanceof Int32Array)) throw new TypeError("asmLoadRows needs the table as an Int32Array");
+        assembler(core).load_rows(request.rows);
+        result = { ...assemblerTable(core), notices: [] };
+        break;
+      case "asmCancel":
+        assembler(core).load_cancel();
+        result = {};
         break;
       case "asmLoad":
         if (typeof request.text !== "string") throw new TypeError("asmLoad needs the .obrick document as text");
@@ -672,7 +780,7 @@ export function dispatch(core, request, now) {
  * calls the core again: it answers everything with a fatal error, so no request
  * runs on an instance whose memory may be broken.
  */
-export function createHandler(load, post, now) {
+export function createHandler(load, post, now, yieldToEvents = () => new Promise((resolve) => setTimeout(resolve, 0))) {
   /** Resolves with the core once it is instantiated; set by the first init request. */
   let loaded = null;
   /** The reply message of the trap that ended this core, if one did. */
@@ -708,6 +816,24 @@ export function createHandler(load, post, now) {
     // Requests that waited for the load resume in order; one of them may have trapped.
     if (trapped) {
       refuse(id);
+      return;
+    }
+    if (request?.type === "asmLoad" && request.lean) {
+      // Opened in steps: progress messages go out between them and other requests get a turn.
+      let reply;
+      let transfer = [];
+      try {
+        if (typeof request.text !== "string") throw new TypeError("asmLoad needs the .obrick document as text");
+        const result = await assemblerLoadSteps(core, request, id, post, yieldToEvents);
+        reply = { id, ok: true, result };
+        transfer = transferables(result);
+      } catch (err) {
+        reply = isTrap(err)
+          ? { id, ok: false, fatal: true, error: `the core stopped with a WebAssembly trap (${errorMessage(err)}), usually a Rust panic; its worker is replaced` }
+          : { id, ok: false, error: errorMessage(err) };
+      }
+      if (reply.fatal) trapped = reply.error;
+      post(reply, transfer);
       return;
     }
     const { reply, transfer } = dispatch(core, request, now);

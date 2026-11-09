@@ -137,3 +137,27 @@ The reference devices named in 07 section 9 are an Iris Xe laptop, a Radeon 780M
 | `warnings` | notes separated by `; ` that qualify the row, in the order they arose, empty when clean: backend fallback, insecure context, software rasteriser, hidden tab, resize, few frames, missing GPU timer, and `error: ...` when the run failed |
 
 Values are plain numbers or text; text containing a comma, quote or line break is quoted as in RFC 4180.
+
+## Build mode on a big model: `?bench=1` (laptop or phone)
+
+The harness above measures the renderer on its own. The playground's Build mode, with its chunking, levels of detail, adaptive resolution and the core's edit round trips, has its own benchmark page, so a laptop or a phone can report the numbers that matter for the 10,000-brick and 100,000-brick targets ([07](../../docs/plan/07-assembler-engine.md#9-rendering)). It needs no build tools on the device: open the published playground with `?bench=1` in the address.
+
+1. Open `https://<the published playground>/?bench=1&device=Pixel%208a%2C%20Chrome` (replace the label with your device and browser). On a laptop, plug it in and close other tabs. On a phone, keep the screen on and the tab in front.
+2. The page opens Build mode and, for 1,000, 10,000 and 100,000 bricks of a seeded random city (`bench/scale/layouts.mjs`, the same models `bench/scale/core.mjs` uses), opens the model, orbits the camera for 8 seconds and adds a row to the table at the bottom: how long the core and the page took to take the model in, draw calls and triangles per frame, how many chunks were drawn at which level, frame times of the orbit (p50, p95, mean fps), and the core round trips of a snap, a pick and a place plus undo. A model too big for the device may take minutes to open: wait for "Done".
+3. Press **Copy CSV** (or **Download CSV**) and send the rows back: append them to `scale-results.csv` here in a pull request, or paste them in an issue. The header is in the file; do not edit the values. Rows whose `warnings` say "software renderer" or "error:" describe a CI machine or a failed run, not a device, and are not added.
+4. Options: `sizes=1000,10000,100000` (a `k` suffix works, at most 140k), `layout=city|towers|plates`, `seconds=8` (1 to 60), `device=label`. For the phone case "30 fps with level 2 and a lower pixel ratio" nothing else is needed: the page starts a phone at pixel ratio 1.5, lowers it while frames are over 33 ms and says the ratio it ended at (`pixel_ratio_end`).
+5. Add `&hud=1` to also show the live overlay (draw calls, triangles, frame time, levels in view) while it runs.
+
+| Column | Meaning |
+|--------|---------|
+| `date`, `device`, `user_agent`, `gpu`, `backend` | when, the label from the URL, the browser, the GPU as the browser reports it (empty when hidden), `webgpu` or `webgl2` |
+| `device_pixel_ratio`, `pixel_ratio_end` | the screen's ratio, and the ratio adaptive resolution ended at |
+| `viewport` | window size in CSS pixels |
+| `layout`, `bricks`, `parts` | the model asked for and the parts it has (the baseplates come on top) |
+| `open_core_ms`, `open_page_ms` | the core reading and checking the document, and the page taking the table in and drawing it |
+| `chunks`, `draw_calls`, `triangles` | chunks of the model, draw calls (chunks in view) and triangles of the last frame |
+| `chunks_full`, `chunks_cheap`, `chunks_solid`, `chunks_hull` | chunks in view at each render level |
+| `frames`, `frame_ms_p50`, `frame_ms_p95`, `fps_mean` | frames of the orbit and their times (capped at the display's refresh rate) |
+| `snap_ms`, `pick_ms`, `place_undo_ms` | mean core round trips of a pointer and of an edit, as the page sees them (worker message included) |
+| `heap_mib` | JavaScript heap (Chrome only) |
+| `warnings` | notes separated by `; `: hidden tab, software renderer, few frames, under 5 fps, `error: ...` |

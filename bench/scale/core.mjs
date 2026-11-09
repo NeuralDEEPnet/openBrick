@@ -66,8 +66,22 @@ function bench(layout, bricks) {
   row.statsMs = +ms(() => a.stats())[0].toFixed(2);
   row.bomMs = +ms(() => a.bom())[0].toFixed(2);
   row.instancesMs = +ms(() => a.instances())[0].toFixed(2);
+  // What the worker answered after every edit before the delta replies: the whole table, the statistics
+  // (counted again: an edit changed the model), the bill of materials and the model as text.
+  const recolour = (colour) => JSON.stringify({ op: "recolour", id: instances[Math.floor(instances.length / 3)].id, colour });
+  a.apply(recolour(15));
   row.fullStateMs = +ms(() => [a.instances(), a.stats(), a.bom(), a.save("Autosave")])[0].toFixed(2);
-  if (has(a, "state_delta")) row.stateDeltaMs = +ms(() => a.state_delta())[0].toFixed(3);
+  if (has(a, "delta")) {
+    // What it answers now: the rows that changed and the counters; the statistics come when editing pauses.
+    a.apply(recolour(4));
+    row.editReplyMs = +ms(() => [a.delta(), a.len(), a.can_undo(), a.can_redo(), a.revision()])[0].toFixed(3);
+    row.statsColdMs = +ms(() => a.stats())[0].toFixed(2);
+    row.statsHitMs = +ms(() => a.stats())[0].toFixed(3);
+    a.apply(JSON.stringify({ op: "remove", id: instances[Math.floor(instances.length / 2)].id }));
+    row.statsAfterRemoveMs = +ms(() => a.stats())[0].toFixed(2);
+    a.undo();
+    a.delta();
+  }
   row.wasmMemoryMiB = +(exports.memory.buffer.byteLength / 1048576).toFixed(1);
   row.notices = notices;
 
@@ -142,7 +156,9 @@ const cols = [
   ["save", (r) => r.saveMs],
   ["stats", (r) => r.statsMs],
   ["bom", (r) => r.bomMs],
-  ["full state", (r) => r.fullStateMs],
+  ["state reply, before", (r) => r.fullStateMs],
+  ["edit reply, now", (r) => r.editReplyMs ?? "-"],
+  ["stats after a removal", (r) => r.statsAfterRemoveMs ?? "-"],
   ["snap p50/p95", (r) => `${r.snap.p50}/${r.snap.p95}`],
   ["pick p50/p95", (r) => `${r.pick.p50}/${r.pick.p95}`],
   ["add p50/p95", (r) => `${r.add.p50}/${r.add.p95}`],

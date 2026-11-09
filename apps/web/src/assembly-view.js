@@ -1,17 +1,26 @@
-// The three.js side of Build mode (docs/plan/07 section 9): one InstancedMesh per
-// placed catalog part with the colour per instance (one draw call per part type in
-// the model, however many parts; a pack of hundreds of part types uploads a mesh only
-// for the ones placed or being placed, see addMeshes and release), a translucent ghost of the part being placed, and an outline of the
-// part under the pointer. It draws what the core says and turns pointer
-// positions into rays in the model's frame; it never decides where a part goes
-// (CLAUDE.md: the UI never computes geometry or connectivity).
+// The three.js side of Build mode (docs/plan/07 section 9): the placed parts drawn as chunked
+// InstancedMeshes, a translucent ghost of the part being placed, and an outline of the part under the
+// pointer. It draws what the core says and turns pointer positions into rays in the model's frame; it never
+// decides where a part goes (CLAUDE.md: the UI never computes geometry or connectivity).
 //
-// Frames: the model is in the LDraw frame (LDU, minus Y up). Everything below the
-// `assembly` group is in that frame; the group turns half a revolution about X
-// (a proper rotation: LDraw's minus Y is three.js's plus Y) and scales LDU to the
-// millimetres the lighting of src/viewer.js is set up in.
+// Chunks: a model of up to a few thousand parts is one chunk per part type (one draw call each, however many
+// parts: the 14 built-in parts are at most 14 draw calls). A bigger model is cut over the lattice into cells
+// of 32 x 32 x 32 studs (src/lod.js CHUNK_LDU), one chunk per (part type, cell). A chunk holds the matrices
+// and colours of its parts in two typed arrays shared by its four meshes (one per render level), so an edit
+// rewrites the arrays of the chunk it touches and uploads only that chunk; colours are per instance.
+//
+// Levels: each frame every chunk is tested against the camera frustum (a chunk out of view is not drawn)
+// and drawn at the render level its studs' size on screen asks for (full studs, cheap studs and tubes, cheap
+// studs on a solid body, the stud-less hull), with a margin so it does not flicker at a border, and borders
+// that rise while the frame is over its triangle budget. The levels only change what is drawn: collision,
+// picking and snapping are the core's, from boxes and connectors that do not depend on any render level.
+//
+// Frames: the model is in the LDraw frame (LDU, minus Y up). Everything below the `assembly` group is in
+// that frame; the group turns half a revolution about X (a proper rotation: LDraw's minus Y is three.js's
+// plus Y) and scales LDU to the millimetres the lighting of src/viewer.js is set up in.
 
-import { colourHex, instanceMatrix } from "./build.js";
+import { colourHex } from "./build.js";
+import { chunkCell, chunkKey, nextBias, pickLevel, studPixels, thresholds, triangleBudget, wantGrid } from "./lod.js";
 
 /** Rotation of the LDraw frame into three.js's Y-up frame: half a turn about X. */
 export const LDRAW_TO_THREE_EULER_X = Math.PI;
@@ -32,7 +41,8 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
   root.visible = false;
   scene.add(root);
 
-  const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.38, metalness: 0, flatShading: true });
+  // Back faces are never drawn (FrontSide): a closed part shows its outside only, half the fragment work of a double-sided one.
+  const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.38, metalness: 0, flatShading: true, side: THREE.FrontSide });
   const ghostMaterial = new THREE.MeshStandardNodeMaterial({ roughness: 0.5, metalness: 0, flatShading: true, transparent: true, opacity: 0.6, depthWrite: false });
   const outlineMaterial = new THREE.LineBasicNodeMaterial({ color: "#ffd23f" });
 
@@ -82,9 +92,34 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
   paintGround();
 
   const colour = new THREE.Color();
-  const matrix = new THREE.Matrix4();
-  let triangles = 0;
-  let drawn = 0;
+  /** palette code -> linear [r, g, b] as three.js stores it in an instance colour. */
+  const colourCache = new Map();
+  function rgbOf(code) {
+    let c = colourCache.get(code);
+    if (!c) {
+      colour.set(colourHex(catalog.palette, code));
+      c = [colour.r, colour.g, colour.b];
+      colourCache.set(code, c);
+    }
+    return c;
+  }
+
+  /** The chunks: key "part|cell" -> chunk. */
+  const chunks = new Map();
+  /** id -> the key of the chunk the part is in. */
+  const where = new Map();
+  const dirty = new Set();
+  let table = null;
+  /** Whether the model is cut over the lattice (src/lod.js wantGrid, `chunked`) and whether it is small enough for full detail everywhere. */
+  let chunked = false;
+  let small = true;
+  let bias = 1;
+  let budget = triangleBudget({ phone: false });
+  /** The last frame's counts. */
+  /** The counts of the last frame, written in place each frame (nothing is allocated per frame). */
+  const frameStats = { drawCalls: 0, triangles: 0, parts: 0, visibleChunks: 0, lod: [0, 0, 0, 0] };
+  let stats = frameStats;
+  let lastScreen = { heightPx: 800, fov: 35 };
 
   function geometryOf(m) {
     const geometry = new THREE.BufferGeometry();
@@ -94,47 +129,85 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
     return geometry;
   }
 
-  function dropMesh(entry) {
-    if (entry.mesh) {
-      root.remove(entry.mesh);
-      entry.mesh.dispose?.();
-      entry.mesh = null;
+  /** Half the longest diagonal of a part's pick box from its origin: a radius that holds it in any rotation. */
+  function reachOf(index) {
+    const b = catalog.parts[index].pickBox;
+    return Math.hypot(...[0, 1, 2].map((k) => Math.max(Math.abs(b.min[k]), Math.abs(b.max[k]))));
+  }
+
+  function disposeChunk(chunk) {
+    for (const mesh of chunk.meshes) {
+      if (!mesh) continue;
+      root.remove(mesh);
+      mesh.dispose?.();
     }
+    chunk.meshes = [null, null, null, null];
+  }
+
+  function dropAllChunks() {
+    for (const chunk of chunks.values()) disposeChunk(chunk);
+    chunks.clear();
+    where.clear();
+    dirty.clear();
   }
 
   /** Use another catalog (a part pack was added or removed); part numbers of the parts already here are unchanged. */
   function setCatalog(next) {
     catalog = next;
+    colourCache.clear();
     // A part number may name another part now (the pack was replaced): forget what was uploaded.
     for (const [index, entry] of [...parts]) {
       if (!next.parts[index] || entry.id !== next.parts[index].id) release([index]);
     }
   }
 
-  /** Whether a mesh of catalog part `index` is uploaded. */
+  /** Whether the meshes of every render level of catalog part `index` are uploaded. */
   function has(index) {
-    return parts.has(index);
+    const e = parts.get(index);
+    return !!e && e.levels.every(Boolean);
   }
 
   /**
-   * Upload render meshes ([{ index, positions, indices, triangles }]); a part that is already here gets the new
-   * one (a mesh level change), and its instances are drawn again by the next setInstances.
+   * Upload render meshes ([{ index, lod, positions, indices, triangles }], `lod` 0 to 3, defaulting to 0): a part
+   * has four levels. A part with levels 0 and 3 only (a part of an LDraw pack has one mesh and its hull) uses
+   * level 0 for 1 and 2. A level that is already here is replaced, and the instances using it are drawn
+   * again at the next frame.
    */
   function addMeshes(meshes) {
+    const replaced = new Set(meshes.map((m) => m.index));
     for (const m of meshes) {
-      const old = parts.get(m.index);
-      if (old) {
-        if (ghostPart === m.index) {
-          ghost.visible = false;
-          ghost.geometry = new THREE.BufferGeometry();
-          ghostPart = -1;
-        }
-        dropMesh(old);
-        old.geometry.dispose();
+      const lod = m.lod ?? 0;
+      let entry = parts.get(m.index);
+      if (!entry) {
+        entry = { levels: [null, null, null, null], tris: [0, 0, 0, 0], id: catalog.parts[m.index]?.id, reach: reachOf(m.index) };
+        parts.set(m.index, entry);
       }
-      parts.set(m.index, { geometry: geometryOf(m), triangles: m.triangles, mesh: null, capacity: 0, id: catalog.parts[m.index]?.id });
+      if (entry.levels[lod]) entry.levels[lod].dispose();
+      entry.levels[lod] = geometryOf(m);
+      entry.tris[lod] = m.triangles;
+      if (ghostPart === m.index) {
+        ghost.visible = false;
+        ghostPart = -1;
+      }
     }
-    markDirty();
+    for (const entry of parts.values()) {
+      if (entry.levels[0] && entry.levels[3]) {
+        // A part with one mesh of its own: its middle levels are that mesh.
+        entry.levels[1] ??= entry.levels[0];
+        entry.levels[2] ??= entry.levels[0];
+        entry.tris[1] ||= entry.tris[0];
+        entry.tris[2] ||= entry.tris[0];
+      }
+    }
+    // Chunks of these parts hold meshes made from the old geometries (or none yet): make them again.
+    for (const chunk of chunks.values()) {
+      if (!replaced.has(chunk.part)) continue;
+      disposeChunk(chunk);
+      chunk.matrices = null; // rebuilt from the table, with meshes of the new geometries
+      dirty.add(chunk.key);
+    }
+    if (table && dirty.size > 0) flush();
+    else markDirty();
   }
 
   /** Let go of the uploaded meshes of these part numbers (GPU memory); not the ghost's. */
@@ -147,8 +220,13 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
         ghost.geometry = new THREE.BufferGeometry();
         ghostPart = -1;
       }
-      dropMesh(entry);
-      entry.geometry.dispose();
+      for (const [key, chunk] of [...chunks]) {
+        if (chunk.part === index) {
+          disposeChunk(chunk);
+          chunks.delete(key);
+        }
+      }
+      for (const g of new Set(entry.levels)) g?.dispose();
       parts.delete(index);
     }
     markDirty();
@@ -159,47 +237,239 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
     return [...parts.keys()];
   }
 
-  function ensureMesh(index, count) {
-    const entry = parts.get(index);
-    if (!entry) throw new RangeError(`no mesh for catalog part ${index}`);
-    if (!entry.mesh || entry.capacity < count) {
-      dropMesh(entry);
-      entry.capacity = Math.max(64, count * 2);
-      const mesh = new THREE.InstancedMesh(entry.geometry, material, entry.capacity);
-      mesh.name = catalog.parts[index].id;
-      mesh.frustumCulled = false;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.count = 0;
-      root.add(mesh);
-      entry.mesh = mesh;
-    }
-    return entry.mesh;
+  // ------------------------------------------------------------- chunks
+
+  function keyOf(slot) {
+    const part = table.partAt(slot);
+    return chunkKey(part, chunkCell([table.posAt(slot, 0), table.posAt(slot, 1), table.posAt(slot, 2)], chunked));
   }
 
-  /** Show the placed parts: [{ id, part, pos, rot, colour }] grouped by part number. */
-  function setInstances(groups) {
-    triangles = 0;
-    drawn = 0;
-    for (const [index, entry] of parts) {
-      const list = groups.get(index) ?? [];
-      if (list.length === 0) {
-        if (entry.mesh) entry.mesh.count = 0;
+  function chunkAt(key, slot) {
+    let chunk = chunks.get(key);
+    if (!chunk) {
+      chunk = {
+        key,
+        part: table.partAt(slot),
+        ids: new Set(),
+        capacity: 0,
+        count: 0,
+        matrices: null,
+        colours: null,
+        matrixAttr: null,
+        colourAttr: null,
+        meshes: [null, null, null, null],
+        centre: [0, 0, 0],
+        radius: 0,
+        level: -1,
+        shown: -1,
+      };
+      chunks.set(key, chunk);
+    }
+    return chunk;
+  }
+
+  /**
+   * Show the model in `next` (a src/model-table.js ModelTable): every chunk is made again. Used when a model is
+   * opened or replaced; edits go through [`update`].
+   */
+  function setModel(next) {
+    table = next;
+    dropAllChunks();
+    chunked = wantGrid(table.size, chunked);
+    table.forEachSlot((slot) => {
+      const key = keyOf(slot);
+      chunkAt(key, slot).ids.add(table.idAt(slot));
+      where.set(table.idAt(slot), key);
+      dirty.add(key);
+    });
+    flush();
+  }
+
+  /** The table changed for these ids (after `table.applyDelta`): move each part to its chunk and mark the chunks to redraw. */
+  function update(ids) {
+    if (!table) return;
+    if (wantGrid(table.size, chunked) !== chunked) return setModel(table);
+    for (const id of ids) {
+      const old = where.get(id);
+      const slot = table.slotOf(id);
+      if (slot === undefined) {
+        if (old !== undefined) {
+          chunks.get(old)?.ids.delete(id);
+          dirty.add(old);
+          where.delete(id);
+        }
         continue;
       }
-      const mesh = ensureMesh(index, list.length);
-      list.forEach((inst, i) => {
-        matrix.fromArray(instanceMatrix(catalog.rotations, inst.rot, inst.pos));
-        mesh.setMatrixAt(i, matrix);
-        mesh.setColorAt(i, colour.set(colourHex(catalog.palette, inst.colour)));
-      });
-      mesh.count = list.length;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      triangles += entry.triangles * list.length;
-      drawn += list.length;
+      const key = keyOf(slot);
+      if (old !== undefined && old !== key) {
+        chunks.get(old)?.ids.delete(id);
+        dirty.add(old);
+      }
+      chunkAt(key, slot).ids.add(id);
+      where.set(id, key);
+      dirty.add(key);
     }
+    flush();
+  }
+
+  /** Write the chunks that changed: their typed arrays, bounds and meshes. */
+  function flush() {
+    for (const key of dirty) {
+      const chunk = chunks.get(key);
+      if (!chunk) continue;
+      if (chunk.ids.size === 0) {
+        disposeChunk(chunk);
+        chunks.delete(key);
+        continue;
+      }
+      rebuild(chunk);
+    }
+    dirty.clear();
+    selectLevels();
     markDirty();
   }
+
+  function rebuild(chunk) {
+    const entry = parts.get(chunk.part);
+    if (!entry) return; // its meshes are still on the way; they redraw the chunk when they arrive
+    const n = chunk.ids.size;
+    if (chunk.capacity < n || !chunk.matrices) {
+      // New arrays (and so new meshes): growing by a quarter again, so a run of placements does not remake them each time.
+      disposeChunk(chunk);
+      chunk.capacity = Math.max(16, Math.ceil(n * 1.25));
+      chunk.matrices = new Float32Array(chunk.capacity * 16);
+      chunk.colours = new Float32Array(chunk.capacity * 3);
+      chunk.matrixAttr = new THREE.InstancedBufferAttribute(chunk.matrices, 16);
+      chunk.matrixAttr.setUsage(THREE.DynamicDrawUsage);
+      chunk.colourAttr = new THREE.InstancedBufferAttribute(chunk.colours, 3);
+      chunk.colourAttr.setUsage(THREE.DynamicDrawUsage);
+    }
+    const reach = entry.reach;
+    const lo = [Infinity, Infinity, Infinity];
+    const hi = [-Infinity, -Infinity, -Infinity];
+    let i = 0;
+    const rotations = catalog.rotations;
+    for (const id of chunk.ids) {
+      const slot = table.slotOf(id);
+      const m = rotations[table.rotAt(slot)];
+      const o = i * 16;
+      const a = chunk.matrices;
+      a[o] = m[0][0];
+      a[o + 1] = m[1][0];
+      a[o + 2] = m[2][0];
+      a[o + 3] = 0;
+      a[o + 4] = m[0][1];
+      a[o + 5] = m[1][1];
+      a[o + 6] = m[2][1];
+      a[o + 7] = 0;
+      a[o + 8] = m[0][2];
+      a[o + 9] = m[1][2];
+      a[o + 10] = m[2][2];
+      a[o + 11] = 0;
+      for (let k = 0; k < 3; k++) {
+        const p = table.posAt(slot, k);
+        a[o + 12 + k] = p;
+        lo[k] = Math.min(lo[k], p - reach);
+        hi[k] = Math.max(hi[k], p + reach);
+      }
+      a[o + 15] = 1;
+      chunk.colours.set(rgbOf(table.colourAt(slot)), i * 3);
+      i++;
+    }
+    chunk.count = n;
+    chunk.centre = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+    chunk.radius = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2;
+    chunk.matrixAttr.needsUpdate = true;
+    chunk.colourAttr.needsUpdate = true;
+    for (const mesh of chunk.meshes) if (mesh) mesh.count = n;
+  }
+
+  function meshOf(chunk, level) {
+    let mesh = chunk.meshes[level];
+    if (!mesh) {
+      const entry = parts.get(chunk.part);
+      mesh = new THREE.InstancedMesh(entry.levels[level], material, chunk.capacity);
+      // The arrays are the chunk's, shared by the meshes of its four levels (one upload, whichever is drawn).
+      mesh.instanceMatrix = chunk.matrixAttr;
+      mesh.instanceColor = chunk.colourAttr;
+      mesh.count = chunk.count;
+      mesh.frustumCulled = false; // the view tests the chunk itself, see selectLevels
+      mesh.name = `${catalog.parts[chunk.part].id} ${chunk.key} level ${level}`;
+      mesh.visible = false;
+      root.add(mesh);
+      chunk.meshes[level] = mesh;
+    }
+    return mesh;
+  }
+
+  // ------------------------------------------------------------- per frame
+
+  const frustum = new THREE.Frustum();
+  const projScreen = new THREE.Matrix4();
+  const sphere = new THREE.Sphere();
+  const centreWorld = new THREE.Vector3();
+  const cameraWorld = new THREE.Vector3();
+
+  /**
+   * Decide, for every chunk, whether it is in view and at which render level it is drawn, and count what the
+   * frame will draw. Called when the model changes and before every frame the viewer draws.
+   */
+  function selectLevels() {
+    root.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(projScreen);
+    cameraWorld.setFromMatrixPosition(camera.matrixWorld);
+    const stud = lduMm * catalog.studPitchLdu;
+    const limits = thresholds({ small, bias });
+    const view = frameStats;
+    view.drawCalls = view.triangles = view.parts = view.visibleChunks = 0;
+    view.lod.fill(0);
+    for (const chunk of chunks.values()) {
+      const entry = parts.get(chunk.part);
+      if (!entry || !chunk.matrices) continue;
+      centreWorld.set(chunk.centre[0], chunk.centre[1], chunk.centre[2]).applyMatrix4(root.matrixWorld);
+      sphere.center.copy(centreWorld);
+      sphere.radius = chunk.radius * lduMm;
+      const visible = frustum.intersectsSphere(sphere);
+      let level = chunk.level < 0 ? 0 : chunk.level;
+      if (visible) {
+        const distance = Math.max(centreWorld.distanceTo(cameraWorld) - sphere.radius, camera.near || 1);
+        level = pickLevel(studPixels(stud, distance, lastScreen.fov, lastScreen.heightPx), limits, chunk.level);
+        // A part with a single mesh of its own (a pack part) has no cheaper level than its own.
+        while (level > 0 && !entry.levels[level]) level--;
+      }
+      chunk.level = level;
+      const show = visible ? level : -1;
+      if (show !== chunk.shown) {
+        if (chunk.shown >= 0) chunk.meshes[chunk.shown].visible = false;
+        if (show >= 0) meshOf(chunk, show).visible = true;
+        chunk.shown = show;
+      }
+      if (visible) {
+        view.drawCalls++;
+        view.visibleChunks++;
+        view.parts += chunk.count;
+        view.lod[level]++;
+        view.triangles += chunk.count * entry.tris[level];
+      }
+    }
+    stats = view;
+  }
+
+  /** Called by the viewer before it draws a frame: levels for the camera as it is, and the next frame's bias. */
+  function beforeFrame() {
+    const size = viewer.internals.stageSize?.();
+    if (size) lastScreen = { heightPx: size.heightPx, fov: camera.fov };
+    selectLevels();
+    // Over the triangle budget: the borders rise for the next frame (src/lod.js nextBias); with a dead band.
+    const next = nextBias(bias, stats.triangles, budget);
+    if (next !== bias) {
+      bias = next;
+      viewer.internals.markDirty();
+    }
+  }
+  viewer.internals.onBeforeRender?.(beforeFrame);
 
   /**
    * Show the ghost of catalog part `part` at the pose the core snapped to, or
@@ -214,9 +484,10 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
       return;
     }
     const entry = parts.get(g.part);
-    if (!entry) return; // its mesh is still on the way
+    const geometry = entry?.levels[0] ?? entry?.levels[1];
+    if (!geometry) return; // its mesh is still on the way
     if (g.part !== ghostPart) {
-      ghost.geometry = entry.geometry;
+      ghost.geometry = geometry;
       ghostPart = g.part;
     }
     ghost.matrix.fromArray(instanceMatrix(catalog.rotations, g.rot, g.pos));
@@ -295,14 +566,25 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
     release,
     has,
     resident,
-    setInstances,
+    setModel,
+    update,
+    /** Whether full detail is used everywhere (a small model); and the triangle budget of a frame. */
+    setPolicy(policy) {
+      if (policy.small !== undefined && policy.small !== small) {
+        small = policy.small;
+        bias = 1;
+      }
+      if (policy.trianglesBudget !== undefined) budget = policy.trianglesBudget;
+      selectLevels();
+      markDirty();
+    },
     setGhost,
     setOutline,
     pointerRay,
     project,
     frameLdu,
     show,
-    /** Triangles and parts drawn by the last setInstances. */
-    counts: () => ({ triangles, parts: drawn, drawCalls: [...parts.values()].filter((p) => p.mesh && p.mesh.count > 0).length }),
+    /** What the last frame draws: triangles, parts, draw calls (chunks in view), and the render levels of those chunks. */
+    counts: () => ({ triangles: stats.triangles, parts: stats.parts, drawCalls: stats.drawCalls, chunks: chunks.size, visibleChunks: stats.visibleChunks, lod: [...stats.lod], bias, chunked, small }),
   };
 }

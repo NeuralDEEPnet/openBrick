@@ -194,14 +194,19 @@ export class CoreClient {
     return this.#send({ type: "asmMeshes", detail, parts });
   }
 
+  /** The render levels (0 full studs to 3 the hull) of catalog parts: { meshes: [{ index, lod, ... }] }. */
+  assemblerLodMeshes(parts, lods) {
+    return this.#send({ type: "asmMeshes", parts, lods });
+  }
+
   /** Add an LDraw pack (the bytes of an .obpack) to the catalog: { pack, catalog, kept, ...state }. */
   assemblerLoadPack(bytes) {
-    return this.#send({ type: "asmLoadPack", bytes });
+    return this.#send({ type: "asmLoadPack", bytes, lean: true });
   }
 
   /** Drop the pack: { kept, catalog, ...state }. */
   assemblerUnloadPack() {
-    return this.#send({ type: "asmUnloadPack" });
+    return this.#send({ type: "asmUnloadPack", lean: true });
   }
 
   /** What a .obrick document needs the core does not have: { requires, missing, missingCount }. */
@@ -219,26 +224,48 @@ export class CoreClient {
     return this.#send({ type: "asmPick", ray });
   }
 
-  /** Apply a command (see crates/openbrick-engine/src/history.rs); resolves with { id, ...state }. */
+  /**
+   * Apply a command (see crates/openbrick-engine/src/history.rs); resolves with { id, delta, parts, canUndo,
+   * canRedo, revision, stats?, bom? }: what changed (src/model-table.js applyDelta), not the model.
+   */
   assemblerApply(command) {
-    return this.#send({ type: "asmApply", command });
+    return this.#send({ type: "asmApply", command, lean: true });
   }
 
   assemblerUndo() {
-    return this.#send({ type: "asmUndo" });
+    return this.#send({ type: "asmUndo", lean: true });
   }
 
   assemblerRedo() {
-    return this.#send({ type: "asmRedo" });
+    return this.#send({ type: "asmRedo", lean: true });
   }
 
+  /** The whole table: { instances (Int32Array), parts, canUndo, canRedo, revision, stats?, bom? }. */
   assemblerState() {
-    return this.#send({ type: "asmState" });
+    return this.#send({ type: "asmState", lean: true });
   }
 
-  /** Replace the model with a .obrick document; resolves with the state. */
-  assemblerLoad(text) {
-    return this.#send({ type: "asmLoad", text });
+  /** The statistics and bill of materials of the model as it is: { stats, bom, parts, revision }. */
+  assemblerStats() {
+    return this.#send({ type: "asmStats" });
+  }
+
+  /**
+   * Replace the model with a .obrick document, read in steps; `onProgress({ done, total })` is called between
+   * them. Resolves with the whole table (as assemblerState) and `notices`.
+   */
+  assemblerLoad(text, onProgress) {
+    return this.#send({ type: "asmLoad", text, lean: true }, { onProgress });
+  }
+
+  /** Replace the model with the table the page holds (the Int32Array of seven numbers a part). */
+  assemblerLoadRows(rows) {
+    return this.#send({ type: "asmLoadRows", rows });
+  }
+
+  /** Stop a document being opened. */
+  assemblerCancel() {
+    return this.#send({ type: "asmCancel" });
   }
 
   /** The model as .obrick text: { text }. */
@@ -277,12 +304,12 @@ export class CoreClient {
     this.#worker = worker;
   }
 
-  #send(fields) {
+  #send(fields, { onProgress } = {}) {
     if (this.#failure) return Promise.reject(this.#failure);
     if (!this.#worker) return Promise.reject(new Error("call CoreClient.start() first"));
     const request = { id: this.#nextId++, ...fields };
     return new Promise((resolve, reject) => {
-      this.#pending.set(request.id, { request, resolve, reject });
+      this.#pending.set(request.id, { request, resolve, reject, onProgress });
       this.#worker.postMessage(request);
     });
   }
@@ -341,6 +368,11 @@ export class CoreClient {
   }
 
   #onReply(reply) {
+    if (reply?.progress) {
+      // Not the answer: a long request says how far it is. The request stays owed.
+      this.#pending.get(reply.id)?.onProgress?.(reply.progress);
+      return;
+    }
     const entry = this.#pending.get(reply?.id);
     if (entry) this.#pending.delete(reply.id);
     if (reply?.fatal) {

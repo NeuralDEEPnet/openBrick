@@ -83,6 +83,10 @@ try {
       row.openMs = Date.now() - t0;
       const b = await page.evaluate(() => JSON.parse(JSON.stringify({ ...window.__web.build, project: undefined, measure: undefined, bench: undefined })));
       row.parts = b.parts;
+      row.openCoreMs = b.openTiming?.coreMs ?? null;
+      row.openPageMs = b.openTiming?.pageMs ?? null;
+      row.hudLod = b.counts?.lod ?? null;
+      row.chunks = b.counts?.chunks ?? null;
       row.drawCalls = b.counts?.drawCalls;
       row.triangles = b.counts?.triangles;
       row.detail = b.detail;
@@ -134,7 +138,8 @@ try {
 const cols = [
   ["layout", (r) => r.layout],
   ["bricks", (r) => r.bricks],
-  ["open s", (r) => (r.openMs == null ? "-" : (r.openMs / 1000).toFixed(1))],
+  ["open s (wall)", (r) => (r.openMs == null ? "-" : (r.openMs / 1000).toFixed(1))],
+  ["open: core + page ms", (r) => (r.openCoreMs == null ? "-" : `${r.openCoreMs} + ${r.openPageMs}`)],
   ["draw calls", (r) => r.drawCalls ?? "-"],
   ["triangles/frame", (r) => r.triangles ?? "-"],
   ["frame ms (software)", (r) => r.frameMs ?? "-"],
