@@ -701,7 +701,12 @@ mod tests {
         let c = |kind| Conn {
             kind,
             pos: [10, 0, 10],
-            dir: [0, -1, 0],
+            // A stud points up, the receptacle that takes it down.
+            dir: if kind == ConnKind::StudM {
+                [0, -1, 0]
+            } else {
+                [0, 1, 0]
+            },
         };
         let mut h = ConnHash::default();
         h.insert(1, [c(ConnKind::StudM)]);
