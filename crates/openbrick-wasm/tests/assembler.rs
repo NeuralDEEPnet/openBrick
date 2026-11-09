@@ -21,7 +21,9 @@ fn catalog_lists_parts_palette_and_rotations() {
         (c["studPitchLdu"].clone(), c["plateLdu"].clone()),
         (json!(20), json!(8))
     );
-    assert_eq!(c["maxModelBytes"], 16 * 1024 * 1024);
+    assert_eq!(c["maxModelBytes"], 64 * 1024 * 1024);
+    assert_eq!(c["maxParts"], 150_000);
+    assert_eq!(c["maxHistory"], 5_000);
     assert!(c["palette"]["colours"].as_array().unwrap().len() >= 8);
     assert_eq!(c["samples"].as_array().unwrap().len(), 2);
 }
@@ -327,4 +329,49 @@ fn hostile_documents_and_tables_are_refused_through_the_stepped_path_and_load_ro
         assert_eq!(a.save("x"), before, "{what}: the model is untouched");
     }
     assert!(t.elapsed().as_secs() < 30, "refused quickly");
+}
+
+/// The worst case the writer can produce for the most parts the engine holds still opens again: 150,000 parts with the
+/// largest ids and coordinates saves to more than the old 16 MiB limit, and under the limit now.
+#[test]
+fn a_model_of_the_most_parts_with_the_longest_numbers_saves_and_opens_again() {
+    use openbrick_wasm::assembler::MAX_MODEL_BYTES;
+    let n = 150_000u64;
+    let instances: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                r#"{{"id":{},"part":"ob.plate-1x1","pose":{{"pos":[{},-8,{}],"rot":0}},"colour":10000}}"#,
+                4_294_967_295 - i,
+                -99_999_990 + 20 * (i % 1000) as i64,
+                -99_999_990 + 20 * (i / 1000) as i64
+            )
+        })
+        .collect();
+    let text = format!(
+        r#"{{"openbrick":"1.0","kind":"model","name":"worst","units":"ldu","frame":"ldraw-y-down","catalog":"openbrick-builtin@1","palette":[],"bom":[],"submodels":[{{"id":"main","instances":[{}]}}]}}"#,
+        instances.join(",")
+    );
+    let mut a = Assembler::create().unwrap();
+    a.load(&text).unwrap();
+    assert_eq!(a.len(), 150_000);
+    let saved = a.save("worst");
+    assert!(
+        saved.len() > 16 * 1024 * 1024,
+        "the old limit would have refused this file ({} bytes)",
+        saved.len()
+    );
+    assert!(
+        saved.len() <= MAX_MODEL_BYTES,
+        "{} bytes against {MAX_MODEL_BYTES}",
+        saved.len()
+    );
+    // The worst line of any part, times the most parts, is within the limit with room for the rest.
+    assert!(
+        openbrick_wasm::assembler::MAX_PART_TEXT_BYTES * 150_000 + 8 * 1024 * 1024
+            <= MAX_MODEL_BYTES
+    );
+    let mut b = Assembler::create().unwrap();
+    b.load(&saved).unwrap();
+    assert_eq!(b.len(), 150_000);
+    assert_eq!(b.save("worst"), saved, "byte for byte");
 }

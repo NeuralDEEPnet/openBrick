@@ -137,9 +137,14 @@ pub fn assembler_model_needs(text: &str) -> Result<String, CoreError> {
     let c = catalog()?;
     let mut missing: Vec<String> = Vec::new();
     let mut count = 0usize;
+    // Each part name is looked up once (the catalog is searched by name, which costs a scan).
+    let mut known: HashMap<&str, bool> = HashMap::new();
     for s in &doc.submodels {
         for i in &s.instances {
-            if c.find(&i.part).is_none() {
+            let found = *known
+                .entry(i.part.as_str())
+                .or_insert_with(|| c.find(&i.part).is_some());
+            if !found {
                 count += 1;
                 if missing.len() < 20 && !missing.contains(&i.part) {
                     missing.push(i.part.clone());
@@ -204,6 +209,8 @@ pub fn assembler_catalog_json() -> Result<String, CoreError> {
         "catalog": CATALOG_ID,
         "lduMm": STANDARD.get().ldu_mm,
         "maxModelBytes": MAX_MODEL_BYTES,
+        "maxParts": openbrick_engine::MAX_INSTANCES,
+        "maxHistory": openbrick_engine::history::MAX_HISTORY,
         "maxPackBytes": openbrick_catalog::pack::MAX_PACK_BYTES,
         "studPitchLdu": openbrick_units::STUD_PITCH_LDU,
         "plateLdu": openbrick_units::PLATE_LDU,
@@ -537,6 +544,11 @@ impl Assembler {
         out
     }
 
+    /// How many commands can be undone (the engine keeps the last 5,000).
+    pub fn history_depth(&self) -> u32 {
+        self.model.history().depth() as u32
+    }
+
     /// The number of placed parts.
     pub fn len(&self) -> u32 {
         self.model.len() as u32
@@ -660,8 +672,16 @@ fn row(i: &Instance) -> [i32; 7] {
     ]
 }
 
-/// The largest model file the page opens: 16 MiB, which holds the engine's limit of 150,000 parts.
-pub const MAX_MODEL_BYTES: usize = 16 * 1024 * 1024;
+/// The text of one part at its longest: 8 spaces, `{"id":4294967295,"part":"` (25), a part id of 64
+/// characters every one of which is escaped (128), `","pose":{"pos":[` (17), three coordinates of
+/// `-100000000` (30) and two commas, `],"rot":23},"colour":65535}` (27) and `,\n` (2).
+pub const MAX_PART_TEXT_BYTES: usize = 8 + 25 + 128 + 17 + 30 + 2 + 27 + 2;
+
+/// The largest model file the core opens: 64 MiB. The writer's worst case is the engine's 150,000 parts at
+/// [`MAX_PART_TEXT_BYTES`] (about 36 MB) plus the bill of materials and palette (a line of at most a few hundred bytes for
+/// each distinct part and colour, at most 20,000 lines for the largest pack: 8 MB); an ordinary 150,000-part model is
+/// 13 to 17 MB. A file the program writes therefore always opens again; a bigger one is refused before it is parsed.
+pub const MAX_MODEL_BYTES: usize = 64 * 1024 * 1024;
 
 /// The rotation index of `rot` turned `quarter_turns` about the vertical axis.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
