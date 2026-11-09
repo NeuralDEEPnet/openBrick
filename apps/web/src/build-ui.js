@@ -892,7 +892,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       }
       if (reply === "save" && !(await save())) return false;
     }
-    const prior = { rows: table.toRows(), name: modelName, dirty };
+    const prior = await snapshotPrior();
     const made = await produce();
     if (!made) return false;
     if (!(await loadText(made.text, made.name))) return false;
@@ -905,15 +905,25 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function restorePrevious() {
     const prev = keeper.previous;
     if (!prev) return;
-    const current = { rows: table.toRows(), name: modelName, dirty };
-    if (await openModel(prev.name, () => asm.assemblerLoadRows(prev.rows))) {
+    const current = await snapshotPrior();
+    if (await (prev.text ? loadText(prev.text, prev.name) : openModel(prev.name, () => asm.assemblerLoadRows(prev.rows)))) {
       setDirty(prev.dirty);
       keeper.setPrevious(current);
       message(`Restored ${prev.name}.${info.notices.length ? ` Notice: ${info.notices.join(" ")}` : ""}`);
     }
   }
 
-  /** Keep `prior` ({ rows, name, dirty }) for "Restore previous model". */
+  /**
+   * The model on screen as it can be put back later: its table, and its text too when it uses parts of an LDraw
+   * pack (the text names the pack it needs, so a restore without the pack can offer to add it).
+   */
+  async function snapshotPrior() {
+    const prior = { rows: table.toRows(), name: modelName, dirty };
+    if ([...partCounts.keys()].some((i) => catalog.parts[i]?.origin === "ldraw")) prior.text = (await asm.assemblerSave(modelName)).text;
+    return prior;
+  }
+
+  /** Keep `prior` ({ rows, text?, name, dirty }) for "Restore previous model". */
   function setAside(prior) {
     keeper.setPrevious(prior);
     $("build-restore").disabled = false;
@@ -1149,7 +1159,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     try {
       if (!(await confirmPackChange(`Adding ${name}`))) return false;
       // What the model was, to set aside if the new pack lacks parts it uses and the core clears it.
-      const prior = { rows: table.toRows(), name: modelName, dirty };
+      const prior = await snapshotPrior();
       message(`Reading ${name}…`);
       const r = await asm.assemblerLoadPack(bytes);
       pack = { info: r.pack, bytes, name };
@@ -1199,7 +1209,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   async function removePack() {
     try {
       if (!(await confirmPackChange("Removing the LDraw pack"))) return;
-      const prior = { rows: table.toRows(), name: modelName, dirty };
+      const prior = await snapshotPrior();
       const r = await asm.assemblerUnloadPack();
       pack = null;
       keeper.rememberPack(null);
