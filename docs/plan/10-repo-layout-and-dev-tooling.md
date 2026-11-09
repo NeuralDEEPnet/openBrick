@@ -89,7 +89,7 @@ openBrick/
 | Viewport | visual snapshots of fixed scenes on WebGL2 and WebGPU backends; instance count and LOD selection assertions | Playwright |
 | App | smoke: launch, open sample, export; calibration wizard flow | Playwright with Tauri driver; manual on mobile |
 | Print-fit | physical: coupon prints on two reference printers per release candidate, pull-test recorded in `fit-profiles/` | humans |
-| Performance | criterion benches for snap, collision, evaluate; web harness for 10k/100k instances; fail on 20 percent regression | bench.yml |
+| Performance | criterion benches for snap, collision, evaluate; web harness for 10k/100k instances, `bench/scale` (core in node, Build mode in headless Chromium, `?bench=1` on devices); fail on 20 percent regression (not yet automated for `bench/scale`) | bench.yml |
 
 ## 4. Lint, format, licence policy
 

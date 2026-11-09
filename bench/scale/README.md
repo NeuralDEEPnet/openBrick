@@ -68,3 +68,7 @@ What the baseline shows:
 * **Rendering** was three draw calls however large the model: no chunks to cull and no level of detail, so the
   triangles drawn are the triangles of every part (10.9 M at 10,000 bricks, 108 M at 100,000), and in software
   a frame takes seconds. The plan's budget is 10 to 20 M triangles per frame on an integrated GPU.
+
+## After the scaling work (2026-11-09)
+
+The tables for the core and Build mode, before and after, are in [docs/plan/07 section 14](../../docs/plan/07-assembler-engine.md#measured-performance-2026-11-09); `node bench/scale/core.mjs` and `node bench/scale/render.mjs` reproduce them. The native engine timings are `cargo run --release -p openbrick-engine --example scale -- 100000`. On a real device use `?bench=1` ([bench/devices/README.md](../devices/README.md)).

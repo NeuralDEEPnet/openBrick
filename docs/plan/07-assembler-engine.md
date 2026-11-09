@@ -80,6 +80,7 @@ Official parts: connectors derived by scanning LDraw primitive references (`stud
 ## 4. Spatial indexes
 
 - **Lattice spatial hash** on 20 x 8 x 20 LDU brick cells using the Teschner hash: `(x * 73856093) xor (y * 19349663) xor (z * 83492791) mod n` with a prime table size, or a packed 64-bit key in an open-addressing map. Each instance is inserted into the cells its AABB covers: O(cells). Teschner's experiments show cell size dominates performance; we size cells to one brick.
+- **As built (2026-11-09):** the hash cell is 4 studs by 6 plates by 4 studs (80 x 48 x 80 LDU), entries are 8-byte nodes in pooled chains, boxes are stored with their pick boxes and a ray picks by walking the cells it crosses (stopping at the first cell that cannot hold something nearer); the exact integer boxes still decide every collision. Cell size changes speed, never an answer.
 - **Connector hash** keyed on (quantised position, direction octant, connector type), so a snap query costs O(connectors on the dragged part).
 - **BVH** (three-mesh-bvh on the web, parry3d in Rust) only for ray picking, frustum culling and free-pose narrowphase.
 
@@ -161,9 +162,41 @@ Native `.obrick` (zip: `model.json` with semver schema, `parts/` custom part doc
 | Operation | Cost |
 |-----------|------|
 | Insert or move instance in spatial hash | O(cells covered), typically 1 to 4 |
-| Snap query | O(connectors x neighbours), independent of model size |
+| Snap query | O(connectors x neighbours), independent of model size (0.05 ms at 100,000 parts) |
 | Lattice collision test | O(overlapping cells) bit operations |
-| Attached check | near O(1) amortised (union-find) |
+| Attached check | statistics counted from the table and cached by change tick (about 200 ms at 100,000 parts after a removal; union-find per edit is still to do) |
 | Articulation update | O(V + E) of the affected component |
 | Render | one draw per (part, colour, LOD, chunk) on WebGPU; one per material class on WebGL2 BatchedMesh |
-| Undo | O(1) per command |
+| Undo | O(1) per command, 5,000 kept |
+| Ray pick | walks the spatial hash cell by cell: cost depends on what is near the ray |
+| Open | O(parts), in steps; 0.6 s for 100,000 parts |
+
+### Measured performance (2026-11-09)
+
+`bench/scale` ([README](../../bench/scale/README.md)) generates deterministic models (`towers`, `plates` and a seeded random `city`) and measures them. **Core numbers are the Rust code as WebAssembly under node 22 on a 4-CPU machine and are real. Draw calls and triangles per frame are real counts. Frame times in headless Chromium are SwiftShader (software GL), marked "software": they say how fast one CPU rasterises, not how a laptop or phone GPU does.** No real-device number has been taken yet; `?bench=1` ([bench/devices/README.md](../../bench/devices/README.md)) and `bench/harness` are how.
+
+Core, `city` layout (before, at commit 55fadb8: open 19 ms / 71 ms / 149 ms / 472 ms / **8,784 ms**; memory 26 / 26 / 37 / 104 / **413 MiB**; snap 0.13 to **3.7 ms**; pick 0.04 to **3.4 ms**; one edit's state reply 3.5 / 25 / 42 / 127 / **553 ms**; stats 4.5 / 24 / 45 / 137 / **628 ms**, for 1k / 5k / 10k / 25k / 100k bricks):
+
+| bricks | `.obrick` | core open | save | stats (cold) | stats after a removal | edit reply | snap p50 / p95 | pick p50 / p95 | place, remove (mid) + undo | wasm memory |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1,000 | 0.09 MB | 15 ms | 3 ms | 0.7 ms | 0.7 ms | 0.302 ms | 0.037 / 0.364 ms | 0.005 / 0.224 ms | 0.007, 0.007 + 0.003 ms | 27 MiB |
+| 5,000 | 0.45 MB | 31 ms | 4 ms | 3.5 ms | 3.5 ms | 0.239 ms | 0.037 / 0.095 ms | 0.004 / 0.015 ms | 0.01, 0.009 + 0.003 ms | 27 MiB |
+| 10,000 | 0.89 MB | 59 ms | 7 ms | 7.2 ms | 7.2 ms | 0.291 ms | 0.043 / 0.503 ms | 0.006 / 0.04 ms | 0.01, 0.01 + 0.003 ms | 27 MiB |
+| 25,000 | 2.26 MB | 137 ms | 23 ms | 33.8 ms | 31.6 ms | 0.289 ms | 0.042 / 0.349 ms | 0.006 / 0.019 ms | 0.011, 0.011 + 0.004 ms | 50 MiB |
+| 100,000 | 9.09 MB | 568 ms | 96 ms | 237.3 ms | 216.4 ms | 0.326 ms | 0.049 / 0.472 ms | 0.006 / 0.023 ms | 0.011, 0.016 + 0.007 ms | 195 MiB |
+
+"Edit reply" is what the worker sends after an edit now (the rows that changed and counters); it was the whole table, statistics, bill of materials and the model text (the autosave) before. The statistics are asked for when editing pauses; after a removal the core counts connections again (about 220 ms in WebAssembly at 100,000 parts, 120 ms natively), which is why the page does not ask after every edit. A part placed or removed costs microseconds in the core at every size.
+
+Build mode in headless Chromium, `city` layout, 1280 x 800, **software rendering**:
+
+| bricks | draw calls | triangles / frame | frame time (software) | page open: core + page JS | before: draw calls, triangles, software frame |
+|---|---|---|---|---|---|
+| 1,000 | 3 | 1.10 M | 1.5 s | 24 + 55 ms | 3, 1.10 M, 1.7 s |
+| 5,000 | 22 | 2.68 M | 3.6 s | 30 + 69 ms | 3, 5.41 M, 6.4 s |
+| 10,000 | 36 | 5.07 M | 6.1 s | 85 + 100 ms | 3, 10.85 M, 13.3 s |
+| 25,000 | 80 | 1.64 M | 2.5 s | 104 + 92 ms | 3, 27.0 M, not timed |
+| 100,000 | 243 | 1.20 M | 2.9 s | 635 + 268 ms | 3, 107.8 M, not timed |
+
+The page's place plus undo through the worker fell from 90 ms (10,000) and 237 ms (25,000) to 0.3 and 0.5 ms. The software frame time is dominated by instances and triangles; it is not a prediction. At the default framing a 100,000-brick city is drawn almost entirely as hulls (studs are under 3 pixels), so its frame is 1.2 M triangles; the triangle budget (8 M on a laptop, 2.5 M on a phone) raises the level borders when a frame is over it. The 1,000 to 3,000-brick range is one chunk per part type, drawn at a single level.
+
+**What is still unmeasured:** frame times of 10,000 and 100,000 bricks on an integrated-GPU laptop and a phone, so the budgets above ("10k at 60 fps, 100k at 30 to 60 fps") are neither confirmed nor refuted; the level borders (28, 8 and 3 pixels per stud) and the budgets are first guesses to tune from those rows.
