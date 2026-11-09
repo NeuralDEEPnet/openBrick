@@ -166,8 +166,8 @@ Native `.obrick` (zip: `model.json` with semver schema, `parts/` custom part doc
 | Lattice collision test | O(overlapping cells) bit operations |
 | Attached check | statistics counted from the table and cached by change tick (about 200 ms at 100,000 parts after a removal; union-find per edit is still to do) |
 | Articulation update | O(V + E) of the affected component |
-| Render | one draw per (part, colour, LOD, chunk) on WebGPU; one per material class on WebGL2 BatchedMesh |
-| Undo | O(1) per command, 5,000 kept |
+| Render | one draw per (part type, chunk, level) in view (colour is per instance, so it does not split draws); BatchedMesh is not used |
+| Undo | O(1) per command; the last 5,000 commands are kept and the page says once when the oldest are discarded |
 | Ray pick | walks the spatial hash cell by cell: cost depends on what is near the ray |
 | Open | O(parts), in steps; 0.6 s for 100,000 parts |
 
