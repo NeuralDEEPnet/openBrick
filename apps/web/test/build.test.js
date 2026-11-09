@@ -23,6 +23,8 @@ import {
   replaceNeedsConfirm,
   usesPackParts,
   paletteName,
+  createTaskQueue,
+  removalTarget,
   MAX_PALETTE_NAME,
   stageKeyAction,
   ZOOM_STEP,
@@ -268,4 +270,76 @@ test("Clear has something to do unless only ground baseplates are left", () => {
   assert.equal(clearable([ground], parts), false);
   assert.equal(clearable([ground, { part: 1, pos: [10, -32, 10] }], parts), true);
   assert.equal(clearable([{ part: 0, pos: [0, -32, 0] }], parts), true, "a baseplate on bricks goes too");
+});
+
+/** A core that answers after a delay and keeps the model in order, as the worker does. */
+function slowCore() {
+  const placed = [{ id: 1, part: "baseplate" }];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let inbox = Promise.resolve();
+  const ask = (fn) => {
+    // The worker handles messages one at a time, in the order they arrive.
+    const run = inbox.then(() => wait(20)).then(fn);
+    inbox = run.catch(() => {});
+    return run;
+  };
+  return {
+    placed,
+    add: (part) => ask(() => placed.push({ id: placed.length + 1, part })),
+    remove: (id) => ask(() => placed.splice(placed.findIndex((i) => i.id === id), 1)),
+    // What is at the aim: the topmost part, the plate when there is one.
+    pick: () => ask(() => ({ instance: placed[placed.length - 1]?.id ?? null })),
+  };
+}
+
+test("a removal asked for right after a placement removes the new part, not the one under it", async () => {
+  const core = slowCore();
+  const enqueue = createTaskQueue();
+  // The page's table of placed parts, as applyState keeps it.
+  const byId = new Map([[1, { id: 1, part: "baseplate" }]]);
+  // The hover before the placement saw the baseplate; it is what a stale Delete would use.
+  const staleHover = 1;
+  const place = () =>
+    enqueue(async () => {
+      await core.add("plate");
+      byId.set(2, { id: 2, part: "plate" });
+    });
+  const del = () =>
+    enqueue(async () => {
+      const inst = await removalTarget(() => core.pick(), { origin: [0, 0, 0], dir: [0, 1, 0] }, byId);
+      if (inst) {
+        await core.remove(inst.id);
+        byId.delete(inst.id);
+      }
+    });
+  // Enter and Delete in the same tick, as a fast keyboard (or a slow core) makes them.
+  await Promise.all([place(), del()]);
+  assert.deepEqual(core.placed.map((i) => i.part), ["baseplate"], "the plate is gone and the baseplate stays");
+  assert.equal(byId.has(staleHover), true);
+});
+
+test("a removal with no ray, or nothing there, removes nothing", async () => {
+  const byId = new Map([[1, { id: 1 }]]);
+  assert.equal(await removalTarget(async () => ({ instance: 1 }), null, byId), null);
+  assert.equal(await removalTarget(async () => null, {}, byId), null);
+  assert.equal(await removalTarget(async () => ({ instance: 9 }), {}, byId), null);
+  assert.deepEqual(await removalTarget(async () => ({ instance: 1 }), {}, byId), { id: 1 });
+});
+
+test("the task queue keeps order and goes on after a task fails", async () => {
+  const enqueue = createTaskQueue();
+  const log = [];
+  const a = enqueue(async () => {
+    await new Promise((r) => setTimeout(r, 15));
+    log.push("a");
+  });
+  const b = enqueue(async () => {
+    log.push("b");
+    throw new Error("b fails");
+  });
+  const c = enqueue(async () => log.push("c"));
+  await a;
+  await assert.rejects(b, /b fails/);
+  await c;
+  assert.deepEqual(log, ["a", "b", "c"]);
 });

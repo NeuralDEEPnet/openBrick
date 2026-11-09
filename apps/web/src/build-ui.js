@@ -40,6 +40,8 @@ import {
   replaceNeedsConfirm,
   usesPackParts,
   paletteName,
+  createTaskQueue,
+  removalTarget,
   stageKeyAction,
   clearable,
   modelFileName,
@@ -183,11 +185,11 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   let lastSnap = null;
   let active = false;
   let modelName = "My build";
-  let chain = Promise.resolve();
 
   const info = (page.build = {
     ready: false,
     parts: 0,
+    placed: [],
     selected: null,
     colour: null,
     rot: 0,
@@ -273,10 +275,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     },
   });
 
-  const enqueue = (fn) => {
-    chain = chain.then(fn, fn);
-    return chain;
-  };
+  const enqueue = createTaskQueue();
 
   const partOf = (id) => partIndex.get(id) ?? -1;
   const names = () => Object.fromEntries(instances.map((i) => [i.id, catalog.parts[i.part].name]));
@@ -306,6 +305,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     view.setInstances(groups);
     releaseSpare();
     info.parts = instances.length;
+    /** The catalog id of every placed part, in placement order (for the smoke test). */
+    info.placed = instances.map((i) => catalog.parts[i.part].id);
     info.stats = next.stats;
     info.revision = next.revision;
     info.counts = view.counts();
@@ -422,18 +423,21 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   }
 
   async function removeWith(ray) {
-    const hit = await asm.assemblerPick(ray);
-    const inst = hit?.instance != null ? byId.get(hit.instance) : null;
+    const inst = await removalTarget((r) => asm.assemblerPick(r), ray, byId);
     if (!inst) return message("Nothing to remove there");
     const name = catalog.parts[inst.part].name;
     await command({ op: "remove", id: inst.id }, (s) => `Removed ${name}. ${stateSentence(s.stats)}`);
   }
 
-  async function removeHovered() {
-    const inst = hovered && byId.get(hovered);
-    if (!inst) return message("Point at a part to remove it");
-    const name = catalog.parts[inst.part].name;
-    await command({ op: "remove", id: inst.id }, (s) => `Removed ${name}. ${stateSentence(s.stats)}`);
+  /**
+   * Delete: remove the part at the aim or the pointer. Asked of the core now, inside the queue, so it
+   * is the part there after every earlier edit; `hovered` is only what the last hover saw, which is
+   * from before a part that was just placed (it still names the baseplate under it).
+   */
+  async function removeAtAim() {
+    const ray = currentRay();
+    if (!ray) return message("Point at a part to remove it");
+    await removeWith(ray);
   }
 
   async function undo() {
@@ -650,7 +654,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
           case "rotateBack":
             return rotate(-1);
           case "delete":
-            return removeHovered();
+            return removeAtAim();
           case "deselect":
             setAim(null);
             return setTool("place");

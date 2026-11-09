@@ -1284,14 +1284,18 @@ async function buildRun(browser, origin) {
   await buildWait(page, () => window.__web.build.ghost !== "none", 10_000, "hovering the plate");
   await page.keyboard.press("Delete");
   await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Delete removing the plate");
+  // Which part went: the plate on top, never the brick or the baseplate (a count of 2 is true of all three).
+  check(JSON.stringify((await buildState(page)).placed) === JSON.stringify(["ob.baseplate-16x16", "ob.brick-2x4"]), `${label}: Delete removed ${JSON.stringify((await buildState(page)).placed)} is left, not the baseplate and the brick`);
   // A baseplate is a part like another: Delete removes it, Ctrl+Z puts it back.
   const floor = await screenAt(page, [100, -8, 100]);
   await page.mouse.move(floor.x, floor.y);
   await buildWait(page, () => window.__web.build.ghost === "valid", 10_000, "hovering the baseplate");
   await page.keyboard.press("Delete");
   await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Delete removing the baseplate");
+  check(JSON.stringify((await buildState(page)).placed) === JSON.stringify(["ob.brick-2x4"]), `${label}: Delete at the floor left ${JSON.stringify((await buildState(page)).placed)}, not just the brick`);
   await page.keyboard.press("Control+z");
   await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Ctrl+Z bringing the baseplate back");
+  check((await buildState(page)).placed.slice().sort().join() === "ob.baseplate-16x16,ob.brick-2x4", `${label}: Ctrl+Z brought back ${JSON.stringify((await buildState(page)).placed)}`);
 
   // The keyboard path: the 3D view takes the focus; arrow keys move the aim a stud at a time and
   // the core snaps the part there; Enter places; Shift+arrows and +/- move the camera.
@@ -1315,11 +1319,14 @@ async function buildRun(browser, origin) {
   await page.waitForFunction((z) => window.__web.build.ghostPos?.[2] === z, p0[2] + 20, { timeout: 10_000, polling: 50 }).catch(() => {});
   b2 = await buildState(page);
   check(b2.ghostPos[2] === p0[2] + 20, `${label}: Up moved the ghost to z ${b2.ghostPos[2]}, from ${p0[2]}`);
+  const placedBefore = (await buildState(page)).placed;
   await page.keyboard.press("Enter");
   await buildWait(page, () => window.__web.build.parts === 3, 10_000, "Enter placing at the aim");
   check(/Placed Plate 1 . 1/.test((await buildState(page)).message), `${label}: message after a keyboard placement ${(await buildState(page)).message}`);
   await page.keyboard.press("Delete");
   await buildWait(page, () => window.__web.build.parts === 2, 10_000, "Delete removing the part at the aim");
+  // The plate just placed is the one that went; the part it stood on is still there.
+  check(JSON.stringify((await buildState(page)).placed) === JSON.stringify(placedBefore), `${label}: Delete at the aim left ${JSON.stringify((await buildState(page)).placed)}, expected ${JSON.stringify(placedBefore)}`);
   const camBefore = await page.evaluate(() => window.__web.stats().camera);
   await page.keyboard.press("Shift+ArrowLeft");
   await page.waitForTimeout(400);
@@ -1348,6 +1355,7 @@ async function buildRun(browser, origin) {
 
   await page.click("#build-clear");
   await buildWait(page, () => window.__web.build.parts === 1, 10_000, "Clear");
+  check(JSON.stringify((await buildState(page)).placed) === JSON.stringify(["ob.baseplate-16x16"]), `${label}: Clear left ${JSON.stringify((await buildState(page)).placed)}, not the ground baseplate`);
   check(!(await page.isEnabled("#build-clear")), `${label}: Clear is disabled with nothing built`);
   await page.click("#build-undo");
   await buildWait(page, () => window.__web.build.parts === 2, 10_000, "undoing Clear");
@@ -1469,6 +1477,61 @@ async function buildRun(browser, origin) {
   );
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
   console.log(`# ${label}: palettes, snapped ghost, place, stack, rotate, undo, redo, delete, save, open, samples and 513 bricks work`);
+  await context.close();
+}
+
+/**
+ * Delete right after a placement, with a slow core: every message to the core's worker is held back
+ * 150 ms (in order, as a slow runner would). The keyboard's Enter then Delete are pressed in the same
+ * tick, so the Delete is handled before the hover has been refreshed for the new part; it must still
+ * remove the plate just placed, never the baseplate the earlier hover saw under the aim. This was the
+ * CI failure of the Clear step: Delete took the baseplate and the part count (2) looked right.
+ */
+async function buildRaceRun(browser, origin) {
+  const label = "build-race";
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light" });
+  await context.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, transfer) {
+      if (message && typeof message.type === "string" && message.type.startsWith("asm")) {
+        setTimeout(() => post.call(this, message, transfer), 150);
+      } else {
+        post.call(this, message, transfer);
+      }
+    };
+  });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the catalog (slow core)");
+  await page.click('#build-parts [aria-label="Plate 1 x 1"]');
+  await buildWait(page, () => window.__web.build.selected === "ob.plate-1x1", 20_000, "the plate chosen");
+  await page.waitForTimeout(800); // the slow core's answers re-draw the palette; the focus goes after
+  await page.focus("#stage");
+  await page.keyboard.press("Enter");
+  await buildWait(page, () => window.__web.build.aim?.join() === "0,0" && window.__web.build.ghost !== "none", 20_000, "the aim");
+  for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+  await buildWait(page, () => window.__web.build.aim?.join() === "100,0" && window.__web.build.ghost === "valid", 20_000, "five Right arrows");
+  await page.keyboard.press("Enter");
+  await buildWait(page, () => window.__web.build.parts === 2, 20_000, "the first plate placed");
+  await page.keyboard.press("ArrowRight");
+  await buildWait(page, () => window.__web.build.aim?.join() === "120,0" && window.__web.build.ghost === "valid", 20_000, "the aim moved");
+  const before = (await buildState(page)).placed;
+  const rev0 = (await buildState(page)).revision;
+  check(before.length === 2 && before[0] === "ob.baseplate-16x16", `${label}: before ${JSON.stringify(before)}`);
+  // Enter and Delete back to back, nothing waited for between them (a few ms apart, against a core
+  // that answers after 150 ms).
+  await page.waitForTimeout(800);
+  await page.focus("#stage");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Delete");
+  // Two edits (the placement and the removal) reach the core.
+  await page.waitForFunction((r) => window.__web.build.revision >= r + 2, rev0, { timeout: 20_000, polling: 50 }).catch(() => failures.push(`${label}: the placement and the removal did not reach the core`));
+  await page.waitForTimeout(1_500);
+  const after = (await buildState(page)).placed;
+  check(JSON.stringify(after) === JSON.stringify(before), `${label}: Enter then Delete left ${JSON.stringify(after)}; the baseplate or the first plate was removed instead of the new plate (${JSON.stringify(before)})`);
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  console.log(`# ${label}: with the core 150 ms slow, Delete right after a placement removed the new plate and kept the baseplate`);
   await context.close();
 }
 
@@ -2126,7 +2189,8 @@ async function main() {
   rmSync(downloads, { recursive: true, force: true });
   mkdirSync(downloads, { recursive: true });
   const onlyPack = args.has("--only-pack");
-  const onlyBuild = args.has("--only-build") || onlyPack;
+  const onlyRace = args.has("--only-race");
+  const onlyBuild = args.has("--only-build") || onlyPack || onlyRace;
   const native = onlyBuild ? null : nativeValues();
   if (native) console.log(
     `native (${native.kernel}): emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash}, ` +
@@ -2149,7 +2213,7 @@ async function main() {
         failures.push(err.message);
       }
     }
-    for (const buildStep of onlyPack ? [buildPackRun] : [buildRun, buildPhoneRun, buildPackRun]) {
+    for (const buildStep of onlyRace ? [buildRaceRun] : onlyPack ? [buildPackRun] : [buildRun, buildRaceRun, buildPhoneRun, buildPackRun]) {
       try {
         await buildStep(browser, origin);
       } catch (err) {

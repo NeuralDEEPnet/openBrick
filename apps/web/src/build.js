@@ -144,6 +144,30 @@ export function replaceNeedsConfirm({ dirty }) {
 }
 
 /**
+ * A queue that runs tasks one after another, whether the one before succeeded or failed. Every
+ * edit and every question that depends on the model (a pick, a snap) goes through it, so a task
+ * that looks at the model sees what every earlier task did.
+ */
+export function createTaskQueue() {
+  let chain = Promise.resolve();
+  return (fn) => {
+    chain = chain.then(fn, fn);
+    return chain;
+  };
+}
+
+/**
+ * The placed part a removal at `ray` is for: asks the core now, with `pick`, and looks the answer up
+ * in `byId`. Never a remembered hover: the hover is from before the edits queued ahead of this one
+ * (a part just placed at the aim is not what the last hover saw). Resolves null when nothing is there.
+ */
+export async function removalTarget(pick, ray, byId) {
+  if (!ray) return null;
+  const hit = await pick(ray);
+  return hit?.instance != null ? (byId.get(hit.instance) ?? null) : null;
+}
+
+/**
  * Whether a model on screen uses a part of the loaded LDraw pack: `instances` as decoded
  * (`part` is the catalog part number), `parts` the catalog's part list (`origin`). Adding or
  * removing a pack can only take parts away from a model that does.
