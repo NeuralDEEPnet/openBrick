@@ -179,13 +179,13 @@ Core, `city` layout (before, at commit 55fadb8: open 19 ms / 71 ms / 149 ms / 47
 
 | bricks | `.obrick` | core open | save | stats (cold) | stats after a removal | edit reply | snap p50 / p95 | pick p50 / p95 | place, remove (mid) + undo | wasm memory |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1,000 | 0.09 MB | 15 ms | 3 ms | 0.7 ms | 0.7 ms | 0.302 ms | 0.037 / 0.364 ms | 0.005 / 0.224 ms | 0.007, 0.007 + 0.003 ms | 27 MiB |
-| 5,000 | 0.45 MB | 31 ms | 4 ms | 3.5 ms | 3.5 ms | 0.239 ms | 0.037 / 0.095 ms | 0.004 / 0.015 ms | 0.01, 0.009 + 0.003 ms | 27 MiB |
-| 10,000 | 0.89 MB | 59 ms | 7 ms | 7.2 ms | 7.2 ms | 0.291 ms | 0.043 / 0.503 ms | 0.006 / 0.04 ms | 0.01, 0.01 + 0.003 ms | 27 MiB |
-| 25,000 | 2.26 MB | 137 ms | 23 ms | 33.8 ms | 31.6 ms | 0.289 ms | 0.042 / 0.349 ms | 0.006 / 0.019 ms | 0.011, 0.011 + 0.004 ms | 50 MiB |
-| 100,000 | 9.09 MB | 568 ms | 96 ms | 237.3 ms | 216.4 ms | 0.326 ms | 0.049 / 0.472 ms | 0.006 / 0.023 ms | 0.011, 0.016 + 0.007 ms | 195 MiB |
+| 1,000 | 0.09 MB | 15 ms | 2 ms | 0.7 ms | 0.7 ms | 0.23 ms | 0.041 / 0.319 ms | 0.004 / 0.069 ms | 0.01, 0.009 + 0.003 ms | 27 MiB |
+| 5,000 | 0.45 MB | 47 ms | 5 ms | 3.7 ms | 3.4 ms | 0.266 ms | 0.038 / 0.085 ms | 0.005 / 0.019 ms | 0.01, 0.01 + 0.003 ms | 27 MiB |
+| 10,000 | 0.89 MB | 51 ms | 6 ms | 7.6 ms | 7.3 ms | 0.287 ms | 0.045 / 0.444 ms | 0.007 / 0.254 ms | 0.011, 0.009 + 0.003 ms | 27 MiB |
+| 25,000 | 2.26 MB | 150 ms | 41 ms | 31.2 ms | 26.8 ms | 0.443 ms | 0.043 / 0.388 ms | 0.006 / 0.019 ms | 0.011, 0.011 + 0.004 ms | 50 MiB |
+| 100,000 | 9.09 MB | 642 ms | 105 ms | 217.2 ms | 254.9 ms | 0.381 ms | 0.064 / 0.888 ms | 0.008 / 0.04 ms | 0.012, 0.019 + 0.007 ms | 195 MiB |
 
-"Edit reply" is what the worker sends after an edit now (the rows that changed and counters); it was the whole table, statistics, bill of materials and the model text (the autosave) before. The statistics are asked for when editing pauses; after a removal the core counts connections again (about 220 ms in WebAssembly at 100,000 parts, 120 ms natively), which is why the page does not ask after every edit. A part placed or removed costs microseconds in the core at every size.
+"Edit reply" is what the worker sends after an edit now (the rows that changed and counters); it was the whole table, statistics, bill of materials and the model text (the autosave) before. The statistics are asked for when editing pauses; after a removal the core counts connections again (about 250 ms in WebAssembly at 100,000 parts, 120 ms natively), which is why the page does not ask after every edit. A part placed or removed costs microseconds in the core at every size.
 
 Build mode in headless Chromium, `city` layout, 1280 x 800, **software rendering**:
 
