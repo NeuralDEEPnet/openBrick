@@ -468,7 +468,7 @@ export const STATS_INLINE_LIMIT = 5000;
 /** The parts a delta's rows are for, in the unit of the core's table. */
 function leanSummary(a) {
   const parts = a.len();
-  const out = { parts, canUndo: a.can_undo(), canRedo: a.can_redo(), revision: a.revision() };
+  const out = { parts, canUndo: a.can_undo(), canRedo: a.can_redo(), revision: a.revision(), depth: a.history_depth() };
   if (parts <= STATS_INLINE_LIMIT) {
     out.stats = JSON.parse(a.stats());
     out.bom = JSON.parse(a.bom());

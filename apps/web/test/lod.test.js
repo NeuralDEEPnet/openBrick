@@ -4,7 +4,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  CHUNK_LDU,
+  CHUNK_STUDS,
+  chunkLdu,
   GRID_ABOVE,
   SINGLE_BELOW,
   basePixelRatio,
@@ -26,9 +27,14 @@ test("a model is chunked above 3000 parts and one chunk per part type again belo
   assert.equal(wantGrid(GRID_ABOVE + 1, false), true);
   assert.equal(wantGrid(SINGLE_BELOW, true), true);
   assert.equal(wantGrid(SINGLE_BELOW - 1, true), false);
-  assert.equal(chunkCell([5, -300, 10], false), "all");
-  assert.equal(chunkCell([5, -300, 10], true), "0,-1,0");
-  assert.equal(chunkCell([CHUNK_LDU, 0, -1], true), "1,0,-1");
+  assert.equal(chunkLdu(20), 640, "32 studs of the standard's 20 LDU");
+  assert.equal(chunkLdu(10), 320, "from the catalog's pitch, not a typed number");
+  assert.equal(CHUNK_STUDS, 32);
+  const edge = chunkLdu(20);
+  assert.equal(chunkCell([5, -300, 10], false, edge), "all");
+  assert.equal(chunkCell([5, -300, 10], true, edge), "0,-1,0");
+  assert.equal(chunkCell([edge, 0, -1], true, edge), "1,0,-1");
+  assert.equal(chunkCell([edge, 0, -1], true, 320), "2,0,-1");
 });
 
 test("a stud is fewer pixels the farther it is", () => {
@@ -154,4 +160,23 @@ test("the table grows past its first capacity", () => {
   assert.equal(t.size, 1000);
   assert.equal(t.get(1000).pos[0], 999 * 20);
   assert.deepEqual([...t.toRows()], [...rows]);
+});
+
+test("ids up to 4,294,967,295 are read back unsigned, in order, through every path", () => {
+  const big = [3_000_000_000, 4_294_967_295, 2_147_483_648, 5];
+  const rows = new Int32Array(big.length * ROW);
+  big.forEach((id, i) => rows.set([id, 1, i * 20, -8, 0, 0, 4], i * ROW)); // the id is stored as its bits
+  const t = new ModelTable(1);
+  t.replaceAll(rows);
+  for (const id of big) assert.equal(t.get(id)?.id, id, `get ${id}`);
+  assert.deepEqual([...t.toRows()].filter((_, i) => i % ROW === 0).map((v) => v >>> 0), [5, 2_147_483_648, 3_000_000_000, 4_294_967_295], "ascending unsigned");
+  // A delta: a recolour of the largest id, then its removal and its return.
+  let r = t.applyDelta(Int32Array.from([0, 4_294_967_295, 1, 60, -8, 0, 0, 15]));
+  assert.deepEqual(r.ids, [4_294_967_295]);
+  assert.equal(t.get(4_294_967_295).colour, 15);
+  r = t.applyDelta(Int32Array.from([0, 4_294_967_295, -1, 0, 0, 0, 0, 0]));
+  assert.equal(t.has(4_294_967_295), false);
+  t.applyDelta(Int32Array.from([0, 4_294_967_295, 1, 60, -8, 0, 0, 4]));
+  assert.equal(t.get(4_294_967_295).pos[0], 60);
+  assert.equal(t.size, 4);
 });

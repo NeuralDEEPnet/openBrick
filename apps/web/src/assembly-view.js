@@ -5,7 +5,7 @@
 //
 // Chunks: a model of up to a few thousand parts is one chunk per part type (one draw call each, however many
 // parts: the 14 built-in parts are at most 14 draw calls). A bigger model is cut over the lattice into cells
-// of 32 x 32 x 32 studs (src/lod.js CHUNK_LDU), one chunk per (part type, cell). A chunk holds the matrices
+// of 32 x 32 x 32 studs (src/lod.js CHUNK_STUDS), one chunk per (part type, cell). A chunk holds the matrices
 // and colours of its parts in two typed arrays shared by its four meshes (one per render level), so an edit
 // rewrites the arrays of the chunk it touches and uploads only that chunk; colours are per instance.
 //
@@ -20,7 +20,7 @@
 // plus Y) and scales LDU to the millimetres the lighting of src/viewer.js is set up in.
 
 import { colourHex, instanceMatrix } from "./build.js";
-import { chunkCell, chunkKey, nextBias, pickLevel, studPixels, thresholds, triangleBudget, wantGrid } from "./lod.js";
+import { chunkCell, chunkLdu, chunkKey, nextBias, pickLevel, studPixels, thresholds, triangleBudget, wantGrid } from "./lod.js";
 
 /** Rotation of the LDraw frame into three.js's Y-up frame: half a turn about X. */
 export const LDRAW_TO_THREE_EULER_X = Math.PI;
@@ -243,7 +243,7 @@ export function createAssemblyView(viewer, { catalog: initialCatalog, lduMm }) {
 
   function keyOf(slot) {
     const part = table.partAt(slot);
-    return chunkKey(part, chunkCell([table.posAt(slot, 0), table.posAt(slot, 1), table.posAt(slot, 2)], chunked));
+    return chunkKey(part, chunkCell([table.posAt(slot, 0), table.posAt(slot, 1), table.posAt(slot, 2)], chunked, chunkLdu(catalog.studPitchLdu)));
   }
 
   function chunkAt(key, slot) {

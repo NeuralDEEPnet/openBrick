@@ -4,6 +4,8 @@
 // draw, and hand the same table back to a replaced core (src/model-keeper.js): it never decides
 // where a part goes (CLAUDE.md: the UI never computes geometry or connectivity).
 //
+// Ids are unsigned (up to 4,294,967,295): they cross as the bits of an Int32Array and are read with `>>> 0`.
+//
 // A table of 100,000 parts is about 4 MB (28 bytes a part and the id map), not a list of 100,000
 // objects, and an edit changes one slot.
 
@@ -34,7 +36,7 @@ export class ModelTable {
       if (old) next.set(old);
       return next;
     };
-    this.#id = grow(this.#id, Int32Array);
+    this.#id = grow(this.#id, Uint32Array);
     this.#part = grow(this.#part, Int32Array);
     this.#pos = grow(this.#pos, Int32Array, 3);
     this.#rot = grow(this.#rot, Uint8Array);
@@ -89,7 +91,8 @@ export class ModelTable {
   }
 
   #put(row, at) {
-    const id = row[at];
+    // Ids are unsigned 32-bit numbers; the core's rows are Int32Array, so the bits are read back as unsigned.
+    const id = row[at] >>> 0;
     let s = this.#slot.get(id);
     if (s === undefined) {
       s = this.#free.length ? this.#free.pop() : this.#high++;
@@ -129,13 +132,13 @@ export class ModelTable {
       const before = [...this.#slot.keys()];
       this.replaceAll(rows);
       const ids = new Set(before);
-      for (let at = 0; at < rows.length; at += ROW) ids.add(rows[at]);
+      for (let at = 0; at < rows.length; at += ROW) ids.add(rows[at] >>> 0);
       return { full: true, ids: [...ids] };
     }
     if (mode !== 0) throw new RangeError(`unknown delta mode ${mode}`);
     const ids = [];
     for (let at = 0; at < rows.length; at += ROW) {
-      const id = rows[at];
+      const id = rows[at] >>> 0;
       ids.push(id);
       if (rows[at + 1] < 0) {
         const s = this.#slot.get(id);

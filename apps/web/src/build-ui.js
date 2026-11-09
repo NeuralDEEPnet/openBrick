@@ -179,6 +179,9 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   let state = null;
   /** True while the model is small enough for full detail everywhere (src/build.js wantDetail). */
   let small = true;
+  let historyWarned = false;
+  /** A sentence for the next message: the undo history is full (said once per model). */
+  let historyNote = null;
   const hud = { on: false, timer: null };
   let hovered = null;
   let lastPointer = null;
@@ -306,6 +309,10 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   }
 
   function message(text, { alert = false } = {}) {
+    if (historyNote) {
+      text = `${text} ${historyNote}`;
+      historyNote = null;
+    }
     const node = $("build-message");
     node.textContent = text;
     node.setAttribute("role", alert ? "alert" : "status");
@@ -343,7 +350,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     } else if (next.delta) {
       const rows = next.delta;
       const before = new Map();
-      for (let at = 1; at < rows.length; at += ROW) before.set(rows[at], table.get(rows[at])?.part);
+      for (let at = 1; at < rows.length; at += ROW) before.set(rows[at] >>> 0, table.get(rows[at] >>> 0)?.part);
       const r = table.applyDelta(rows);
       if (r.full) {
         partCounts = table.countsByPart();
@@ -368,6 +375,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
       canRedo: next.canRedo,
       revision: next.revision,
       parts: next.parts ?? table.size,
+      depth: next.depth ?? 0,
       stats: next.stats ?? state?.stats ?? null,
       bom: next.bom ?? state?.bom ?? [],
     };
@@ -384,6 +392,11 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     renderStats();
     if (next.stats) info.statsFor = next.revision;
     else wantStats();
+    // The engine keeps the last `maxHistory` commands: say once, when the oldest begin to be discarded.
+    if (next.delta && next.depth >= catalog.maxHistory && !historyWarned) {
+      historyWarned = true;
+      historyNote = `Undo goes back ${catalog.maxHistory.toLocaleString("en-US")} steps; older steps are discarded from now on.`;
+    } else if (next.instances) historyWarned = false;
     $("build-undo").disabled = !next.canUndo;
     $("build-redo").disabled = !next.canRedo;
     $("build-clear").disabled = !clearableNow();

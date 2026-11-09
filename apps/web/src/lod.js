@@ -4,8 +4,11 @@
 // snapping and connectivity come from the core's boxes and connectors, never from a render level
 // ("never derive collision from the render LOD").
 
-/** The edge of a chunk of the model in LDU: 32 studs of 20 LDU (docs/plan/07 section 9). */
-export const CHUNK_LDU = 640;
+/** The edge of a chunk of the model in studs (docs/plan/07 section 9); in LDU it is this times the catalog's stud pitch. */
+export const CHUNK_STUDS = 32;
+
+/** The edge of a chunk in LDU, from the stud pitch the core's catalog reports (`studPitchLdu`, the Dimensional Standard's). */
+export const chunkLdu = (studPitchLdu) => CHUNK_STUDS * studPitchLdu;
 
 /** Render levels, nearest first: full studs, cheap studs and tubes, cheap studs on a solid body, the hull. */
 export const LEVELS = 4;
@@ -20,9 +23,9 @@ export function wantGrid(count, current = false) {
 }
 
 /** The chunk a part at `pos` (LDU) belongs to: "x,y,z" of its cell, or "all" when the model is not chunked. */
-export function chunkCell(pos, grid) {
+export function chunkCell(pos, grid, size) {
   if (!grid) return "all";
-  return `${Math.floor(pos[0] / CHUNK_LDU)},${Math.floor(pos[1] / CHUNK_LDU)},${Math.floor(pos[2] / CHUNK_LDU)}`;
+  return `${Math.floor(pos[0] / size)},${Math.floor(pos[1] / size)},${Math.floor(pos[2] / size)}`;
 }
 
 /** The cell's name for a chunk key "part|cell". */

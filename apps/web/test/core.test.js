@@ -584,3 +584,99 @@ test("the render levels come from the core and never change what the core snaps 
   ok({ type: "asmMeshes", parts: [brick], lods: [3] });
   assert.deepEqual(snap(), before);
 });
+
+// ------------------------------------------------------------ the page's table against the core
+
+/** A seeded generator, so a failure names its seed. */
+function rng(seed) {
+  let s = seed >>> 0 || 1;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+test("ids up to 4,294,967,295 survive load, pick, delete, undo and a restart through the page's table", { skip }, async () => {
+  const core = await loadCore();
+  let n = 0;
+  const ok = (request) => {
+    const { reply } = dispatch(core, { id: ++n, ...request });
+    assert.equal(reply.ok, true, `${request.type}: ${reply.error}`);
+    return reply.result;
+  };
+  const inst = (id, x) => ({ id, part: "ob.brick-2x4", pose: { pos: [x, -24, 0], rot: 0 }, colour: 4 });
+  const text = JSON.stringify({
+    openbrick: "1.0", kind: "model", name: "big ids", units: "ldu", frame: "ldraw-y-down", catalog: "openbrick-builtin@1", palette: [], bom: [],
+    submodels: [{ id: "main", instances: [inst(5, 0), inst(3_000_000_000, 100), inst(4_294_967_294, 200)] }],
+  });
+  const table = new ModelTable();
+  const sync = (r) => (r.instances ? table.replaceAll(r.instances) : table.applyDelta(r.delta));
+  sync(ok({ type: "asmLoad", text, lean: true }));
+  assert.deepEqual([...table.toRows()].filter((_, i) => i % 7 === 0).map((v) => v >>> 0), [5, 3_000_000_000, 4_294_967_294]);
+  // The pick names the largest id and the page's table knows it.
+  const hit = ok({ type: "asmPick", ray: { origin: [200, -500, 0], dir: [0, 1, 0] } });
+  assert.equal(hit.instance, 4_294_967_294);
+  assert.equal(table.get(hit.instance)?.pos[0], 200, "hover, outline and delete find the part");
+  // Delete it (by the id the pick gave), undo, and compare with the core after each.
+  const same = () => assert.deepEqual([...table.toRows()], [...ok({ type: "asmState", lean: true }).instances]);
+  sync(ok({ type: "asmApply", lean: true, command: { op: "remove", id: hit.instance } }));
+  assert.equal(table.has(4_294_967_294), false);
+  same();
+  sync(ok({ type: "asmUndo", lean: true }));
+  assert.equal(table.has(4_294_967_294), true);
+  same();
+  // A restart: the table's rows go into an empty core, in unsigned id order, and come back the same.
+  const rows = table.toRows();
+  const restored = ok({ type: "asmLoadRows", rows });
+  assert.deepEqual([...restored.instances], [...rows]);
+  assert.equal(ok({ type: "asmPick", ray: { origin: [100, -500, 0], dir: [0, 1, 0] } }).instance, 3_000_000_000);
+});
+
+test("the page's table equals the core's after random edits, failed commands, undo, redo, clears and pack parts", { skip: skip || skipPack }, async () => {
+  const core = await loadCore();
+  let n = 0;
+  const ask = (request) => dispatch(core, { id: ++n, ...request }).reply;
+  const ok = (request) => {
+    const reply = ask(request);
+    assert.equal(reply.ok, true, `${request.type}: ${reply.error}`);
+    return reply.result;
+  };
+  ok({ type: "asmLoadPack", bytes: miniPack() });
+  const catalog = ok({ type: "asmInit" });
+  const names = catalog.parts.filter((p) => !p.base && p.connectivity !== "none").map((p) => p.id);
+  assert.ok(names.some((id) => id.startsWith("ld.")), "pack parts are in the mix");
+  for (let seed = 1; seed <= 8; seed++) {
+    const r = rng(seed * 7919);
+    const pick = (a) => a[Math.floor(r() * a.length)];
+    ok({ type: "asmLoad", text: JSON.stringify({ openbrick: "1.0", kind: "model", name: "e", units: "ldu", frame: "ldraw-y-down", catalog: "openbrick-builtin@1", palette: [], bom: [], submodels: [{ id: "main", instances: [] }] }), lean: true });
+    const table = new ModelTable();
+    table.replaceAll(ok({ type: "asmState", lean: true }).instances);
+    let failed = 0;
+    for (let step = 0; step < 120; step++) {
+      const at = `seed ${seed} step ${step}`;
+      let reply;
+      const roll = r();
+      if (roll < 0.5) {
+        const part = pick(names);
+        const ray = { origin: [(r() - 0.5) * 400, -300, (r() - 0.5) * 400], dir: [0.1 * (r() - 0.5), 1, 0.1 * (r() - 0.5)] };
+        const snap = ok({ type: "asmSnap", part, rot: pick([0, 1, 2, 3]), ray });
+        // Often the snapped pose; sometimes a pose that must be refused (the page never sends one, a hostile page could).
+        const pos = snap && r() < 0.85 ? snap.pos : [Math.round(r() * 40) * 20 - 400, -24, Math.round(r() * 40) * 20 - 400];
+        reply = ask({ type: "asmApply", lean: true, command: { op: "add", part, pos, rot: snap ? snap.rot : 0, colour: pick([2, 4, 15]) } });
+      } else if (roll < 0.62) reply = ask({ type: "asmApply", lean: true, command: { op: "remove", id: 1 + Math.floor(r() * 40) } });
+      else if (roll < 0.7) reply = ask({ type: "asmApply", lean: true, command: { op: "recolour", id: 1 + Math.floor(r() * 40), colour: pick([4, 14, 99999]) } });
+      else if (roll < 0.76) reply = ask({ type: "asmApply", lean: true, command: { op: "turn", id: 1 + Math.floor(r() * 40), quarterTurns: 1 } });
+      else if (roll < 0.9) reply = ask({ type: r() < 0.5 ? "asmUndo" : "asmRedo", lean: true });
+      else if (roll < 0.93) reply = ask({ type: "asmApply", lean: true, command: { op: r() < 0.5 ? "clear" : "clearBuilt" } });
+      else reply = ask({ type: "asmState", lean: true });
+      if (!reply.ok) {
+        failed++;
+        assert.equal(reply.fatal, undefined, `${at}: a refusal is not a trap`);
+      } else if (reply.result.instances) table.replaceAll(reply.result.instances);
+      else table.applyDelta(reply.result.delta);
+      const want = ok({ type: "asmState", lean: true });
+      assert.deepEqual([...table.toRows()], [...want.instances], `${at}: the table equals the core's`);
+    }
+    assert.ok(failed > 0, "some commands failed, and the table was still right after them");
+  }
+});
