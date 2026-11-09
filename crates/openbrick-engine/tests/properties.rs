@@ -66,7 +66,7 @@ fn every_snapped_pose_is_on_the_lattice_and_collides_with_nothing() {
             let b = m.body_box(p, &pose).unwrap();
             if s.valid {
                 assert!(
-                    m.collision(&b, None).is_none(),
+                    m.collision(&b, None).unwrap().is_none(),
                     "seed {seed}: a valid snap collides: {s:?}"
                 );
                 assert!(b.max[1] <= 0);

@@ -9,6 +9,12 @@ repository.workspace = true
 # Not on crates.io before M2 (PACKAGING.md); only the openbrick CLI is released.
 publish = false
 
+[features]
+# The LDraw importer (parser, resolver, connector derivation): reads files and zips,
+# so the command line turns it on and the WebAssembly build leaves it off. The pack
+# reader (`pack`) is always built.
+import = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -18,6 +24,9 @@ openbrick-geom = { workspace = true }
 # The built-in parts are built by the part evaluator on a bundled process profile.
 openbrick-part = { workspace = true }
 openbrick-print = { workspace = true }
+# Pack integrity (SHA-256) and the compressed mesh blob; both pure Rust, wasm32-ready.
+sha2 = { workspace = true }
+miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
 
 [dev-dependencies]
 # tests/builtin.rs fingerprints the built meshes with the kernel's mesh type.

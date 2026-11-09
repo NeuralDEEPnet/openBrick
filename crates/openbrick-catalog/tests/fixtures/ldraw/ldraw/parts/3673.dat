@@ -1,0 +1,11 @@
+0 Technic Pin
+0 Name: 3673.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Part UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+0 !CATEGORY Technic
+0 BFC CERTIFY CCW
+
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 connect.dat
+1 16 0 -20 0 1 0 0 0 1 0 0 0 1 connect.dat
+1 16 0 -40 0 3 0 0 0 40 0 0 0 3 cube.dat

@@ -104,6 +104,8 @@ pub enum EngineError {
     ZeroId,
     #[error("the model has used every part id up to {0}; save it and start a new model")]
     IdsExhausted(InstanceId),
+    #[error("the part's body covers {cells} lattice cells; the limit is {limit}. A pack part this large is not placeable; import the pack again from a library file that is not damaged")]
+    BoxTooLarge { cells: u64, limit: u64 },
     #[error("position {pos:?} is beyond {limit} LDU from the origin; keep every coordinate within plus or minus {limit}")]
     OutOfRange { pos: [i32; 3], limit: i32 },
 }
@@ -234,19 +236,25 @@ impl<'c> Model<'c> {
                 limit: crate::MAX_COORD,
             });
         }
-        for c in self.placed_connectors(part, pose)? {
-            // Vertical connectors (the only kind the built-in parts have)
-            // must be on the stud grid; a part turned on its side is checked
-            // by its box alone until side connectors exist.
-            if c.dir[1] != 0 && !on_stud_grid(c.pos) {
-                return Err(EngineError::OffGrid { pos: c.pos });
+        // The studs and receptacles of a built-in part must be on the stud grid (snapping only
+        // produces such poses, and the model refuses others). A part of an LDraw pack is drawn by
+        // its authors, with studs half a stud apart (jumper plates) or a clip hanging two units
+        // below its plate, so its connectors are not required to be on the grid: they mate only
+        // where they coincide with another part's, which is exact whatever the grid. A part turned
+        // on its side is checked by its box alone, and pins and axles have no grid of their own.
+        if self.part(part)?.origin == openbrick_catalog::Origin::Builtin {
+            for c in self.placed_connectors(part, pose)? {
+                if c.kind.is_stud_kind() && c.dir[1] != 0 && !on_stud_grid(c.pos) {
+                    return Err(EngineError::OffGrid { pos: c.pos });
+                }
             }
         }
         let b = self.body_box(part, pose)?;
+        crate::spatial::check_box(&b)?;
         if b.max[1] > 0 {
             return Err(EngineError::BelowGround { depth: b.max[1] });
         }
-        if let Some(with) = self.collision(&b, skip) {
+        if let Some(with) = self.collision(&b, skip)? {
             let name = self
                 .part(self.instance(with).expect("indexed").part)?
                 .name
@@ -257,8 +265,12 @@ impl<'c> Model<'c> {
     }
 
     /// The first placed part (lowest id) whose body overlaps `b`, ignoring `skip`.
-    pub fn collision(&self, b: &Aabb, skip: Option<InstanceId>) -> Option<InstanceId> {
-        self.spatial.near(b).into_iter().find(|&id| {
+    pub fn collision(
+        &self,
+        b: &Aabb,
+        skip: Option<InstanceId>,
+    ) -> Result<Option<InstanceId>, EngineError> {
+        Ok(self.spatial.near(b)?.into_iter().find(|&id| {
             Some(id) != skip && {
                 let i = self.instance(id).expect("indexed");
                 self.catalog.parts[i.part as usize]
@@ -267,7 +279,7 @@ impl<'c> Model<'c> {
                     .transformed(i.pose.rot, i.pose.pos)
                     .overlaps(b)
             }
-        })
+        }))
     }
 
     /// How many connectors of `part` at `pose` mate with placed parts (other
@@ -311,7 +323,7 @@ impl<'c> Model<'c> {
         let conns = self.placed_connectors(inst.part, &inst.pose)?;
         self.instances.insert(index, inst);
         self.reindex_from(index);
-        self.spatial.insert(inst.id, &b);
+        self.spatial.insert(inst.id, &b)?;
         self.conns.insert(inst.id, &conns);
         self.next_id = self.next_id.max(inst.id.saturating_add(1));
         Ok(())
@@ -325,7 +337,7 @@ impl<'c> Model<'c> {
         self.reindex_from(index);
         let b = self.body_box(inst.part, &inst.pose)?;
         let conns = self.placed_connectors(inst.part, &inst.pose)?;
-        self.spatial.remove(id, &b);
+        self.spatial.remove(id, &b)?;
         self.conns.remove(id, &conns);
         Ok((index, inst))
     }
@@ -343,10 +355,10 @@ impl<'c> Model<'c> {
             self.body_box(inst.part, &inst.pose)?,
             self.placed_connectors(inst.part, &inst.pose)?,
         );
-        self.spatial.remove(id, &old_box);
+        self.spatial.remove(id, &old_box)?;
         self.conns.remove(id, &old_conns);
         self.instances.pose[index] = pose;
-        self.spatial.insert(id, &self.body_box(inst.part, &pose)?);
+        self.spatial.insert(id, &self.body_box(inst.part, &pose)?)?;
         let conns = self.placed_connectors(inst.part, &pose)?;
         self.conns.insert(id, &conns);
         Ok(inst.pose)
@@ -388,12 +400,12 @@ impl<'c> Model<'c> {
             pos[k] = (want2 - have2).div_euclid(2);
         }
         pos[1] = old.max[1] - local.max[1];
-        // Put the first vertical connector on the grid; the rest follow.
+        // Put the first vertical stud or receptacle on the grid; the rest follow.
         if let Some(c) = shape
             .connectors
             .iter()
             .map(|c| c.transformed(rot, pos))
-            .find(|c| c.dir[1] != 0)
+            .find(|c| c.kind.is_stud_kind() && c.dir[1] != 0)
         {
             for k in [0, 2] {
                 let off = (c.pos[k] - openbrick_units::HALF_STUD_LDU)

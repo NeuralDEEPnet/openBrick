@@ -35,6 +35,8 @@
     "obrick-id-zero.json": { "pointer": "/submodels/0/instances/0/id", "keyword": "minimum", "message": "0" },
     "obrick-id-too-large.json": { "pointer": "/submodels/0/instances/0/id", "keyword": "maximum", "message": "4294967296" },
     "obrick-position-out-of-range.json": { "pointer": "/submodels/0/instances/0/pose/pos/1", "keyword": "minimum", "message": "2147483648" },
+    "obrick-requires-bad-fingerprint.json": { "pointer": "/requires/0/fingerprint", "keyword": "pattern", "message": "\"ABC\"" },
+    "obrick-requires-too-many.json": { "pointer": "/requires", "keyword": "maxItems", "message": "has more than 16 items" },
     "part-preset-without-name.json": { "pointer": "/presets/0", "keyword": "required", "message": "\"name\"" }
   }
 }

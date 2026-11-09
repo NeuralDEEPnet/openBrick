@@ -104,3 +104,10 @@ fn yaw_rotation_composes_in_the_core() {
     assert_eq!(assembler_turn_rotation(one, 3).unwrap(), 0);
     assert!(assembler_turn_rotation(24, 1).is_err());
 }
+
+#[test]
+fn loading_a_model_returns_its_notices_as_json() {
+    let mut a = Assembler::create().unwrap();
+    let notices = a.load(&assembler_sample("staircase").unwrap()).unwrap();
+    assert_eq!(notices, "[]", "built-in parts only: nothing to say");
+}

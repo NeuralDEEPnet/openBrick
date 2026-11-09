@@ -5,7 +5,10 @@
 // with a reason, when the core has not been built; the smoke test always builds it.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { cellMap, choose, chosenCells, labelText, offsetRows, recordInput, signedMm } from "../src/calibration.js";
 import { controlsFor, defaultValues, paramOverrides, visibility } from "../src/params.js";
@@ -352,4 +355,112 @@ test("the real core's assembler: catalog, snap, place, undo, save and load throu
   }
   assert.equal(ask({ type: "asmSnap", part: "ob.nope", rot: 0, ray: down(0, 0) }).reply.ok, false);
   assert.equal(ask({ type: "asmSnap", part: "ob.brick-2x4", rot: 0, ray: { origin: [0, 0, 0] } }).reply.ok, false);
+});
+
+// ------------------------------------------------------------ an LDraw pack
+
+const cli = new URL("../../../target/debug/openbrick", import.meta.url).pathname;
+const fixtureLibrary = new URL("../../../crates/openbrick-catalog/tests/fixtures/ldraw", import.meta.url).pathname;
+const skipPack = skip || (existsSync(cli) ? false : "target/debug/openbrick is not built; run `cargo build -p openbrick`");
+
+/** The mini pack the CLI makes from the synthetic fixture library (ours, written for the tests). */
+function miniPack(extra = []) {
+  const dir = mkdtempSync(join(tmpdir(), "openbrick-pack-"));
+  const out = join(dir, "mini.obpack");
+  const r = spawnSync(cli, ["catalog", "import", fixtureLibrary, "--out", out, "--category-filter", "Brick,Plate,Tile,Technic", ...extra], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const bytes = new Uint8Array(readFileSync(out));
+  rmSync(dir, { recursive: true });
+  return bytes;
+}
+
+test("the real core loads an LDraw pack: parts join the catalog, models say which pack they need", { skip: skipPack }, async () => {
+  const core = await loadCore();
+  let n = 0;
+  const ok = (request) => {
+    const { reply } = dispatch(core, { id: ++n, ...request });
+    assert.equal(reply.ok, true, `${request.type}: ${reply.error}`);
+    return reply.result;
+  };
+  const fails = (request) => {
+    const { reply } = dispatch(core, { id: ++n, ...request });
+    assert.equal(reply.ok, false, request.type);
+    assert.equal(reply.fatal, undefined, "a refusal is not a trap");
+    return reply.error;
+  };
+  const before = ok({ type: "asmInit" });
+  assert.equal(before.pack, null);
+  assert.equal(before.parts.length, 14);
+  assert.ok(before.maxPackBytes >= 64 * 1024 * 1024);
+  // The core is shared with the tests above: start from an empty model, then one of built-in parts to carry over the load.
+  ok({
+    type: "asmLoad",
+    text: '{"openbrick":"1.0","kind":"model","name":"e","units":"ldu","frame":"ldraw-y-down","catalog":"openbrick-builtin@1","palette":[],"bom":[],"submodels":[{"id":"main","instances":[]}]}',
+  });
+  ok({ type: "asmApply", command: { op: "add", part: "ob.brick-2x4", pos: [0, -24, 0], rot: 0, colour: 4 } });
+
+  const bytes = miniPack();
+  const loaded = ok({ type: "asmLoadPack", bytes });
+  assert.equal(loaded.kept, true, "the built-in model survives");
+  assert.equal(loaded.stats.parts, 1);
+  assert.equal(loaded.pack.library, "2026-01");
+  assert.match(loaded.pack.attribution, /LDraw Parts Library/);
+  assert.ok(loaded.pack.licences.length >= 1);
+  const catalog = loaded.catalog;
+  assert.equal(catalog.parts.length, 14 + 11);
+  assert.equal(catalog.parts[0].id, "ob.brick-1x1", "built-in part numbers do not move");
+  const p3003 = catalog.parts.findIndex((p) => p.id === "ld.3003");
+  assert.ok(p3003 >= 14);
+  assert.equal(catalog.parts[p3003].origin, "ldraw");
+  assert.equal(catalog.parts[p3003].category, "Brick");
+  assert.equal(catalog.parts[p3003].connectivity, "derived");
+  assert.equal(catalog.parts[p3003].author, "OpenBrick3D tests");
+  assert.equal(catalog.parts.find((p) => p.id === "ld.4081b").joints[0], "clip");
+
+  // Meshes are asked for by part number, never all at once by default.
+  assert.equal(ok({ type: "asmMeshes", detail: true }).meshes.length, 14);
+  const m = ok({ type: "asmMeshes", detail: true, parts: [p3003] }).meshes[0];
+  assert.equal(m.id, "ld.3003");
+  assert.ok(m.triangles > 50 && m.positions.length > 0);
+  assert.match(fails({ type: "asmMeshes", parts: [9999] }), /no catalog part number/);
+  assert.match(fails({ type: "asmMeshes", parts: Array.from({ length: 300 }, (_, i) => i) }), /at most/);
+
+  // The engine places and snaps a pack part: one more brick on top of the 2x4 has its studs connected.
+  const snap = ok({ type: "asmSnap", part: "ld.3003", rot: 0, ray: { origin: [10, -1000, 10], dir: [0, 1, 0] } });
+  assert.equal(snap.valid, true);
+  assert.equal(snap.mates, 4);
+  const placed = ok({ type: "asmApply", command: { op: "add", part: "ld.3003", pos: snap.pos, rot: snap.rot, colour: 2 } });
+  assert.equal(placed.stats.parts, 2);
+  assert.equal(placed.stats.connections, 4);
+  assert.match(placed.text, /"requires"/);
+  assert.match(placed.text, /"library":"2026-01"/);
+
+  // The same model is described to a core without the pack: it needs ldraw, and says which parts.
+  const needs = ok({ type: "asmNeeds", text: placed.text });
+  assert.equal(needs.missingCount, 0, "with the pack nothing is missing");
+  const gone = ok({ type: "asmUnloadPack" });
+  assert.equal(gone.kept, false, "the model used pack parts, so it cannot stay");
+  assert.equal(gone.catalog.parts.length, 14);
+  const missing = ok({ type: "asmNeeds", text: placed.text });
+  assert.equal(missing.missingCount, 1);
+  assert.deepEqual(missing.missing, ["ld.3003"]);
+  assert.equal(missing.requires[0].pack, "ldraw");
+  assert.match(fails({ type: "asmLoad", text: placed.text }), /LDraw pack `ldraw` \(library 2026-01\), which is not loaded/);
+  // A damaged or foreign file is refused with a message, and the core goes on.
+  assert.match(fails({ type: "asmLoadPack", bytes: new Uint8Array([1, 2, 3]) }), /not an OpenBrick3D pack/);
+  const flipped = bytes.slice();
+  flipped[40] ^= 1;
+  assert.match(fails({ type: "asmLoadPack", bytes: flipped }), /checksum/);
+  assert.equal(ok({ type: "asmInit" }).parts.length, 14);
+  // Loading it again works (the page does this when a worker is replaced).
+  ok({ type: "asmLoadPack", bytes });
+  const again = ok({ type: "asmLoad", text: placed.text });
+  assert.equal(again.stats.parts, 2);
+  assert.deepEqual(again.notices, [], "the pack the model was made with: nothing to say");
+  // Another build of the pack (the low-resolution primitives): the model opens, and says so.
+  ok({ type: "asmLoadPack", bytes: miniPack(["--resolution", "low"]) });
+  const other = ok({ type: "asmLoad", text: placed.text });
+  assert.equal(other.stats.parts, 2, "a pack of another version still opens the model");
+  assert.equal(other.notices.length, 1);
+  assert.match(other.notices[0], /different build of the `ldraw` pack/);
 });

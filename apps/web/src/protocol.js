@@ -28,12 +28,18 @@
 //   savePart       doc, params, process                     { text }: the document with params as defaults
 //   addPreset      doc, name, params, process               { text }: the document with a preset `name`
 //   asmInit        -                                        the assembler catalog (assemblerCatalog() below)
-//   asmMeshes      detail                                   { meshes: [{ index, positions, indices, triangles }] }
+//   asmMeshes      detail, parts?                           { meshes: [{ index, positions, indices, triangles }] }:
+//                                                           the listed catalog part numbers, else the built-in ones
+//   asmLoadPack    bytes                                    { pack, kept, ...state }: an LDraw pack (.obpack) joins the
+//                                                           catalog; the model is carried over when it still loads
+//   asmUnloadPack  -                                        { kept, ...state }
+//   asmNeeds       text                                     { requires, missing, missingCount } of a .obrick document
 //   asmSnap        part, rot, ray                           a snap or null (the engine's Snap)
 //   asmPick        ray                                      a hit or null
 //   asmApply       command                                  { id, ...state }; the engine refuses with a message
 //   asmUndo, asmRedo, asmState                              the state (assemblerState() below)
-//   asmLoad        text                                     the state of the model in a .obrick document
+//   asmLoad        text                                     the state of the model in a .obrick document, and `notices`
+//                                                            (sentences: the model opened with another build of its pack)
 //   asmSave        name                                     { text }
 //   asmSample      id                                       { text } of a sample model
 //   asmTurn        rot, quarterTurns                        { rot }: the rotation index turned about the vertical axis
@@ -445,10 +451,25 @@ export function assemblerState(core) {
   };
 }
 
-/** The render meshes of the catalog parts: the baseplate always at the cheap level, the others at `detail` or not. */
+/**
+ * The render meshes of catalog parts: the baseplate always at the cheap level, the others at `detail`
+ * or not. `request.parts` lists the part numbers wanted (at most MAX_MESHES_PER_REQUEST); without it
+ * the answer is the built-in parts, so a loaded pack's hundreds of parts are never all built at once.
+ */
 export function assemblerMeshes(core, request) {
   const catalog = assemblerCatalog(core);
-  const meshes = catalog.parts.map((part, index) => {
+  let wanted;
+  if (Array.isArray(request?.parts)) {
+    if (request.parts.length > MAX_MESHES_PER_REQUEST) throw new RangeError(`at most ${MAX_MESHES_PER_REQUEST} meshes per request`);
+    wanted = request.parts.map((i) => {
+      if (!Number.isInteger(i) || i < 0 || i >= catalog.parts.length) throw new RangeError(`there is no catalog part number ${i}`);
+      return i;
+    });
+  } else {
+    wanted = catalog.parts.flatMap((p, i) => (p.origin === "ldraw" ? [] : [i]));
+  }
+  const meshes = wanted.map((index) => {
+    const part = catalog.parts[index];
     const mesh = core.assembler_part_mesh(index, part.base ? false : request?.detail !== false);
     try {
       return { index, id: part.id, positions: mesh.take_positions(), indices: mesh.take_indices(), triangles: mesh.triangle_count() };
@@ -457,6 +478,43 @@ export function assemblerMeshes(core, request) {
     }
   });
   return { meshes };
+}
+
+/** The most meshes one request may ask for. */
+export const MAX_MESHES_PER_REQUEST = 256;
+
+/**
+ * Put the model into a new assembler, which has the catalog of the core as it is now (an assembler keeps the
+ * catalog it was made with). Resolves { kept }: false when the model's text no longer loads (it uses parts the
+ * catalog does not have), in which case the new assembler is empty.
+ */
+function renewAssembler(core) {
+  const old = assemblers.get(core);
+  const text = old ? old.save("Autosave") : null;
+  assemblers.delete(core);
+  const fresh = assembler(core);
+  if (text === null) return { kept: true };
+  try {
+    fresh.load(text);
+    return { kept: true };
+  } catch {
+    return { kept: false };
+  }
+}
+
+/** Load an LDraw pack: its parts join the catalog after the built-in ones. */
+export function assemblerLoadPack(core, request) {
+  if (!(request?.bytes instanceof Uint8Array)) throw new TypeError("asmLoadPack needs the pack file as bytes");
+  core.assembler_load_pack(request.bytes);
+  const { kept } = renewAssembler(core);
+  const catalog = assemblerCatalog(core);
+  return { pack: catalog.pack, catalog, kept, ...assemblerState(core) };
+}
+
+export function assemblerUnloadPack(core) {
+  core.assembler_unload_pack();
+  const { kept } = renewAssembler(core);
+  return { kept, catalog: assemblerCatalog(core), ...assemblerState(core) };
 }
 
 /** The buffers of a result to transfer instead of copying: mesh arrays and file bytes. */
@@ -540,6 +598,16 @@ export function dispatch(core, request, now) {
       case "asmMeshes":
         result = assemblerMeshes(core, request);
         break;
+      case "asmLoadPack":
+        result = assemblerLoadPack(core, request);
+        break;
+      case "asmUnloadPack":
+        result = assemblerUnloadPack(core);
+        break;
+      case "asmNeeds":
+        if (typeof request.text !== "string") throw new TypeError("asmNeeds needs the .obrick document as text");
+        result = JSON.parse(core.assembler_model_needs(request.text));
+        break;
       case "asmSnap": {
         if (typeof request.part !== "string") throw new TypeError("asmSnap needs the catalog id of the part");
         result = JSON.parse(assembler(core).snap(request.part, request.rot ?? 0, ...rayArgs(request.ray)));
@@ -566,8 +634,11 @@ export function dispatch(core, request, now) {
         break;
       case "asmLoad":
         if (typeof request.text !== "string") throw new TypeError("asmLoad needs the .obrick document as text");
-        assembler(core).load(request.text);
-        result = assemblerState(core);
+        {
+          // `notices`: sentences about a model that opened with another build of the pack it was made with.
+          const notices = JSON.parse(assembler(core).load(request.text));
+          result = { ...assemblerState(core), notices };
+        }
         break;
       case "asmSave":
         result = { text: assembler(core).save(String(request.name ?? "Model")) };

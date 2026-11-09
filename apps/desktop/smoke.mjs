@@ -18,12 +18,14 @@
 // preset and saved through the save dialog, is byte-identical to what
 // `native_eval` saves, Build mode places a brick, saves the model through the
 // save dialog and opens it again through the open dialog (open.obrick.json),
-// and a project link does not navigate the window away.
+// an LDraw pack made by the CLI from a synthetic library is added through the
+// open dialog (open.obpack), and a project link does not navigate the window away.
 //
 // WebDriver cannot reach a native dialog, so the debug app is started with
 // OPENBRICK_DESKTOP_TEST_DIALOGS set to a temporary folder: saves land there
 // under the suggested name, and an open picks open.svg, open.json (a fit
-// profile), open.obpart.json (a part) or open.obrick.json (a model) from it
+// profile), open.obpart.json (a part), open.obrick.json (a model) or open.obpack
+// (an LDraw part pack) from it
 // (src-tauri/src/app.rs; release builds do not contain this). The native file
 // dialogs themselves are checked by hand on each OS (README.md).
 //
@@ -483,6 +485,17 @@ async function main() {
     check(bomRows.length === 2 && bomRows.some((r) => r.includes("Brick 2 x 4")), `${label}: bill of materials ${JSON.stringify(bomRows)}`);
     if (shots) await screenshots(session, "desktop-build");
     console.log(`# ${label}: Build mode placed a brick, saved the model through the save dialog and opened it again through the open dialog`);
+
+    // An LDraw pack comes through the native open dialog too (kind `pack`, open.obpack): the CLI makes a mini
+    // pack from the synthetic fixture library of the catalog's tests; its parts join the palette and the
+    // model on screen stays.
+    run("cargo", ["build", "-q", "-p", "openbrick"]);
+    run(join(repo, "target", "debug", process.platform === "win32" ? "openbrick.exe" : "openbrick"), ["catalog", "import", join(repo, "crates", "openbrick-catalog", "tests", "fixtures", "ldraw"), "--out", join(dialogs, "open.obpack"), "--force", "--category-filter", "Brick,Plate,Tile,Technic"]);
+    await session.click("#build-pack-open");
+    await session.waitFor("const b = window.__web.build; return b.pack !== null && b.list.total === 25 ? true : null;", `${label} build pack`, 60_000);
+    const packNote = await session.exec("return [document.getElementById('build-attribution').textContent, window.__web.build.parts];");
+    check(packNote[0].includes("LDraw Parts Library") && packNote[1] === 2, `${label}: after adding the pack: ${JSON.stringify(packNote)}`);
+    console.log(`# ${label}: an LDraw pack was added through the open dialog, with its attribution, and the model stayed`);
 
     // A project link opens outside (the system browser, if there is one); the window stays on the app.
     await session.exec("document.querySelector('footer a[href^=\"https://github.com/\"]').click();");

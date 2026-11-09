@@ -353,3 +353,8 @@ python3 -I scripts/spikes/ldraw_connectivity.py /tmp/ldraw-q04/lib/ldraw --bar-s
 ```
 
 The plain run (second command) rewrites `scripts/spikes/q04_results.csv`. With the 2026-10 library the file comes out byte-identical; I checked this by running it twice. A later library update can change the numbers and the bar sample; record the new UPDATE tag when re-running. The download is about 140 MB and stays out of CI.
+
+## Follow-up: the Rust importer (2026-11-08)
+
+M3a's importer (`crates/openbrick-catalog/src/ldraw/`, [guide](../guides/ldraw-parts.md)) reimplements this report's mapping and female-stud synthesis in Rust and runs it over the whole 2026-10 library (146,853,687 bytes, SHA-256 `023083918da2d3697c794fb4267975509584f3611b993095874206a803fa610f`, the same file as above, downloaded twice again with identical hashes). It reproduces the prototype's known limits exactly: of the 66 parts whose description is plain `Brick|Plate|Tile W x L`, 63 get exactly the studs and receptacles of their footprint, and the other three are the report's: the 10 x 10 brick without tubes (36 of 100 receptacles), the 3 x 6 tile (14 of 18) and the 8 x 16 tile (80 of 128). One change to the synthesis: a cell whose centre line meets a face at the opening plane (a solid bottom, such as a beam or a block) is not an opening, and a plate's roof, exactly one stud height above its opening, counts as cover. Over the importer's default categories (1,545 parts), 1,469 (95.1 percent) get at least one connector; that is coverage, not correctness against ground truth, and the clip and hinge calibration table and the blind re-check of the 36 unverified parts are still open.
+

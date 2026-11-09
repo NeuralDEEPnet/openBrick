@@ -12,3 +12,13 @@ dist
 # SBOMs that `cargo cyclonedx` writes next to each crate manifest (the release
 # workflow moves them into target/distrib; dist-workspace.toml).
 *.cdx.xml
+
+# The LDraw Parts Library and anything made from it is user-local data (CC BY, never redistributed:
+# docs/plan/12, docs/guides/ldraw-parts.md). `openbrick catalog fetch` and `import` write these.
+# The synthetic mini library under crates/openbrick-catalog/tests/fixtures is ours and is committed.
+*.obpack
+/ldraw/
+/ldraw-lib/
+/complete.zip
+complete.zip.part
+complete.zip.unverified

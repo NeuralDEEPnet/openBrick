@@ -20,6 +20,10 @@ The `openbrick` command line builds, validates and calibrates brick-compatible p
     - [`openbrick calibrate record`](#openbrick-calibrate-record)
   - [`openbrick validate`](#openbrick-validate)
   - [`openbrick bom`](#openbrick-bom)
+  - [`openbrick catalog`](#openbrick-catalog)
+    - [`openbrick catalog import`](#openbrick-catalog-import)
+    - [`openbrick catalog info`](#openbrick-catalog-info)
+    - [`openbrick catalog fetch`](#openbrick-catalog-fetch)
   - [`openbrick convert`](#openbrick-convert)
   - [`openbrick run`](#openbrick-run)
   - [`openbrick serve`](#openbrick-serve)
@@ -40,6 +44,7 @@ Commands:
   calibrate  Print the calibration coupon and record the cells that fit best
   validate   Validate a part against a process and fit profile
   bom        Validate an assembler model (.obrick) and print its bill of materials
+  catalog    Import the LDraw parts library into a pack, inspect a pack, or download the library
   convert    Convert between .obrick, .ldr/.mpd, 3MF, STL, glTF (M3)
   run        Run a batch merch job (M4)
   serve      Serve the PWA on the LAN with a QR code (M4)
@@ -370,8 +375,123 @@ Arguments:
           The model document (.obrick)
 
 Options:
+      --pack <FILE>
+          The LDraw part pack (.obpack) the model's `ld.` parts come from, made by `openbrick catalog import`
+
       --json
           Print one JSON object on stdout instead of the table
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `openbrick catalog`
+
+```text
+Import the LDraw parts library into a pack, inspect a pack, or download the library
+
+Usage: openbrick catalog <COMMAND>
+
+Commands:
+  import  Turn an LDraw library (folder or complete.zip) into an .obpack
+  info    Print what an .obpack holds: counts, categories, connector coverage
+  fetch   Download the official LDraw library (complete.zip) into a folder
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+Guide: docs/guides/ldraw-parts.md
+```
+
+## `openbrick catalog import`
+
+```text
+Turn an LDraw library (folder or complete.zip) into an .obpack.
+
+Reads the parts of the chosen categories, derives their meshes, collision boxes and connectors from the primitives they reference, and writes a pack of the parts that have connectors. The library is the user's own copy (CC BY 2.0 / CC BY 4.0); the pack carries its attribution and is never to be committed or redistributed.
+
+Usage: openbrick catalog import [OPTIONS] --out <FILE> <SOURCE>
+
+Arguments:
+  <SOURCE>
+          The LDraw library: the folder that holds `parts` and `p` (or its `ldraw` folder), or complete.zip
+
+Options:
+      --out <FILE>
+          The pack file to write (.obpack)
+
+      --category-filter <A,B>
+          LDraw categories to import, comma separated (case-insensitive). Default: Brick, Plate, Tile, Slope, Baseplate, Wedge, Arch, Window, Door, Windscreen, Panel, Cylinder, Cone, Fence, Bracket
+
+      --limit <N>
+          The most parts to write (default 600, taken from every category in turn; 0 for all that qualify)
+
+      --resolution <LEVEL>
+          Which primitives round parts use: low (p/8), standard (p/) or high (p/48)
+
+          [default: standard]
+
+      --include-unconnected
+          Also write parts without a derived connector (placeable on the ground or at the pointer only)
+
+      --force
+          Replace the output file if it exists
+
+      --json
+          Print one JSON object on stdout instead of the report
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Examples:
+  openbrick catalog fetch --dest ~/ldraw
+  openbrick catalog import ~/ldraw/complete.zip --out ldraw.obpack
+  openbrick catalog import ~/ldraw/ldraw --out bricks.obpack --category-filter Brick,Plate,Tile --limit 150
+  openbrick catalog info ldraw.obpack
+
+Guide: docs/guides/ldraw-parts.md
+```
+
+## `openbrick catalog info`
+
+```text
+Print what an .obpack holds: counts, categories, connector coverage
+
+Usage: openbrick catalog info [OPTIONS] <PACK>
+
+Arguments:
+  <PACK>  The pack (.obpack)
+
+Options:
+      --json
+  -h, --help  Print help
+```
+
+## `openbrick catalog fetch`
+
+```text
+Download the official LDraw library (complete.zip) into a folder.
+
+Refuses to overwrite, stops at 400 MiB (also when the server does not say how long the file is) and checks the SHA-256.
+
+Usage: openbrick catalog fetch [OPTIONS] --dest <DIR>
+
+Options:
+      --dest <DIR>
+          The folder to put complete.zip in (created if missing)
+
+      --sha256 <HEX>
+          The SHA-256 (hex) the file must have. Default: the release this build was checked against; the library changes every few months, and then you pass the new hash after checking the release at ldraw.org
+
+      --url <URL>
+          Download from another https address (a mirror); the hash is still checked
+
+      --max-bytes <BYTES>
+          Stop the download once it passes this many bytes (default and highest: 400 MiB)
+
+      --json
+
 
   -h, --help
           Print help (see a summary with '-h')

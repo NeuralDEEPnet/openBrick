@@ -262,3 +262,75 @@ fn hostile_poses_never_panic() {
         Model::from_text(catalog(), &text).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
     }
 }
+
+/// A pack built in memory (the builder does not validate, as a hostile reader could not be
+/// trusted to) whose only part has the given body box.
+fn catalog_with_box(body: openbrick_catalog::Aabb) -> openbrick_catalog::Catalog {
+    use openbrick_catalog::pack::{PackCounts, PackHeader, PACK_FORMAT};
+    use openbrick_catalog::{Connectivity, Pack, PackPart, PartMesh};
+    let part = PackPart {
+        id: "ld.1".into(),
+        name: "Huge".into(),
+        category: "Brick".into(),
+        author: "x".into(),
+        license: "x".into(),
+        connectivity: Connectivity::None,
+        joints: vec![],
+        studs: [1, 1],
+        height_ldu: 24,
+        body,
+        pick: body,
+        connectors: vec![],
+        vertices: 0,
+        triangles: 0,
+        offset: 0,
+    };
+    let header = PackHeader {
+        openbrick: "1.0".into(),
+        kind: "pack".into(),
+        format: PACK_FORMAT,
+        id: "ldraw".into(),
+        library: "x".into(),
+        resolution: "standard".into(),
+        generator: "test".into(),
+        attribution: "x".into(),
+        licences: vec![],
+        counts: PackCounts::default(),
+        parts: vec![part],
+    };
+    let mesh = PartMesh {
+        positions: vec![[0.0; 3]; 3],
+        indices: vec![0, 1, 2],
+    };
+    let pack = Pack::build(header, &[mesh]).unwrap();
+    catalog().with_pack(&pack)
+}
+
+#[test]
+fn a_part_with_a_huge_box_is_refused_not_iterated() {
+    let big = 10_000_000;
+    let c = catalog_with_box(openbrick_catalog::Aabb {
+        min: [-big, -big, -big],
+        max: [big, big, big],
+    });
+    let t = std::time::Instant::now();
+    let mut m = Model::new(&c);
+    let e = m
+        .apply(&Command::Add {
+            part: "ld.1".into(),
+            pos: [0, -big, 0],
+            rot: 0,
+            colour: 4,
+        })
+        .unwrap_err();
+    assert!(matches!(e, EngineError::BoxTooLarge { .. }), "{e}");
+    assert_eq!(m.len(), 0);
+    // The same through a document, and through the pointer snap.
+    let text = doc(r#"{"id":1,"part":"ld.1","pose":{"pos":[0,-10000000,0],"rot":0},"colour":4}"#);
+    assert!(Model::from_text(&c, &text).is_err());
+    assert!(
+        t.elapsed().as_millis() < 1000,
+        "refused in {:?}",
+        t.elapsed()
+    );
+}

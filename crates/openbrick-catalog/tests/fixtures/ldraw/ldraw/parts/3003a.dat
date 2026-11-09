@@ -1,0 +1,14 @@
+0 Brick  2 x  2 Duplo Compatible
+0 Name: 3003a.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Part UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+
+0 BFC CERTIFY CCW
+
+1 16 0 0 0 20 0 0 0 4 0 0 0 20 cube.dat
+1 16 -18.0 0 0 2.0 0 0 0 24 0 0 0 20 cube.dat
+1 16 18.0 0 0 2.0 0 0 0 24 0 0 0 20 cube.dat
+1 16 0 0 -18.0 16 0 0 0 24 0 0 0 2.0 cube.dat
+1 16 0 0 18.0 16 0 0 0 24 0 0 0 2.0 cube.dat
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 stug-2x2.dat

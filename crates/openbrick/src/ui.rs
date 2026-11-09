@@ -58,19 +58,37 @@ pub struct Ui {
 }
 
 impl Ui {
-    /// One line of human text: stdout, or stderr in `--json` mode.
+    /// One line of human text: stdout, or stderr in `--json` mode. Printable (see [`printable`]).
     pub fn say(&self, line: impl AsRef<str>) {
         if self.json {
-            eprintln!("{}", line.as_ref());
+            eprintln!("{}", printable(line.as_ref()));
         } else {
-            println!("{}", line.as_ref());
+            println!("{}", printable(line.as_ref()));
         }
     }
 
-    /// One line of an error or a blocker: always stderr.
+    /// One line of an error or a blocker: always stderr. Printable (see [`printable`]).
     pub fn err(&self, line: impl AsRef<str>) {
-        eprintln!("{}", line.as_ref());
+        eprintln!("{}", printable(line.as_ref()));
     }
+}
+
+/// `text` as it may be printed to a terminal: every control character but the line break and the
+/// tab, and every bidirectional or other invisible format character, becomes U+FFFD. What the
+/// commands print can hold text from a library or a pack (a part's description, a file name, a
+/// version tag); an escape sequence in it must not be able to move the cursor, recolour or clear
+/// the screen, set the title, or make later text read backwards.
+pub fn printable(text: &str) -> std::borrow::Cow<'_, str> {
+    use openbrick_catalog::text::{is_unsafe_char, REPLACEMENT};
+    let bad = |c: char| c != '\n' && c != '\t' && is_unsafe_char(c);
+    if !text.chars().any(bad) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(
+        text.chars()
+            .map(|c| if bad(c) { REPLACEMENT } else { c })
+            .collect(),
+    )
 }
 
 /// A number for a message: three decimals at most, without trailing zeros.
@@ -136,6 +154,28 @@ pub fn failure_json(command: &str, fail: &Fail) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn printable_replaces_escapes_and_direction_marks_only() {
+        assert_eq!(
+            printable("plain é text\n\tindented"),
+            "plain é text\n\tindented"
+        );
+        assert!(matches!(printable("plain"), std::borrow::Cow::Borrowed(_)));
+        assert_eq!(
+            printable("a\u{1b}[2Jb\u{7}c\r"),
+            "a\u{FFFD}[2Jb\u{FFFD}c\u{FFFD}"
+        );
+        assert_eq!(
+            printable("x\u{202E}y\u{2066}z\u{200B}"),
+            "x\u{FFFD}y\u{FFFD}z\u{FFFD}"
+        );
+        assert_eq!(
+            printable("\u{9b}31m"),
+            "\u{FFFD}31m",
+            "the one-byte CSI too"
+        );
+    }
 
     #[test]
     fn numbers_are_short() {

@@ -24,7 +24,7 @@ pub mod model;
 pub mod snap;
 mod spatial;
 
-pub use document::{Bom, BomLine, DocError, ModelDoc, MODEL_PRAGMA};
+pub use document::{Bom, BomLine, DocError, ModelDoc, PackRequirement, MODEL_PRAGMA};
 pub use graph::Stats;
 pub use history::Command;
 pub use model::{EngineError, Instance, InstanceId, Instances, Model};
@@ -42,7 +42,8 @@ pub const MAX_RAY: f64 = 1.0e9;
 /// The stud grid every vertical connector of a placed part lies on: X and Z
 /// are odd multiples of half a stud (`HALF_STUD_LDU`, so a 2 x 2 placed at the
 /// origin has its studs at plus and minus 10), and Y is a whole number of
-/// plates. [`snap`] only produces poses on it, and [`Model`] refuses others.
+/// plates. [`snap`] only produces poses on it for the built-in parts, and [`Model`]
+/// refuses a built-in part off it; a part of an LDraw pack is not held to it.
 pub fn on_stud_grid(p: [i32; 3]) -> bool {
     use openbrick_units::{HALF_STUD_LDU, PLATE_LDU, STUD_PITCH_LDU};
     let horizontal = |v: i32| (v - HALF_STUD_LDU).rem_euclid(STUD_PITCH_LDU) == 0;

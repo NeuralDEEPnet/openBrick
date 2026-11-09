@@ -1,0 +1,9 @@
+0 Plate  2 x  2 Body
+0 Name: 3022s01.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Subpart UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+
+0 BFC CERTIFY CCW
+
+1 16 0 0 0 20 0 0 0 8 0 0 0 20 cube.dat

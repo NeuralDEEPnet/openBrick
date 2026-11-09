@@ -2,10 +2,10 @@
 //! desktop adapter (apps/web/src/files.js) calls.
 //!
 //! - `pick_file(kind)` shows the native open dialog for an SVG drawing, a
-//!   fit profile or a part document and answers with the chosen file's name and size, or `null`
+//!   fit profile, a part document, a model or an LDraw part pack and answers with the chosen file's name and size, or `null`
 //!   when the user cancelled. The path stays here.
 //! - `read_picked_file(kind, maxBytes)` reads that file once, at most
-//!   `maxBytes` (and never more than [`MAX_READ_BYTES`]), and answers with its
+//!   `maxBytes` (and never more than the kind's [`OpenKind::max_read_bytes`]), and answers with its
 //!   bytes.
 //! - `save_file(bytes)` takes the file bytes as the request body and the
 //!   suggested name and format in two headers, shows the native save dialog,
@@ -28,7 +28,7 @@ use tauri::webview::NewWindowResponse;
 use tauri::{Manager, State, Url, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::files::{self, OpenKind, SaveFormat, FORMAT_HEADER, MAX_READ_BYTES, NAME_HEADER};
+use crate::files::{self, OpenKind, SaveFormat, FORMAT_HEADER, NAME_HEADER};
 use crate::shell;
 
 /// Debug builds only: when this variable names a folder, the dialogs are not
@@ -187,7 +187,7 @@ async fn read_picked_file(
     let Some((_, path)) = taken.filter(|(k, _)| *k == kind) else {
         return Err("no file is chosen for this; choose the file again".to_string());
     };
-    let bytes = files::read_limited(&path, max_bytes.min(MAX_READ_BYTES))?;
+    let bytes = files::read_limited(&path, max_bytes.min(kind.max_read_bytes()))?;
     Ok(Response::new(bytes))
 }
 

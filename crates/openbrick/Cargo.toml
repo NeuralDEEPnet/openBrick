@@ -19,7 +19,10 @@ openbrick-geom = { workspace = true }
 openbrick-part = { workspace = true }
 openbrick-print = { workspace = true }
 openbrick-io = { workspace = true }
-openbrick-catalog = { workspace = true }
+# The `catalog import` command reads LDraw libraries: the importer is a feature
+# of the catalog crate that the WebAssembly build leaves off.
+openbrick-catalog = { workspace = true, features = ["import"] }
+sha2 = { workspace = true }
 openbrick-engine = { workspace = true }
 
 [dev-dependencies]

@@ -144,6 +144,49 @@ export function replaceNeedsConfirm({ dirty }) {
 }
 
 /**
+ * A queue that runs tasks one after another, whether the one before succeeded or failed. Every
+ * edit and every question that depends on the model (a pick, a snap) goes through it, so a task
+ * that looks at the model sees what every earlier task did.
+ */
+export function createTaskQueue() {
+  let chain = Promise.resolve();
+  return (fn) => {
+    chain = chain.then(fn, fn);
+    return chain;
+  };
+}
+
+/**
+ * The placed part a removal at `ray` is for: asks the core now, with `pick`, and looks the answer up
+ * in `byId`. Never a remembered hover: the hover is from before the edits queued ahead of this one
+ * (a part just placed at the aim is not what the last hover saw). Resolves null when nothing is there.
+ */
+export async function removalTarget(pick, ray, byId) {
+  if (!ray) return null;
+  const hit = await pick(ray);
+  return hit?.instance != null ? (byId.get(hit.instance) ?? null) : null;
+}
+
+/**
+ * Whether a model on screen uses a part of the loaded LDraw pack: `instances` as decoded
+ * (`part` is the catalog part number), `parts` the catalog's part list (`origin`). Adding or
+ * removing a pack can only take parts away from a model that does.
+ */
+export function usesPackParts(instances, parts) {
+  return instances.some((i) => parts[i.part]?.origin === "ldraw");
+}
+
+/** The longest part name the palette shows; the core cuts names at 256 characters. */
+export const MAX_PALETTE_NAME = 120;
+
+/** A part name for the palette: control, direction and other invisible characters replaced, and cut. */
+export function paletteName(name) {
+  const clean = String(name ?? "").replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "\uFFFD");
+  const chars = [...clean];
+  return chars.length > MAX_PALETTE_NAME ? `${chars.slice(0, MAX_PALETTE_NAME - 1).join("")}…` : clean;
+}
+
+/**
  * Whether Clear has anything to remove: any part but a baseplate standing on the ground
  * (the engine's `ClearBuilt` keeps exactly those). `parts` is the catalog's part list
  * (`base`, `heightLdu`); a baseplate is on the ground when its bottom (position plus height)

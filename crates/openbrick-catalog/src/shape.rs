@@ -4,7 +4,15 @@
 //! Everything here is derived from the part evaluator's output
 //! ([`crate::builtin`]), never typed in by hand (CLAUDE.md).
 
-use openbrick_units::Rot24;
+use openbrick_units::{Rot24, PLATE_LDU, STUD_PITCH_LDU};
+
+/// The widest a part's box may be along any axis, in LDU (8,192 LDU is 3.3 m; the widest part of
+/// the 2026-10 LDraw library is 960). A pack that claims more is refused.
+pub const MAX_BOX_EXTENT_LDU: i32 = 8192;
+/// The most lattice cells (one stud by one plate by one stud) one body box may cover; the engine's
+/// spatial hash holds one entry per cell, so this bounds its work. The 2026-10 library's largest
+/// part covers about 21,000.
+pub const MAX_BOX_CELLS: u64 = 65_536;
 
 /// An axis-aligned box in integer LDU, `min` inclusive and `max` exclusive in
 /// the sense that two boxes that only touch (`a.max == b.min`) do not overlap.
@@ -40,6 +48,21 @@ impl Aabb {
         out
     }
 
+    /// How many lattice cells (one stud by one plate by one stud) the box covers: the cells from the
+    /// one of its minimum corner to the one just inside its maximum corner. Counted, never iterated,
+    /// so it is cheap for any box; an inverted box covers none.
+    pub fn lattice_cells(&self) -> u64 {
+        let cell = [STUD_PITCH_LDU, PLATE_LDU, STUD_PITCH_LDU];
+        let mut n = 1u64;
+        for ((lo, hi), c) in self.min.iter().zip(&self.max).zip(cell) {
+            let c = i64::from(c);
+            let lo = i64::from(*lo).div_euclid(c);
+            let hi = (i64::from(*hi) - 1).div_euclid(c);
+            n = n.saturating_mul((hi - lo + 1).max(0) as u64);
+        }
+        n
+    }
+
     /// Size along each axis.
     pub fn size(&self) -> [i32; 3] {
         [
@@ -60,9 +83,13 @@ impl Aabb {
     }
 }
 
-/// The connector kinds the built-in catalog derives (the docs/plan/06 section
-/// 6 names): a stud on top, and the receptacle under a body that takes one
-/// (tubes, pins and walls together; `tubeF` in the evaluator).
+/// The connector kinds the engine handles (the docs/plan/06 section 6 names): a
+/// stud on top and the receptacle under a body that takes one (tubes, pins and
+/// walls together; `tubeF`), which the built-in catalog and the LDraw pack
+/// derive, plus the Technic pin and axle connectors the LDraw pack derives from
+/// its primitives. Studs and receptacles mate pointing at each other; a pin or
+/// an axle mates with the hole it sits in when their centres coincide and their
+/// axes are parallel (an axis has no sign, so either direction fits).
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -71,6 +98,14 @@ pub enum ConnKind {
     StudM,
     #[serde(rename = "tubeF")]
     TubeF,
+    #[serde(rename = "pinM")]
+    PinM,
+    #[serde(rename = "pinF")]
+    PinF,
+    #[serde(rename = "axleM")]
+    AxleM,
+    #[serde(rename = "axleF")]
+    AxleF,
 }
 
 impl ConnKind {
@@ -79,6 +114,10 @@ impl ConnKind {
         match self {
             ConnKind::StudM => "studM",
             ConnKind::TubeF => "tubeF",
+            ConnKind::PinM => "pinM",
+            ConnKind::PinF => "pinF",
+            ConnKind::AxleM => "axleM",
+            ConnKind::AxleF => "axleF",
         }
     }
 
@@ -87,6 +126,10 @@ impl ConnKind {
         match name {
             "studM" => Some(ConnKind::StudM),
             "tubeF" => Some(ConnKind::TubeF),
+            "pinM" => Some(ConnKind::PinM),
+            "pinF" => Some(ConnKind::PinF),
+            "axleM" => Some(ConnKind::AxleM),
+            "axleF" => Some(ConnKind::AxleF),
             _ => None,
         }
     }
@@ -96,7 +139,26 @@ impl ConnKind {
         match self {
             ConnKind::StudM => ConnKind::TubeF,
             ConnKind::TubeF => ConnKind::StudM,
+            ConnKind::PinM => ConnKind::PinF,
+            ConnKind::PinF => ConnKind::PinM,
+            ConnKind::AxleM => ConnKind::AxleF,
+            ConnKind::AxleF => ConnKind::AxleM,
         }
+    }
+
+    /// Pins and axles: their direction is an axis, not a facing.
+    pub fn is_axial(self) -> bool {
+        !matches!(self, ConnKind::StudM | ConnKind::TubeF)
+    }
+
+    /// The part that goes into the other (stud, pin, axle).
+    pub fn is_male(self) -> bool {
+        matches!(self, ConnKind::StudM | ConnKind::PinM | ConnKind::AxleM)
+    }
+
+    /// Studs and receptacles sit on the stud grid; pins and axles do not have to.
+    pub fn is_stud_kind(self) -> bool {
+        !self.is_axial()
     }
 }
 
@@ -125,11 +187,18 @@ impl Conn {
     }
 
     /// True when two placed connectors mate: compatible kinds at the same
-    /// point, pointing at each other.
+    /// point, pointing at each other (studs and receptacles) or along one axis
+    /// (pins and axles).
     pub fn mates(&self, other: &Conn) -> bool {
-        self.kind.mate() == other.kind
-            && self.pos == other.pos
-            && self.dir == [-other.dir[0], -other.dir[1], -other.dir[2]]
+        if self.kind.mate() != other.kind || self.pos != other.pos {
+            return false;
+        }
+        let neg = [-other.dir[0], -other.dir[1], -other.dir[2]];
+        if self.kind.is_axial() {
+            self.dir == other.dir || self.dir == neg
+        } else {
+            self.dir == neg
+        }
     }
 }
 
