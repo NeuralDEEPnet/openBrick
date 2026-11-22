@@ -478,7 +478,7 @@ impl Source for ZipSource {
 /// A library with a parse cache.
 pub struct Library {
     source: Box<dyn Source>,
-    resolution: Resolution,
+    resolution: Cell<Resolution>,
     cache: RefCell<HashMap<String, Option<Rc<ParsedFile>>>>,
     bytes_read: Cell<u64>,
     work: Cell<u64>,
@@ -506,7 +506,7 @@ impl Library {
         };
         let lib = Library {
             source,
-            resolution,
+            resolution: Cell::new(resolution),
             cache: RefCell::new(HashMap::new()),
             bytes_read: Cell::new(0),
             work: Cell::new(0),
@@ -521,7 +521,17 @@ impl Library {
     }
 
     pub fn resolution(&self) -> Resolution {
-        self.resolution
+        self.resolution.get()
+    }
+
+    /// Run `f` with the library preferring `resolution`'s primitives, then restore the setting.
+    /// The collision masks are built this way at one fixed resolution, so they never depend on the
+    /// level of detail the user chose for the render mesh (docs/plan/07 section 6).
+    pub fn at_resolution<R>(&self, resolution: Resolution, f: impl FnOnce(&Library) -> R) -> R {
+        let before = self.resolution.replace(resolution);
+        let out = f(self);
+        self.resolution.set(before);
+        out
     }
 
     /// Bound the work every walk of this library may do in all: one unit per sub-file reference
@@ -577,7 +587,7 @@ impl Library {
         }
         let mut c = vec![format!("parts/{n}")];
         if !n.contains('/') {
-            match self.resolution {
+            match self.resolution.get() {
                 Resolution::High => c.push(format!("p/48/{n}")),
                 Resolution::Low => c.push(format!("p/8/{n}")),
                 Resolution::Standard => {}

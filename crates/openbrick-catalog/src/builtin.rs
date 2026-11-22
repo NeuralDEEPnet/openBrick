@@ -331,6 +331,7 @@ fn build_full(
             body: body_box,
             pick,
             connectors,
+            mask: None,
         },
         mesh,
         height_ldu,

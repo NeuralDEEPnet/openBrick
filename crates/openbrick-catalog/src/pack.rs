@@ -8,7 +8,7 @@
 //! carries the library's attribution and licence text, and each part's author
 //! and licence line, so a copy keeps its credits.
 //!
-//! Layout, little-endian, format version 1:
+//! Layout, little-endian, format version 2 (format 1 is the same without the last section):
 //!
 //! | bytes | content |
 //! |-------|---------|
@@ -18,6 +18,9 @@
 //! | 4 | `blob_len`, the compressed size |
 //! | 8 | `blob_raw_len`, the size after inflating |
 //! | `blob_len` | the mesh blob, raw DEFLATE: for each part in header order its vertices (`vertices` x 3 `f32`) then its indices (`triangles` x 3 `u32`) |
+//! | 4 | format 2 only: `mask_len`, the compressed size of the mask blob |
+//! | 8 | format 2 only: `mask_raw_len`, the size after inflating |
+//! | `mask_len` | format 2 only: the mask blob, raw DEFLATE: for each part with a mask its bit grid ([`crate::mask`]) |
 //! | 32 | SHA-256 of every byte before it (the pack's fingerprint) |
 //!
 //! Writing is deterministic: the same parts in the same order give the same
@@ -32,12 +35,17 @@
 use sha2::{Digest, Sha256};
 
 use crate::builtin::PartMesh;
+use crate::mask::{
+    cell_count, Mask, MaskGrid, MaskRef, SharedMask, MAX_MASK_BLOB_BYTES, MAX_PACK_MASK_BOXES,
+};
 use crate::shape::{Aabb, Conn, MAX_BOX_CELLS, MAX_BOX_EXTENT_LDU};
 use crate::text::{has_unsafe, safe};
 use openbrick_units::STUD_PITCH_LDU;
 
-/// The pack format this build writes and reads.
-pub const PACK_FORMAT: u32 = 1;
+/// The pack format this build writes. Format 2 adds the mask section (docs/plan/08 section 1).
+pub const PACK_FORMAT: u32 = 2;
+/// The oldest pack format this build still reads (format 1: no masks, parts collide as boxes).
+pub const MIN_PACK_FORMAT: u32 = 1;
 /// The first bytes of every pack.
 pub const MAGIC: &[u8; 8] = b"OBPACK1\n";
 /// The prefix of the part ids of an LDraw pack: `ld.3001`.
@@ -114,6 +122,9 @@ pub struct PackCounts {
     pub free_placement: u32,
     /// Imported parts that carry clip, hinge, ball or socket joints this slice does not model.
     pub with_joints: u32,
+    /// Imported parts with an occupancy mask (the others collide as their box).
+    #[serde(default)]
+    pub with_masks: u32,
 }
 
 /// One part of a pack: what the engine and the palette need, and where its mesh is.
@@ -142,6 +153,10 @@ pub struct PackPart {
     pub triangles: u32,
     /// Byte offset of this part's mesh in the inflated blob.
     pub offset: u64,
+    /// Where the occupancy mask of the body is in the mask blob (format 2); `None` for a part that
+    /// collides as its box. A format 1 header never has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<MaskRef>,
 }
 
 /// The pack's JSON header.
@@ -176,7 +191,7 @@ pub enum PackError {
     Damaged(String),
     #[error("the pack's checksum does not match its content; it was changed or cut short, import it again")]
     Checksum,
-    #[error("the pack has format version {0}; this build reads version {PACK_FORMAT}; update OpenBrick3D or import the pack again")]
+    #[error("the pack has format version {0}; this build reads versions {MIN_PACK_FORMAT} to {PACK_FORMAT}; update OpenBrick3D or import the pack again")]
     Version(u32),
 }
 
@@ -190,6 +205,10 @@ fn damaged(m: impl Into<String>) -> PackError {
 pub struct Pack {
     pub header: PackHeader,
     blob: Vec<u8>,
+    /// The inflated mask blob (empty for format 1).
+    mask_blob: Vec<u8>,
+    /// Each part's mask, merged into boxes (decoded and checked when the pack is built or read).
+    masks: Vec<Option<SharedMask>>,
     fingerprint: String,
 }
 
@@ -200,7 +219,18 @@ fn hex(bytes: &[u8]) -> String {
 impl Pack {
     /// Build a pack from its parts: `parts[i]` is the part's metadata (its
     /// `vertices`, `triangles` and `offset` are set here) and `meshes[i]` its mesh.
-    pub fn build(mut header: PackHeader, meshes: &[PartMesh]) -> Result<Pack, PackError> {
+    pub fn build(header: PackHeader, meshes: &[PartMesh]) -> Result<Pack, PackError> {
+        Pack::build_with_masks(header, meshes, &[])
+    }
+
+    /// [`Pack::build`] with occupancy masks: `masks[i]` is part `i`'s bit grid (missing entries,
+    /// and a shorter slice, mean no mask). Needs `header.format` 2; the grid must be the size of
+    /// the part's body box.
+    pub fn build_with_masks(
+        mut header: PackHeader,
+        meshes: &[PartMesh],
+        masks: &[Option<MaskGrid>],
+    ) -> Result<Pack, PackError> {
         if header.parts.len() != meshes.len() {
             return Err(damaged("one mesh per part is needed"));
         }
@@ -226,11 +256,41 @@ impl Pack {
                 ));
             }
         }
+        let mut mask_blob = Vec::new();
+        for (i, p) in header.parts.iter_mut().enumerate() {
+            p.mask = None;
+            if let Some(Some(g)) = masks.get(i) {
+                if header.format < 2 {
+                    return Err(damaged("masks need pack format 2"));
+                }
+                let n = g
+                    .validate()
+                    .map_err(|e| damaged(format!("part {}: {e}", p.id)))?;
+                if g.origin != p.body.min || g.dims.map(i64::from) != p.body.size().map(i64::from) {
+                    return Err(damaged(format!(
+                        "the mask of part {} is not its body box",
+                        p.id
+                    )));
+                }
+                p.mask = Some(MaskRef {
+                    offset: mask_blob.len() as u64,
+                    bytes: n.div_ceil(8) as u32,
+                    solid: g.solid() as u32,
+                });
+                mask_blob.extend(&g.bits);
+                if mask_blob.len() > MAX_MASK_BLOB_BYTES {
+                    return Err(damaged("the masks are too large for one pack"));
+                }
+            }
+        }
         let mut pack = Pack {
             header,
             blob,
+            mask_blob,
+            masks: Vec::new(),
             fingerprint: String::new(),
         };
+        pack.masks = pack.decode_masks()?;
         let bytes = pack.to_bytes()?;
         pack.fingerprint = hex(&bytes[bytes.len() - 32..]);
         Ok(pack)
@@ -240,6 +300,77 @@ impl Pack {
     /// pack's identity, written into `.obrick` files that use it.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
+    }
+
+    /// The occupancy mask of part `index`, if it has one (shared; cheap to clone).
+    pub fn mask(&self, index: usize) -> Option<SharedMask> {
+        self.masks.get(index).cloned().flatten()
+    }
+
+    /// Decode and check every part's mask against the header (sizes, ranges, solid counts and the
+    /// pack's total box budget), before anything is handed out.
+    fn decode_masks(&self) -> Result<Vec<Option<SharedMask>>, PackError> {
+        let mut out = Vec::with_capacity(self.header.parts.len());
+        let mut next = 0u64;
+        let mut boxes = 0usize;
+        for p in &self.header.parts {
+            let Some(r) = &p.mask else {
+                out.push(None);
+                continue;
+            };
+            if self.header.format < 2 {
+                return Err(damaged(format!(
+                    "part {} has a mask in a format 1 pack",
+                    p.id
+                )));
+            }
+            let size = p.body.size();
+            if size.iter().any(|&v| v <= 0) {
+                return Err(damaged(format!(
+                    "part {} has a mask but an empty body",
+                    p.id
+                )));
+            }
+            let dims = size.map(|v| v as u32);
+            let cells = cell_count(dims).ok_or_else(|| {
+                damaged(format!(
+                    "the mask of part {} spans more cells than a mask may",
+                    p.id
+                ))
+            })?;
+            if u64::from(r.bytes) != cells.div_ceil(8)
+                || r.offset != next
+                || r.offset + u64::from(r.bytes) > self.mask_blob.len() as u64
+            {
+                return Err(damaged(format!(
+                    "the mask of part {} is outside the mask blob or of the wrong size",
+                    p.id
+                )));
+            }
+            next = r.offset + u64::from(r.bytes);
+            let g = MaskGrid {
+                origin: p.body.min,
+                dims,
+                bits: self.mask_blob[r.offset as usize..next as usize].to_vec(),
+            };
+            let m = Mask::from_grid(&g)
+                .map_err(|e| damaged(format!("the mask of part {}: {e}", p.id)))?;
+            if m.volume() != u64::from(r.solid) {
+                return Err(damaged(format!(
+                    "the mask of part {} does not hold the {} cells it says",
+                    p.id, r.solid
+                )));
+            }
+            boxes += m.boxes().len();
+            if boxes > MAX_PACK_MASK_BOXES {
+                return Err(damaged("the masks of the pack need too many boxes in all"));
+            }
+            out.push(Some(std::sync::Arc::new(m)));
+        }
+        if next != self.mask_blob.len() as u64 {
+            return Err(damaged("the mask blob has bytes no part uses"));
+        }
+        Ok(out)
     }
 
     /// The part's mesh, decoded.
@@ -287,6 +418,12 @@ impl Pack {
         out.extend((blob.len() as u32).to_le_bytes());
         out.extend((self.blob.len() as u64).to_le_bytes());
         out.extend(&blob);
+        if self.header.format >= 2 {
+            let masks = miniz_oxide::deflate::compress_to_vec(&self.mask_blob, 6);
+            out.extend((masks.len() as u32).to_le_bytes());
+            out.extend((self.mask_blob.len() as u64).to_le_bytes());
+            out.extend(&masks);
+        }
         let sum = Sha256::digest(&out);
         out.extend(sum);
         if out.len() > MAX_PACK_BYTES {
@@ -325,7 +462,7 @@ impl Pack {
             .ok_or_else(|| damaged("the header is cut short"))?;
         let header: PackHeader =
             serde_json::from_slice(hbytes).map_err(|e| damaged(format!("the header: {e}")))?;
-        if header.format != PACK_FORMAT {
+        if !(MIN_PACK_FORMAT..=PACK_FORMAT).contains(&header.format) {
             return Err(PackError::Version(header.format));
         }
         let at = hstart + hlen;
@@ -350,20 +487,65 @@ impl Pack {
         let comp = body
             .get(at + 12..at + 12 + clen)
             .ok_or_else(|| damaged("the mesh blob is cut short"))?;
-        if at + 12 + clen != body.len() {
-            return Err(damaged("there are extra bytes after the mesh blob"));
+        let mut end = at + 12 + clen;
+        let mut mask_blob = Vec::new();
+        if header.format >= 2 {
+            // The mask section: its declared inflated size must be exactly what the parts' masks
+            // need (the header says each one's byte count), checked before anything is inflated.
+            let mlen = rd32(end)?;
+            let mraw = body
+                .get(end + 4..end + 12)
+                .map(|b| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                .ok_or_else(|| damaged("the file is cut short"))? as usize;
+            if mraw > MAX_MASK_BLOB_BYTES {
+                return Err(damaged("the mask blob is too large"));
+            }
+            let need = header.parts.iter().try_fold(0u64, |n, p| {
+                n.checked_add(p.mask.as_ref().map_or(0, |m| u64::from(m.bytes)))
+            });
+            if need != Some(mraw as u64) {
+                return Err(damaged(
+                    "the size of the mask blob is not the size the masks need",
+                ));
+            }
+            let mcomp = body
+                .get(end + 12..end + 12 + mlen)
+                .ok_or_else(|| damaged("the mask blob is cut short"))?;
+            end += 12 + mlen;
+            if mraw == 0 {
+                // Nothing to inflate: an empty stream is a few bytes at most.
+                if mlen > 16 {
+                    return Err(damaged(
+                        "the empty mask blob has a stream longer than an empty one",
+                    ));
+                }
+            } else {
+                mask_blob = miniz_oxide::inflate::decompress_to_vec_with_limit(mcomp, mraw)
+                    .map_err(|e| {
+                        damaged(format!("the mask blob does not inflate ({:?})", e.status))
+                    })?;
+                if mask_blob.len() != mraw {
+                    return Err(damaged("the mask blob has the wrong size"));
+                }
+            }
+        }
+        if end != body.len() {
+            return Err(damaged("there are extra bytes after the last blob"));
         }
         let blob = miniz_oxide::inflate::decompress_to_vec_with_limit(comp, raw_len)
             .map_err(|e| damaged(format!("the mesh blob does not inflate ({:?})", e.status)))?;
         if blob.len() != raw_len {
             return Err(damaged("the mesh blob has the wrong size"));
         }
-        let pack = Pack {
+        let mut pack = Pack {
             header,
             blob,
+            mask_blob,
+            masks: Vec::new(),
             fingerprint: hex(sum),
         };
         pack.check()?;
+        pack.masks = pack.decode_masks()?;
         Ok(pack)
     }
 
@@ -608,6 +790,7 @@ mod tests {
             vertices: 0,
             triangles: 0,
             offset: 0,
+            mask: None,
         };
         let mesh = PartMesh {
             positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -704,6 +887,9 @@ mod tests {
         out.extend((comp.len() as u32).to_le_bytes());
         out.extend(raw_len.to_le_bytes());
         out.extend(comp);
+        // The (empty) mask section of format 2.
+        out.extend(0u32.to_le_bytes());
+        out.extend(0u64.to_le_bytes());
         let sum = Sha256::digest(&out);
         out.extend(sum);
         out
@@ -821,7 +1007,11 @@ mod tests {
             let m = Pack::from_bytes(&bytes).unwrap_err().to_string();
             assert!(m.contains(needle) && m.len() < 600, "{m}");
         };
-        assert!(Pack::from_bytes(&edit(&|_| {})).is_ok());
+        assert!(
+            Pack::from_bytes(&edit(&|_| {})).is_ok(),
+            "{:?}",
+            Pack::from_bytes(&edit(&|_| {})).err()
+        );
         refused(
             edit(&|h| h["attribution"] = ("a".repeat(70_000)).into()),
             "attribution",
@@ -925,6 +1115,187 @@ mod tests {
             "{} bytes: {m}",
             m.len()
         );
+    }
+
+    /// A format 2 pack whose first part (a 10 x 8 x 10 block) has the mask of a block with a
+    /// 4 x 4 x 4 hole through its middle.
+    fn masked() -> Pack {
+        let base = sample();
+        let mut header = base.header.clone();
+        header.parts[0].body = Aabb {
+            min: [-5, 0, -5],
+            max: [5, 8, 5],
+        };
+        header.parts[0].pick = header.parts[0].body;
+        header.parts[0].studs = [1, 1];
+        header.parts[0].height_ldu = 8;
+        let mut g = MaskGrid::empty(&header.parts[0].body).unwrap();
+        for y in 0..8u32 {
+            for z in 0..10u32 {
+                for x in 0..10u32 {
+                    g.set(x, y, z, !((3..7).contains(&x) && (3..7).contains(&z)));
+                }
+            }
+        }
+        let meshes: Vec<_> = (0..2).map(|i| base.mesh(i).unwrap()).collect();
+        Pack::build_with_masks(header, &meshes, &[Some(g), None]).unwrap()
+    }
+
+    #[test]
+    fn a_mask_round_trips_through_the_file_and_a_format_1_pack_still_loads() {
+        let p = masked();
+        let bytes = p.to_bytes().unwrap();
+        let q = Pack::from_bytes(&bytes).unwrap();
+        assert_eq!(q.header, p.header);
+        let m = q.mask(0).expect("part 0 has a mask");
+        assert_eq!(m.volume(), 10 * 8 * 10 - 4 * 8 * 4);
+        assert!(q.mask(1).is_none());
+        // Deterministic.
+        assert_eq!(bytes, masked().to_bytes().unwrap());
+        // Format 1: the same parts without masks, in the layout of version 1 (no mask section).
+        let mut header = sample().header;
+        header.format = 1;
+        let meshes: Vec<_> = (0..2).map(|i| sample().mesh(i).unwrap()).collect();
+        let v1 = Pack::build(header, &meshes).unwrap();
+        let v1_bytes = v1.to_bytes().unwrap();
+        let back = Pack::from_bytes(&v1_bytes).expect("a format 1 pack is read");
+        assert_eq!(back.header.format, 1);
+        assert!(back.mask(0).is_none());
+        // The layout is the old one: magic, header, blob, hash, nothing in between.
+        let v2_bytes = sample().to_bytes().unwrap();
+        assert_eq!(
+            v2_bytes.len(),
+            v1_bytes.len() + 12 + 2,
+            "format 2 adds the 12 byte mask section header and the 2 byte empty stream"
+        );
+        // A format 1 pack cannot carry a mask; a version in the future is refused with the range.
+        let mut h = masked().header;
+        h.format = 1;
+        let forged = Pack {
+            header: h,
+            ..masked()
+        };
+        assert!(Pack::from_bytes(&forged.to_bytes().unwrap()).is_err());
+        let mut h = sample().header;
+        h.format = 3;
+        let e = Pack::from_bytes(
+            &Pack {
+                header: h,
+                ..sample()
+            }
+            .to_bytes()
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert_eq!(e, PackError::Version(3));
+        assert!(e.to_string().contains("1 to 2"), "{e}");
+    }
+
+    #[test]
+    fn a_hostile_mask_is_refused_cleanly() {
+        let refused = |what: &str, edit: &dyn Fn(&mut Pack)| {
+            let mut p = masked();
+            edit(&mut p);
+            let t = std::time::Instant::now();
+            let e = Pack::from_bytes(&p.to_bytes().unwrap())
+                .err()
+                .unwrap_or_else(|| panic!("{what}: accepted"));
+            assert!(e.to_string().len() < 400, "{what}: {e}");
+            assert!(t.elapsed().as_millis() < 500, "{what}: slow");
+        };
+        refused("wrong byte count", &|p| {
+            p.header.parts[0].mask.as_mut().unwrap().bytes += 1
+        });
+        refused("offset gap", &|p| {
+            p.header.parts[0].mask.as_mut().unwrap().offset = 8
+        });
+        refused("solid count", &|p| {
+            p.header.parts[0].mask.as_mut().unwrap().solid += 1
+        });
+        refused("mask on an empty body", &|p| {
+            p.header.parts[0].body.max = p.header.parts[0].body.min;
+            p.header.parts[0].pick = p.header.parts[0].body;
+        });
+        refused("a mask for a part without one in the blob", &|p| {
+            p.header.parts[1].mask = Some(MaskRef {
+                offset: 100,
+                bytes: 125,
+                solid: 1,
+            });
+        });
+        refused("stray bits", &|p| {
+            // 10 x 8 x 10 = 800 cells = 100 bytes: no padding there; make the body 3 x 3 x 3.
+            p.header.parts[0].body = Aabb {
+                min: [0; 3],
+                max: [3; 3],
+            };
+            p.header.parts[0].pick = p.header.parts[0].body;
+            p.header.parts[0].studs = [1, 1];
+            p.header.parts[0].height_ldu = 3;
+            p.header.parts[0].mask = Some(MaskRef {
+                offset: 0,
+                bytes: 4,
+                solid: 0,
+            });
+            p.mask_blob = vec![0, 0, 0, 0xff];
+        });
+        refused("a body too large for a mask", &|p| {
+            p.header.parts[0].body = Aabb {
+                min: [0; 3],
+                max: [200, 200, 200],
+            };
+            p.header.parts[0].pick = p.header.parts[0].body;
+            p.header.parts[0].studs = [10, 10];
+            p.header.parts[0].height_ldu = 200;
+        });
+        // A declared blob that does not match what the masks need, and one that inflates to more.
+        let p = masked();
+        let json = serde_json::to_vec(&p.header).unwrap();
+        let mesh = miniz_oxide::deflate::compress_to_vec(&p.blob, 6);
+        let mut raw = Vec::new();
+        raw.extend(MAGIC);
+        raw.extend((json.len() as u32).to_le_bytes());
+        raw.extend(&json);
+        raw.extend((mesh.len() as u32).to_le_bytes());
+        raw.extend((p.blob.len() as u64).to_le_bytes());
+        raw.extend(&mesh);
+        let zeros = miniz_oxide::deflate::compress_to_vec(&vec![0u8; 8 << 20], 1);
+        for (declared, comp) in [
+            (1u64 << 40, zeros.clone()),
+            (p.mask_blob.len() as u64, zeros.clone()),
+            (3, vec![]),
+        ] {
+            let mut f = raw.clone();
+            f.extend((comp.len() as u32).to_le_bytes());
+            f.extend(declared.to_le_bytes());
+            f.extend(&comp);
+            let sum = Sha256::digest(&f);
+            f.extend(sum);
+            let t = std::time::Instant::now();
+            assert!(Pack::from_bytes(&f).is_err());
+            assert!(t.elapsed().as_millis() < 500);
+        }
+        // A checkerboard mask needs more boxes than a mask may be merged into.
+        let base = sample();
+        let mut header = base.header.clone();
+        header.parts[0].body = Aabb {
+            min: [0; 3],
+            max: [80, 4, 80],
+        };
+        header.parts[0].pick = header.parts[0].body;
+        header.parts[0].studs = [4, 4];
+        header.parts[0].height_ldu = 4;
+        let mut g = MaskGrid::empty(&header.parts[0].body).unwrap();
+        for y in 0..4 {
+            for z in 0..80 {
+                for x in 0..80 {
+                    g.set(x, y, z, (x + y + z) % 2 == 0);
+                }
+            }
+        }
+        let meshes: Vec<_> = (0..2).map(|i| base.mesh(i).unwrap()).collect();
+        let e = Pack::build_with_masks(header, &meshes, &[Some(g), None]).unwrap_err();
+        assert!(e.to_string().contains("too fragmented"), "{e}");
     }
 
     #[test]

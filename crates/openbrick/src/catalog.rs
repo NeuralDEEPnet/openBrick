@@ -16,7 +16,9 @@ use std::process::{Command, ExitStatus};
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
-use openbrick_catalog::ldraw::{import, ImportError, ImportOptions, Resolution};
+use openbrick_catalog::ldraw::{
+    import, ImportError, ImportOptions, Resolution, DEFAULT_CATEGORIES, TECHNIC_CATEGORIES,
+};
 use openbrick_catalog::{Connectivity, Pack, PackError};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -59,6 +61,7 @@ pub enum CatalogCmd {
 const IMPORT_EXAMPLES: &str = "Examples:
   openbrick catalog fetch --dest ~/ldraw
   openbrick catalog import ~/ldraw/complete.zip --out ldraw.obpack
+  openbrick catalog import ~/ldraw/complete.zip --out technic.obpack --technic --limit 0
   openbrick catalog import ~/ldraw/ldraw --out bricks.obpack --category-filter Brick,Plate,Tile --limit 150
   openbrick catalog info ldraw.obpack
 
@@ -102,6 +105,10 @@ pub struct ImportArgs {
     /// Windscreen, Panel, Cylinder, Cone, Fence, Bracket.
     #[arg(long, value_delimiter = ',', value_name = "A,B")]
     pub category_filter: Option<Vec<String>>,
+    /// Add the Technic categories (Technic, Hinge, Bar, Wheel) to the chosen ones: pins, axles,
+    /// beams, gears, hinges, clips and bars, with their occupancy masks. Off by default.
+    #[arg(long)]
+    pub technic: bool,
     /// The most parts to write (default 600, taken from every category in turn; 0 for all that qualify).
     #[arg(long, value_name = "N")]
     pub limit: Option<usize>,
@@ -171,7 +178,22 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
     }
     let opts = ImportOptions {
         resolution: a.resolution,
-        categories: a.category_filter.clone(),
+        categories: if a.technic {
+            let mut c: Vec<String> = a.category_filter.clone().unwrap_or_else(|| {
+                DEFAULT_CATEGORIES
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect()
+            });
+            for t in TECHNIC_CATEGORIES {
+                if !c.iter().any(|x| x.eq_ignore_ascii_case(t)) {
+                    c.push((*t).to_string());
+                }
+            }
+            Some(c)
+        } else {
+            a.category_filter.clone()
+        },
         limit: match a.limit {
             Some(0) => None,
             Some(n) => Some(n),
@@ -234,6 +256,12 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
         bytes.len(),
         report.seconds
     ));
+    if c.with_masks > 0 {
+        ui.say(format!(
+            "  {} have an occupancy mask (non-box parts: pins, axles, holes, slopes, round parts); the rest collide as their box",
+            c.with_masks
+        ));
+    }
     if c.with_joints > 0 {
         ui.say(format!(
             "  {} of them have clip, hinge, ball or socket joints, which are not modelled yet: their studs snap, the joints do not",

@@ -245,17 +245,25 @@ impl Visitor for Scanner<'_> {
                 });
             }
             Prim::AxleShaft => {
+                // The axle's length is the matrix's, but its beveled ends take 2.5 LDU each off a
+                // whole number of modules (75 for "Axle 4", 80 long): the shaft holds the nearest
+                // whole number of modules, centred on the shaft.
                 let axis = m.apply_dir([0.0, 1.0, 0.0]);
                 let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
-                let n = (len / module + 0.01).floor() as usize;
+                let n = (len / module).round().max(1.0) as usize;
+                let centre = [
+                    m.t[0] + axis[0] * 0.5,
+                    m.t[1] + axis[1] * 0.5,
+                    m.t[2] + axis[2] * 0.5,
+                ];
                 for i in 0..n {
-                    let f = (i as f64 + 0.5) * module / len.max(1e-9);
+                    let f = (i as f64 - (n as f64 - 1.0) / 2.0) * module / len.max(1e-9);
                     self.raw.push(Raw {
                         kind: ConnKind::AxleM,
                         pos: [
-                            m.t[0] + axis[0] * f,
-                            m.t[1] + axis[1] * f,
-                            m.t[2] + axis[2] * f,
+                            centre[0] + axis[0] * f,
+                            centre[1] + axis[1] * f,
+                            centre[2] + axis[2] * f,
                         ],
                         dir: axis,
                     });
@@ -673,6 +681,9 @@ pub struct Derived {
     pub off_lattice: usize,
     pub uncertified_triangles: usize,
     pub missing_refs: usize,
+    /// The occupancy mask of the body, for a part whose box is not its shape.
+    pub mask: Option<crate::mask::MaskGrid>,
+    pub occupancy: super::occupancy::OccupancyStats,
 }
 
 /// Tessellate a part and derive its connectors and boxes.
@@ -695,6 +706,19 @@ pub fn derive(lib: &Library, path: &str, limits: Limits) -> Result<Option<Derive
     conns.extend(studf);
     normalise(&mut conns);
     let mesh = IndexedMesh::from_soup(&c.soup);
+    // The mask is built from the triangles at the standard primitive resolution whatever the
+    // user chose for the render mesh (collision never depends on the render level of detail).
+    let (mask, occupancy) = if lib.resolution() == super::library::Resolution::Standard {
+        super::occupancy::occupancy(&c.soup, &body)
+    } else {
+        let std_soup = lib.at_resolution(super::library::Resolution::Standard, |l| {
+            let mut c2 = Collect::new(is_stud);
+            Walker::new(l, limits)
+                .walk(&mut c2, path, &Mat::IDENTITY)
+                .map(|()| c2.soup)
+        })?;
+        super::occupancy::occupancy(&std_soup, &body)
+    };
     Ok(Some(Derived {
         mesh,
         body,
@@ -707,5 +731,7 @@ pub fn derive(lib: &Library, path: &str, limits: Limits) -> Result<Option<Derive
         off_lattice: sc.off_lattice,
         uncertified_triangles: w.stats.uncertified_triangles,
         missing_refs: w.stats.missing_count,
+        mask,
+        occupancy,
     }))
 }

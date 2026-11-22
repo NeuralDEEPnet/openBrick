@@ -35,6 +35,7 @@ use super::flatten::{Limits, WalkError};
 use super::library::{Library, LibraryError, Resolution};
 use super::parse::Header;
 use crate::builtin::PartMesh;
+use crate::mask::Mask;
 use crate::pack::{
     footprint_studs, Connectivity, LicenceText, Pack, PackCounts, PackError, PackHeader, PackPart,
     LDRAW_ID_PREFIX, MAX_BLOB_BYTES, MAX_CATEGORY_CHARS, MAX_CREDIT_CHARS, MAX_NAME_CHARS,
@@ -62,6 +63,12 @@ pub const DEFAULT_CATEGORIES: &[&str] = &[
     "Fence",
     "Bracket",
 ];
+
+/// The categories `--technic` adds to the defaults: the Technic parts themselves (beams, pins,
+/// axles, gears), hinges, bars and wheels (which have axle holes). Their pin, axle, clip, bar,
+/// hinge and ball connectors are derived from the primitives like the studs are
+/// (docs/guides/ldraw-parts.md).
+pub const TECHNIC_CATEGORIES: &[&str] = &["Technic", "Hinge", "Bar", "Wheel"];
 
 /// Categories (lower case, as a prefix) of figure parts, which are never imported: the library's
 /// `Minifig...` (head, torso, accessory, ...), `Figure` and `Figure Accessory`, and `Constraction`.
@@ -144,6 +151,8 @@ pub struct ImportReport {
     pub with_technic: u32,
     /// Parts of the chosen categories in which some connector was off the lattice and dropped.
     pub with_off_lattice: u32,
+    /// Parts that needed a mask but would have needed more boxes than a mask may hold: they collide as their box.
+    pub masks_too_fragmented: u32,
     /// Parts written to the pack that were not BFC certified somewhere.
     pub uncertified: u32,
     /// The first few failures: path and message.
@@ -391,6 +400,7 @@ pub fn import(
     let library = safe(&newest, 32);
     let mut parts = Vec::new();
     let mut meshes = Vec::new();
+    let mut masks = Vec::new();
     for Done { cand, d } in chosen {
         let connectivity = if d.conns.is_empty() {
             report.counts.free_placement += 1;
@@ -430,11 +440,26 @@ pub fn import(
             vertices: 0,
             triangles: 0,
             offset: 0,
+            mask: None,
         });
         meshes.push(PartMesh {
             positions: d.mesh.positions,
             indices: d.mesh.indices,
         });
+        // A mask that merges into too many boxes (a gear, a wheel) is dropped: the part collides as
+        // its box, which is always safe.
+        let mask = match d.mask {
+            Some(g) if Mask::from_grid(&g).is_ok() => Some(g),
+            Some(_) => {
+                report.masks_too_fragmented += 1;
+                None
+            }
+            None => None,
+        };
+        if mask.is_some() {
+            report.counts.with_masks += 1;
+        }
+        masks.push(mask);
     }
     report.counts.imported = parts.len() as u32;
     report.work = lib.work();
@@ -497,7 +522,7 @@ pub fn import(
         counts: report.counts.clone(),
         parts,
     };
-    let pack = Pack::build(header, &meshes)?;
+    let pack = Pack::build_with_masks(header, &meshes, &masks)?;
     report.seconds = t0.elapsed().as_secs_f64();
     Ok((pack, report))
 }
