@@ -155,7 +155,7 @@ What it does (`scripts/slicer-smoke.sh`, with `scripts/slicer-smoke.py` for the 
 
 `scripts/slicer-smoke.sh --dry-run --openbrick target/debug/openbrick` builds and checks the inputs without downloading OrcaSlicer, and the `cli` job of the `ci` workflow runs it on every pull request. On Linux x86-64 with `xvfb-run`, the script without `--dry-run` does the whole run locally. `--orca-root DIR` uses an OrcaSlicer you extracted yourself instead.
 
-What OrcaSlicer 2.4.2's source predicts (all **source**, `src/libslic3r/Format/bbs_3mf.cpp` at tag `v2.4.2`); the runs below confirm both points for its command line:
+What OrcaSlicer 2.4.2's source predicts (all **source**, `src/libslic3r/Format/bbs_3mf.cpp` at tag `v2.4.2`); the runs below confirm the first point for its command line, and the second for the parts of a components object (a one-colour object such as the coupon cannot show whether an object's own `pid` picks a filament):
 - the components object loads as one object whose parts are the components, as in Bambu Studio (`_generate_current_object_list`, then one volume per component);
 - colours do not reach the filaments. The importer ignores a triangle's `pid` and `p1` to `p3` (`_handle_start_triangle`), keeps one colour per colour group, and gives a filament only to a build item's object whose own `pid` names a colour group. The components object carries no `pid`, so both parts print with filament 1, with or without `--no-colour`, and the user picks the accent's filament by hand. Since the importer keeps no per-triangle colours, the data that Bambu Studio's "Standard 3MF Import color" dialog works from is missing here (**unconfirmed**: OrcaSlicer's GUI code was not read).
 
