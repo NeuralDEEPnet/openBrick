@@ -258,13 +258,16 @@ fn technic_pins_axles_and_holes_come_from_their_primitives() {
 }
 
 #[test]
-fn clip_parts_are_flagged_not_modelled() {
+fn clip_parts_get_a_clip_connector_from_the_joint_table() {
     let (pack, report) = pack_of(&all_categories());
     let c = part(&pack, "ld.4081b");
-    assert_eq!(c.joints, vec!["clip".to_string()]);
-    // Its stud still snaps; the clip is not a connector.
+    // clip1 is in the joint table (standards/joints-v1.json): the part has a clip connector and is
+    // not flagged; its stud still snaps.
+    assert!(c.joints.is_empty(), "{:?}", c.joints);
+    assert!(c.connectors.iter().any(|x| x.kind == ConnKind::ClipF));
     assert!(c.connectors.iter().any(|x| x.kind == ConnKind::StudM));
-    assert_eq!(report.counts.with_joints, 1);
+    assert_eq!(report.counts.with_joints, 0);
+    assert_eq!(report.counts.with_joint_connectors, 1);
 }
 
 #[test]

@@ -187,6 +187,14 @@ pub fn assembler_catalog_json() -> Result<String, CoreError> {
                 "studs": p.studs, "heightLdu": p.height_ldu, "base": p.base,
                 "bodyBox": p.shape.body, "pickBox": p.shape.pick,
                 "connectors": p.shape.connectors.len(),
+                // The classes of connection the part can make (stud, pin, axle, clip, ball,
+                // hinge), from its connectors: the palette's badge and filters read them.
+                "links": openbrick_catalog::Link::ALL
+                    .iter()
+                    .filter(|l| p.shape.connectors.iter().any(|c| c.kind.link() == **l))
+                    .map(|l| l.name())
+                    .collect::<Vec<_>>(),
+                "masked": p.shape.mask.is_some(),
             });
             if let Some(pp) = pack.as_ref().and_then(|k| {
                 i.checked_sub(first_pack)
@@ -209,6 +217,7 @@ pub fn assembler_catalog_json() -> Result<String, CoreError> {
         "catalog": CATALOG_ID,
         "lduMm": STANDARD.get().ldu_mm,
         "maxModelBytes": MAX_MODEL_BYTES,
+        "jointTableAttribution": openbrick_catalog::JOINT_TABLE_ATTRIBUTION,
         "maxParts": openbrick_engine::MAX_INSTANCES,
         "maxHistory": openbrick_engine::history::MAX_HISTORY,
         "maxPackBytes": openbrick_catalog::pack::MAX_PACK_BYTES,
@@ -596,7 +605,17 @@ impl Assembler {
             .model
             .snap(p, Rot24(rot), &ray([ox, oy, oz], [dx, dy, dz])?)
             .map_err(engine)?;
-        Ok(serde_json::to_string(&s).expect("snap serialises"))
+        let mut v = serde_json::to_value(s).expect("snap serialises");
+        if let (Some(snap), Some(o)) = (s, v.as_object_mut()) {
+            // What would hold the part, in words: the core says it, the page shows it.
+            o.insert(
+                "connects".into(),
+                json!(openbrick_catalog::Link::in_set(snap.links)
+                    .map(|l| l.phrase())
+                    .collect::<Vec<_>>()),
+            );
+        }
+        Ok(v.to_string())
     }
 
     /// The first thing the ray hits: JSON of a `Hit` (`{ instance, point,
@@ -643,6 +662,20 @@ impl Assembler {
 
     pub fn can_redo(&self) -> bool {
         self.model.history().can_redo()
+    }
+
+    /// The connections of the model as JSON, `{ total, edges: [{ a, b, link }] }` with at most
+    /// `limit` edges (ids ascending, `link` one of stud, pin, axle, clip, ball, hinge): what the
+    /// page's tests read to say which connections exist. Counted again from the model, so it is for
+    /// small models and tests, not for every edit.
+    pub fn connections(&self, limit: u32) -> String {
+        let all = self.model.connections_with_links();
+        let edges: Vec<_> = all
+            .iter()
+            .take(limit as usize)
+            .map(|(a, b, l)| json!({ "a": a, "b": b, "link": l.name() }))
+            .collect();
+        json!({ "total": all.len(), "edges": edges }).to_string()
     }
 
     /// Part by colour counts as JSON: `[{ part, name, colour, colourName, count }]`.

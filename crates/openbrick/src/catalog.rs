@@ -16,7 +16,9 @@ use std::process::{Command, ExitStatus};
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
-use openbrick_catalog::ldraw::{import, ImportError, ImportOptions, Resolution};
+use openbrick_catalog::ldraw::{
+    import, ImportError, ImportOptions, Resolution, DEFAULT_CATEGORIES, TECHNIC_CATEGORIES,
+};
 use openbrick_catalog::{Connectivity, Pack, PackError};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -59,6 +61,7 @@ pub enum CatalogCmd {
 const IMPORT_EXAMPLES: &str = "Examples:
   openbrick catalog fetch --dest ~/ldraw
   openbrick catalog import ~/ldraw/complete.zip --out ldraw.obpack
+  openbrick catalog import ~/ldraw/complete.zip --out technic.obpack --technic --limit 0
   openbrick catalog import ~/ldraw/ldraw --out bricks.obpack --category-filter Brick,Plate,Tile --limit 150
   openbrick catalog info ldraw.obpack
 
@@ -102,6 +105,10 @@ pub struct ImportArgs {
     /// Windscreen, Panel, Cylinder, Cone, Fence, Bracket.
     #[arg(long, value_delimiter = ',', value_name = "A,B")]
     pub category_filter: Option<Vec<String>>,
+    /// Add the Technic categories (Technic, Hinge, Bar, Wheel) to the chosen ones: pins, axles,
+    /// beams, gears, hinges, clips and bars, with their occupancy masks. Off by default.
+    #[arg(long)]
+    pub technic: bool,
     /// The most parts to write (default 600, taken from every category in turn; 0 for all that qualify).
     #[arg(long, value_name = "N")]
     pub limit: Option<usize>,
@@ -171,7 +178,22 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
     }
     let opts = ImportOptions {
         resolution: a.resolution,
-        categories: a.category_filter.clone(),
+        categories: if a.technic {
+            let mut c: Vec<String> = a.category_filter.clone().unwrap_or_else(|| {
+                DEFAULT_CATEGORIES
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect()
+            });
+            for t in TECHNIC_CATEGORIES {
+                if !c.iter().any(|x| x.eq_ignore_ascii_case(t)) {
+                    c.push((*t).to_string());
+                }
+            }
+            Some(c)
+        } else {
+            a.category_filter.clone()
+        },
         limit: match a.limit {
             Some(0) => None,
             Some(n) => Some(n),
@@ -234,9 +256,21 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
         bytes.len(),
         report.seconds
     ));
+    if c.with_masks > 0 {
+        ui.say(format!(
+            "  {} have an occupancy mask (non-box parts: pins, axles, holes, slopes, round parts); the rest collide as their box",
+            c.with_masks
+        ));
+    }
+    if c.with_joint_connectors > 0 {
+        ui.say(format!(
+            "  {} of them have clip, bar, ball, socket or hinge connectors from the joint table",
+            c.with_joint_connectors
+        ));
+    }
     if c.with_joints > 0 {
         ui.say(format!(
-            "  {} of them have clip, hinge, ball or socket joints, which are not modelled yet: their studs snap, the joints do not",
+            "  {} of them have a joint the joint table does not calibrate (a hinge plate, a bar handle, an odd clip): their studs, pins and axles snap, the joint does not",
             c.with_joints
         ));
     }
@@ -247,6 +281,7 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
         ));
     }
     ui.say("Built from the LDraw Parts Library (CC BY 2.0 / CC BY 4.0), https://www.ldraw.org. The pack is for your own use: do not commit or redistribute it.");
+    ui.say(openbrick_catalog::JOINT_TABLE_ATTRIBUTION);
     Ok(Outcome {
         code: 0,
         json: json!({
@@ -276,7 +311,12 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
     let h = &pack.header;
     let mut by_cat: BTreeMap<&str, u32> = BTreeMap::new();
     let (mut derived, mut none, mut joints, mut tris, mut conns) = (0u32, 0u32, 0u32, 0u64, 0u64);
-    for p in &h.parts {
+    // Connectors by kind, and parts by the classes of connection they can make (Link names).
+    let mut by_kind: BTreeMap<&str, u32> = BTreeMap::new();
+    let mut parts_by_link: BTreeMap<&str, u32> = BTreeMap::new();
+    let (mut with_masks, mut mask_cells, mut mask_boxes) = (0u32, 0u64, 0usize);
+    for (i, p) in h.parts.iter().enumerate() {
+        mask_boxes += pack.mask(i).map_or(0, |m| m.boxes().len());
         *by_cat.entry(p.category.as_str()).or_default() += 1;
         match p.connectivity {
             Connectivity::Derived => derived += 1,
@@ -287,6 +327,18 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
         }
         tris += u64::from(p.triangles);
         conns += p.connectors.len() as u64;
+        for c in &p.connectors {
+            *by_kind.entry(c.kind.name()).or_default() += 1;
+        }
+        for l in openbrick_catalog::Link::ALL {
+            if p.connectors.iter().any(|c| c.kind.link() == l) {
+                *parts_by_link.entry(l.name()).or_default() += 1;
+            }
+        }
+        if let Some(m) = &p.mask {
+            with_masks += 1;
+            mask_cells += u64::from(m.solid);
+        }
     }
     ui.say(format!(
         "{}: {} pack `{}`, LDraw library {} ({} primitives), format {}, {} bytes",
@@ -303,6 +355,20 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
         "{} parts: connectivity derived {derived}, none (free placement only) {none}; {joints} with unmodelled joints; {conns} connectors, {tris} triangles",
         h.parts.len()
     ));
+    let kinds: Vec<String> = by_kind.iter().map(|(k, v)| format!("{k} {v}")).collect();
+    ui.say(format!("connectors by kind: {}", kinds.join(", ")));
+    let links: Vec<String> = parts_by_link
+        .iter()
+        .map(|(k, v)| format!("{k} {v}"))
+        .collect();
+    ui.say(format!(
+        "parts that can make a connection of class: {}",
+        links.join(", ")
+    ));
+    ui.say(format!(
+        "{with_masks} parts have an occupancy mask ({mask_cells} solid cells of 1 LDU, {mask_boxes} merged boxes, about {} MiB in memory); the others collide as their box",
+        mask_boxes * 24 / 1_048_576
+    ));
     let cats: Vec<String> = by_cat.iter().map(|(k, v)| format!("{k} {v}")).collect();
     ui.say(format!("categories: {}", cats.join(", ")));
     let c = &h.counts;
@@ -311,6 +377,7 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
         c.scanned, c.eligible, c.in_categories, c.with_connectors, c.imported
     ));
     ui.say(&h.attribution);
+    ui.say(openbrick_catalog::JOINT_TABLE_ATTRIBUTION);
     Ok(Outcome {
         code: 0,
         json: json!({
@@ -328,6 +395,11 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
             "parts": h.parts.len(),
             "connectivity": { "derived": derived, "none": none },
             "withJoints": joints,
+            "connectorsByKind": by_kind,
+            "partsByLink": parts_by_link,
+            "withMasks": with_masks,
+            "maskSolidCells": mask_cells,
+            "maskBoxes": mask_boxes,
             "connectors": conns,
             "triangles": tris,
             "categories": by_cat,

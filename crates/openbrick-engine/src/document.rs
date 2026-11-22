@@ -141,6 +141,11 @@ pub enum DocError {
     UnknownPart { id: InstanceId, part: String },
     #[error("instance {id}: {error}")]
     Instance { id: InstanceId, error: EngineError },
+    /// A collision while opening a model saved against a pack, with a pack loaded whose parts have
+    /// no occupancy masks (a format 1 pack): the model was probably built with masks, and without
+    /// them a pin in a hole or a brick in an arch collides as its box.
+    #[error("instance {id}: {error}. The model names a part pack, and the loaded pack has no occupancy masks (it is an older pack file), so parts that fit through holes or arches collide as their boxes. Import the library again with this version of `openbrick catalog import` and load that pack")]
+    NeedsMasks { id: InstanceId, error: EngineError },
 }
 
 impl ModelDoc {
@@ -598,7 +603,20 @@ impl<'c> Loader<'c> {
                         colour: i.colour,
                     },
                 )
-                .map_err(|error| DocError::Instance { id: i.id, error })?;
+                .map_err(|error| {
+                    // A collision, a pack that names itself in the model but holds no mask at all:
+                    // say so, with the fix, instead of a bare overlap.
+                    let maskless = !self.doc.requires.is_empty()
+                        && self.catalog.pack.is_some()
+                        && !self.catalog.parts.iter().any(|p| {
+                            p.origin == openbrick_catalog::Origin::Ldraw && p.shape.mask.is_some()
+                        });
+                    if matches!(error, EngineError::Collides { .. }) && maskless {
+                        DocError::NeedsMasks { id: i.id, error }
+                    } else {
+                        DocError::Instance { id: i.id, error }
+                    }
+                })?;
             self.next += 1;
         }
         Ok(self.next)

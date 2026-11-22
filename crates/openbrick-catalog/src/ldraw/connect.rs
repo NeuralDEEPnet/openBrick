@@ -20,7 +20,8 @@
 //! | `axlehole`, `axl2hole`, `axl3hole`, `axl4hole`, `axlehol4`, `axlehol5`, `axl2hol8`, `axl3hol8`, `axl5hol8`; `bush`, `bush0`, `bush0a` | `axleF`, one per module |
 //! | `connect*`, `confric*` | `pinM`, one per module of length |
 //! | `axlehol8` ("Technic Axle Perimeter") | `axleM`, one per module of length |
-//! | `clip<n>`, `clh*`, `arm1`-`arm3`, `joint8ball`, `joint8socket*` | not modelled: the part is flagged with its joint kinds |
+//! | `clip<n>`, `clh*`, `arm1`-`arm3`, `h1`, `h2`, `joint8ball`, `joint8socket*` | the joint table (`standards/joints-v1.json`): `clipF`, `hingeO`/`hingeE`, `ballM`, `socketF` with the table's axis and point; a primitive the table does not calibrate (`clip4`, `h1`, `h2`, `phandle*`) only flags the part with its joint kind |
+//! | a cylinder of the bar radius in a part whose description names a bar or a handle | `barM` along the cylinder, at its middle (the table's bar rule) |
 //!
 //! The unlisted tube primitives (`stud4` and its relatives) only count as
 //! evidence of a system underside; the engine's `tubeF` is the receptacle cell.
@@ -31,6 +32,7 @@ use openbrick_units::STANDARD;
 
 use super::flatten::{Bounds, Collect, IndexedMesh, Limits, Mat, Soup, Visitor, WalkError, Walker};
 use super::library::Library;
+use crate::joints::JointTable;
 use crate::shape::{Aabb, Conn, ConnKind};
 
 /// A number of the Dimensional Standard in LDU (`ldraw_ldu`), by feature id.
@@ -101,6 +103,8 @@ pub fn classify(path: &str) -> Option<Prim> {
             Prim::Pin
         }
         _ if digits_after(n, "clip").is_some() => Prim::Joint("clip"),
+        "h1" | "h2" => Prim::Joint("hinge"),
+        "phandle1" | "phandle2" => Prim::Joint("bar"),
         _ if n.starts_with("clh") => Prim::Joint("hinge"),
         "arm1" | "arm2" | "arm3" => Prim::Joint("hinge"),
         "joint8ball" => Prim::Joint("ball"),
@@ -172,6 +176,8 @@ pub struct Scan {
 
 struct Scanner<'a> {
     lib: &'a Library,
+    /// The part's description names a bar or a handle, so a cylinder of the bar radius in it is a bar.
+    bar_ok: bool,
     raw: Vec<Raw>,
     peg: Vec<([f64; 3], [f64; 3])>,
     joints: Joints,
@@ -202,6 +208,9 @@ impl Visitor for Scanner<'_> {
 
     fn enter(&mut self, path: &str, m: &Mat, _flip: bool) -> bool {
         let Some(prim) = classify(path) else {
+            if self.bar_ok && is_cylinder(path) {
+                self.bar(m);
+            }
             return true;
         };
         let module = std_ldu("module");
@@ -245,17 +254,25 @@ impl Visitor for Scanner<'_> {
                 });
             }
             Prim::AxleShaft => {
+                // The axle's length is the matrix's, but its beveled ends take 2.5 LDU each off a
+                // whole number of modules (75 for "Axle 4", 80 long): the shaft holds the nearest
+                // whole number of modules, centred on the shaft.
                 let axis = m.apply_dir([0.0, 1.0, 0.0]);
                 let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
-                let n = (len / module + 0.01).floor() as usize;
+                let n = (len / module).round().max(1.0) as usize;
+                let centre = [
+                    m.t[0] + axis[0] * 0.5,
+                    m.t[1] + axis[1] * 0.5,
+                    m.t[2] + axis[2] * 0.5,
+                ];
                 for i in 0..n {
-                    let f = (i as f64 + 0.5) * module / len.max(1e-9);
+                    let f = (i as f64 - (n as f64 - 1.0) / 2.0) * module / len.max(1e-9);
                     self.raw.push(Raw {
                         kind: ConnKind::AxleM,
                         pos: [
-                            m.t[0] + axis[0] * f,
-                            m.t[1] + axis[1] * f,
-                            m.t[2] + axis[2] * f,
+                            centre[0] + axis[0] * f,
+                            centre[1] + axis[1] * f,
+                            centre[2] + axis[2] * f,
                         ],
                         dir: axis,
                     });
@@ -275,7 +292,19 @@ impl Visitor for Scanner<'_> {
                 }
             }
             Prim::Joint(j) => {
-                self.joints.insert(j);
+                // A primitive of the joint table makes a connector (the axis and a point on it, in
+                // the primitive's frame, placed by the instance's matrix); one the table does not
+                // calibrate only flags the part (`joints`), as before.
+                match JointTable::bundled().get(basename(path)) {
+                    Some(e) => self.raw.push(Raw {
+                        kind: e.kind,
+                        pos: m.apply(e.origin),
+                        dir: m.apply_dir(e.axis.map(f64::from)),
+                    }),
+                    None => {
+                        self.joints.insert(j);
+                    }
+                }
             }
         }
         // Mapped primitives are leaves: their own sub-primitives are not connectors.
@@ -283,6 +312,45 @@ impl Visitor for Scanner<'_> {
     }
 
     fn triangle(&mut self, _tri: [[f64; 3]; 3]) {}
+}
+
+/// A cylinder primitive: `4-4cyli`, `2-4cylo`, `5-8cylc` (fraction, then closed or open ends).
+fn is_cylinder(path: &str) -> bool {
+    let n = basename(path);
+    let Some(rest) = n
+        .strip_suffix("cyli")
+        .or_else(|| n.strip_suffix("cylo"))
+        .or_else(|| n.strip_suffix("cylc"))
+    else {
+        return false;
+    };
+    let mut parts = rest.split('-');
+    let ok =
+        |s: Option<&str>| s.is_some_and(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()));
+    ok(parts.next()) && ok(parts.next()) && parts.next().is_none()
+}
+
+impl Scanner<'_> {
+    /// A cylinder of the bar rule's radius and at least its length is a bar along its axis, at its
+    /// middle: one connector per bar, at the middle of the cylinder instance (a bar that needs the
+    /// clip to sit elsewhere along it is not modelled; the mate is by position). Quarter, half and
+    /// full cylinders all count: the pieces of one bar share the axis and the middle, so they make
+    /// the same connector and `normalise` keeps one. A bar drawn as two cylinders end to end gets
+    /// two, each at its own middle.
+    fn bar(&mut self, m: &Mat) {
+        let rule = &JointTable::bundled().bars;
+        let len_v = m.apply_dir([0.0, 1.0, 0.0]);
+        let len = (len_v[0] * len_v[0] + len_v[1] * len_v[1] + len_v[2] * len_v[2]).sqrt();
+        let rad_v = m.apply_dir([1.0, 0.0, 0.0]);
+        let rad = (rad_v[0] * rad_v[0] + rad_v[1] * rad_v[1] + rad_v[2] * rad_v[2]).sqrt();
+        if (rad - rule.radius).abs() <= rule.radius_tolerance && len >= rule.min_length {
+            self.raw.push(Raw {
+                kind: ConnKind::BarM,
+                pos: m.apply([0.0, 0.5, 0.0]),
+                dir: len_v,
+            });
+        }
+    }
 }
 
 /// Pair the openings of through holes (Q04, post-processing): two `peghole`
@@ -334,8 +402,30 @@ fn pair_pegs(peg: &[([f64; 3], [f64; 3])], out: &mut Vec<Raw>) {
 
 /// Scan a part (library path `parts/3001.dat`) for its primitive connectors.
 pub fn scan(lib: &Library, path: &str, limits: Limits) -> Result<Scan, WalkError> {
+    let words: Vec<String> = lib
+        .load(path)
+        .map(|r| {
+            r.file
+                .header
+                .description
+                .to_lowercase()
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let bar_ok = JointTable::bundled()
+        .bars
+        .description_words
+        .iter()
+        .any(|w| {
+            words
+                .iter()
+                .any(|x| x == w || x.strip_suffix('s') == Some(w.as_str()))
+        });
     let mut s = Scanner {
         lib,
+        bar_ok,
         raw: Vec::new(),
         peg: Vec::new(),
         joints: Joints::new(),
@@ -673,6 +763,9 @@ pub struct Derived {
     pub off_lattice: usize,
     pub uncertified_triangles: usize,
     pub missing_refs: usize,
+    /// The occupancy mask of the body, for a part whose box is not its shape.
+    pub mask: Option<crate::mask::MaskGrid>,
+    pub occupancy: super::occupancy::OccupancyStats,
 }
 
 /// Tessellate a part and derive its connectors and boxes.
@@ -695,6 +788,31 @@ pub fn derive(lib: &Library, path: &str, limits: Limits) -> Result<Option<Derive
     conns.extend(studf);
     normalise(&mut conns);
     let mesh = IndexedMesh::from_soup(&c.soup);
+    // The mask is built from the triangles at the standard primitive resolution whatever the
+    // user chose for the render mesh (collision never depends on the render level of detail).
+    // A part with a clip, bar, ball, socket or hinge connector always gets one (see `occupancy`).
+    let joint = conns.iter().any(|c| {
+        matches!(
+            c.kind,
+            ConnKind::ClipF
+                | ConnKind::BarM
+                | ConnKind::BallM
+                | ConnKind::SocketF
+                | ConnKind::HingeO
+                | ConnKind::HingeE
+        )
+    });
+    let (mask, occupancy) = if lib.resolution() == super::library::Resolution::Standard {
+        super::occupancy::occupancy(&c.soup, &body, joint)
+    } else {
+        let std_soup = lib.at_resolution(super::library::Resolution::Standard, |l| {
+            let mut c2 = Collect::new(is_stud);
+            Walker::new(l, limits)
+                .walk(&mut c2, path, &Mat::IDENTITY)
+                .map(|()| c2.soup)
+        })?;
+        super::occupancy::occupancy(&std_soup, &body, joint)
+    };
     Ok(Some(Derived {
         mesh,
         body,
@@ -707,5 +825,7 @@ pub fn derive(lib: &Library, path: &str, limits: Limits) -> Result<Option<Derive
         off_lattice: sc.off_lattice,
         uncertified_triangles: w.stats.uncertified_triangles,
         missing_refs: w.stats.missing_count,
+        mask,
+        occupancy,
     }))
 }

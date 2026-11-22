@@ -1,0 +1,13 @@
+0 Synthetic Joint-8 Socket Free Square
+0 Name: joint8socket2.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Primitive UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+
+0 BFC CERTIFY CCW
+
+1 16 -8.5 -10 0 1.5 0 0 0 20 0 0 0 10 cube.dat
+1 16 8.5 -10 0 1.5 0 0 0 20 0 0 0 10 cube.dat
+1 16 0 -10 0 7 0 0 0 3 0 0 0 10 cube.dat
+1 16 0 7 0 7 0 0 0 3 0 0 0 10 cube.dat
+1 16 0 -7 -8.5 7 0 0 0 14 0 0 0 1.5 cube.dat

@@ -448,7 +448,7 @@ export function assemblerState(core) {
   const a = assembler(core);
   return {
     instances: a.instances(),
-    stats: JSON.parse(a.stats()),
+    stats: statsOf(a),
     bom: JSON.parse(a.bom()),
     canUndo: a.can_undo(),
     canRedo: a.can_redo(),
@@ -465,12 +465,30 @@ export function assemblerState(core) {
  */
 export const STATS_INLINE_LIMIT = 5000;
 
+/** Models up to this many parts also report which connections exist (the core's edge list), for the page's checks. */
+export const EDGES_INLINE_LIMIT = 400;
+/** The most edges listed; `stats.edgesTotal` and `stats.edgesAtLeast` say when there were more. */
+export const EDGES_LIMIT = 2000;
+
+/** The core's statistics, and for a small model the connections themselves: `edges: [{ a, b, link }]`. */
+function statsOf(a) {
+  const stats = JSON.parse(a.stats());
+  if (a.len() <= EDGES_INLINE_LIMIT) {
+    const all = JSON.parse(a.connections(EDGES_LIMIT));
+    stats.edges = all.edges;
+    // Never silently short: `edgesTotal` is the real count and `edgesAtLeast` says the list was cut.
+    stats.edgesTotal = all.total;
+    stats.edgesAtLeast = all.total > all.edges.length;
+  }
+  return stats;
+}
+
 /** The parts a delta's rows are for, in the unit of the core's table. */
 function leanSummary(a) {
   const parts = a.len();
   const out = { parts, canUndo: a.can_undo(), canRedo: a.can_redo(), revision: a.revision(), depth: a.history_depth() };
   if (parts <= STATS_INLINE_LIMIT) {
-    out.stats = JSON.parse(a.stats());
+    out.stats = statsOf(a);
     out.bom = JSON.parse(a.bom());
   }
   return out;
@@ -492,7 +510,7 @@ export function assemblerTable(core) {
 /** The statistics and bill of materials of the model as it is: { stats, bom, parts, revision }. */
 export function assemblerStats(core) {
   const a = assembler(core);
-  return { stats: JSON.parse(a.stats()), bom: JSON.parse(a.bom()), parts: a.len(), revision: a.revision() };
+  return { stats: statsOf(a), bom: JSON.parse(a.bom()), parts: a.len(), revision: a.revision() };
 }
 
 /** Parts the core reads per step when it opens a document: about 25 ms of work, so a cancel or a snap is answered between steps. */

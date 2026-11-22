@@ -1,0 +1,14 @@
+{
+ "openbrick": "1.0",
+ "kind": "joints",
+ "version": "1.0.0",
+ "license": "CC-BY-4.0",
+ "credit": {"author": "OpenBrick3D contributors, derived from the LDraw Parts Library (LDraw.org, CC BY 2.0 / CC BY 4.0)", "url": "https://www.ldraw.org"},
+ "library": "LDraw Parts Library, update 2026-10 (complete.zip, SHA-256 023083918da2d3697c794fb4267975509584f3611b993095874206a803fa610f)",
+ "notes": "Joint primitives of the LDraw Parts Library, each with the axis of the joint and a point on that axis in the primitive's own frame (integer LDU or halves), derived from the primitive's own cylinders, cones and spheres by scripts/derive-joint-table.py. A clip holds a bar of radius 4 LDU (standard row bar_diameter); the ball is radius 8. Hinge halves are told apart by the parity of their finger count: a hinge with an odd number of fingers mates one with an even number. Primitives that are not listed are not modelled.",
+ "bars": {"radius": 4.0, "radiusTolerance": 0.15, "minLength": 6.0, "descriptionWords": ["bar", "handle"], "source": "standards/dimensions-v1.json bar_diameter (7.95 LDU, which LDraw models as a radius of 4); the clip bores of this table are cylinders of the same radius"},
+ "primitives": [
+  {"primitive": "clip2", "description": "Vertical Clip for Bricks", "kind": "clipF", "axis": [0, 2, 0], "origin": [0.0, 0.0, -10.0], "method": "bore-cylinder", "evidence": "2-4cyli.dat: a cylinder of radius 4.0 (the bar radius, bar_diameter / 2) and length 8.0; origin is its middle"},
+  {"primitive": "joint8ball", "description": "Joint-8 Ball with Straight Bar", "kind": "ballM", "axis": [0, 0, 1], "origin": [0.0, 0.0, 0.0], "method": "sphere-centre", "evidence": "8-8sphe.dat: a sphere of radius 8.0, centred at the origin of the instance; the stem is a cylinder of radius 4 along the axis"}
+ ]
+}

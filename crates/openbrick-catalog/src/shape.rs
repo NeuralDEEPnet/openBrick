@@ -83,13 +83,90 @@ impl Aabb {
     }
 }
 
+/// How two mated connectors hold each other: the class of a connection, for the statistics, the
+/// hover line and the rule that decides whether two connectors mate. Every [`ConnKind`] belongs to
+/// one, and its mate to the same one.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Link {
+    /// A stud in a receptacle (tube, pin or wall around it).
+    Stud,
+    /// A Technic pin in a round hole.
+    Pin,
+    /// An axle in a cross-shaped hole.
+    Axle,
+    /// A clip gripping a bar, handle or stem.
+    Clip,
+    /// A ball in a socket.
+    Ball,
+    /// Two hinge halves whose fingers interleave on one axis.
+    Hinge,
+}
+
+impl Link {
+    /// Every class, in the order of their bits.
+    pub const ALL: [Link; 6] = [
+        Link::Stud,
+        Link::Pin,
+        Link::Axle,
+        Link::Clip,
+        Link::Ball,
+        Link::Hinge,
+    ];
+
+    /// The bit of this class in a set of classes (`Snap::links`).
+    pub fn bit(self) -> u32 {
+        1 << (self as u32)
+    }
+
+    /// The short name the page's hover line and statistics use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Link::Stud => "stud",
+            Link::Pin => "pin",
+            Link::Axle => "axle",
+            Link::Clip => "clip",
+            Link::Ball => "ball",
+            Link::Hinge => "hinge",
+        }
+    }
+
+    /// What a connection of this class is, in words for the hover line: "pin in hole".
+    pub fn phrase(self) -> &'static str {
+        match self {
+            Link::Stud => "stud in receptacle",
+            Link::Pin => "pin in hole",
+            Link::Axle => "axle in hole",
+            Link::Clip => "clip on bar",
+            Link::Ball => "ball in socket",
+            Link::Hinge => "hinge fingers interleaved",
+        }
+    }
+
+    /// The classes in a set of bits, in order.
+    pub fn in_set(bits: u32) -> impl Iterator<Item = Link> {
+        Link::ALL.into_iter().filter(move |l| bits & l.bit() != 0)
+    }
+
+    /// True when the connection leaves a rotation free about its axis (or, for a ball, about its
+    /// point): the engine keeps the part at the one lattice pose it was placed in (its default
+    /// pose) and the connection records the freedom. A stud grips on the lattice, an axle locks.
+    pub fn free_rotation(self) -> bool {
+        matches!(self, Link::Pin | Link::Clip | Link::Ball | Link::Hinge)
+    }
+}
+
 /// The connector kinds the engine handles (the docs/plan/06 section 6 names): a
 /// stud on top and the receptacle under a body that takes one (tubes, pins and
 /// walls together; `tubeF`), which the built-in catalog and the LDraw pack
-/// derive, plus the Technic pin and axle connectors the LDraw pack derives from
-/// its primitives. Studs and receptacles mate pointing at each other; a pin or
-/// an axle mates with the hole it sits in when their centres coincide and their
-/// axes are parallel (an axis has no sign, so either direction fits).
+/// derive, plus the Technic pin and axle connectors, the clip, bar, ball, socket and hinge
+/// connectors the LDraw pack derives from its primitives and the joint table
+/// (`standards/joints-v1.json`). Studs and receptacles mate pointing at each other; a pin, an
+/// axle, a clip with its bar and the two halves of a hinge mate when their centres coincide and
+/// their axes are parallel (an axis has no sign, so either direction fits); a ball and its socket
+/// mate when their centres coincide, whatever way the stem points.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -106,9 +183,41 @@ pub enum ConnKind {
     AxleM,
     #[serde(rename = "axleF")]
     AxleF,
+    /// A clip's grip: where a bar or handle sits, along the bar's axis.
+    #[serde(rename = "clipF")]
+    ClipF,
+    /// A bar, handle, stem or rod a clip grips, along its axis.
+    #[serde(rename = "barM")]
+    BarM,
+    #[serde(rename = "ballM")]
+    BallM,
+    #[serde(rename = "socketF")]
+    SocketF,
+    /// A hinge half with an odd number of fingers (one or three).
+    #[serde(rename = "hingeO")]
+    HingeO,
+    /// A hinge half with an even number of fingers (two).
+    #[serde(rename = "hingeE")]
+    HingeE,
 }
 
 impl ConnKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [ConnKind; 12] = [
+        ConnKind::StudM,
+        ConnKind::TubeF,
+        ConnKind::PinM,
+        ConnKind::PinF,
+        ConnKind::AxleM,
+        ConnKind::AxleF,
+        ConnKind::ClipF,
+        ConnKind::BarM,
+        ConnKind::BallM,
+        ConnKind::SocketF,
+        ConnKind::HingeO,
+        ConnKind::HingeE,
+    ];
+
     /// The evaluator's name of this kind.
     pub fn name(self) -> &'static str {
         match self {
@@ -118,20 +227,18 @@ impl ConnKind {
             ConnKind::PinF => "pinF",
             ConnKind::AxleM => "axleM",
             ConnKind::AxleF => "axleF",
+            ConnKind::ClipF => "clipF",
+            ConnKind::BarM => "barM",
+            ConnKind::BallM => "ballM",
+            ConnKind::SocketF => "socketF",
+            ConnKind::HingeO => "hingeO",
+            ConnKind::HingeE => "hingeE",
         }
     }
 
     /// The kind from the evaluator's name, if the engine handles it.
     pub fn from_name(name: &str) -> Option<ConnKind> {
-        match name {
-            "studM" => Some(ConnKind::StudM),
-            "tubeF" => Some(ConnKind::TubeF),
-            "pinM" => Some(ConnKind::PinM),
-            "pinF" => Some(ConnKind::PinF),
-            "axleM" => Some(ConnKind::AxleM),
-            "axleF" => Some(ConnKind::AxleF),
-            _ => None,
-        }
+        ConnKind::ALL.into_iter().find(|k| k.name() == name)
     }
 
     /// The kind this one mates with.
@@ -143,22 +250,56 @@ impl ConnKind {
             ConnKind::PinF => ConnKind::PinM,
             ConnKind::AxleM => ConnKind::AxleF,
             ConnKind::AxleF => ConnKind::AxleM,
+            ConnKind::ClipF => ConnKind::BarM,
+            ConnKind::BarM => ConnKind::ClipF,
+            ConnKind::BallM => ConnKind::SocketF,
+            ConnKind::SocketF => ConnKind::BallM,
+            ConnKind::HingeO => ConnKind::HingeE,
+            ConnKind::HingeE => ConnKind::HingeO,
         }
     }
 
-    /// Pins and axles: their direction is an axis, not a facing.
+    /// How a connection of this kind holds (see [`Link`]).
+    pub fn link(self) -> Link {
+        match self {
+            ConnKind::StudM | ConnKind::TubeF => Link::Stud,
+            ConnKind::PinM | ConnKind::PinF => Link::Pin,
+            ConnKind::AxleM | ConnKind::AxleF => Link::Axle,
+            ConnKind::ClipF | ConnKind::BarM => Link::Clip,
+            ConnKind::BallM | ConnKind::SocketF => Link::Ball,
+            ConnKind::HingeO | ConnKind::HingeE => Link::Hinge,
+        }
+    }
+
+    /// Pins, axles, clips, bars and hinges: their direction is an axis, not a facing.
     pub fn is_axial(self) -> bool {
-        !matches!(self, ConnKind::StudM | ConnKind::TubeF)
+        !matches!(
+            self,
+            ConnKind::StudM | ConnKind::TubeF | ConnKind::BallM | ConnKind::SocketF
+        )
     }
 
-    /// The part that goes into the other (stud, pin, axle).
+    /// Balls and sockets mate by position alone: the stem may point anywhere.
+    pub fn is_point(self) -> bool {
+        matches!(self, ConnKind::BallM | ConnKind::SocketF)
+    }
+
+    /// The part that goes into the other (stud, pin, axle, bar, ball, odd hinge half).
     pub fn is_male(self) -> bool {
-        matches!(self, ConnKind::StudM | ConnKind::PinM | ConnKind::AxleM)
+        matches!(
+            self,
+            ConnKind::StudM
+                | ConnKind::PinM
+                | ConnKind::AxleM
+                | ConnKind::BarM
+                | ConnKind::BallM
+                | ConnKind::HingeO
+        )
     }
 
-    /// Studs and receptacles sit on the stud grid; pins and axles do not have to.
+    /// Studs and receptacles sit on the stud grid; the others do not have to.
     pub fn is_stud_kind(self) -> bool {
-        !self.is_axial()
+        matches!(self, ConnKind::StudM | ConnKind::TubeF)
     }
 }
 
@@ -194,7 +335,9 @@ impl Conn {
             return false;
         }
         let neg = [-other.dir[0], -other.dir[1], -other.dir[2]];
-        if self.kind.is_axial() {
+        if self.kind.is_point() {
+            true
+        } else if self.kind.is_axial() {
             self.dir == other.dir || self.dir == neg
         } else {
             self.dir == neg
@@ -213,6 +356,10 @@ pub struct PartShape {
     /// The body with its studs: the box a pointer ray hits.
     pub pick: Aabb,
     pub connectors: Vec<Conn>,
+    /// The occupancy mask of the body ([`crate::mask`]): the narrowphase of collision for a part
+    /// whose box is not its shape. `None` is the box. Never serialised; read from the pack.
+    #[serde(skip)]
+    pub mask: Option<crate::mask::SharedMask>,
 }
 
 #[cfg(test)]

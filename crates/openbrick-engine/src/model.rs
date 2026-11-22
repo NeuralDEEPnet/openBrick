@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use openbrick_catalog::{Aabb, Catalog, CatalogPart, Conn, Palette, PartId};
+use openbrick_catalog::{Aabb, Catalog, CatalogPart, Conn, Mask, Palette, PartId};
 use openbrick_units::{LatticePose, Rot24};
 
 use crate::graph::Stats;
@@ -453,7 +453,7 @@ impl<'c> Model<'c> {
         if b.max[1] > 0 {
             return Err(EngineError::BelowGround { depth: b.max[1] });
         }
-        if let Some(with) = self.collision(&b, skip)? {
+        if let Some(with) = self.collision_of(part, pose, &b, skip)? {
             let name = self
                 .part(self.instance(with).expect("indexed").part)?
                 .name
@@ -463,7 +463,9 @@ impl<'c> Model<'c> {
         Ok(())
     }
 
-    /// The first placed part (lowest id) whose body overlaps `b`, ignoring `skip`.
+    /// The first placed part (lowest id) whose body *box* overlaps `b`, ignoring `skip`: the broadphase
+    /// only. It ignores occupancy masks, so it is a superset of the real collisions; the tests use it to
+    /// compare against the walk, and every edit and snap goes through [`Model::collision_of`].
     pub fn collision(
         &self,
         b: &Aabb,
@@ -482,6 +484,54 @@ impl<'c> Model<'c> {
         Ok(best)
     }
 
+    /// [`Model::collision`] for `part` at `pose` (whose body box is `b`): a placed part whose box
+    /// overlaps counts only when the two solids really share volume, which the occupancy masks of
+    /// the narrowphase decide (docs/plan/07 section 6). A part without a mask is its box, so for the
+    /// built-in parts the answer is the box test's, unchanged.
+    pub fn collision_of(
+        &self,
+        part: PartId,
+        pose: &LatticePose,
+        b: &Aabb,
+        skip: Option<InstanceId>,
+    ) -> Result<Option<InstanceId>, EngineError> {
+        let shape = &self.part(part)?.shape;
+        let mut best: Option<InstanceId> = None;
+        self.spatial.for_each_near(b, |slot| {
+            let id = self.instances.id_of(slot);
+            if Some(id) == skip || !best.is_none_or(|other| id < other) {
+                return;
+            }
+            let other_body = self.instances.body_at(slot);
+            if !other_body.overlaps(b) {
+                return;
+            }
+            let inst = self.instances.at_slot(slot);
+            let other = &self.catalog.parts[inst.part as usize].shape;
+            let hit = if shape.mask.is_none() && other.mask.is_none() {
+                true
+            } else {
+                let region = Aabb {
+                    min: [0, 1, 2].map(|k| b.min[k].max(other_body.min[k])),
+                    max: [0, 1, 2].map(|k| b.max[k].min(other_body.max[k])),
+                };
+                Mask::solids_overlap(
+                    shape.mask.as_deref(),
+                    &shape.body,
+                    (pose.rot, pose.pos),
+                    other.mask.as_deref(),
+                    &other.body,
+                    (inst.pose.rot, inst.pose.pos),
+                    &region,
+                )
+            };
+            if hit {
+                best = Some(id);
+            }
+        })?;
+        Ok(best)
+    }
+
     /// How many connectors of `part` at `pose` mate with placed parts (other
     /// than `skip`).
     pub fn mates(
@@ -490,15 +540,27 @@ impl<'c> Model<'c> {
         pose: &LatticePose,
         skip: Option<InstanceId>,
     ) -> Result<u32, EngineError> {
+        Ok(self.mates_links(part, pose, skip)?.0)
+    }
+
+    /// [`Model::mates`], and the classes of the connections ([`openbrick_catalog::Link`] bits):
+    /// what the page's hover line says the part would be held by.
+    pub fn mates_links(
+        &self,
+        part: PartId,
+        pose: &LatticePose,
+        skip: Option<InstanceId>,
+    ) -> Result<(u32, u32), EngineError> {
         let skip = skip.and_then(|id| self.index.get(&id).copied());
-        Ok(self
-            .part(part)?
-            .shape
-            .connectors
-            .iter()
-            .map(|c| c.transformed(pose.rot, pose.pos))
-            .filter(|c| self.conns.mate_of(c, skip).is_some())
-            .count() as u32)
+        let (mut n, mut links) = (0u32, 0u32);
+        for c in &self.part(part)?.shape.connectors {
+            let placed = c.transformed(pose.rot, pose.pos);
+            if self.conns.mate_of(&placed, skip).is_some() {
+                n += 1;
+                links |= c.kind.link().bit();
+            }
+        }
+        Ok((n, links))
     }
 
     /// Check a colour against the bundled palette.

@@ -1769,15 +1769,15 @@ async function buildPackRun(browser, origin) {
   check(attribution.includes("LDraw Parts Library") && attribution.includes("2026-01") && attribution.includes("CC BY"), `${label}: attribution "${attribution}"`);
   const licence = await page.textContent("#build-licences");
   check(licence.includes("Synthetic test library") && licence.includes("Synthetic licence text"), `${label}: licence text "${licence.slice(0, 80)}"`);
-  check(/1 with joints/.test(await page.textContent("#build-pack-counts")) && /11 parts/.test(await page.textContent("#build-pack-counts")), `${label}: pack counts "${await page.textContent("#build-pack-counts")}"`);
+  check(/1 with clip, bar, ball or hinge connectors/.test(await page.textContent("#build-pack-counts")) && /11 parts/.test(await page.textContent("#build-pack-counts")), `${label}: pack counts "${await page.textContent("#build-pack-counts")}"`);
 
   // Search: words, a size, a category, nothing.
   await page.fill("#build-search", "clip");
   await buildWait(page, () => window.__web.build.list.total === 1, 10_000, "the search for clip");
   let names = await paletteNames(page);
-  check(names.length === 1 && /Clip/.test(names[0]) && /joint not modelled/.test(names[0]), `${label}: search "clip" gives ${JSON.stringify(names)}`);
+  check(names.length === 1 && /Clip/.test(names[0]) && /\(joint\)/.test(names[0]), `${label}: search "clip" gives ${JSON.stringify(names)}`);
   await page.click('#build-parts [role="radio"]');
-  check(/clip joint is not modelled/.test(await page.textContent("#build-part-note")), `${label}: part note "${await page.textContent("#build-part-note")}"`);
+  check(/Connects by clips and bars/.test(await page.textContent("#build-part-note")), `${label}: part note "${await page.textContent("#build-part-note")}"`);
   await page.fill("#build-search", "brick 2x2");
   await buildWait(page, () => window.__web.build.list.total === 2, 10_000, "the search for brick 2x2 (the built-in and the pack's)");
   await page.fill("#build-search", "zzzz");
@@ -1909,6 +1909,217 @@ async function buildPackRun(browser, origin) {
   console.log(`# ${label}: pack added, ${b.list.total} parts searchable, two pack bricks snapped, the model names its pack, opens after adding it${restarted ? ", and survived a worker restart" : " (no worker restart happened)"}`);
   check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
   await context.close();
+}
+
+
+/** A mini pack made by the CLI from the synthetic Technic library: pins, axles, holes, a clip, a bar, a ball and socket, hinge halves. */
+function miniTechnicPack(file = "mini-technic.obpack") {
+  run("cargo", ["build", "-q", "-p", "openbrick"]);
+  const out = join(downloads, file);
+  run(join(repo, "target/debug/openbrick"), ["catalog", "import", join(repo, "crates/openbrick-catalog/tests/fixtures/technic"), "--out", out, "--force", "--technic", "--limit", "0"]);
+  return out;
+}
+
+/** Choose a pack part in the palette by its id (a search that finds one part, then its button). */
+async function chooseById(page, id) {
+  await page.fill("#build-search", id);
+  // The list is for this search (not the previous one that also found one part) once its query is the id.
+  await buildWait(page, (q) => window.__web.build.list.query === q && window.__web.build.list.total === 1 && window.__web.build.list.shown === 1, 15_000, `the search for ${id}`, id);
+  await page.click('#build-parts [role="radio"]');
+  await buildWait(page, (want) => window.__web.build.selected === want, 15_000, `choosing ${id}`, id);
+  await page.fill("#build-search", "");
+  await buildWait(page, () => window.__web.build.list.query === "" && window.__web.build.list.total === 26, 15_000, "the search cleared");
+}
+
+/** Move the pointer to a point of the model frame and wait until the hover line (the core's words) says `words` and the ghost is `ghost`. */
+async function hoverUntil(page, pos, words, ghost, what) {
+  const at = await screenAt(page, pos);
+  await page.mouse.move(at.x, at.y);
+  await buildWait(page, (w) => window.__web.build.ghost === w.ghost && new RegExp(w.words).test(document.querySelector("#build-hover").textContent), 20_000, what, { ghost, words });
+  return at;
+}
+
+/** The connections as sorted "link:nameA+nameB" strings from the core's edge list and the model table. */
+const connectionNames = (page) =>
+  page.evaluate(() => {
+    const b = window.__web.build;
+    const name = (id) => b.nameOf(id) ?? String(id);
+    return (b.stats.edges ?? []).map((e) => `${e.link}:${name(e.a)}+${name(e.b)}`).sort();
+  });
+
+/**
+ * Technic and joint parts in Build mode, desktop and phone width, on the synthetic Technic pack the CLI builds:
+ * the Technic and joint filter chips, the hover line saying what would hold the part ("pin in hole", "axle in
+ * hole", "clip on bar", "ball in socket", "hinge fingers interleaved"), a part that cannot connect staying
+ * red, the connections the core counts by class and WHICH ones they are, the parts that remain (not only how
+ * many), undo, and the same model opened at 390 px. Every step waits for an explicit condition.
+ */
+async function buildTechnicRun(browser, origin) {
+  const label = "build-technic";
+  const pack = miniTechnicPack();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: "light", acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = watchErrors(page);
+  await page.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(page, () => window.__web?.build?.ready === true, 120_000, "the core's catalog");
+  check(await page.isHidden("#build-chips"), `${label}: filter chips are shown before a pack is loaded`);
+  await page.setInputFiles("#build-pack-file", pack);
+  await buildWait(page, () => window.__web.build.pack !== null && window.__web.build.list.total === 26, 30_000, "the Technic pack's parts in the palette (14 built-in and 12 of the pack)");
+  const counts = await page.textContent("#build-pack-counts");
+  check(/6 with clip, bar, ball or hinge connectors, 1 with joints that are not calibrated/.test(counts) && /12 parts/.test(counts), `${label}: pack counts "${counts}"`);
+
+  // The chips: Technic keeps the parts with pin or axle connectors, Clips and joints the others that join.
+  check(await page.isVisible("#build-chips"), `${label}: the filter chips are not shown with a Technic pack`);
+  const chipNames = await page.$$eval("#build-chips button", (bs) => bs.map((b) => `${b.textContent}:${b.getAttribute("aria-pressed")}`));
+  check(JSON.stringify(chipNames) === JSON.stringify(["All:true", "Technic:false", "Clips and joints:false"]), `${label}: chips ${JSON.stringify(chipNames)}`);
+  await page.click('#build-chips [data-chip="technic"]');
+  await buildWait(page, () => window.__web.build.list.links === "technic" && window.__web.build.list.total === 4, 15_000, "the Technic chip (pin, beam, axle and axle beam)");
+  let names = await paletteNames(page);
+  check(names.length === 4 && names.every((n) => /\(technic\)/.test(n)), `${label}: the Technic chip lists ${JSON.stringify(names)}`);
+  check((await page.getAttribute('#build-chips [data-chip="technic"]', "aria-pressed")) === "true", `${label}: the pressed chip is not marked`);
+  await page.click('#build-chips [data-chip="joints"]');
+  await buildWait(page, () => window.__web.build.list.links === "joints" && window.__web.build.list.total === 6, 15_000, "the Clips and joints chip");
+  names = await paletteNames(page);
+  check(names.length === 6 && names.every((n) => /\(joint\)/.test(n)), `${label}: the joint chip lists ${JSON.stringify(names)}`);
+  await page.click('#build-chips [data-chip=""]');
+  await buildWait(page, () => window.__web.build.list.links === "" && window.__web.build.list.total === 26, 15_000, "the All chip");
+  // The part with a clip the joint table does not calibrate says so; the plate with a calibrated clip says what it connects by.
+  await page.fill("#build-search", "roadsign");
+  await buildWait(page, () => window.__web.build.list.query === "roadsign" && window.__web.build.list.total === 1, 10_000, "the search for the uncalibrated clip");
+  await page.click('#build-parts [role="radio"]');
+  check(/clip joint is not calibrated/.test(await page.textContent("#build-part-note")) && /joint not calibrated/.test((await paletteNames(page))[0]), `${label}: the uncalibrated clip "${await page.textContent("#build-part-note")}"`);
+  await page.fill("#build-search", "");
+  await buildWait(page, () => window.__web.build.list.query === "" && window.__web.build.list.total === 26, 10_000, "the empty search");
+
+  // Zoom out with the wheel so the spots around the baseplate are on screen: each notch is waited for by the camera's distance.
+  await page.mouse.move(640, 400);
+  const far0 = await page.evaluate(() => Math.hypot(...window.__web.stats().camera));
+  for (let i = 0; i < 3; i++) {
+    const before = await page.evaluate(() => Math.hypot(...window.__web.stats().camera));
+    await page.mouse.wheel(0, 300);
+    await page.waitForFunction((d) => Math.hypot(...window.__web.stats().camera) > d + 1, before, { timeout: 10_000, polling: 50 }).catch(() => failures.push(`${label}: the wheel did not move the camera away`));
+  }
+  check((await page.evaluate(() => Math.hypot(...window.__web.stats().camera))) > far0 + 60, `${label}: the camera did not zoom out`);
+  // Place on the open ground (no baseplate under it, so parts need no receptacle): a Technic brick, a 1 x 2 with an axle hole,
+  // a plate with a clip, and the two hinge halves, then the parts that join them.
+  const place = async (id, spot, n) => {
+    await chooseById(page, id);
+    const at = await screenAt(page, spot);
+    await page.mouse.move(at.x, at.y);
+    await buildWait(page, () => window.__web.build.ghost === "valid", 20_000, `a valid ghost for ${id}`);
+    const pos = (await buildState(page)).ghostPos;
+    await page.mouse.click(at.x, at.y);
+    await buildWait(page, (want) => window.__web.build.parts === want, 20_000, `${id} placed`, n);
+    return pos;
+  };
+  let n = 1;
+  const beam = await place("ld.3701", [250, 0, -120], ++n);
+  const axleBrick = await place("ld.3704", [250, 0, 0], ++n);
+  const clipPlate = await place("ld.4085", [250, 0, 120], ++n);
+  const hingeA = await place("ld.9101", [380, 0, -120], ++n);
+  const socket = await place("ld.14418", [380, 0, 40], ++n);
+  let b = await buildState(page);
+  check(b.stats.connections === 0, `${label}: five parts on the open ground connect to nothing yet (${JSON.stringify(b.stats.links)})`);
+
+  // A pin over the middle hole of the beam: the core stands it into the hole and says "pin in hole".
+  await chooseById(page, "ld.3673");
+  let at = await hoverUntil(page, [beam[0], beam[1] - 4, beam[2]], "pin in hole", "valid", "a pin ghost in the hole of the Technic brick");
+  if (shots) await page.screenshot({ path: join(shots, "build-technic-pin-ghost-1280.png") });
+  await page.mouse.click(at.x, at.y);
+  await buildWait(page, () => window.__web.build.parts === 7, 20_000, "the pin placed");
+  // An axle over the axle brick: "axle in hole".
+  await chooseById(page, "ld.3705");
+  at = await hoverUntil(page, [axleBrick[0], axleBrick[1] - 4, axleBrick[2]], "axle in hole", "valid", "an axle ghost in the cross hole");
+  await page.mouse.click(at.x, at.y);
+  await buildWait(page, () => window.__web.build.parts === 8, 20_000, "the axle placed");
+  // A pin over the axle brick cannot go in the cross hole: red, with the core's reason.
+  await chooseById(page, "ld.3673");
+  await hoverUntil(page, [axleBrick[0], axleBrick[1] - 4, axleBrick[2]], "would not connect|would overlap", "invalid", "a red pin ghost over the cross hole");
+  // A bar over the clip: "clip on bar".
+  await chooseById(page, "ld.87994");
+  at = await hoverUntil(page, [clipPlate[0], clipPlate[1] - 4, clipPlate[2] - 6], "clip on bar", "valid", "a bar ghost in the clip");
+  await page.mouse.click(at.x, at.y);
+  await buildWait(page, () => window.__web.build.parts === 9, 20_000, "the bar placed");
+  // A ball over the socket: "ball in socket".
+  await chooseById(page, "ld.22890");
+  at = await hoverUntil(page, [socket[0], socket[1] - 10, socket[2]], "ball in socket", "valid", "a ball ghost in the socket");
+  await page.mouse.click(at.x, at.y);
+  await buildWait(page, () => window.__web.build.parts === 10, 20_000, "the ball placed");
+  // The one-finger hinge half, turned half a turn with the rotate button twice, over the two fingers of the other.
+  await chooseById(page, "ld.9102");
+  await page.click("#build-rotate");
+  await buildWait(page, () => window.__web.build.rot !== 0, 10_000, "the first turn of the hinge half");
+  const first = (await buildState(page)).rot;
+  await page.click("#build-rotate");
+  await buildWait(page, (r) => window.__web.build.rot !== r, 10_000, "the second turn of the hinge half", first);
+  at = await hoverUntil(page, [hingeA[0], hingeA[1] + 2, hingeA[2] - 20], "hinge fingers interleaved", "valid", "a hinge half ghost between the fingers");
+  await page.mouse.click(at.x, at.y);
+  await buildWait(page, () => window.__web.build.parts === 11, 20_000, "the hinge half placed");
+
+  // WHICH connections the core has, by class, and which parts remain.
+  await buildWait(page, () => window.__web.build.stats?.parts === 11 && window.__web.build.stats.connections === 5, 20_000, "the five connections counted");
+  b = await buildState(page);
+  const links = b.stats.links;
+  check(links.pin === 1 && links.axle === 1 && links.clip === 1 && links.ball === 1 && links.hinge === 1 && links.stud === 0, `${label}: connections by class ${JSON.stringify(links)}`);
+  check(b.stats.freeRotation === 4, `${label}: four of the connections leave a rotation free (pin, clip, ball, hinge); got ${b.stats.freeRotation}`);
+  const edges = await connectionNames(page);
+  const want = ["axle:Technic Brick 1 x 2 with Axle Hole+Technic Axle 4", "ball:Technic Socket Joint+Technic Ball Joint", "clip:Plate 1 x 1 with Clip Horizontal+Bar 3L", "hinge:Hinge Plate 1 x 1 with 2 Fingers+Hinge Plate 1 x 1 with 1 Finger", "pin:Technic Brick 1 x 4 with Holes+Technic Pin"];
+  check(JSON.stringify(edges.map((e) => e.replace(/\s+/g, " "))) === JSON.stringify(want), `${label}: the connections are ${JSON.stringify(edges)}`);
+  const bom = await page.$$eval("#build-bom tr", (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim().replace(/\s+/g, " "))));
+  const remaining = bom.map((r) => `${r[0]} ${r[1]}`).sort();
+  const wantParts = ["1 Bar 3L", "1 Baseplate 16 x 16", "1 Hinge Plate 1 x 1 with 1 Finger", "1 Hinge Plate 1 x 1 with 2 Fingers", "1 Plate 1 x 1 with Clip Horizontal", "1 Technic Axle 4", "1 Technic Ball Joint", "1 Technic Brick 1 x 2 with Axle Hole", "1 Technic Brick 1 x 4 with Holes", "1 Technic Pin", "1 Technic Socket Joint"].sort();
+  check(JSON.stringify(remaining) === JSON.stringify(wantParts), `${label}: the parts that remain are ${JSON.stringify(remaining)}`);
+  const stats = (await page.textContent("#build-stats")).replace(/\s+/g, " ");
+  check(/Pins in holes ?1/.test(stats) && /Axles in holes ?1/.test(stats) && /Clips on bars ?1/.test(stats) && /Balls in sockets ?1/.test(stats) && /Hinges ?1/.test(stats), `${label}: the stats panel says "${stats}"`);
+  check(b.stats.floating.length === 0, `${label}: floating ${JSON.stringify(b.stats.floating)}`);
+  if (shots) {
+    // A clean frame: the pointer off the view (so no stale hover line), the camera one notch closer, then the Model panel.
+    await page.mouse.move(60, 30);
+    await buildWait(page, () => window.__web.build.ghost === "none", 10_000, "the ghost leaving with the pointer");
+    await page.mouse.move(900, 400);
+    const before = await page.evaluate(() => Math.hypot(...window.__web.stats().camera));
+    await page.mouse.wheel(0, -300);
+    await page.waitForFunction((d) => Math.hypot(...window.__web.stats().camera) < d - 1, before, { timeout: 10_000, polling: 50 }).catch(() => {});
+    await page.mouse.move(60, 30);
+    await buildWait(page, () => window.__web.build.ghost === "none" && window.__web.build.hover === "", 10_000, "the hover line clearing when the pointer leaves the view");
+    await page.screenshot({ path: join(shots, "build-technic-1280.png") });
+    await page.evaluate(() => document.querySelector("#build-stats").scrollIntoView({ block: "center" }));
+    await page.screenshot({ path: join(shots, "build-technic-1280-stats.png") });
+  }
+
+  // Save the model for the phone-width page, then undo the last placement: the hinge connection goes with it.
+  const [saved] = await Promise.all([page.waitForEvent("download"), page.click("#build-save")]);
+  const savedPath = join(downloads, "technic-model.obrick.json");
+  await saved.saveAs(savedPath);
+  await page.click("#build-undo");
+  await buildWait(page, () => window.__web.build.parts === 10 && window.__web.build.stats?.links?.hinge === 0 && window.__web.build.stats.connections === 4, 20_000, "undo taking the hinge half and its connection away");
+  await page.click("#build-redo");
+  await buildWait(page, () => window.__web.build.parts === 11 && window.__web.build.stats?.links?.hinge === 1, 20_000, "redo bringing the hinge half and its connection back");
+  check(errors.length === 0, `${label}: page errors: ${errors.join(" | ")}`);
+  await context.close();
+
+  // The same model at 390 px: the pack, then the file; nothing wider than the screen.
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: "light" });
+  const p2 = await phone.newPage();
+  const errors2 = watchErrors(p2);
+  await p2.goto(`${origin}/?backend=webgl2&mode=build`);
+  await buildWait(p2, () => window.__web?.build?.ready === true, 120_000, "the phone page's catalog");
+  await p2.setInputFiles("#build-pack-file", pack);
+  await buildWait(p2, () => window.__web.build.pack !== null, 30_000, "the pack on the phone page");
+  await p2.setInputFiles("#build-file", savedPath);
+  await buildWait(p2, () => window.__web.build.parts === 11 && window.__web.build.stats?.connections === 5, 30_000, "the Technic model opening on the phone page");
+  const pb = await buildState(p2);
+  check(pb.stats.links.pin === 1 && pb.stats.links.hinge === 1 && pb.stats.links.clip === 1, `${label}: the model opened at 390 px has ${JSON.stringify(pb.stats.links)}`);
+  check((await p2.evaluate(() => document.documentElement.scrollWidth)) <= 390, `${label}: the page is wider than 390 px (${await p2.evaluate(() => document.documentElement.scrollWidth)})`);
+  await p2.evaluate(() => document.querySelector("#stage").scrollIntoView());
+  if (shots) {
+    await p2.screenshot({ path: join(shots, "build-technic-390-stage.png") });
+    await p2.evaluate(() => document.querySelector("#build-stats").scrollIntoView());
+    await p2.screenshot({ path: join(shots, "build-technic-390-stats.png") });
+  }
+  check(errors2.length === 0, `${label}: page errors at 390 px: ${errors2.join(" | ")}`);
+  console.log(`# ${label}: chips filter the palette, pin, axle, clip, ball and hinge connect with the core's words, a pin stays red over a cross hole, the five connections are the expected ones, undo and redo bring the hinge back, and the model opens at 390 px`);
+  await phone.close();
 }
 
 /** A real pack, when OPENBRICK_SMOKE_PACK names one: screenshots and the numbers (not in CI). */
@@ -2340,9 +2551,10 @@ async function main() {
   rmSync(downloads, { recursive: true, force: true });
   mkdirSync(downloads, { recursive: true });
   const onlyPack = args.has("--only-pack");
+  const onlyTechnic = args.has("--only-technic");
   const onlyRace = args.has("--only-race");
   const onlyScale = args.has("--only-scale");
-  const onlyBuild = args.has("--only-build") || onlyPack || onlyRace || onlyScale;
+  const onlyBuild = args.has("--only-build") || onlyPack || onlyTechnic || onlyRace || onlyScale;
   const native = onlyBuild ? null : nativeValues();
   if (native) console.log(
     `native (${native.kernel}): emboss ${native.part.emboss.triangles} triangles ${native.part.emboss.contentHash}, ` +
@@ -2365,7 +2577,7 @@ async function main() {
         failures.push(err.message);
       }
     }
-    for (const buildStep of onlyRace ? [buildRaceRun] : onlyPack ? [buildPackRun] : onlyScale ? [buildScaleRun, buildGrowRun] : [buildRun, buildRaceRun, buildGrowRun, buildScaleRun, buildPhoneRun, buildPackRun]) {
+    for (const buildStep of onlyRace ? [buildRaceRun] : onlyTechnic ? [buildTechnicRun] : onlyPack ? [buildPackRun] : onlyScale ? [buildScaleRun, buildGrowRun] : [buildRun, buildRaceRun, buildGrowRun, buildScaleRun, buildPhoneRun, buildPackRun, buildTechnicRun]) {
       try {
         await buildStep(browser, origin);
       } catch (err) {

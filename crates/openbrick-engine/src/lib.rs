@@ -25,7 +25,7 @@ pub mod snap;
 mod spatial;
 
 pub use document::{Bom, BomLine, DocError, Loader, ModelDoc, PackRequirement, MODEL_PRAGMA};
-pub use graph::Stats;
+pub use graph::{LinkCounts, Stats};
 pub use history::Command;
 pub use model::{Changes, EngineError, IndexSnapshot, Instance, InstanceId, Instances, Model};
 pub use snap::{Hit, Ray, Snap};

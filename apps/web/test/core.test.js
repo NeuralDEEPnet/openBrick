@@ -417,7 +417,12 @@ test("the real core loads an LDraw pack: parts join the catalog, models say whic
   assert.equal(catalog.parts[p3003].category, "Brick");
   assert.equal(catalog.parts[p3003].connectivity, "derived");
   assert.equal(catalog.parts[p3003].author, "OpenBrick3D tests");
-  assert.equal(catalog.parts.find((p) => p.id === "ld.4081b").joints[0], "clip");
+  // clip1 is in the joint table: the clip part is not flagged, it connects by a clip (and a stud), and has a mask.
+  const clipPart = catalog.parts.find((p) => p.id === "ld.4081b");
+  assert.deepEqual(clipPart.joints, []);
+  assert.deepEqual(clipPart.links, ["stud", "clip"]);
+  assert.equal(typeof clipPart.masked, "boolean");
+  assert.deepEqual(catalog.parts.find((p) => p.id === "ld.3673")?.links, ["pin"]);
 
   // Meshes are asked for by part number, never all at once by default.
   assert.equal(ok({ type: "asmMeshes", detail: true }).meshes.length, 14);
@@ -630,6 +635,53 @@ test("ids up to 4,294,967,295 survive load, pick, delete, undo and a restart thr
   const restored = ok({ type: "asmLoadRows", rows });
   assert.deepEqual([...restored.instances], [...rows]);
   assert.equal(ok({ type: "asmPick", ray: { origin: [100, -500, 0], dir: [0, 1, 0] } }).instance, 3_000_000_000);
+});
+
+const technicLibrary = new URL("../../../crates/openbrick-catalog/tests/fixtures/technic", import.meta.url).pathname;
+
+/** The pack the CLI makes from the synthetic Technic library with `--technic` (ours, written for the tests). */
+function technicPack() {
+  const dir = mkdtempSync(join(tmpdir(), "openbrick-technic-"));
+  const out = join(dir, "technic.obpack");
+  const r = spawnSync(cli, ["catalog", "import", technicLibrary, "--out", out, "--technic", "--limit", "0"], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const bytes = new Uint8Array(readFileSync(out));
+  rmSync(dir, { recursive: true });
+  return bytes;
+}
+
+test("the real core snaps a pin into a hole, says what holds it, and counts connections by class with the edges", { skip: skip || skipPack }, async () => {
+  const core = await loadCore();
+  let n = 0;
+  const ask = (request) => dispatch(core, { id: ++n, ...request }).reply;
+  const ok = (request) => {
+    const reply = ask(request);
+    assert.equal(reply.ok, true, `${request.type}: ${reply.error}`);
+    return reply.result;
+  };
+  ok({ type: "asmLoadPack", bytes: technicPack() });
+  const catalog = ok({ type: "asmInit" });
+  const part = (id) => catalog.parts.find((p) => p.id === id);
+  assert.deepEqual(part("ld.3701").links, ["stud", "pin"]);
+  assert.deepEqual(part("ld.3704").links, ["stud", "axle"]);
+  assert.deepEqual(part("ld.4085").links, ["stud", "clip"]);
+  assert.deepEqual(part("ld.9103").joints, ["clip"], "the clip the table does not calibrate is flagged");
+  assert.equal(part("ld.3673").masked, true);
+  assert.equal(part("ld.3005").masked, false, "a plain brick collides as its box");
+  const empty = '{"openbrick":"1.0","kind":"model","name":"e","units":"ldu","frame":"ldraw-y-down","catalog":"openbrick-builtin@1","palette":[],"bom":[],"submodels":[{"id":"main","instances":[]}]}';
+  ok({ type: "asmLoad", text: empty });
+  ok({ type: "asmApply", command: { op: "add", part: "ld.3701", pos: [0, -24, 0], rot: 0, colour: 4 } });
+  // A ray at the middle hole of the beam from the +X side: the pin is laid into the hole.
+  const snap = ok({ type: "asmSnap", part: "ld.3673", rot: 0, ray: { origin: [500, -12, 0], dir: [-1, 0, 0] } });
+  assert.equal(snap.valid, true);
+  assert.deepEqual(snap.connects, ["pin in hole"]);
+  assert.equal(snap.links, 2, "the pin class bit");
+  ok({ type: "asmApply", command: { op: "add", part: "ld.3673", pos: snap.pos, rot: snap.rot, colour: 15 } });
+  const stats = ok({ type: "asmStats" }).stats;
+  assert.equal(stats.links.pin, 1);
+  assert.equal(stats.connections, 1);
+  assert.equal(stats.freeRotation, 1, "a pin leaves a rotation free");
+  assert.deepEqual(stats.edges, [{ a: 1, b: 2, link: "pin" }], "which connection exists, not only how many");
 });
 
 test("the page's table equals the core's after random edits, failed commands, undo, redo, clears and pack parts", { skip: skip || skipPack }, async () => {

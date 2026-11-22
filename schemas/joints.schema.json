@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbrick3d.org/schemas/1.0/joints.schema.json",
+  "title": "OpenBrick3D joint table",
+  "description": "standards/joints-*.json (kind joints): how the clip, hinge, ball and bar primitives of the LDraw Parts Library turn into connectors (docs/plan/07 section 3, the Q04 report's calibration table). Each entry is a fact about one primitive in its own frame, derived from its own geometry by scripts/derive-joint-table.py and cited. Read by openbrick-catalog as JointTable.",
+  "type": "object",
+  "required": [
+    "openbrick",
+    "kind",
+    "version",
+    "license",
+    "credit",
+    "library",
+    "notes",
+    "bars",
+    "primitives"
+  ],
+  "properties": {
+    "openbrick": {
+      "$ref": "#/$defs/pragma"
+    },
+    "kind": {
+      "const": "joints"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1
+    },
+    "credit": {
+      "$ref": "#/$defs/credit"
+    },
+    "library": {
+      "description": "The library release the table was derived from, with the release file's SHA-256.",
+      "type": "string",
+      "minLength": 1
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bars": {
+      "description": "The rule that finds bars, which have no primitive: a cylinder of this radius at least this long, in a part whose description holds one of the words.",
+      "type": "object",
+      "required": [
+        "radius",
+        "radiusTolerance",
+        "minLength",
+        "descriptionWords",
+        "source"
+      ],
+      "properties": {
+        "radius": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 50
+        },
+        "radiusTolerance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "minLength": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        },
+        "descriptionWords": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]+$"
+          }
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "primitives": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": [
+          "primitive",
+          "description",
+          "kind",
+          "axis",
+          "origin",
+          "method",
+          "evidence"
+        ],
+        "properties": {
+          "primitive": {
+            "description": "The primitive's file name without .dat, lower case.",
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "description": {
+            "type": "string"
+          },
+          "kind": {
+            "description": "The connector kind an instance makes.",
+            "enum": [
+              "clipF",
+              "barM",
+              "ballM",
+              "socketF",
+              "hingeO",
+              "hingeE"
+            ]
+          },
+          "axis": {
+            "description": "The joint's axis in the primitive's frame: a positive lattice axis.",
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "origin": {
+            "description": "A point on that axis in the primitive's frame, LDU.",
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "number",
+              "minimum": -1000,
+              "maximum": 1000
+            }
+          },
+          "method": {
+            "enum": [
+              "bore-cylinder",
+              "sphere-centre",
+              "concentric-with-ball",
+              "hinge-pin"
+            ]
+          },
+          "evidence": {
+            "description": "The primitive geometry the entry was read from.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "if": {
+    "$ref": "#/$defs/atThisMinor"
+  },
+  "then": {
+    "$ref": "#/$defs/knownFields"
+  },
+  "$defs": {
+    "knownFields": {
+      "description": "The fields schema 1.0 names, object by object; true means the value is checked by the main schema. Applied only to 1.0 documents (see atThisMinor), where any other field is an error.",
+      "properties": {
+        "openbrick": true,
+        "kind": true,
+        "version": true,
+        "license": true,
+        "credit": {
+          "properties": {
+            "author": true,
+            "url": true
+          },
+          "additionalProperties": false
+        },
+        "library": true,
+        "notes": true,
+        "bars": {
+          "properties": {
+            "radius": true,
+            "radiusTolerance": true,
+            "minLength": true,
+            "descriptionWords": true,
+            "source": true
+          },
+          "additionalProperties": false
+        },
+        "primitives": {
+          "items": {
+            "properties": {
+              "primitive": true,
+              "description": true,
+              "kind": true,
+              "axis": true,
+              "origin": true,
+              "method": true,
+              "evidence": true
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "atThisMinor": {
+      "description": "Matches a document whose pragma names a minor version this schema knows, 1.0 (or a patch of it). Such a document may use only the fields this schema names ($defs/knownFields). A document of a later 1.x minor may carry fields added since; this schema checks the fields it knows and ignores the rest, so older tools can still read newer minors (docs/plan/08 section 9). Unlike the other shared definitions this one follows the schema's own minor version (cargo xtask data checks it against $id).",
+      "required": [
+        "openbrick"
+      ],
+      "properties": {
+        "openbrick": {
+          "type": "string",
+          "pattern": "^1\\.0(\\.|$)"
+        }
+      }
+    },
+    "pragma": {
+      "description": "Schema version pragma: major 1 and a minor, optionally a patch (docs/plan/08 sections 1 and 9). Every 1.x is accepted: readers ignore fields from minors newer than they know, and this schema checks only the fields it names in documents newer than 1.0 (see atThisMinor).",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))?$"
+    },
+    "credit": {
+      "description": "Who made the document. Keeping it is a community norm, not a legal condition (LICENSE-POLICY.md).",
+      "type": "object",
+      "required": [
+        "author"
+      ],
+      "properties": {
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://\\S+$"
+        }
+      }
+    },
+    "profileId": {
+      "description": "A profile id: lower-case words joined by hyphens, where a word may hold dots, as in fdm-0.4 or resin-msla (docs/plan/05 section 3).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+(\\.[a-z0-9]+)*)*$"
+    }
+  }
+}

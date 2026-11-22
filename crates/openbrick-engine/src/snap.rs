@@ -64,6 +64,10 @@ pub struct Snap {
     pub valid: bool,
     /// Connectors that would mate with placed parts.
     pub mates: u32,
+    /// The classes of those connections, as [`openbrick_catalog::Link`] bits (a stud in a
+    /// receptacle, a pin in a hole, an axle in a hole, a clip on a bar, a ball in a socket, hinge
+    /// halves): what the page's hover line says the part would be held by.
+    pub links: u32,
     /// On the ground (its bottom at Y = 0).
     pub grounded: bool,
     /// A placed part it would overlap, if any.
@@ -284,57 +288,214 @@ impl Model<'_> {
         let z0 = nearest_phase(cursor[2] - centre2(2), phase[1], STUD_PITCH_LDU);
 
         let mut best: Option<(Key, Snap)> = None;
+        // Evaluate one candidate pose; `face_dist` is the ranking distance, `anchor` the point of
+        // the part its offset from the cursor is measured at.
+        // A part with pin, axle, clip, bar, ball or hinge connectors prefers a valid pose that puts one
+        // of them on a mate over a valid one that only stands on the ground or touches: pointing at a
+        // hole means the hole. Parts without them rank exactly as before.
+        let prefers_mates = shape.connectors.iter().any(|c| !c.kind.is_stud_kind());
+        let consider = |pos: [i32; 3],
+                        rot: Rot24,
+                        dist: Option<f64>,
+                        by_mate: bool,
+                        best: &mut Option<(Key, Snap)>|
+         -> Result<(), EngineError> {
+            let pose = LatticePose { pos, rot };
+            let b = shape.body.transformed(rot, pos);
+            let a = [
+                f64::from(b.min[0] + b.max[0]) / 2.0,
+                match anchor {
+                    Anchor::Bottom => f64::from(b.max[1]),
+                    Anchor::Top => f64::from(b.min[1]),
+                    Anchor::Centre => f64::from(b.min[1] + b.max[1]) / 2.0,
+                },
+                f64::from(b.min[2] + b.max[2]) / 2.0,
+            ];
+            let d = [a[0] - cursor[0], a[1] - cursor[1], a[2] - cursor[2]];
+            let dist = dist.unwrap_or_else(|| d.iter().map(|v| v * v).sum::<f64>());
+            let (mates, links) = self.mates_links(part, &pose, None)?;
+            let grounded = b.max[1] == 0;
+            let collides = self.collision_of(part, &pose, &b, None)?;
+            let valid = collides.is_none() && b.max[1] <= 0 && (mates > 0 || grounded);
+            let key = Key {
+                invalid: !valid,
+                unmated: prefers_mates && !by_mate,
+                dist,
+                mates,
+                d,
+            };
+            if best.as_ref().is_none_or(|(k, _)| key.before(k)) {
+                *best = Some((
+                    key,
+                    Snap {
+                        pos,
+                        rot: rot.0,
+                        valid,
+                        mates,
+                        links,
+                        grounded,
+                        collides,
+                        target: hit.instance,
+                    },
+                ));
+            }
+            Ok(())
+        };
         for &y in &ys {
             for i in -WINDOW..=WINDOW {
                 for j in -WINDOW..=WINDOW {
                     let pos = [x0 + i * STUD_PITCH_LDU, y, z0 + j * STUD_PITCH_LDU];
-                    let pose = LatticePose { pos, rot };
-                    let b = local.transformed(Rot24::IDENTITY, pos);
-                    let a = [
-                        f64::from(b.min[0] + b.max[0]) / 2.0,
-                        match anchor {
-                            Anchor::Bottom => f64::from(b.max[1]),
-                            Anchor::Top => f64::from(b.min[1]),
-                            Anchor::Centre => f64::from(b.min[1] + b.max[1]) / 2.0,
-                        },
-                        f64::from(b.min[2] + b.max[2]) / 2.0,
-                    ];
-                    let d = [a[0] - cursor[0], a[1] - cursor[1], a[2] - cursor[2]];
-                    let dist = d.iter().map(|v| v * v).sum::<f64>();
-                    let mates = self.mates(part, &pose, None)?;
-                    let grounded = b.max[1] == 0;
-                    let collides = self.collision(&b, None)?;
-                    let valid = collides.is_none() && b.max[1] <= 0 && (mates > 0 || grounded);
-                    let key = Key {
-                        invalid: !valid,
-                        dist,
-                        mates,
-                        d,
-                    };
-                    if best.as_ref().is_none_or(|(k, _)| key.before(k)) {
-                        best = Some((
-                            key,
-                            Snap {
-                                pos,
-                                rot: rot.0,
-                                valid,
-                                mates,
-                                grounded,
-                                collides,
-                                target: hit.instance,
-                            },
-                        ));
-                    }
+                    consider(pos, rot, None, false, &mut best)?;
                 }
+            }
+        }
+        // Poses that put one of the part's pins, axles, clips, bars, balls or hinge halves on the
+        // matching connector of a part near the cursor. They are not on the stud grid: a pin's hole
+        // is half a stud from a brick's studs, and a hole two plates above a beam's bottom is not
+        // on the plate grid, so no lattice window finds them. Parts without such connectors, and
+        // targets without them, add no candidate (stud and receptacle mates are found by the window).
+        if shape.connectors.iter().any(|c| !c.kind.is_stud_kind()) {
+            for (pos, rot, _) in self.mate_poses(part, rot, hit.point)? {
+                consider(pos, rot, None, true, &mut best)?;
             }
         }
         Ok(best.map(|(_, s)| s))
     }
+
+    /// The lattice poses that mate a non-stud connector of `part` (turned by `rot`) with a
+    /// placed one near `point`, nearest target first: at most [`MATE_TARGETS`] targets and
+    /// [`MATE_CONNECTORS`] connectors of the part, each with the distance from the target to
+    /// `point` squared. The rotation is the given one when the connector's axis already lies on the
+    /// target's; otherwise it is turned a quarter or a half about the axis that takes one onto the
+    /// other (so a pin dropped on a hole in a side face lies down to fit, whichever way the user
+    /// had turned it). A pin spins freely about its axis and an axle fits in four quarter turns of
+    /// it; the roll kept is the one the given rotation implies, and R chooses another.
+    pub fn mate_poses(
+        &self,
+        part: PartId,
+        rot: Rot24,
+        point: [f64; 3],
+    ) -> Result<Vec<([i32; 3], Rot24, f64)>, EngineError> {
+        let shape = &self.part(part)?.shape;
+        let reach = MATE_REACH;
+        let probe = Aabb {
+            min: [0, 1, 2].map(|k| (point[k] - f64::from(reach)).floor() as i32),
+            max: [0, 1, 2].map(|k| (point[k] + f64::from(reach)).ceil() as i32 + 1),
+        };
+        let near = self.spatial().near(&probe)?;
+        // Targets: placed connectors of an axial or point kind, with their distance to the point.
+        let mut targets: Vec<(f64, InstanceId, openbrick_catalog::Conn)> = Vec::new();
+        for slot in near {
+            let inst = self.instances.at_slot(slot);
+            let other = &self.catalog().parts[inst.part as usize].shape;
+            for c in other
+                .connectors
+                .iter()
+                .filter(|c| !c.kind.is_stud_kind())
+                .map(|c| c.transformed(inst.pose.rot, inst.pose.pos))
+            {
+                let d: f64 = (0..3)
+                    .map(|k| (f64::from(c.pos[k]) - point[k]).powi(2))
+                    .sum();
+                if d <= f64::from(reach) * f64::from(reach) {
+                    targets.push((d, inst.id, c));
+                }
+            }
+        }
+        targets.sort_by(|a, b| {
+            a.0.total_cmp(&b.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.kind.cmp(&b.2.kind))
+                .then(a.2.pos.cmp(&b.2.pos))
+        });
+        targets.truncate(MATE_TARGETS);
+        let mut out: Vec<([i32; 3], Rot24, f64)> = Vec::new();
+        for (d, _, t) in targets {
+            let mut used = 0;
+            for c in shape
+                .connectors
+                .iter()
+                .filter(|c| !c.kind.is_stud_kind() && c.kind.mate() == t.kind)
+            {
+                if used == MATE_CONNECTORS {
+                    break;
+                }
+                let Some(r) = align(rot, c, &t) else { continue };
+                used += 1;
+                let p = r.apply(c.pos);
+                let pos = [t.pos[0] - p[0], t.pos[1] - p[1], t.pos[2] - p[2]];
+                if pos
+                    .iter()
+                    .any(|v| v.unsigned_abs() > crate::MAX_COORD as u32)
+                {
+                    continue;
+                }
+                if !out.iter().any(|o| o.0 == pos && o.1 == r) {
+                    out.push((pos, r, d));
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// The nearest placed connectors considered when looking for pin, axle, clip, bar, ball and hinge
+/// mates, and the connectors of the dragged part tried against each: bounds on the work of one
+/// snap, so a beam of sixteen holes dropped among a hundred pins costs a fixed amount.
+pub const MATE_TARGETS: usize = 8;
+pub const MATE_CONNECTORS: usize = 8;
+/// How far from the cursor (LDU) a target connector may be: two studs and a half.
+pub const MATE_REACH: i32 = 50;
+
+/// The rotation, derived from `rot`, under which connector `c` of a part mates with the placed
+/// connector `t` in direction (and `None` when the two kinds do not mate).
+fn align(rot: Rot24, c: &openbrick_catalog::Conn, t: &openbrick_catalog::Conn) -> Option<Rot24> {
+    if c.kind.mate() != t.kind {
+        return None;
+    }
+    if c.kind.is_point() {
+        return Some(rot);
+    }
+    let a = rot.apply(c.dir);
+    let dot = a[0] * t.dir[0] + a[1] * t.dir[1] + a[2] * t.dir[2];
+    if dot != 0 {
+        // Parallel or anti-parallel: an axis has no sign.
+        return Some(rot);
+    }
+    // Perpendicular: a quarter turn about a x t takes a onto t.
+    let n = [
+        a[1] * t.dir[2] - a[2] * t.dir[1],
+        a[2] * t.dir[0] - a[0] * t.dir[2],
+        a[0] * t.dir[1] - a[1] * t.dir[0],
+    ];
+    // R v = n x v + n (n . v), the quarter turn about the unit lattice vector n.
+    let col = |e: [i32; 3]| {
+        let cross = [
+            n[1] * e[2] - n[2] * e[1],
+            n[2] * e[0] - n[0] * e[2],
+            n[0] * e[1] - n[1] * e[0],
+        ];
+        let dn = n[0] * e[0] + n[1] * e[1] + n[2] * e[2];
+        [
+            cross[0] + n[0] * dn,
+            cross[1] + n[1] * dn,
+            cross[2] + n[2] * dn,
+        ]
+    };
+    let (c0, c1, c2) = (col([1, 0, 0]), col([0, 1, 0]), col([0, 0, 1]));
+    let quarter = Rot24::from_matrix([
+        [c0[0], c1[0], c2[0]],
+        [c0[1], c1[1], c2[1]],
+        [c0[2], c1[2], c2[2]],
+    ])?;
+    Some(quarter.compose(rot))
 }
 
 /// The ranking of candidates (module documentation).
 struct Key {
     invalid: bool,
+    /// For a part that prefers mates: the pose does not put a non-stud connector on a mate.
+    unmated: bool,
     dist: f64,
     mates: u32,
     d: [f64; 3],
@@ -346,6 +507,7 @@ impl Key {
         let order = self
             .invalid
             .cmp(&other.invalid)
+            .then(self.unmated.cmp(&other.unmated))
             .then(self.dist.total_cmp(&other.dist))
             .then(other.mates.cmp(&self.mates))
             .then(self.d[0].total_cmp(&other.d[0]))

@@ -11,7 +11,10 @@ pub mod connect;
 pub mod flatten;
 pub mod import;
 pub mod library;
+pub mod occupancy;
 pub mod parse;
 
-pub use import::{import, ImportError, ImportOptions, ImportReport, DEFAULT_CATEGORIES};
+pub use import::{
+    import, ImportError, ImportOptions, ImportReport, DEFAULT_CATEGORIES, TECHNIC_CATEGORIES,
+};
 pub use library::{Library, LibraryError, Resolution};

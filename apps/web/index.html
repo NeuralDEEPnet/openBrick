@@ -328,6 +328,10 @@
       span.thumb.pending { border-radius: 6px; background: color-mix(in srgb, var(--muted) 14%, transparent); }
       .part-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 11em); gap: 6px; margin-bottom: 8px; }
       .part-tools[hidden] { display: none; }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      .chips[hidden] { display: none; }
+      .chip { min-height: 32px; padding: 2px 12px; border-radius: 16px; }
+      .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: transparent; }
       .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--muted); }
       .choice-badge { font-size: 10px; color: var(--muted); border: 1px solid var(--muted); border-radius: 4px; padding: 0 3px; }
       .pack-row { margin-top: 8px; }
@@ -468,6 +472,7 @@
               <label class="visually-hidden" for="build-category">Category</label>
               <select id="build-category"></select>
             </div>
+            <div id="build-chips" class="chips" role="group" aria-label="Part filter" hidden></div>
             <div id="build-parts" class="palette" role="radiogroup" aria-label="Part to place"></div>
             <div class="pager">
               <button type="button" id="build-prev" disabled>Previous</button>
@@ -706,6 +711,7 @@
       <output id="status" role="status" aria-live="polite"></output>
       <p class="owner" id="owner"><img src="./src/brand/ndn-logo-96.webp" srcset="./src/brand/ndn-logo-96.webp 2x, ./src/brand/ndn-logo-192.webp 4x" width="61" height="96" alt="Neuraldeep.net logo" /><span>An open demo by Neural Deep Network Ltd (<a href="https://www.neuraldeep.net/" target="_blank" rel="noopener">neuraldeep.net</a>). The Neuraldeep.net logo and the NEURALDEEP.NET wordmark: Copyright Neural Deep Network Ltd. All rights reserved. <a href="https://github.com/NeuralDEEPnet/openBrick/blob/main/parts/assets/brand/NOTICE.md" target="_blank" rel="noopener">Notice</a></span></p>
       <p class="disclaimer"><span id="disclaimer"><!--openbrick:disclaimer--></span> <a href="https://neuraldeepnet.github.io/openBrick/docs/" target="_blank" rel="noopener">Documentation</a> · <a href="https://github.com/NeuralDEEPnet/openBrick" target="_blank" rel="noopener">Source code on GitHub</a></p>
+      <p class="disclaimer" id="joint-attribution">The joint table (standards/joints-v1.json) is derived from the <a href="https://www.ldraw.org" target="_blank" rel="noopener">LDraw Parts Library</a> (LDraw.org) and licensed CC BY 4.0.</p>
     </footer>
     <script type="module" src="/src/main.js"></script>
   </body>

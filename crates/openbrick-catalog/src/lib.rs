@@ -9,12 +9,13 @@
 //!
 //! The LDraw Parts Library is fetched by the user at runtime and never vendored
 //! (CC BY attribution travels with every pack; see LICENSE-POLICY.md and
-//! docs/plan/12). Still to do (docs/plan/11, M3a): clip, hinge and ball joints,
-//! occupancy masks, LOD hulls.
+//! docs/plan/12). Still to do (docs/plan/11, M3a): LOD hulls.
 
 pub mod builtin;
+pub mod joints;
 #[cfg(feature = "import")]
 pub mod ldraw;
+pub mod mask;
 pub mod pack;
 pub mod palette;
 pub mod shape;
@@ -25,9 +26,11 @@ use std::sync::OnceLock;
 pub use builtin::{
     body_hull, BuiltPart, BuiltinSpec, CatalogError, Lod, PartMesh, BUILTIN, CATALOG_ID,
 };
+pub use joints::{BarRule, JointPrimitive, JointTable, JOINT_TABLE_ATTRIBUTION};
+pub use mask::{Mask, MaskGrid, MaskRef, SharedMask, MASK_CELL_LDU, MAX_MASK_CELLS};
 pub use pack::{Connectivity, Pack, PackError, PackHeader, PackPart, LDRAW_ID_PREFIX};
 pub use palette::{Colour, Palette};
-pub use shape::{Aabb, Conn, ConnKind, PartShape, MAX_BOX_CELLS, MAX_BOX_EXTENT_LDU};
+pub use shape::{Aabb, Conn, ConnKind, Link, PartShape, MAX_BOX_CELLS, MAX_BOX_EXTENT_LDU};
 
 /// A connector in the LDCad SNAP vocabulary.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -145,8 +148,10 @@ impl Catalog {
             .filter(|p| p.origin == Origin::Builtin)
             .cloned()
             .collect();
-        for p in &pack.header.parts {
-            parts.push(CatalogPart::from_pack(p));
+        for (i, p) in pack.header.parts.iter().enumerate() {
+            let mut part = CatalogPart::from_pack(p);
+            part.shape.mask = pack.mask(i);
+            parts.push(part);
         }
         Catalog {
             parts,
@@ -211,6 +216,7 @@ impl CatalogPart {
                 body: p.body,
                 pick: p.pick,
                 connectors: p.connectors.clone(),
+                mask: None,
             },
         }
     }

@@ -649,8 +649,8 @@ fn inlay_without_round_puts_the_first_layer_chamfer_on_the_bed() {
         mm("plate_height"),
     );
     let inset = c + param_default("margin");
-    for k in 0..2 {
-        assert!((art.box_min_mm[k] - inset).abs() < 1e-12);
+    for v in &art.box_min_mm[..2] {
+        assert!((v - inset).abs() < 1e-12);
     }
     let s = (w - 2.0 * inset).min(d - 2.0 * inset);
     let (a_lo, a_hi) = opened_square_area(s, r0());

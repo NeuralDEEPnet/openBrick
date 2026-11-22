@@ -99,7 +99,11 @@ fn info_prints_counts_and_coverage() {
     assert_eq!(j["parts"], 11);
     assert_eq!(j["connectivity"]["derived"], 11);
     assert_eq!(j["connectivity"]["none"], 0);
-    assert_eq!(j["withJoints"], 1);
+    // clip1 is in the joint table: the clip part has a clip connector and is not flagged.
+    assert_eq!(j["withJoints"], 0);
+    assert_eq!(j["connectorsByKind"]["clipF"], 1);
+    assert_eq!(j["partsByLink"]["clip"], 1);
+    assert!(j["withMasks"].as_u64().unwrap() >= 1);
     assert_eq!(j["library"], "2026-01");
     assert!(j["attribution"]
         .as_str()

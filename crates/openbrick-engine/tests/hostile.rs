@@ -292,6 +292,7 @@ fn catalog_with_boxes(
         vertices: 0,
         triangles: 0,
         offset: 0,
+        mask: None,
     };
     let header = PackHeader {
         openbrick: "1.0".into(),

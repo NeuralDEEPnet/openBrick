@@ -1,0 +1,611 @@
+//! Technic parts in the assembler: pins and axles in holes (occupancy masks as the narrowphase,
+//! snapping by connector pairs, the connection graph, undo and the indexes), on the synthetic
+//! mini Technic library of the catalog's tests (`tests/fixtures/technic`, written for these
+//! tests, CC0). The same checks run on the real LDraw library when `OPENBRICK_LDRAW_DIR` names
+//! one (`tests/technic_real.rs`).
+
+mod common;
+
+use std::path::Path;
+use std::sync::OnceLock;
+
+use common::*;
+use openbrick_catalog::ldraw::{import, ImportOptions};
+use openbrick_catalog::{Catalog, Link, Mask, Pack};
+use openbrick_engine::{Command, EngineError, Model, Ray};
+use openbrick_units::{LatticePose, Rot24};
+
+pub fn technic_pack() -> Pack {
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../openbrick-catalog/tests/fixtures/technic");
+    let opts = ImportOptions {
+        categories: Some(
+            ["Brick", "Plate", "Technic", "Bar", "Hinge"]
+                .map(String::from)
+                .to_vec(),
+        ),
+        ..ImportOptions::default()
+    };
+    let (p, _) = import(&dir, &opts, &mut |_, _, _| {}).expect("fixture imports");
+    Pack::from_bytes(&p.to_bytes().unwrap()).unwrap()
+}
+
+pub fn cat() -> &'static Catalog {
+    static C: OnceLock<Catalog> = OnceLock::new();
+    C.get_or_init(|| Catalog::builtin().unwrap().with_pack(&technic_pack()))
+}
+
+fn add(part: &str, pos: [i32; 3], rot: u8) -> Command {
+    Command::Add {
+        part: part.into(),
+        pos,
+        rot,
+        colour: 15,
+    }
+}
+
+fn id(name: &str) -> u32 {
+    cat().find(name).unwrap_or_else(|| panic!("part {name}"))
+}
+
+/// A ray straight at a point from the +X side.
+fn from_plus_x(y: i32, z: i32) -> Ray {
+    Ray {
+        origin: [500.0, f64::from(y), f64::from(z)],
+        dir: [-1.0, 0.0, 0.0],
+    }
+}
+
+#[test]
+fn the_mini_pack_has_masks_for_the_technic_parts_and_none_for_the_plain_brick() {
+    let c = cat();
+    for (n, mask) in [
+        ("ld.3701", true),
+        ("ld.3704", true),
+        ("ld.3673", true),
+        ("ld.3705", true),
+        ("ld.3005", false),
+    ] {
+        let p = &c.parts[id(n) as usize];
+        assert_eq!(p.shape.mask.is_some(), mask, "{n}");
+    }
+}
+
+#[test]
+fn a_pin_enters_the_hole_of_a_beam_that_its_box_would_forbid() {
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.3701", [0, -24, 0], 0)).unwrap();
+    // The pin's connectors are at plus and minus 10 from its origin along X; origin at x = 10
+    // puts one in the hole at the centre of the middle cell (0, -12, 0).
+    let pin = id("ld.3673");
+    let pose = LatticePose {
+        pos: [10, -12, 0],
+        rot: Rot24::IDENTITY,
+    };
+    // The boxes of the two overlap.
+    let beam_body = m
+        .body_box(
+            id("ld.3701"),
+            &LatticePose {
+                pos: [0, -24, 0],
+                rot: Rot24::IDENTITY,
+            },
+        )
+        .unwrap();
+    let pin_body = m.body_box(pin, &pose).unwrap();
+    assert!(beam_body.overlaps(&pin_body));
+    m.check_pose(pin, &pose, None)
+        .expect("through the hole: no shared volume");
+    m.apply(&add("ld.3673", pose.pos, 0)).unwrap();
+    let s = m.stats();
+    assert_eq!(
+        (s.parts, s.connections, s.floating.len()),
+        (2, 1, 0),
+        "{s:?}"
+    );
+    // The same pin 6 LDU sideways cuts the wall of the hole.
+    let off = LatticePose {
+        pos: [10, -12, 6],
+        rot: Rot24::IDENTITY,
+    };
+    let e = Model::new(c);
+    let mut e = e;
+    e.apply(&add("ld.3701", [0, -24, 0], 0)).unwrap();
+    assert!(matches!(
+        e.check_pose(pin, &off, None),
+        Err(EngineError::Collides { .. })
+    ));
+}
+
+#[test]
+fn snapping_a_pin_to_a_hole_lies_it_down_and_says_a_pin_holds_it() {
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.3701", [0, -24, 0], 0)).unwrap();
+    let pin = id("ld.3673");
+    // A pointer ray at the middle hole of the +X face of the beam; the pin as it comes (standing up
+    // on the page's default turn: its axis along X in its own frame, so the turn is identity).
+    let s = m
+        .snap(pin, Rot24::IDENTITY, &from_plus_x(-12, 0))
+        .unwrap()
+        .unwrap();
+    assert!(s.valid && s.mates >= 1, "{s:?}");
+    assert_eq!(s.links, Link::Pin.bit(), "{s:?}");
+    assert_eq!((s.pos, s.rot), ([10, -12, 0], 0), "{s:?}");
+    // Turned a quarter about Z so its axis points up, the snap turns it back onto the hole's axis.
+    let up = Rot24::from_matrix([[0, -1, 0], [1, 0, 0], [0, 0, 1]]).unwrap();
+    let t = m.snap(pin, up, &from_plus_x(-12, 0)).unwrap().unwrap();
+    assert!(t.valid && t.links == Link::Pin.bit(), "{t:?}");
+    let placed = LatticePose {
+        pos: t.pos,
+        rot: Rot24(t.rot),
+    };
+    assert!(m.mates_links(pin, &placed, None).unwrap().0 >= 1);
+    m.apply(&add("ld.3673", t.pos, t.rot)).unwrap();
+}
+
+#[test]
+fn an_axle_fits_the_cross_hole_in_four_quarter_turns_and_a_round_pin_does_not() {
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.3704", [0, -24, 0], 0)).unwrap();
+    let axle = id("ld.3705");
+    for k in 0..4 {
+        // A quarter turn of the axle about its own axis (X).
+        let roll = Rot24::from_matrix([[1, 0, 0], [0, 0, -1], [0, 1, 0]]).unwrap();
+        let rot = (0..k).fold(Rot24::IDENTITY, |r, _| roll.compose(r));
+        let pose = LatticePose {
+            pos: [10, -12, 0],
+            rot,
+        };
+        m.check_pose(axle, &pose, None)
+            .unwrap_or_else(|e| panic!("roll {k}: {e}"));
+        assert_eq!(
+            m.mates_links(axle, &pose, None).unwrap(),
+            (1, Link::Axle.bit()),
+            "roll {k}"
+        );
+    }
+    // The round pin has the same reach but a rounder, bigger shaft: it cuts the cross hole's wall.
+    let pin = id("ld.3673");
+    let pose = LatticePose {
+        pos: [10, -12, 0],
+        rot: Rot24::IDENTITY,
+    };
+    assert!(matches!(
+        m.check_pose(pin, &pose, None),
+        Err(EngineError::Collides { .. })
+    ));
+    // And it does not mate: a pin is not an axle.
+    assert_eq!(m.mates(pin, &pose, None).unwrap(), 0);
+    // The snap for the axle says "axle".
+    let s = m
+        .snap(axle, Rot24::IDENTITY, &from_plus_x(-12, 0))
+        .unwrap()
+        .unwrap();
+    assert!(s.valid && s.links == Link::Axle.bit(), "{s:?}");
+}
+
+#[test]
+fn a_plain_brick_stacks_on_a_technic_brick_by_its_studs() {
+    let c = cat();
+    let mut m = Model::new(c);
+    // A 1-wide part's studs are at x = 0 in its own frame; put them on the stud grid (x = 10).
+    m.apply(&add("ld.3701", [10, -24, 0], 0)).unwrap();
+    let brick = id("ld.3005");
+    let s = m
+        .snap(brick, Rot24::IDENTITY, &down(10, 10))
+        .unwrap()
+        .unwrap();
+    assert!(
+        s.valid && s.links == Link::Stud.bit() && s.mates == 1,
+        "{s:?}"
+    );
+    assert_eq!(s.pos[1], -48);
+    m.apply(&add("ld.3005", s.pos, s.rot)).unwrap();
+}
+
+/// The solids of every pair of placed parts, from scratch with the masks: none shares volume.
+fn assert_no_shared_volume(m: &Model<'_>, at: &str) {
+    let c = m.catalog();
+    let all: Vec<_> = m.instances().iter().collect();
+    for (i, a) in all.iter().enumerate() {
+        for b in &all[i + 1..] {
+            let (pa, pb) = (
+                &c.parts[a.part as usize].shape,
+                &c.parts[b.part as usize].shape,
+            );
+            let (ba, bb) = (
+                pa.body.transformed(a.pose.rot, a.pose.pos),
+                pb.body.transformed(b.pose.rot, b.pose.pos),
+            );
+            if !ba.overlaps(&bb) {
+                continue;
+            }
+            let region = openbrick_catalog::Aabb {
+                min: [0, 1, 2].map(|k| ba.min[k].max(bb.min[k])),
+                max: [0, 1, 2].map(|k| ba.max[k].min(bb.max[k])),
+            };
+            assert!(
+                !Mask::solids_overlap(
+                    pa.mask.as_deref(),
+                    &pa.body,
+                    (a.pose.rot, a.pose.pos),
+                    pb.mask.as_deref(),
+                    &pb.body,
+                    (b.pose.rot, b.pose.pos),
+                    &region
+                ),
+                "{at}: parts {} and {} share volume",
+                a.id,
+                b.id
+            );
+        }
+    }
+}
+
+/// Technic and plain parts through random edits with undo and redo: the incremental indexes equal
+/// ones built again, the cached statistics equal fresh ones, no two solids share volume, a snap is
+/// deterministic and the same after moving everything by a lattice step, and undoing everything
+/// restores the model text.
+#[test]
+fn technic_parts_keep_every_index_equal_to_a_computation_from_scratch() {
+    let c = cat();
+    let names: Vec<String> = c
+        .parts
+        .iter()
+        .filter(|p| p.origin == openbrick_catalog::Origin::Ldraw)
+        .map(|p| p.id.clone())
+        .collect();
+    let mut pins_placed = 0;
+    for seed in 0..10u64 {
+        let mut rng = Rng(seed * 7_919 + 5);
+        let mut m = Model::new(c);
+        let empty = m.to_text("t", None);
+        m.apply(&add("ob.baseplate-16x16", [0, -8, 0], 0)).unwrap();
+        let mut edits = 0;
+        for step in 0..120 {
+            let part = rng.pick(&names).clone();
+            let ray = ray_towards(&mut rng, 100);
+            match rng.range(0, 6) {
+                0..=3 => {
+                    let p = id(&part);
+                    let rot = Rot24(rng.range(0, 23) as u8);
+                    if let Some(s) = m.snap(p, rot, &ray).unwrap() {
+                        if s.valid {
+                            // Snapping is deterministic.
+                            assert_eq!(Some(s), m.snap(p, rot, &ray).unwrap());
+                            m.apply(&add(&part, s.pos, s.rot))
+                                .unwrap_or_else(|e| panic!("{part} {s:?}: {e}"));
+                            edits += 1;
+                            if s.links & !Link::Stud.bit() != 0 {
+                                pins_placed += 1;
+                            }
+                        }
+                    }
+                }
+                4 => {
+                    let _ = m.apply(&Command::Remove {
+                        id: rng.range(1, m.next_id().max(2) as i32) as u32,
+                    });
+                }
+                5 => {
+                    let _ = m.undo();
+                }
+                _ => {
+                    let _ = m.redo();
+                }
+            }
+            let at = format!("seed {seed} step {step}");
+            assert_eq!(m.index_snapshot(), m.index_snapshot_from_scratch(), "{at}");
+            let fresh = m.stats();
+            assert_eq!(m.stats_cached(), &fresh, "{at}");
+            if step % 10 == 0 {
+                assert_no_shared_volume(&m, &at);
+            }
+        }
+        assert_no_shared_volume(&m, &format!("seed {seed} end"));
+        let _ = edits;
+        // Undo to the start restores the text (ids are never reused, the text is the same).
+        while m.undo().is_ok() {}
+        assert_eq!(m.to_text("t", None), empty, "seed {seed}");
+        assert!(m.indexes_are_empty());
+    }
+    assert!(
+        pins_placed > 0,
+        "the random edits never made a pin or axle connection"
+    );
+}
+
+#[test]
+fn snapping_a_pin_is_the_same_after_moving_the_beam_by_a_lattice_step() {
+    let c = cat();
+    let pin = id("ld.3673");
+    let at = |d: [i32; 3]| {
+        let mut m = Model::new(c);
+        m.apply(&add("ld.3701", [d[0], -24 + d[1], d[2]], 0))
+            .unwrap();
+        let ray = Ray {
+            origin: [
+                500.0 + f64::from(d[0]),
+                -12.0 + f64::from(d[1]) + 3.0,
+                f64::from(d[2]) + 4.0,
+            ],
+            dir: [-1.0, 0.0, 0.0],
+        };
+        m.snap(pin, Rot24::IDENTITY, &ray).unwrap().unwrap()
+    };
+    let base = at([0, 0, 0]);
+    for d in [[20, 0, 0], [0, -8, 0], [0, 0, -40], [60, -24, 100]] {
+        let s = at(d);
+        assert_eq!(
+            (s.pos, s.rot, s.valid, s.mates, s.links),
+            (
+                [base.pos[0] + d[0], base.pos[1] + d[1], base.pos[2] + d[2]],
+                base.rot,
+                base.valid,
+                base.mates,
+                base.links
+            ),
+            "shift {d:?}"
+        );
+    }
+}
+
+/// A ray straight down onto (x, z) from far above.
+fn from_above(x: i32, z: i32) -> Ray {
+    down(x, z)
+}
+
+#[test]
+fn a_bar_is_gripped_by_a_clip_and_the_connection_is_a_clip_on_a_bar() {
+    let c = cat();
+    let mut m = Model::new(c);
+    // The plate with a clip on the ground; its clip's bore is at (0, -10, -20), axis along X.
+    m.apply(&add("ld.4085", [0, -8, 0], 0)).unwrap();
+    let bar = id("ld.87994");
+    // The bar lies along X already; the pointer is above the clip.
+    let s = m
+        .snap(bar, Rot24::IDENTITY, &from_above(0, -16))
+        .unwrap()
+        .unwrap();
+    assert!(s.valid, "{s:?}");
+    assert_eq!(s.links, Link::Clip.bit(), "{s:?}");
+    assert_eq!((s.pos, s.rot), ([0, -10, -20], 0));
+    m.apply(&add("ld.87994", s.pos, s.rot)).unwrap();
+    let st = m.stats();
+    assert_eq!(
+        (
+            st.links.clip,
+            st.links.stud,
+            st.connections,
+            st.free_rotation
+        ),
+        (1, 0, 1, 1),
+        "{st:?}"
+    );
+    assert_eq!(m.connections_with_links(), vec![(1, 2, Link::Clip)]);
+    // Plate and bar are one component.
+    assert_eq!(st.components, 1, "{st:?}");
+    // A bar turned to stand up is turned back along the clip's axis by the snap.
+    let up = Rot24::from_matrix([[0, -1, 0], [1, 0, 0], [0, 0, 1]]).unwrap();
+    let mut m2 = Model::new(c);
+    m2.apply(&add("ld.4085", [0, -8, 0], 0)).unwrap();
+    let t = m2.snap(bar, up, &from_above(0, -16)).unwrap().unwrap();
+    assert!(t.valid && t.links == Link::Clip.bit(), "{t:?}");
+}
+
+#[test]
+fn a_ball_goes_in_its_socket_and_hinge_halves_interleave() {
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.14418", [0, -10, 0], 0)).unwrap();
+    let ball = id("ld.22890");
+    // The ball part (a ball and a stem out the +Z side) comes from the socket's open side.
+    let s = m
+        .snap(
+            ball,
+            Rot24::IDENTITY,
+            &Ray {
+                origin: [0.0, -10.0, 300.0],
+                dir: [0.0, 0.0, -1.0],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert!(s.valid && s.links == Link::Ball.bit(), "{s:?}");
+    assert_eq!(s.pos, [0, -10, 0], "its centre on the socket's");
+    m.apply(&add("ld.22890", s.pos, s.rot)).unwrap();
+    assert_eq!(m.connections_with_links(), vec![(1, 2, Link::Ball)]);
+
+    // Hinge: a 2-finger half on the ground, a 1-finger half turned half a turn about the vertical so
+    // its plate is on the other side: its finger sits between the two.
+    let mut h = Model::new(c);
+    h.apply(&add("ld.9101", [0, -8, 0], 0)).unwrap();
+    let one = id("ld.9102");
+    let half = Rot24::yaw_quarter_turns(2);
+    let s = h
+        .snap(
+            one,
+            half,
+            &Ray {
+                origin: [0.0, -300.0, -20.0],
+                dir: [0.0, 1.0, 0.0],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert!(s.valid && s.links == Link::Hinge.bit(), "{s:?}");
+    assert_eq!((s.pos, s.rot), ([0, -8, -40], half.0), "{s:?}");
+    h.apply(&add("ld.9102", s.pos, s.rot)).unwrap();
+    assert_eq!(h.stats().links.hinge, 1);
+    // Offset along the axis by 4 LDU the single finger meets one of the two.
+    let off = LatticePose {
+        pos: [s.pos[0] + 4, s.pos[1], s.pos[2]],
+        rot: Rot24(s.rot),
+    };
+    let mut h2 = Model::new(c);
+    h2.apply(&add("ld.9101", [0, -8, 0], 0)).unwrap();
+    assert!(matches!(
+        h2.check_pose(one, &off, None),
+        Err(EngineError::Collides { .. })
+    ));
+}
+
+/// The cost of snapping Technic parts in a big model, measured natively (run with
+/// `cargo test --release -p openbrick-engine --test technic -- --ignored --nocapture`): 10,000 Technic
+/// bricks with a pin through each, then snaps of a pin onto a hole (connector pairs and masks) and of
+/// a plain brick. The numbers are in docs/plan/07 section 14.
+#[test]
+#[ignore = "a timing, not a check"]
+fn technic_snap_timing_at_scale() {
+    use std::time::Instant;
+    let c = cat();
+    let mut m = Model::new(c);
+    let (n_side, pitch) = (100i32, 120i32);
+    for i in 0..n_side {
+        for j in 0..n_side {
+            let x = i * pitch;
+            let z = j * pitch;
+            m.apply(&add("ld.3701", [x + 10, -24, z], 0)).unwrap();
+            m.apply(&add("ld.3673", [x + 10 + 10, -12, z], 0)).unwrap();
+        }
+    }
+    eprintln!(
+        "{} parts, spatial and connector entries {:?}",
+        m.len(),
+        m.index_entries()
+    );
+    let pin = id("ld.3673");
+    let brick = id("ld.3005");
+    let mut rng = Rng(7);
+    let mut time = |what: &str, part: u32, from_side: bool| {
+        let mut ms = Vec::new();
+        for _ in 0..2000 {
+            let i = rng.range(0, n_side - 1);
+            let j = rng.range(0, n_side - 1);
+            let (x, z) = (i * pitch + 10, j * pitch + rng.range(-30, 30));
+            let ray = if from_side {
+                Ray {
+                    origin: [f64::from(x) + 500.0, -12.0, f64::from(z)],
+                    dir: [-1.0, 0.0, 0.0],
+                }
+            } else {
+                down(x, z)
+            };
+            let t = Instant::now();
+            let s = m.snap(part, Rot24::IDENTITY, &ray).unwrap();
+            ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            std::hint::black_box(s);
+        }
+        ms.sort_by(|a, b| a.total_cmp(b));
+        eprintln!(
+            "{what}: snap p50 {:.3} ms, p95 {:.3} ms, max {:.3} ms",
+            ms[ms.len() / 2],
+            ms[ms.len() * 95 / 100],
+            ms[ms.len() - 1]
+        );
+    };
+    time("pin onto holes (connector pairs, masks)", pin, true);
+    time("plain brick on top of the Technic bricks", brick, false);
+}
+
+#[test]
+fn a_pin_through_two_beams_joins_three_parts_with_two_pin_edges() {
+    let c = cat();
+    let mut m = Model::new(c);
+    // Two beams side by side (holes at x = -10 and x = 10), a pin with its two modules in both.
+    m.apply(&add("ld.3701", [-10, -24, 0], 0)).unwrap();
+    m.apply(&add("ld.3701", [10, -24, 0], 0)).unwrap();
+    m.apply(&add("ld.3673", [0, -12, 0], 0)).unwrap();
+    let s = m.stats();
+    assert_eq!(
+        (s.parts, s.connections, s.links.pin, s.components),
+        (3, 2, 2, 1),
+        "{s:?}"
+    );
+    assert_eq!(
+        m.connections_with_links(),
+        vec![(1, 3, Link::Pin), (2, 3, Link::Pin)],
+        "the pin joins each beam, the beams are joined only through it"
+    );
+    assert!(
+        s.floating.is_empty(),
+        "the beams stand on the ground, so does everything they hold"
+    );
+    assert_no_shared_volume(&m, "pin through two beams");
+}
+
+#[test]
+fn a_part_held_only_by_a_free_rotation_link_counts_as_attached_to_the_ground() {
+    // Documented in docs/plan/07 section 7: a clip, ball, pin or hinge connection leaves a rotation
+    // free but the part is still held by it, so a bar clipped to a part on the ground is not
+    // floating even though it touches nothing standing on the ground.
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.4085", [0, -8, 0], 0)).unwrap();
+    m.apply(&add("ld.87994", [0, -10, -20], 0)).unwrap();
+    let s = m.stats();
+    assert_eq!((s.links.clip, s.free_rotation), (1, 1));
+    assert!(s.floating.is_empty(), "{s:?}");
+    // Raise the plate off the ground: both float, together.
+    let mut m2 = Model::new(c);
+    m2.apply(&add("ld.4085", [0, -48, 0], 0)).unwrap();
+    m2.apply(&add("ld.87994", [0, -50, -20], 0)).unwrap();
+    assert_eq!(m2.stats().floating, vec![1, 2]);
+}
+
+#[test]
+fn joint_edits_undo_and_redo_with_their_connections() {
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.3701", [0, -24, 0], 0)).unwrap();
+    let before = m.to_text("t", None);
+    m.apply(&add("ld.3673", [10, -12, 0], 0)).unwrap();
+    assert_eq!(m.stats().links.pin, 1);
+    let with_pin = m.to_text("t", None);
+    m.undo().unwrap();
+    assert_eq!((m.stats().links.pin, m.stats().connections), (0, 0));
+    assert_eq!(m.to_text("t", None), before);
+    assert_eq!(m.index_snapshot(), m.index_snapshot_from_scratch());
+    m.redo().unwrap();
+    assert_eq!(m.stats().links.pin, 1);
+    assert_eq!(m.to_text("t", None), with_pin);
+    // Moving the pin out of the hole drops the edge; undoing the move brings it back.
+    m.apply(&Command::Move {
+        id: 2,
+        pos: [10, -12, 60],
+        rot: 0,
+    })
+    .unwrap();
+    assert_eq!(m.stats().links.pin, 0);
+    m.undo().unwrap();
+    assert_eq!(m.stats().links.pin, 1);
+    assert_eq!(m.index_snapshot(), m.index_snapshot_from_scratch());
+}
+
+#[test]
+fn a_masked_model_opened_with_a_pack_without_masks_says_how_to_fix_it() {
+    use openbrick_engine::DocError;
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.3701", [0, -24, 0], 0)).unwrap();
+    m.apply(&add("ld.3673", [10, -12, 0], 0)).unwrap();
+    let text = m.to_text("t", None);
+    // The same parts in a format 1 pack: no masks at all.
+    let base = technic_pack();
+    let mut header = base.header.clone();
+    header.format = 1;
+    let meshes: Vec<_> = (0..header.parts.len())
+        .map(|i| base.mesh(i).unwrap())
+        .collect();
+    let old = Pack::build(header, &meshes).unwrap();
+    let old_catalog = Catalog::builtin().unwrap().with_pack(&old);
+    let e = Model::from_text(&old_catalog, &text).unwrap_err();
+    assert!(matches!(e, DocError::NeedsMasks { .. }), "{e}");
+    assert!(
+        e.to_string().contains("catalog import") && e.to_string().contains("occupancy masks"),
+        "{e}"
+    );
+}
