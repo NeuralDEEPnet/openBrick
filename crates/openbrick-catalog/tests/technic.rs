@@ -149,3 +149,36 @@ fn bars_come_from_a_cylinder_of_the_bar_radius_in_a_part_that_names_a_bar() {
     let plate = p.header.parts.iter().find(|x| x.id == "ld.4085").unwrap();
     assert!(plate.connectors.iter().all(|c| c.kind != ConnKind::BarM));
 }
+
+#[test]
+fn every_part_with_a_joint_connector_has_a_mask() {
+    // The share rule (1.5 percent empty) would leave a plate with a small clip on its box, which
+    // would forbid the bar; joint parts always get one.
+    let p = pack(
+        Resolution::Standard,
+        &["Brick", "Plate", "Technic", "Bar", "Hinge"],
+    );
+    let mut n = 0;
+    for (i, part) in p.header.parts.iter().enumerate() {
+        let joint = part.connectors.iter().any(|c| {
+            matches!(
+                c.kind,
+                ConnKind::ClipF
+                    | ConnKind::BarM
+                    | ConnKind::BallM
+                    | ConnKind::SocketF
+                    | ConnKind::HingeO
+                    | ConnKind::HingeE
+            )
+        });
+        if joint {
+            n += 1;
+            assert!(
+                p.mask(i).is_some(),
+                "{} has a joint connector and no mask",
+                part.id
+            );
+        }
+    }
+    assert!(n >= 6, "{n}");
+}

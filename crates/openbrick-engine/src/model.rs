@@ -463,7 +463,9 @@ impl<'c> Model<'c> {
         Ok(())
     }
 
-    /// The first placed part (lowest id) whose body overlaps `b`, ignoring `skip`.
+    /// The first placed part (lowest id) whose body *box* overlaps `b`, ignoring `skip`: the broadphase
+    /// only. It ignores occupancy masks, so it is a superset of the real collisions; the tests use it to
+    /// compare against the walk, and every edit and snap goes through [`Model::collision_of`].
     pub fn collision(
         &self,
         b: &Aabb,

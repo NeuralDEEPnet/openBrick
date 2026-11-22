@@ -121,7 +121,7 @@ export function partBadge(part) {
   if ((part.connectivity ?? "derived") === "none") return "ground only";
   if (part.joints?.length) return "joint not calibrated";
   const links = part.links ?? [];
-  if (links.some((l) => LINK_GROUPS.joints.includes(l)) || links.includes("bar")) return "joint";
+  if (links.some((l) => LINK_GROUPS.joints.includes(l))) return "joint";
   if (links.some((l) => LINK_GROUPS.technic.includes(l))) return "technic";
   return "";
 }

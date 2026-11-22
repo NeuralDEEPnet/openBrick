@@ -156,7 +156,9 @@ fn vote(votes: &mut [u8], dims: [usize; 3], axis: usize, hits: &[(u32, f32, i8)]
 /// The occupancy grid of a part's body (its triangles without the studs) over `body`, and what it
 /// found; the grid is `None` when the box is already the right shape (module documentation), when
 /// the box spans more than [`crate::mask::MAX_MASK_CELLS`] cells or when the part has no solid at all.
-pub fn occupancy(soup: &Soup, body: &Aabb) -> (Option<MaskGrid>, OccupancyStats) {
+/// `force` skips the share test: a part with a clip, bar, ball, socket or hinge connector always gets a
+/// mask, because the opening of a clip is a tiny share of a long plate and the box would forbid the bar.
+pub fn occupancy(soup: &Soup, body: &Aabb, force: bool) -> (Option<MaskGrid>, OccupancyStats) {
     let size = body.size();
     if size.iter().any(|&v| v <= 0) {
         return (None, OccupancyStats::default());
@@ -205,7 +207,7 @@ pub fn occupancy(soup: &Soup, body: &Aabb) -> (Option<MaskGrid>, OccupancyStats)
         }
     }
     stats.empty_not_cavity = cells - stats.solid - cavity;
-    if stats.solid == 0 || stats.empty_not_cavity * 10_000 < MASK_NEED_PER_10K * cells {
+    if stats.solid == 0 || (!force && stats.empty_not_cavity * 10_000 < MASK_NEED_PER_10K * cells) {
         return (None, stats);
     }
     (Some(grid), stats)
@@ -251,6 +253,28 @@ mod tests {
     }
 
     #[test]
+    fn a_small_opening_in_a_big_block_needs_force() {
+        // A 100 x 4 x 20 block with a 4 x 4 x 4 notch from the top: 0.8 percent of the box, under the
+        // 1.5 percent that earns a mask, so only a part with a joint connector (`force`) gets one.
+        let mut soup = Soup::default();
+        cuboid(&mut soup, [0.0, 0.0, 0.0], [48.0, 4.0, 20.0]);
+        cuboid(&mut soup, [52.0, 0.0, 0.0], [100.0, 4.0, 20.0]);
+        cuboid(&mut soup, [48.0, 0.0, 0.0], [52.0, 4.0, 8.0]);
+        cuboid(&mut soup, [48.0, 0.0, 12.0], [52.0, 4.0, 20.0]);
+        let body = Aabb {
+            min: [0, 0, 0],
+            max: [100, 4, 20],
+        };
+        let (plain, st) = occupancy(&soup, &body, false);
+        assert!(
+            plain.is_none() && st.empty_not_cavity == 4 * 4 * 4,
+            "{st:?}"
+        );
+        let (forced, _) = occupancy(&soup, &body, true);
+        assert!(forced.is_some(), "a joint part always has its mask");
+    }
+
+    #[test]
     fn a_cuboid_is_full_and_needs_no_mask() {
         let mut soup = Soup::default();
         cuboid(&mut soup, [-10.0, 0.0, -10.0], [10.0, 8.0, 10.0]);
@@ -258,7 +282,7 @@ mod tests {
             min: [-10, 0, -10],
             max: [10, 8, 10],
         };
-        let (g, st) = occupancy(&soup, &body);
+        let (g, st) = occupancy(&soup, &body, false);
         assert!(g.is_none());
         assert_eq!(st.solid, 20 * 8 * 20);
         assert_eq!(st.empty_not_cavity, 0);
@@ -279,7 +303,7 @@ mod tests {
             min: [-10, 0, -10],
             max: [10, 8, 10],
         };
-        let (g, st) = occupancy(&soup, &body);
+        let (g, st) = occupancy(&soup, &body, false);
         let g = g.expect("a gap of 4 x 8 x 20 is 20 percent of the box");
         assert_eq!(st.solid, 2 * 8 * 8 * 20);
         assert_eq!(g.solid(), st.solid);
@@ -300,7 +324,7 @@ mod tests {
             min: [-10, 0, -10],
             max: [10, 24, 10],
         };
-        let (g, st) = occupancy(&soup, &body);
+        let (g, st) = occupancy(&soup, &body, false);
         assert!(g.is_none(), "{st:?}");
         assert_eq!(st.empty_not_cavity, 0);
     }

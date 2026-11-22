@@ -364,6 +364,12 @@ impl Pack {
                 &mut scratch,
             )
             .map_err(|e| damaged(format!("the mask of part {}: {e}", p.id)))?;
+            if r.solid == 0 || m.boxes().is_empty() {
+                return Err(damaged(format!(
+                    "the mask of part {} is empty; a part without a mask collides as its box, leave the mask out",
+                    p.id
+                )));
+            }
             if m.volume() != u64::from(r.solid) {
                 return Err(damaged(format!(
                     "the mask of part {} does not hold the {} cells it says",
@@ -482,13 +488,17 @@ impl Pack {
         }
         let at = hstart + hlen;
         let clen = rd32(at)?;
-        let raw_len = body
+        // Declared sizes are compared as u64 before they become a usize (a 32-bit target would
+        // otherwise wrap a huge claim into a small one).
+        let raw_declared = body
             .get(at + 4..at + 12)
             .map(|b| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
-            .ok_or_else(|| damaged("the file is cut short"))? as usize;
-        if raw_len > MAX_BLOB_BYTES {
+            .ok_or_else(|| damaged("the file is cut short"))?;
+        if raw_declared > MAX_BLOB_BYTES as u64 {
             return Err(damaged("the mesh blob is too large"));
         }
+        let raw_len =
+            usize::try_from(raw_declared).map_err(|_| damaged("the mesh blob is too large"))?;
         // What the header's parts need: the blob must be exactly that, so a stream that inflates
         // to more (a bomb) is refused at the declared size, before any more is allocated.
         let needed = header.parts.iter().try_fold(0u64, |n, p| {
@@ -509,13 +519,15 @@ impl Pack {
             // The mask section: its declared inflated size must be exactly what the parts' masks
             // need (the header says each one's byte count), checked before anything is inflated.
             let mlen = rd32(end)?;
-            let mraw = body
+            let mraw_declared = body
                 .get(end + 4..end + 12)
                 .map(|b| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
-                .ok_or_else(|| damaged("the file is cut short"))? as usize;
-            if mraw > MAX_MASK_BLOB_BYTES {
+                .ok_or_else(|| damaged("the file is cut short"))?;
+            if mraw_declared > MAX_MASK_BLOB_BYTES as u64 {
                 return Err(damaged("the mask blob is too large"));
             }
+            let mraw = usize::try_from(mraw_declared)
+                .map_err(|_| damaged("the mask blob is too large"))?;
             let need = header.parts.iter().try_fold(0u64, |n, p| {
                 n.checked_add(p.mask.as_ref().map_or(0, |m| u64::from(m.bytes)))
             });
@@ -535,6 +547,8 @@ impl Pack {
                         "the empty mask blob has a stream longer than an empty one",
                     ));
                 }
+                // Kept as it is, so the file reads back and writes out byte for byte.
+                mask_stream = Some((mcomp.to_vec(), 0));
             } else {
                 // Into a buffer of exactly the size the header's masks need (checked above, at most
                 // MAX_MASK_BLOB_BYTES): no growing and copying, so the heap of a WebAssembly page
@@ -1258,16 +1272,62 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_mask_and_an_empty_mask_stream_are_handled() {
+        // A mask with no solid cell is refused (a part without one collides as its box).
+        let mut p = masked();
+        p.header.parts[0].mask.as_mut().unwrap().solid = 0;
+        let e = Pack::from_bytes(&p.to_bytes().unwrap()).unwrap_err();
+        assert!(e.to_string().contains("empty"), "{e}");
+        // A format 2 file whose mask stream is some other valid empty stream reads back and writes
+        // out the same bytes.
+        let base = sample();
+        let json = serde_json::to_vec(&base.header).unwrap();
+        let mesh = miniz_oxide::deflate::compress_to_vec(&base.blob, 6);
+        let mut f = Vec::new();
+        f.extend(MAGIC);
+        f.extend((json.len() as u32).to_le_bytes());
+        f.extend(&json);
+        f.extend((mesh.len() as u32).to_le_bytes());
+        f.extend((base.blob.len() as u64).to_le_bytes());
+        f.extend(&mesh);
+        f.extend(5u32.to_le_bytes());
+        f.extend(0u64.to_le_bytes());
+        f.extend([3u8, 0, 0, 0, 0]);
+        let sum = Sha256::digest(&f);
+        f.extend(sum);
+        assert_eq!(Pack::from_bytes(&f).unwrap().to_bytes().unwrap(), f);
+    }
+
+    #[test]
+    fn decoding_work_is_bounded_by_the_declared_cells() {
+        // The decoder visits the cells of the body box it was told about, once, and no more.
+        let body = Aabb {
+            min: [0; 3],
+            max: [40, 4, 40],
+        };
+        let mut g = MaskGrid::empty(&body).unwrap();
+        for y in 0..4 {
+            for z in 0..40 {
+                for x in 0..40 {
+                    g.set(x, y, z, (x + z) % 2 == 0);
+                }
+            }
+        }
+        let mut scratch = crate::mask::MaskScratch::default();
+        let m = Mask::from_bits_in(g.origin, g.dims, &g.bits, &mut scratch).unwrap();
+        assert!(m.boxes().len() > 100);
+        assert!(scratch.work() <= 2 * 40 * 4 * 40, "{}", scratch.work());
+    }
+
+    #[test]
     fn a_hostile_mask_is_refused_cleanly() {
         let refused = |what: &str, edit: &dyn Fn(&mut Pack)| {
             let mut p = masked();
             edit(&mut p);
-            let t = std::time::Instant::now();
             let e = Pack::from_bytes(&p.to_bytes().unwrap())
                 .err()
                 .unwrap_or_else(|| panic!("{what}: accepted"));
             assert!(e.to_string().len() < 400, "{what}: {e}");
-            assert!(t.elapsed().as_millis() < 500, "{what}: slow");
         };
         refused("wrong byte count", &|p| {
             p.header.parts[0].mask.as_mut().unwrap().bytes += 1
@@ -1337,9 +1397,7 @@ mod tests {
             f.extend(&comp);
             let sum = Sha256::digest(&f);
             f.extend(sum);
-            let t = std::time::Instant::now();
             assert!(Pack::from_bytes(&f).is_err());
-            assert!(t.elapsed().as_millis() < 500);
         }
         // A checkerboard mask needs more boxes than a mask may be merged into.
         let base = sample();

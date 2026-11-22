@@ -467,11 +467,19 @@ export const STATS_INLINE_LIMIT = 5000;
 
 /** Models up to this many parts also report which connections exist (the core's edge list), for the page's checks. */
 export const EDGES_INLINE_LIMIT = 400;
+/** The most edges listed; `stats.edgesTotal` and `stats.edgesAtLeast` say when there were more. */
+export const EDGES_LIMIT = 2000;
 
 /** The core's statistics, and for a small model the connections themselves: `edges: [{ a, b, link }]`. */
 function statsOf(a) {
   const stats = JSON.parse(a.stats());
-  if (a.len() <= EDGES_INLINE_LIMIT) stats.edges = JSON.parse(a.connections(2000)).edges;
+  if (a.len() <= EDGES_INLINE_LIMIT) {
+    const all = JSON.parse(a.connections(EDGES_LIMIT));
+    stats.edges = all.edges;
+    // Never silently short: `edgesTotal` is the real count and `edgesAtLeast` says the list was cut.
+    stats.edgesTotal = all.total;
+    stats.edgesAtLeast = all.total > all.edges.length;
+  }
   return stats;
 }
 

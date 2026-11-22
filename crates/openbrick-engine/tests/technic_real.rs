@@ -13,6 +13,25 @@ use openbrick_catalog::{Catalog, Conn, ConnKind, Origin};
 use openbrick_engine::{Command, Model};
 use openbrick_units::{LatticePose, Rot24};
 
+/// The library named by `OPENBRICK_LDRAW_DIR`, or `None` with a printed `SKIPPED` line. CI that wants
+/// these checks to run sets `OPENBRICK_REQUIRE_LDRAW=1`, and then a missing library fails the test
+/// instead of letting it pass by doing nothing.
+fn real_library() -> Option<String> {
+    match std::env::var("OPENBRICK_LDRAW_DIR") {
+        Ok(d) => Some(d),
+        Err(_) => {
+            assert!(
+                std::env::var("OPENBRICK_REQUIRE_LDRAW").is_err(),
+                "OPENBRICK_REQUIRE_LDRAW is set but OPENBRICK_LDRAW_DIR is not"
+            );
+            eprintln!(
+                "SKIPPED: OPENBRICK_LDRAW_DIR is not set; the real-library calibration did not run"
+            );
+            None
+        }
+    }
+}
+
 /// The turn that takes the pin's or axle's own axis (`from`) onto `to`.
 fn turn_onto(from: [i32; 3], to: [i32; 3]) -> Rot24 {
     for r in Rot24::all() {
@@ -26,8 +45,7 @@ fn turn_onto(from: [i32; 3], to: [i32; 3]) -> Rot24 {
 
 #[test]
 fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
-    let Ok(dir) = std::env::var("OPENBRICK_LDRAW_DIR") else {
-        eprintln!("OPENBRICK_LDRAW_DIR is not set: skipping the real-library calibration");
+    let Some(dir) = real_library() else {
         return;
     };
     let cats: Vec<String> = DEFAULT_CATEGORIES
@@ -190,8 +208,7 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
 #[test]
 fn joints_fit_the_real_parts_they_mate_with() {
     use openbrick_catalog::Link;
-    let Ok(dir) = std::env::var("OPENBRICK_LDRAW_DIR") else {
-        eprintln!("OPENBRICK_LDRAW_DIR is not set: skipping the joint calibration");
+    let Some(dir) = real_library() else {
         return;
     };
     let cats: Vec<String> = DEFAULT_CATEGORIES
@@ -308,8 +325,7 @@ fn joints_fit_the_real_parts_they_mate_with() {
 /// bush, half bush), printed, and checked where the library's own description says what they must be.
 #[test]
 fn named_technic_parts_have_the_connectors_their_descriptions_promise() {
-    let Ok(dir) = std::env::var("OPENBRICK_LDRAW_DIR") else {
-        eprintln!("OPENBRICK_LDRAW_DIR is not set: skipping");
+    let Some(dir) = real_library() else {
         return;
     };
     let cats: Vec<String> = DEFAULT_CATEGORIES

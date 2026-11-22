@@ -217,6 +217,7 @@ pub fn assembler_catalog_json() -> Result<String, CoreError> {
         "catalog": CATALOG_ID,
         "lduMm": STANDARD.get().ldu_mm,
         "maxModelBytes": MAX_MODEL_BYTES,
+        "jointTableAttribution": openbrick_catalog::JOINT_TABLE_ATTRIBUTION,
         "maxParts": openbrick_engine::MAX_INSTANCES,
         "maxHistory": openbrick_engine::history::MAX_HISTORY,
         "maxPackBytes": openbrick_catalog::pack::MAX_PACK_BYTES,

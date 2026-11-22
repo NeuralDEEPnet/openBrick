@@ -22,3 +22,5 @@ OpenBrick3D uses a three-tier licence layout so that code, data and documentatio
 ## Provenance
 
 Every part, profile and standard file carries a `provenance` block (`source`, `author`, `license` SPDX id, `url`, `modified`, `history`) so attribution travels with the data through conversion, export and printing. `CREDITS.txt` and the in-app attribution screen are generated from these fields.
+
+**For a pull request description** (decisions a human can revert): `standards/joints-v1.json` is CC BY 4.0, derived from LDraw geometry, with the credit "LDraw.org" shown in the web footer, the command line's `catalog` output and the catalog JSON (`JOINT_TABLE_ATTRIBUTION`); the importer and masks read a user-fetched library at runtime only.

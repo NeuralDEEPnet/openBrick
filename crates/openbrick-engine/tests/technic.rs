@@ -510,3 +510,102 @@ fn technic_snap_timing_at_scale() {
     time("pin onto holes (connector pairs, masks)", pin, true);
     time("plain brick on top of the Technic bricks", brick, false);
 }
+
+#[test]
+fn a_pin_through_two_beams_joins_three_parts_with_two_pin_edges() {
+    let c = cat();
+    let mut m = Model::new(c);
+    // Two beams side by side (holes at x = -10 and x = 10), a pin with its two modules in both.
+    m.apply(&add("ld.3701", [-10, -24, 0], 0)).unwrap();
+    m.apply(&add("ld.3701", [10, -24, 0], 0)).unwrap();
+    m.apply(&add("ld.3673", [0, -12, 0], 0)).unwrap();
+    let s = m.stats();
+    assert_eq!(
+        (s.parts, s.connections, s.links.pin, s.components),
+        (3, 2, 2, 1),
+        "{s:?}"
+    );
+    assert_eq!(
+        m.connections_with_links(),
+        vec![(1, 3, Link::Pin), (2, 3, Link::Pin)],
+        "the pin joins each beam, the beams are joined only through it"
+    );
+    assert!(
+        s.floating.is_empty(),
+        "the beams stand on the ground, so does everything they hold"
+    );
+    assert_no_shared_volume(&m, "pin through two beams");
+}
+
+#[test]
+fn a_part_held_only_by_a_free_rotation_link_counts_as_attached_to_the_ground() {
+    // Documented in docs/plan/07 section 7: a clip, ball, pin or hinge connection leaves a rotation
+    // free but the part is still held by it, so a bar clipped to a part on the ground is not
+    // floating even though it touches nothing standing on the ground.
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.4085", [0, -8, 0], 0)).unwrap();
+    m.apply(&add("ld.87994", [0, -10, -20], 0)).unwrap();
+    let s = m.stats();
+    assert_eq!((s.links.clip, s.free_rotation), (1, 1));
+    assert!(s.floating.is_empty(), "{s:?}");
+    // Raise the plate off the ground: both float, together.
+    let mut m2 = Model::new(c);
+    m2.apply(&add("ld.4085", [0, -48, 0], 0)).unwrap();
+    m2.apply(&add("ld.87994", [0, -50, -20], 0)).unwrap();
+    assert_eq!(m2.stats().floating, vec![1, 2]);
+}
+
+#[test]
+fn joint_edits_undo_and_redo_with_their_connections() {
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.3701", [0, -24, 0], 0)).unwrap();
+    let before = m.to_text("t", None);
+    m.apply(&add("ld.3673", [10, -12, 0], 0)).unwrap();
+    assert_eq!(m.stats().links.pin, 1);
+    let with_pin = m.to_text("t", None);
+    m.undo().unwrap();
+    assert_eq!((m.stats().links.pin, m.stats().connections), (0, 0));
+    assert_eq!(m.to_text("t", None), before);
+    assert_eq!(m.index_snapshot(), m.index_snapshot_from_scratch());
+    m.redo().unwrap();
+    assert_eq!(m.stats().links.pin, 1);
+    assert_eq!(m.to_text("t", None), with_pin);
+    // Moving the pin out of the hole drops the edge; undoing the move brings it back.
+    m.apply(&Command::Move {
+        id: 2,
+        pos: [10, -12, 60],
+        rot: 0,
+    })
+    .unwrap();
+    assert_eq!(m.stats().links.pin, 0);
+    m.undo().unwrap();
+    assert_eq!(m.stats().links.pin, 1);
+    assert_eq!(m.index_snapshot(), m.index_snapshot_from_scratch());
+}
+
+#[test]
+fn a_masked_model_opened_with_a_pack_without_masks_says_how_to_fix_it() {
+    use openbrick_engine::DocError;
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.3701", [0, -24, 0], 0)).unwrap();
+    m.apply(&add("ld.3673", [10, -12, 0], 0)).unwrap();
+    let text = m.to_text("t", None);
+    // The same parts in a format 1 pack: no masks at all.
+    let base = technic_pack();
+    let mut header = base.header.clone();
+    header.format = 1;
+    let meshes: Vec<_> = (0..header.parts.len())
+        .map(|i| base.mesh(i).unwrap())
+        .collect();
+    let old = Pack::build(header, &meshes).unwrap();
+    let old_catalog = Catalog::builtin().unwrap().with_pack(&old);
+    let e = Model::from_text(&old_catalog, &text).unwrap_err();
+    assert!(matches!(e, DocError::NeedsMasks { .. }), "{e}");
+    assert!(
+        e.to_string().contains("catalog import") && e.to_string().contains("occupancy masks"),
+        "{e}"
+    );
+}

@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 pub use builtin::{
     body_hull, BuiltPart, BuiltinSpec, CatalogError, Lod, PartMesh, BUILTIN, CATALOG_ID,
 };
-pub use joints::{BarRule, JointPrimitive, JointTable};
+pub use joints::{BarRule, JointPrimitive, JointTable, JOINT_TABLE_ATTRIBUTION};
 pub use mask::{Mask, MaskGrid, MaskRef, SharedMask, MASK_CELL_LDU, MAX_MASK_CELLS};
 pub use pack::{Connectivity, Pack, PackError, PackHeader, PackPart, LDRAW_ID_PREFIX};
 pub use palette::{Colour, Palette};

@@ -14,6 +14,11 @@
 //! would not fit its hole. Boxes of whole cells in integer LDU compose exactly under the 24
 //! lattice rotations and any integer position, so no two grids ever need to line up.
 //!
+//! **Collision.** Two parts whose boxes overlap collide when the intersection of their solids contains a
+//! 2 x 2 x 2 cell cube (0.8 mm) in the union, not box pair by box pair ([`Mask::solids_overlap_counted`]):
+//! a one-cell sliver where shapes that mate touch is not a collision, a 3 LDU deep overlap of a round wall
+//! merged into a staircase of boxes is.
+//!
 //! **What the mask is.** Centre-sampled, not conservative either way: it is exact at faces on
 //! integer LDU planes (two bricks that touch do not overlap) and within 0.71 LDU (0.28 mm) of a
 //! slanted or round surface. It therefore never lets two real solids interpenetrate by more than
@@ -47,6 +52,9 @@ pub const MAX_MASK_CELLS: u64 = 1 << 20;
 /// cell sliver; and a snap-fit part is meant to be pressed in a little. Applies where a mask is
 /// involved; two boxes (parts without masks) collide at any overlap, as before.
 pub const MIN_PENETRATION_LDU: i32 = 2;
+/// The largest overlap region (cells) the narrowphase rasterises: 262,144, a 64 LDU cube. A larger
+/// region is answered "collide" without looking, which is safe and bounds one call's work.
+pub const MAX_OVERLAP_CELLS: u64 = 1 << 18;
 /// The most boxes one mask may be merged into. The real parts need a few hundred; a hostile
 /// checkerboard would need two million.
 pub const MAX_MASK_BOXES: usize = 4096;
@@ -165,6 +173,15 @@ impl MaskGrid {
 pub struct MaskScratch {
     done: Vec<bool>,
     boxes: Vec<Aabb>,
+    work: u64,
+}
+
+impl MaskScratch {
+    /// The work done so far: cells of the declared body boxes visited, and boxes made. A count, so
+    /// a test can bound a hostile decode without a clock.
+    pub fn work(&self) -> u64 {
+        self.work
+    }
 }
 
 /// A read-only view of a bit grid (the same layout as [`MaskGrid`]).
@@ -219,6 +236,7 @@ impl Mask {
         let g = MaskView { origin, dims, bits };
         g.validate()?;
         let [nx, ny, nz] = g.dims;
+        scratch.work += u64::from(dims[0]) * u64::from(dims[1]) * u64::from(dims[2]);
         let done = &mut scratch.done;
         done.clear();
         done.resize(
@@ -273,6 +291,7 @@ impl Mask {
                         g.origin[1] + y as i32,
                         g.origin[2] + z as i32,
                     ];
+                    scratch.work += 1;
                     boxes.push(Aabb {
                         min: lo,
                         max: [lo[0] + wx as i32, lo[1] + wy as i32, lo[2] + wz as i32],
@@ -301,9 +320,9 @@ impl Mask {
         self.volume
     }
 
-    /// True when the solid of this part at (`rot`, `pos`) and the solid of `other` at
-    /// (`other_rot`, `other_pos`) share volume inside `region` (a world box, the overlap of the two
-    /// body boxes). A part without a mask is its `body` box. Touching is not sharing.
+    /// True when the solid of part A at `a_pose` and the solid of part B at `b_pose` collide inside
+    /// `region` (a world box, the overlap of the two body boxes). A part without a mask is its `body`
+    /// box. Touching is not colliding. See [`Mask::solids_overlap_counted`] for the rule and its cost.
     #[allow(clippy::too_many_arguments)]
     pub fn solids_overlap(
         a: Option<&Mask>,
@@ -314,31 +333,108 @@ impl Mask {
         b_pose: (Rot24, [i32; 3]),
         region: &Aabb,
     ) -> bool {
-        let gather = |m: Option<&Mask>, body: &Aabb, pose: (Rot24, [i32; 3])| -> Vec<Aabb> {
-            match m {
-                None => vec![body.transformed(pose.0, pose.1)],
-                Some(m) => m
-                    .boxes
-                    .iter()
-                    .map(|b| b.transformed(pose.0, pose.1))
-                    .filter(|w| w.overlaps(region))
-                    .collect(),
-            }
-        };
-        let wa = gather(a, a_body, a_pose);
-        if wa.is_empty() {
-            return false;
-        }
-        let wb = gather(b, b_body, b_pose);
-        // Two sampled solids that mate (a pin in its hole, an axle in its cross) can share a cell
-        // where the library's own shapes touch: the narrowphase counts an overlap only when it is
-        // at least `MIN_PENETRATION_LDU` deep on every axis, 0.8 mm, which the eye does not see.
-        // Boxes that only touch, or share a one-cell sliver, do not collide.
-        let deep = |x: &Aabb, y: &Aabb| {
-            (0..3).all(|k| x.max[k].min(y.max[k]) - x.min[k].max(y.min[k]) >= MIN_PENETRATION_LDU)
-        };
-        wa.iter().any(|x| wb.iter().any(|y| deep(x, y)))
+        Mask::solids_overlap_counted(a, a_body, a_pose, b, b_body, b_pose, region).0
     }
+
+    /// [`Mask::solids_overlap`] and the work it did (boxes visited, cells written and scanned: a
+    /// count, so tests can bound the cost without a clock).
+    ///
+    /// **The rule.** The two solids collide when their intersection contains a cube of
+    /// [`MIN_PENETRATION_LDU`] cells (2 x 2 x 2: 0.8 mm) anywhere, that is when they overlap at least
+    /// that deep on every axis *as a union*, not box pair by box pair: a round wall merged into a
+    /// staircase of boxes is as deep as the whole staircase. Sampled solids that mate (a pin in its
+    /// hole, an axle in its cross) can share a one-cell sliver where the library's shapes touch,
+    /// which is not a collision.
+    ///
+    /// **The cost.** Linear: the region's cells are rasterised once for each part (the merged boxes
+    /// of a mask never overlap, so the writes are at most twice the region) and eroded in three
+    /// passes, plus one transform of each box of each mask. No pair of boxes is ever compared. A
+    /// region of more than [`MAX_OVERLAP_CELLS`] cells is not examined: the answer is "collide",
+    /// the safe one (the part is refused, never wrongly accepted), at the cost of one counter.
+    #[allow(clippy::too_many_arguments)]
+    pub fn solids_overlap_counted(
+        a: Option<&Mask>,
+        a_body: &Aabb,
+        a_pose: (Rot24, [i32; 3]),
+        b: Option<&Mask>,
+        b_body: &Aabb,
+        b_pose: (Rot24, [i32; 3]),
+        region: &Aabb,
+    ) -> (bool, u64) {
+        let d: [i64; 3] = [0, 1, 2].map(|k| i64::from(region.max[k]) - i64::from(region.min[k]));
+        if d.iter().any(|&v| v < i64::from(MIN_PENETRATION_LDU)) {
+            return (false, 1);
+        }
+        let cells = d[0] * d[1] * d[2];
+        if cells as u64 > MAX_OVERLAP_CELLS {
+            return (true, 1);
+        }
+        let (nx, ny) = (d[0] as usize, d[1] as usize);
+        let n = cells as usize;
+        let mut work = 0u64;
+        OVERLAP_SCRATCH.with(|cell| {
+            let mut v = cell.borrow_mut();
+            v.clear();
+            v.resize(n, 0u8);
+            for (bit, m, body, pose) in [(1u8, a, a_body, a_pose), (2u8, b, b_body, b_pose)] {
+                let mut fill = |w: Aabb| {
+                    work += 1;
+                    let lo: [i64; 3] = [0, 1, 2]
+                        .map(|k| i64::from(w.min[k].max(region.min[k])) - i64::from(region.min[k]));
+                    let hi: [i64; 3] = [0, 1, 2]
+                        .map(|k| i64::from(w.max[k].min(region.max[k])) - i64::from(region.min[k]));
+                    if (0..3).any(|k| lo[k] >= hi[k]) {
+                        return;
+                    }
+                    for z in lo[2]..hi[2] {
+                        for y in lo[1]..hi[1] {
+                            let row = (lo[0] as usize) + nx * (y as usize + ny * z as usize);
+                            let len = (hi[0] - lo[0]) as usize;
+                            work += len as u64;
+                            for c in &mut v[row..row + len] {
+                                *c |= bit;
+                            }
+                        }
+                    }
+                };
+                match m {
+                    None => fill(body.transformed(pose.0, pose.1)),
+                    Some(m) => {
+                        for bx in &m.boxes {
+                            fill(bx.transformed(pose.0, pose.1));
+                        }
+                    }
+                }
+            }
+            work += n as u64;
+        });
+        // Erode the intersection by one cell on each axis in turn: a cell survives the three
+        // passes only if a 2 x 2 x 2 cube of the intersection starts there.
+        let found = OVERLAP_SCRATCH.with(|cell| {
+            let mut v = cell.borrow_mut();
+            let step = [1usize, nx, nx * ny];
+            let extent = [nx, ny, d[2] as usize];
+            for c in &mut *v {
+                *c = u8::from(*c == 3);
+            }
+            for axis in 0..3 {
+                // v[c] = v[c] && v[c + step], reading ascending so the neighbour is still the old value.
+                for c in 0..n {
+                    let coord = (c / step[axis]) % extent[axis];
+                    let keep = v[c] == 1 && coord + 1 < extent[axis] && v[c + step[axis]] == 1;
+                    v[c] = u8::from(keep);
+                }
+            }
+            v.iter().any(|&c| c == 1)
+        });
+        work += 4 * n as u64;
+        (found, work)
+    }
+}
+
+thread_local! {
+    /// The cells of one narrowphase call, reused so a snap does not allocate for each candidate.
+    static OVERLAP_SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// A shared mask (parts are cloned into catalogs; the boxes are not).
@@ -448,6 +544,76 @@ mod tests {
             id,
             &region
         ));
+    }
+
+    #[test]
+    fn a_staircase_wall_is_as_deep_as_the_whole_staircase() {
+        // A: solid where x < 10 - z over 10 x 10 x 3 cells: three boxes, each one cell deep in z.
+        let body = Aabb {
+            min: [0, 0, 0],
+            max: [10, 10, 3],
+        };
+        let a = Mask::from_grid(&grid_of(body, |x, _, z| x < 10 - z)).unwrap();
+        assert_eq!(a.boxes().len(), 3);
+        // B: a plain box 8 x 10 x 3 sharing 240 cells, three deep in z.
+        let b_body = Aabb {
+            min: [0, 0, 0],
+            max: [8, 10, 3],
+        };
+        let id = (Rot24::IDENTITY, [0, 0, 0]);
+        let region = Aabb {
+            min: [0, 0, 0],
+            max: [8, 10, 3],
+        };
+        let (hit, _) =
+            Mask::solids_overlap_counted(Some(&a), &body, id, None, &b_body, id, &region);
+        assert!(hit, "three deep in z as a union, one deep in each box");
+        // The same staircase one cell deep only (B 1 thick) is a sliver, not a collision.
+        let thin = Aabb {
+            min: [0, 0, 0],
+            max: [8, 10, 1],
+        };
+        let thin_region = thin;
+        assert!(!Mask::solids_overlap(
+            Some(&a),
+            &body,
+            id,
+            None,
+            &thin,
+            id,
+            &thin_region
+        ));
+    }
+
+    #[test]
+    fn the_narrowphase_does_bounded_work_whatever_the_masks() {
+        // A hostile mask: as many isolated cells as a mask may have boxes, in a big body.
+        let body = Aabb {
+            min: [0, 0, 0],
+            max: [64, 2, 64],
+        };
+        let m = Mask::from_grid(&grid_of(body, |x, y, z| {
+            y == 0 && x % 2 == 0 && z % 2 == 0 && (x / 2 + z / 2) % 2 == 0
+        }))
+        .unwrap();
+        assert!(m.boxes().len() > 400);
+        let id = (Rot24::IDENTITY, [0, 0, 0]);
+        let (_, work) =
+            Mask::solids_overlap_counted(Some(&m), &body, id, Some(&m), &body, id, &body);
+        // Linear in the region (8,192 cells) and the boxes, nowhere near boxes x boxes.
+        assert!(
+            work < 10 * 64 * 2 * 64 + 8 * m.boxes().len() as u64,
+            "{work}"
+        );
+        // A region over the cap is answered "collide" for one unit of work.
+        let huge = Aabb {
+            min: [0, 0, 0],
+            max: [200, 200, 200],
+        };
+        assert_eq!(
+            Mask::solids_overlap_counted(Some(&m), &body, id, None, &huge, id, &huge),
+            (true, 1)
+        );
     }
 
     #[test]

@@ -331,7 +331,12 @@ fn is_cylinder(path: &str) -> bool {
 }
 
 impl Scanner<'_> {
-    /// A cylinder of the bar rule's radius and at least its length is a bar along its axis, at its middle.
+    /// A cylinder of the bar rule's radius and at least its length is a bar along its axis, at its
+    /// middle: one connector per bar, at the middle of the cylinder instance (a bar that needs the
+    /// clip to sit elsewhere along it is not modelled; the mate is by position). Quarter, half and
+    /// full cylinders all count: the pieces of one bar share the axis and the middle, so they make
+    /// the same connector and `normalise` keeps one. A bar drawn as two cylinders end to end gets
+    /// two, each at its own middle.
     fn bar(&mut self, m: &Mat) {
         let rule = &JointTable::bundled().bars;
         let len_v = m.apply_dir([0.0, 1.0, 0.0]);
@@ -785,8 +790,20 @@ pub fn derive(lib: &Library, path: &str, limits: Limits) -> Result<Option<Derive
     let mesh = IndexedMesh::from_soup(&c.soup);
     // The mask is built from the triangles at the standard primitive resolution whatever the
     // user chose for the render mesh (collision never depends on the render level of detail).
+    // A part with a clip, bar, ball, socket or hinge connector always gets one (see `occupancy`).
+    let joint = conns.iter().any(|c| {
+        matches!(
+            c.kind,
+            ConnKind::ClipF
+                | ConnKind::BarM
+                | ConnKind::BallM
+                | ConnKind::SocketF
+                | ConnKind::HingeO
+                | ConnKind::HingeE
+        )
+    });
     let (mask, occupancy) = if lib.resolution() == super::library::Resolution::Standard {
-        super::occupancy::occupancy(&c.soup, &body)
+        super::occupancy::occupancy(&c.soup, &body, joint)
     } else {
         let std_soup = lib.at_resolution(super::library::Resolution::Standard, |l| {
             let mut c2 = Collect::new(is_stud);
@@ -794,7 +811,7 @@ pub fn derive(lib: &Library, path: &str, limits: Limits) -> Result<Option<Derive
                 .walk(&mut c2, path, &Mat::IDENTITY)
                 .map(|()| c2.soup)
         })?;
-        super::occupancy::occupancy(&std_soup, &body)
+        super::occupancy::occupancy(&std_soup, &body, joint)
     };
     Ok(Some(Derived {
         mesh,

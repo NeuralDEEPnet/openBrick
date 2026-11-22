@@ -281,6 +281,7 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
         ));
     }
     ui.say("Built from the LDraw Parts Library (CC BY 2.0 / CC BY 4.0), https://www.ldraw.org. The pack is for your own use: do not commit or redistribute it.");
+    ui.say(openbrick_catalog::JOINT_TABLE_ATTRIBUTION);
     Ok(Outcome {
         code: 0,
         json: json!({
@@ -376,6 +377,7 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
         c.scanned, c.eligible, c.in_categories, c.with_connectors, c.imported
     ));
     ui.say(&h.attribution);
+    ui.say(openbrick_catalog::JOINT_TABLE_ATTRIBUTION);
     Ok(Outcome {
         code: 0,
         json: json!({

@@ -13,6 +13,11 @@ use openbrick_units::Credit;
 
 use crate::shape::ConnKind;
 
+/// The attribution the joint table carries wherever the program shows credits (the web page's footer,
+/// the command line's `catalog` output, the catalog JSON): the table is CC BY 4.0, derived from the
+/// geometry of the LDraw Parts Library.
+pub const JOINT_TABLE_ATTRIBUTION: &str = "The joint table (standards/joints-v1.json) is derived from the LDraw Parts Library (LDraw.org, https://www.ldraw.org) and licensed CC BY 4.0.";
+
 const SOURCE: &str = include_str!("../../../standards/joints-v1.json");
 
 /// One joint primitive.
@@ -116,6 +121,19 @@ impl JointTable {
                     p.primitive
                 ));
             }
+        }
+        // The bar radius is the Dimensional Standard's: twice it is the row `bar_diameter`, within the
+        // table's own tolerance (LDraw models the 7.95 LDU bar at a radius of 4).
+        match openbrick_units::STANDARD
+            .get()
+            .feature("bar_diameter")
+            .and_then(|f| f.ldraw_ldu)
+        {
+            Some(d) if (self.bars.radius * 2.0 - d).abs() <= 2.0 * self.bars.radius_tolerance => {}
+            other => problems.push(format!(
+                "bars: twice the radius ({}) is not the standard's bar_diameter ({other:?}) within the tolerance",
+                self.bars.radius * 2.0
+            )),
         }
         if !(self.bars.radius > 0.0
             && self.bars.radius_tolerance >= 0.0
