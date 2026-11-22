@@ -41,6 +41,7 @@ use crate::pack::{
     LDRAW_ID_PREFIX, MAX_BLOB_BYTES, MAX_CATEGORY_CHARS, MAX_CREDIT_CHARS, MAX_NAME_CHARS,
     MAX_PARTS, PACK_FORMAT,
 };
+use crate::shape::ConnKind;
 use crate::text::{is_unsafe_char, safe, safe_msg, REPLACEMENT};
 use crate::LDRAW_ATTRIBUTION;
 
@@ -352,7 +353,12 @@ pub fn import(
                 if d.studf > 0 {
                     report.with_receptacles += 1;
                 }
-                if d.conns.iter().any(|c| c.kind.is_axial()) {
+                if d.conns.iter().any(|c| {
+                    matches!(
+                        c.kind,
+                        ConnKind::PinM | ConnKind::PinF | ConnKind::AxleM | ConnKind::AxleF
+                    )
+                }) {
                     report.with_technic += 1;
                 }
                 if d.off_lattice > 0 {
@@ -410,6 +416,19 @@ pub fn import(
         };
         if !d.joints.is_empty() {
             report.counts.with_joints += 1;
+        }
+        if d.conns.iter().any(|c| {
+            matches!(
+                c.kind,
+                ConnKind::ClipF
+                    | ConnKind::BarM
+                    | ConnKind::BallM
+                    | ConnKind::SocketF
+                    | ConnKind::HingeO
+                    | ConnKind::HingeE
+            )
+        }) {
+            report.counts.with_joint_connectors += 1;
         }
         if d.uncertified_triangles > 0 {
             report.uncertified += 1;

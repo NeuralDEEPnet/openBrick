@@ -2,7 +2,46 @@
 //! mated connectors, connected components by union-find, and the parts that
 //! float (no path to a part standing on the ground).
 
+use openbrick_catalog::Link;
+
 use crate::model::{InstanceId, Model};
+
+/// Mated connector pairs by class ([`openbrick_catalog::Link`]): a stud in a receptacle, a pin in a
+/// hole, an axle in a hole, a clip on a bar, a ball in a socket, two hinge halves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LinkCounts {
+    pub stud: usize,
+    pub pin: usize,
+    pub axle: usize,
+    pub clip: usize,
+    pub ball: usize,
+    pub hinge: usize,
+}
+
+impl LinkCounts {
+    fn add(&mut self, l: Link) {
+        match l {
+            Link::Stud => self.stud += 1,
+            Link::Pin => self.pin += 1,
+            Link::Axle => self.axle += 1,
+            Link::Clip => self.clip += 1,
+            Link::Ball => self.ball += 1,
+            Link::Hinge => self.hinge += 1,
+        }
+    }
+
+    /// The count of one class.
+    pub fn of(&self, l: Link) -> usize {
+        match l {
+            Link::Stud => self.stud,
+            Link::Pin => self.pin,
+            Link::Axle => self.axle,
+            Link::Clip => self.clip,
+            Link::Ball => self.ball,
+            Link::Hinge => self.hinge,
+        }
+    }
+}
 
 /// Counts for the stats panel and the command line.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -11,6 +50,11 @@ pub struct Stats {
     pub parts: usize,
     /// Mated connector pairs (a stud in a receptacle is one, a pin in a hole is one).
     pub connections: usize,
+    /// The same pairs by class.
+    pub links: LinkCounts,
+    /// Of them, the pairs that leave a rotation free (pins, clips, balls, hinges): the parts are kept
+    /// at the one lattice pose they were placed in, the default pose, and the connection says it could turn.
+    pub free_rotation: usize,
     /// Connected groups of parts.
     pub components: usize,
     /// Parts standing on the ground (their bottom at Y = 0).
@@ -52,15 +96,35 @@ impl Model<'_> {
         out
     }
 
+    /// Every mated pair once with its class, as (smaller id, larger id, class), sorted: the edges of
+    /// the connection graph for the page, the command line and the tests.
+    pub fn connections_with_links(&self) -> Vec<(InstanceId, InstanceId, Link)> {
+        let mut out = Vec::new();
+        self.for_each_edge_links(|a, b, l| out.push((a.min(b), a.max(b), l)));
+        out.sort_unstable();
+        out
+    }
+
+    /// Calls `f(slot, slot, class)` for every male connector that has a mate (the lowest slot when several).
+    fn for_each_edge_links(&self, mut f: impl FnMut(InstanceId, InstanceId, Link)) {
+        self.for_each_edge_slots_links(|a, b, l| {
+            f(self.instances.id_of(a), self.instances.id_of(b), l)
+        });
+    }
+
     /// Calls `f(slot, slot)` for every male connector that has a mate (the lowest slot when several).
     fn for_each_edge_slots(&self, mut f: impl FnMut(u32, u32)) {
+        self.for_each_edge_slots_links(|a, b, _| f(a, b));
+    }
+
+    fn for_each_edge_slots_links(&self, mut f: impl FnMut(u32, u32, Link)) {
         for &slot in self.instances.slots() {
             let inst = self.instances.at_slot(slot);
             let shape = &self.catalog().parts[inst.part as usize].shape;
             for c in shape.connectors.iter().filter(|c| c.kind.is_male()) {
                 let placed = c.transformed(inst.pose.rot, inst.pose.pos);
                 if let Some(other) = self.conns.mate_of(&placed, Some(slot)) {
-                    f(slot, other);
+                    f(slot, other, c.kind.link());
                 }
             }
         }
@@ -76,8 +140,12 @@ impl Model<'_> {
         let n = self.instances.len();
         let mut sets = Sets((0..self.instances.slot_capacity() as u32).collect());
         let mut connections = 0usize;
-        self.for_each_edge_slots(|a, b| {
+        let mut links = LinkCounts::default();
+        let mut free_rotation = 0usize;
+        self.for_each_edge_slots_links(|a, b, l| {
             connections += 1;
+            links.add(l);
+            free_rotation += usize::from(l.free_rotation());
             sets.union(a, b);
         });
         let mut root_on_ground = vec![false; self.instances.slot_capacity()];
@@ -100,6 +168,8 @@ impl Model<'_> {
         Stats {
             parts: n,
             connections,
+            links,
+            free_rotation,
             components: is_root.iter().filter(|r| **r).count(),
             grounded,
             floating,

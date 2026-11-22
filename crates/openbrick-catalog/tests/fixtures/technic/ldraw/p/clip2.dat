@@ -1,0 +1,13 @@
+0 Synthetic Vertical Clip for Bricks
+0 Name: clip2.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Primitive UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+
+0 BFC CERTIFY CCW
+
+1 16 -6 -4 -10 1.5 0 0 0 8 0 0 0 7.5 cube.dat
+1 16 6 -4 -10 1.5 0 0 0 8 0 0 0 7.5 cube.dat
+1 16 0 -4 -16 4.5 0 0 0 8 0 0 0 1.5 cube.dat
+1 16 0 -4 -4 4.5 0 0 0 8 0 0 0 1.5 cube.dat
+1 16 0 -4 -1.25 3 0 0 0 8 0 0 0 1.25 cube.dat

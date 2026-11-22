@@ -60,6 +60,15 @@ pub const DATA_SETS: &[DataSet] = &[
         reader: read_coupon,
     },
     DataSet {
+        dir: "standards",
+        files: "joints-",
+        kind: Some("joints"),
+        schema: "joints.schema.json",
+        prefix: "joints-",
+        reader_name: "openbrick_catalog::JointTable",
+        reader: read_joints,
+    },
+    DataSet {
         dir: "profiles/process",
         files: "",
         kind: Some("process"),
@@ -169,6 +178,17 @@ fn read_printer(text: &str) -> Result<Value, String> {
 
 /// The palette, plus what its schema cannot state: unique codes and both
 /// defaults in the palette (`Palette::check`).
+/// The joint table, plus what its schema cannot state: unique primitives, lattice axes, finite
+/// origins, joint kinds only.
+fn read_joints(text: &str) -> Result<Value, String> {
+    let t: openbrick_catalog::JointTable = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let problems = t.check();
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+    written(serde_json::to_value(&t))
+}
+
 fn read_palette(text: &str) -> Result<Value, String> {
     let p: openbrick_catalog::Palette = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let problems = p.check();

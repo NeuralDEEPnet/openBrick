@@ -73,7 +73,7 @@ pub const MAX_LICENCE_BYTES: usize = 1024 * 1024;
 /// The longest library version, generator and licence name, in characters.
 pub const MAX_LABEL_CHARS: usize = 256;
 /// The joint kinds a part may list.
-pub const JOINT_KINDS: [&str; 4] = ["clip", "hinge", "ball", "socket"];
+pub const JOINT_KINDS: [&str; 5] = ["clip", "hinge", "ball", "socket", "bar"];
 
 /// The footprint of a body box in whole studs along X then Z (at least one each).
 pub fn footprint_studs(body: &Aabb) -> [u32; 2] {
@@ -125,6 +125,9 @@ pub struct PackCounts {
     /// Imported parts with an occupancy mask (the others collide as their box).
     #[serde(default)]
     pub with_masks: u32,
+    /// Imported parts with at least one clip, bar, ball, socket or hinge connector from the joint table.
+    #[serde(default)]
+    pub with_joint_connectors: u32,
 }
 
 /// One part of a pack: what the engine and the palette need, and where its mesh is.
@@ -638,7 +641,7 @@ impl Pack {
             || p.joints.iter().any(|j| !JOINT_KINDS.contains(&j.as_str()))
         {
             return Err(damaged(format!(
-                "part {} lists a joint kind other than clip, hinge, ball or socket",
+                "part {} lists a joint kind other than clip, hinge, ball, socket or bar",
                 p.id
             )));
         }
@@ -1189,6 +1192,45 @@ mod tests {
         .unwrap_err();
         assert_eq!(e, PackError::Version(3));
         assert!(e.to_string().contains("1 to 2"), "{e}");
+    }
+
+    #[test]
+    fn connectors_of_the_joint_kinds_load_and_unknown_kinds_are_refused() {
+        let p = masked();
+        let mut h = serde_json::to_value(&p.header).unwrap();
+        for kind in ["clipF", "barM", "ballM", "socketF", "hingeO", "hingeE"] {
+            h["parts"][0]["connectors"] =
+                serde_json::json!([{"kind": kind, "pos": [0, 4, -20], "dir": [0, 1, 0]}]);
+            let bytes = raw_file_v2(&serde_json::to_vec(&h).unwrap(), &p);
+            let q = Pack::from_bytes(&bytes).unwrap_or_else(|e| panic!("{kind}: {e}"));
+            assert_eq!(q.header.parts[0].connectors[0].kind.name(), kind);
+        }
+        h["parts"][0]["connectors"] =
+            serde_json::json!([{"kind": "hookM", "pos": [0, 0, 0], "dir": [0, 1, 0]}]);
+        let e = Pack::from_bytes(&raw_file_v2(&serde_json::to_vec(&h).unwrap(), &p)).unwrap_err();
+        assert!(e.to_string().len() < 400, "{e}");
+        h["parts"][0]["connectors"] =
+            serde_json::json!([{"kind": "ballM", "pos": [0, 0, 0], "dir": [1, 1, 0]}]);
+        assert!(Pack::from_bytes(&raw_file_v2(&serde_json::to_vec(&h).unwrap(), &p)).is_err());
+    }
+
+    /// A format 2 file from header JSON and the meshes and masks of `p`.
+    fn raw_file_v2(header: &[u8], p: &Pack) -> Vec<u8> {
+        let mesh = miniz_oxide::deflate::compress_to_vec(&p.blob, 6);
+        let masks = miniz_oxide::deflate::compress_to_vec(&p.mask_blob, 6);
+        let mut f = Vec::new();
+        f.extend(MAGIC);
+        f.extend((header.len() as u32).to_le_bytes());
+        f.extend(header);
+        f.extend((mesh.len() as u32).to_le_bytes());
+        f.extend((p.blob.len() as u64).to_le_bytes());
+        f.extend(&mesh);
+        f.extend((masks.len() as u32).to_le_bytes());
+        f.extend((p.mask_blob.len() as u64).to_le_bytes());
+        f.extend(&masks);
+        let sum = Sha256::digest(&f);
+        f.extend(sum);
+        f
     }
 
     #[test]

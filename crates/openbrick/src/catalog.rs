@@ -262,9 +262,15 @@ fn import_cmd(a: &ImportArgs, ui: Ui) -> Result<Outcome, Fail> {
             c.with_masks
         ));
     }
+    if c.with_joint_connectors > 0 {
+        ui.say(format!(
+            "  {} of them have clip, bar, ball, socket or hinge connectors from the joint table",
+            c.with_joint_connectors
+        ));
+    }
     if c.with_joints > 0 {
         ui.say(format!(
-            "  {} of them have clip, hinge, ball or socket joints, which are not modelled yet: their studs snap, the joints do not",
+            "  {} of them have a joint the joint table does not calibrate (a hinge plate, a bar handle, an odd clip): their studs, pins and axles snap, the joint does not",
             c.with_joints
         ));
     }
@@ -304,6 +310,10 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
     let h = &pack.header;
     let mut by_cat: BTreeMap<&str, u32> = BTreeMap::new();
     let (mut derived, mut none, mut joints, mut tris, mut conns) = (0u32, 0u32, 0u32, 0u64, 0u64);
+    // Connectors by kind, and parts by the classes of connection they can make (Link names).
+    let mut by_kind: BTreeMap<&str, u32> = BTreeMap::new();
+    let mut parts_by_link: BTreeMap<&str, u32> = BTreeMap::new();
+    let (mut with_masks, mut mask_cells) = (0u32, 0u64);
     for p in &h.parts {
         *by_cat.entry(p.category.as_str()).or_default() += 1;
         match p.connectivity {
@@ -315,6 +325,18 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
         }
         tris += u64::from(p.triangles);
         conns += p.connectors.len() as u64;
+        for c in &p.connectors {
+            *by_kind.entry(c.kind.name()).or_default() += 1;
+        }
+        for l in openbrick_catalog::Link::ALL {
+            if p.connectors.iter().any(|c| c.kind.link() == l) {
+                *parts_by_link.entry(l.name()).or_default() += 1;
+            }
+        }
+        if let Some(m) = &p.mask {
+            with_masks += 1;
+            mask_cells += u64::from(m.solid);
+        }
     }
     ui.say(format!(
         "{}: {} pack `{}`, LDraw library {} ({} primitives), format {}, {} bytes",
@@ -330,6 +352,19 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
     ui.say(format!(
         "{} parts: connectivity derived {derived}, none (free placement only) {none}; {joints} with unmodelled joints; {conns} connectors, {tris} triangles",
         h.parts.len()
+    ));
+    let kinds: Vec<String> = by_kind.iter().map(|(k, v)| format!("{k} {v}")).collect();
+    ui.say(format!("connectors by kind: {}", kinds.join(", ")));
+    let links: Vec<String> = parts_by_link
+        .iter()
+        .map(|(k, v)| format!("{k} {v}"))
+        .collect();
+    ui.say(format!(
+        "parts that can make a connection of class: {}",
+        links.join(", ")
+    ));
+    ui.say(format!(
+        "{with_masks} parts have an occupancy mask ({mask_cells} solid cells of 1 LDU); the others collide as their box"
     ));
     let cats: Vec<String> = by_cat.iter().map(|(k, v)| format!("{k} {v}")).collect();
     ui.say(format!("categories: {}", cats.join(", ")));
@@ -356,6 +391,10 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
             "parts": h.parts.len(),
             "connectivity": { "derived": derived, "none": none },
             "withJoints": joints,
+            "connectorsByKind": by_kind,
+            "partsByLink": parts_by_link,
+            "withMasks": with_masks,
+            "maskSolidCells": mask_cells,
             "connectors": conns,
             "triangles": tris,
             "categories": by_cat,

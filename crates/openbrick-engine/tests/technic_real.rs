@@ -149,3 +149,107 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
         eprintln!("  refused: {f}");
     }
 }
+
+/// The clip, bar, ball, socket and hinge connectors of the joint table, against the real parts:
+/// for pairs of parts that should join (a clip and a bar, a ball and a socket, an odd and an even
+/// hinge half), mate their connectors where they coincide and count the poses with no shared
+/// volume. A table entry whose point or axis is wrong makes parts collide at the mated pose.
+#[test]
+fn joints_fit_the_real_parts_they_mate_with() {
+    use openbrick_catalog::Link;
+    let Ok(dir) = std::env::var("OPENBRICK_LDRAW_DIR") else {
+        eprintln!("OPENBRICK_LDRAW_DIR is not set: skipping the joint calibration");
+        return;
+    };
+    let cats: Vec<String> = DEFAULT_CATEGORIES
+        .iter()
+        .chain(TECHNIC_CATEGORIES)
+        .map(|s| (*s).to_string())
+        .collect();
+    let opts = ImportOptions {
+        categories: Some(cats),
+        limit: None,
+        ..ImportOptions::default()
+    };
+    let (pack, _) = import(std::path::Path::new(&dir), &opts, &mut |_, _, _| {}).expect("imports");
+    let cat = Catalog::builtin().unwrap().with_pack(&pack);
+    let with = |kind: ConnKind| -> Vec<u32> {
+        cat.parts
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| {
+                p.origin == Origin::Ldraw && p.shape.connectors.iter().any(|c| c.kind == kind)
+            })
+            .map(|(i, _)| i as u32)
+            .collect()
+    };
+    let mut total = std::collections::BTreeMap::<&str, (u32, u32, u32)>::new();
+    for (name, a_kind, b_kind) in [
+        ("clip on bar", ConnKind::ClipF, ConnKind::BarM),
+        ("ball in socket", ConnKind::BallM, ConnKind::SocketF),
+        ("hinge halves", ConnKind::HingeO, ConnKind::HingeE),
+    ] {
+        let (a_parts, b_parts) = (with(a_kind), with(b_kind));
+        eprintln!(
+            "{name}: {} parts with {}, {} with {}",
+            a_parts.len(),
+            a_kind.name(),
+            b_parts.len(),
+            b_kind.name()
+        );
+        for &a in a_parts.iter().take(40) {
+            for &b in b_parts.iter().take(40) {
+                // The target part, high above the ground, and the pose of the other that mates.
+                let mut m = Model::new(&cat);
+                if m.apply(&Command::Add {
+                    part: cat.parts[b as usize].id.clone(),
+                    pos: [0, -600, 0],
+                    rot: 0,
+                    colour: 15,
+                })
+                .is_err()
+                {
+                    continue;
+                }
+                let targets: Vec<Conn> = cat.parts[b as usize]
+                    .shape
+                    .connectors
+                    .iter()
+                    .filter(|c| c.kind == b_kind)
+                    .map(|c| c.transformed(Rot24::IDENTITY, [0, -600, 0]))
+                    .collect();
+                for t in targets.iter().take(4) {
+                    let point = t.pos.map(f64::from);
+                    let poses = m.mate_poses(a, Rot24::IDENTITY, point).unwrap();
+                    let e = total.entry(name).or_default();
+                    e.0 += 1;
+                    let mut fits = false;
+                    let mut mated = false;
+                    for (pos, rot, _) in poses {
+                        let pose = LatticePose { pos, rot };
+                        let (n, links) = m.mates_links(a, &pose, None).unwrap();
+                        if n > 0
+                            && links
+                                & Link::ALL
+                                    .iter()
+                                    .filter(|l| **l == a_kind.link())
+                                    .map(|l| l.bit())
+                                    .sum::<u32>()
+                                != 0
+                        {
+                            mated = true;
+                            if m.check_pose(a, &pose, None).is_ok() {
+                                fits = true;
+                            }
+                        }
+                    }
+                    e.1 += u32::from(mated);
+                    e.2 += u32::from(fits);
+                }
+            }
+        }
+    }
+    for (k, (tried, mated, fit)) in &total {
+        eprintln!("{k}: {tried} connector pairs tried, {mated} mate by position and axis, {fit} of those with no shared volume ({:.1} percent)", 100.0 * f64::from(*fit) / f64::from((*mated).max(1)));
+    }
+}

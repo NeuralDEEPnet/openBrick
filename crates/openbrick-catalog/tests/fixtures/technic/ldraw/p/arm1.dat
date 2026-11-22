@@ -1,0 +1,10 @@
+0 Synthetic Hinge Arm 2 Finger
+0 Name: arm1.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Primitive UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+
+0 BFC CERTIFY CCW
+
+1 16 0 -6 -10 10 0 0 0 3.75 0 0 0 10 cube.dat
+1 16 0 2.25 -10 10 0 0 0 3.75 0 0 0 10 cube.dat

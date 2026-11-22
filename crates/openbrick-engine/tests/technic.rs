@@ -19,7 +19,11 @@ pub fn technic_pack() -> Pack {
     let dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../openbrick-catalog/tests/fixtures/technic");
     let opts = ImportOptions {
-        categories: Some(["Brick", "Technic"].map(String::from).to_vec()),
+        categories: Some(
+            ["Brick", "Plate", "Technic", "Bar", "Hinge"]
+                .map(String::from)
+                .to_vec(),
+        ),
         ..ImportOptions::default()
     };
     let (p, _) = import(&dir, &opts, &mut |_, _, _| {}).expect("fixture imports");
@@ -347,4 +351,98 @@ fn snapping_a_pin_is_the_same_after_moving_the_beam_by_a_lattice_step() {
             "shift {d:?}"
         );
     }
+}
+
+/// A ray straight down onto (x, z) from far above.
+fn from_above(x: i32, z: i32) -> Ray {
+    down(x, z)
+}
+
+#[test]
+fn a_bar_is_gripped_by_a_clip_and_the_connection_is_a_clip_on_a_bar() {
+    let c = cat();
+    let mut m = Model::new(c);
+    // The plate with a clip, raised so a standing bar clears the ground; its clip's bore is at
+    // (0, -44, -20) with a vertical axis.
+    m.apply(&add("ld.4085", [0, -48, 0], 0)).unwrap();
+    let bar = id("ld.87994");
+    // The bar lies along X; the clip wants a vertical bar, so the snap stands it up.
+    let s = m
+        .snap(bar, Rot24::IDENTITY, &from_above(0, -20))
+        .unwrap()
+        .unwrap();
+    assert!(s.valid, "{s:?}");
+    assert_eq!(s.links, Link::Clip.bit(), "{s:?}");
+    assert_ne!(s.rot, 0, "the bar was turned onto the clip's axis");
+    m.apply(&add("ld.87994", s.pos, s.rot)).unwrap();
+    let st = m.stats();
+    assert_eq!(
+        (
+            st.links.clip,
+            st.links.stud,
+            st.connections,
+            st.free_rotation
+        ),
+        (1, 0, 1, 1),
+        "{st:?}"
+    );
+    assert_eq!(m.connections_with_links(), vec![(1, 2, Link::Clip)]);
+    // Plate and bar are one component.
+    assert_eq!(st.components, 1, "{st:?}");
+}
+
+#[test]
+fn a_ball_goes_in_its_socket_and_hinge_halves_interleave() {
+    let c = cat();
+    let mut m = Model::new(c);
+    m.apply(&add("ld.14418", [0, -10, 0], 0)).unwrap();
+    let ball = id("ld.22890");
+    // The ball part (a ball and a stem out the +Z side) comes from the socket's open side.
+    let s = m
+        .snap(
+            ball,
+            Rot24::IDENTITY,
+            &Ray {
+                origin: [0.0, -10.0, 300.0],
+                dir: [0.0, 0.0, -1.0],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert!(s.valid && s.links == Link::Ball.bit(), "{s:?}");
+    assert_eq!(s.pos, [0, -10, 0], "its centre on the socket's");
+    m.apply(&add("ld.22890", s.pos, s.rot)).unwrap();
+    assert_eq!(m.connections_with_links(), vec![(1, 2, Link::Ball)]);
+
+    // Hinge: a 2-finger half on the ground, a 3-finger half turned half a turn about the vertical
+    // so its plate is on the other side: the fingers interleave.
+    let mut h = Model::new(c);
+    h.apply(&add("ld.9101", [0, -20, 0], 0)).unwrap();
+    let three = id("ld.9102");
+    let half = Rot24::yaw_quarter_turns(2);
+    let s = h
+        .snap(
+            three,
+            half,
+            &Ray {
+                origin: [0.0, -300.0, -20.0],
+                dir: [0.0, 1.0, 0.0],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert!(s.valid && s.links == Link::Hinge.bit(), "{s:?}");
+    h.apply(&add("ld.9102", s.pos, s.rot)).unwrap();
+    assert_eq!(h.stats().links.hinge, 1);
+    // Offset along the axis by 4 LDU the fingers collide.
+    let off = LatticePose {
+        pos: [s.pos[0], s.pos[1] + 4, s.pos[2]],
+        rot: Rot24(s.rot),
+    };
+    let mut h2 = Model::new(c);
+    h2.apply(&add("ld.9101", [0, -20, 0], 0)).unwrap();
+    assert!(matches!(
+        h2.check_pose(three, &off, None),
+        Err(EngineError::Collides { .. })
+    ));
 }

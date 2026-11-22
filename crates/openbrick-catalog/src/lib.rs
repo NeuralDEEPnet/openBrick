@@ -12,6 +12,7 @@
 //! docs/plan/12). Still to do (docs/plan/11, M3a): LOD hulls.
 
 pub mod builtin;
+pub mod joints;
 #[cfg(feature = "import")]
 pub mod ldraw;
 pub mod mask;
@@ -25,6 +26,7 @@ use std::sync::OnceLock;
 pub use builtin::{
     body_hull, BuiltPart, BuiltinSpec, CatalogError, Lod, PartMesh, BUILTIN, CATALOG_ID,
 };
+pub use joints::{BarRule, JointPrimitive, JointTable};
 pub use mask::{Mask, MaskGrid, MaskRef, SharedMask, MASK_CELL_LDU, MAX_MASK_CELLS};
 pub use pack::{Connectivity, Pack, PackError, PackHeader, PackPart, LDRAW_ID_PREFIX};
 pub use palette::{Colour, Palette};

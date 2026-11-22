@@ -11,6 +11,7 @@ One JSON Schema (draft 2020-12) per document kind, published with each release a
 | `part.schema.json` | `parts/*.obpart.json` (`openbrick/part@1`) | `openbrick_part::PartDoc` |
 | `printer-profile.schema.json` | `profiles/printer/*.json` (`kind: "printer"`): a printer and tool setup with the build volume its maker publishes and the page it was read from (validator rule `SIZE.BED`) | `openbrick_print::PrinterProfile` |
 | `obrick.schema.json` | `models/*.obrick.json` (`kind: "model"`): an assembler model, the `model.json` of docs/plan/08 section 2 as plain JSON in the alpha; integer LDU poses in the LDraw frame, a rotation index 0 to 23, a bill of materials written for people | `openbrick_engine::ModelDoc` (and `Model::from_doc`, which also checks the stud grid, the ground and overlaps) |
+| `joints.schema.json` | `standards/joints-*.json` (`kind: "joints"`): the joint table, how the clip, hinge, ball and bar primitives of the LDraw library become connectors (axis and a point on it per primitive, each citing the geometry it was read from; the bar rule); derived by `scripts/derive-joint-table.py` | `openbrick_catalog::JointTable` |
 | `palette.schema.json` | `profiles/palette/*.json` (`kind: "palette"`): the assembler's colours, neutral names and sRGB display values | `openbrick_catalog::Palette` |
 | `report.schema.json` | validator reports, the output of `openbrick validate --json` (docs/plan/05 section 5); no data files, checked against the expected reports of the validator fixtures in `crates/openbrick-print/tests/fixtures/validator/` | `openbrick_print::Report` |
 
@@ -18,7 +19,7 @@ Still to come, with their document kinds: `run.schema.json` (`.obrun.json`); the
 
 ## What `cargo xtask data` checks
 
-Every `.json` file in `standards/` must be claimed by exactly one schema (by its file-name prefix, `dimensions-` or `coupon-`), so a new file there never goes unchecked.
+Every `.json` file in `standards/` must be claimed by exactly one schema (by its file-name prefix, `dimensions-`, `coupon-` or `joints-`), so a new file there never goes unchecked.
 
 For every file in `standards/`, `profiles/process/`, `profiles/fit/` and `parts/`, and for every fixture in `fixtures/valid/`:
 

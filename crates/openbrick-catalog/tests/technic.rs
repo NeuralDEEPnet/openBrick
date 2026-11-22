@@ -24,17 +24,17 @@ fn pack(resolution: Resolution, categories: &[&str]) -> Pack {
 #[test]
 fn technic_is_off_by_default_and_on_when_asked() {
     let default = import(&dir(), &ImportOptions::default(), &mut |_, _, _| {});
-    // The default categories hold the plain brick only.
-    let (p, _) = default.expect("the plain brick imports");
-    assert_eq!(
-        p.header.parts.len(),
-        1,
-        "{:?}",
-        p.header.parts.iter().map(|p| &p.id).collect::<Vec<_>>()
-    );
-    assert_eq!(p.header.parts[0].id, "ld.3005");
+    // The default categories hold the plain brick and the plates; none of the Technic category.
+    let (p, _) = default.expect("the plain parts import");
+    let ids: Vec<&str> = p.header.parts.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids, vec!["ld.3005", "ld.4085", "ld.9103"]);
+    assert!(p.header.parts.iter().all(|p| p.category != "Technic"));
     let both = pack(Resolution::Standard, &["Brick", "Technic"]);
-    assert_eq!(both.header.parts.len(), 5);
+    assert_eq!(
+        both.header.parts.len(),
+        7,
+        "the plain brick, the pin, two beams, the axle, the ball and the socket"
+    );
 }
 
 #[test]
@@ -110,4 +110,42 @@ fn a_pack_with_masks_is_byte_for_byte_reproducible() {
     assert_eq!(a, b);
     let back = Pack::from_bytes(&a).unwrap();
     assert!(back.mask(0).is_some() || back.mask(1).is_some());
+}
+
+#[test]
+fn a_clip_the_table_does_not_calibrate_only_flags_the_part() {
+    // clip4 has no cylinder of the bar radius: it is not in standards/joints-v1.json, so the part
+    // keeps its studs and is flagged with the joint kind, as before the table existed.
+    let p = pack(Resolution::Standard, &["Plate"]);
+    let c = p.header.parts.iter().find(|x| x.id == "ld.9103").unwrap();
+    assert_eq!(c.joints, vec!["clip".to_string()]);
+    assert!(c.connectors.iter().all(|k| k.kind != ConnKind::ClipF));
+    assert!(c.connectors.iter().any(|k| k.kind == ConnKind::StudM));
+    // The plate with a clip the table does know has the connector and no flag.
+    let ok = p.header.parts.iter().find(|x| x.id == "ld.4085").unwrap();
+    assert!(ok.joints.is_empty());
+    let clip: Vec<_> = ok
+        .connectors
+        .iter()
+        .filter(|k| k.kind == ConnKind::ClipF)
+        .collect();
+    assert_eq!(clip.len(), 1);
+    // The table's origin (0, 0, -10) in clip2's frame, placed by the part's instance at (0, 4, -10).
+    assert_eq!((clip[0].pos, clip[0].dir), ([0, 4, -20], [0, 1, 0]));
+}
+
+#[test]
+fn bars_come_from_a_cylinder_of_the_bar_radius_in_a_part_that_names_a_bar() {
+    let p = pack(Resolution::Standard, &["Bar", "Plate"]);
+    let bar = p.header.parts.iter().find(|x| x.id == "ld.87994").unwrap();
+    assert_eq!(
+        bar.connectors
+            .iter()
+            .map(|c| (c.kind, c.pos, c.dir))
+            .collect::<Vec<_>>(),
+        vec![(ConnKind::BarM, [0, 0, 0], [1, 0, 0])]
+    );
+    // The plate's clip bore is a cylinder of the same radius, but a plate is not a bar: no barM.
+    let plate = p.header.parts.iter().find(|x| x.id == "ld.4085").unwrap();
+    assert!(plate.connectors.iter().all(|c| c.kind != ConnKind::BarM));
 }
