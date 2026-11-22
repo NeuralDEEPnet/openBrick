@@ -208,8 +208,12 @@ fn damaged(m: impl Into<String>) -> PackError {
 pub struct Pack {
     pub header: PackHeader,
     blob: Vec<u8>,
-    /// The inflated mask blob (empty for format 1).
+    /// The inflated mask blob of a pack that was built here (empty for format 1, and for a pack read
+    /// from a file once its masks are decoded: 38 MiB for the real library, not worth keeping).
     mask_blob: Vec<u8>,
+    /// For a pack read from a file: its deflated mask section and the size it inflates to, so
+    /// [`Pack::to_bytes`] can write the same file back.
+    mask_stream: Option<(Vec<u8>, usize)>,
     /// Each part's mask, merged into boxes (decoded and checked when the pack is built or read).
     masks: Vec<Option<SharedMask>>,
     fingerprint: String,
@@ -290,6 +294,7 @@ impl Pack {
             header,
             blob,
             mask_blob,
+            mask_stream: None,
             masks: Vec::new(),
             fingerprint: String::new(),
         };
@@ -316,6 +321,7 @@ impl Pack {
         let mut out = Vec::with_capacity(self.header.parts.len());
         let mut next = 0u64;
         let mut boxes = 0usize;
+        let mut scratch = crate::mask::MaskScratch::default();
         for p in &self.header.parts {
             let Some(r) = &p.mask else {
                 out.push(None);
@@ -351,13 +357,13 @@ impl Pack {
                 )));
             }
             next = r.offset + u64::from(r.bytes);
-            let g = MaskGrid {
-                origin: p.body.min,
+            let m = Mask::from_bits_in(
+                p.body.min,
                 dims,
-                bits: self.mask_blob[r.offset as usize..next as usize].to_vec(),
-            };
-            let m = Mask::from_grid(&g)
-                .map_err(|e| damaged(format!("the mask of part {}: {e}", p.id)))?;
+                &self.mask_blob[r.offset as usize..next as usize],
+                &mut scratch,
+            )
+            .map_err(|e| damaged(format!("the mask of part {}: {e}", p.id)))?;
             if m.volume() != u64::from(r.solid) {
                 return Err(damaged(format!(
                     "the mask of part {} does not hold the {} cells it says",
@@ -422,9 +428,15 @@ impl Pack {
         out.extend((self.blob.len() as u64).to_le_bytes());
         out.extend(&blob);
         if self.header.format >= 2 {
-            let masks = miniz_oxide::deflate::compress_to_vec(&self.mask_blob, 6);
+            let (masks, raw) = match &self.mask_stream {
+                Some((stream, raw)) if self.mask_blob.is_empty() => (stream.clone(), *raw),
+                _ => (
+                    miniz_oxide::deflate::compress_to_vec(&self.mask_blob, 6),
+                    self.mask_blob.len(),
+                ),
+            };
             out.extend((masks.len() as u32).to_le_bytes());
-            out.extend((self.mask_blob.len() as u64).to_le_bytes());
+            out.extend((raw as u64).to_le_bytes());
             out.extend(&masks);
         }
         let sum = Sha256::digest(&out);
@@ -492,6 +504,7 @@ impl Pack {
             .ok_or_else(|| damaged("the mesh blob is cut short"))?;
         let mut end = at + 12 + clen;
         let mut mask_blob = Vec::new();
+        let mut mask_stream = None;
         if header.format >= 2 {
             // The mask section: its declared inflated size must be exactly what the parts' masks
             // need (the header says each one's byte count), checked before anything is inflated.
@@ -523,13 +536,21 @@ impl Pack {
                     ));
                 }
             } else {
-                mask_blob = miniz_oxide::inflate::decompress_to_vec_with_limit(mcomp, mraw)
-                    .map_err(|e| {
-                        damaged(format!("the mask blob does not inflate ({:?})", e.status))
-                    })?;
-                if mask_blob.len() != mraw {
+                // Into a buffer of exactly the size the header's masks need (checked above, at most
+                // MAX_MASK_BLOB_BYTES): no growing and copying, so the heap of a WebAssembly page
+                // is not left fragmented by 8 MiB of masks.
+                mask_blob = vec![0u8; mraw];
+                let got = miniz_oxide::inflate::decompress_slice_iter_to_slice(
+                    &mut mask_blob,
+                    std::iter::once(mcomp),
+                    false,
+                    false,
+                )
+                .map_err(|e| damaged(format!("the mask blob does not inflate ({e:?})")))?;
+                if got != mraw {
                     return Err(damaged("the mask blob has the wrong size"));
                 }
+                mask_stream = Some((mcomp.to_vec(), mraw));
             }
         }
         if end != body.len() {
@@ -544,11 +565,14 @@ impl Pack {
             header,
             blob,
             mask_blob,
+            mask_stream,
             masks: Vec::new(),
             fingerprint: hex(sum),
         };
         pack.check()?;
         pack.masks = pack.decode_masks()?;
+        // The boxes are all that is used; the file's own deflated section is kept to write it back.
+        pack.mask_blob = Vec::new();
         Ok(pack)
     }
 

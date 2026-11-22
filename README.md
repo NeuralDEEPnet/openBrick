@@ -29,7 +29,7 @@
 crates/        Rust workspace: units, geom, part, print, engine, catalog, io, openbrick (CLI), openbrick-wasm, xtask
 packages/      TypeScript packages: viewport (kernel-to-three.js frame so far); core-wasm, ui, state from M2
 apps/          web (the browser playground: Build mode, the assembler alpha, and the part designer, which opens, edits and saves any part document with its presets, and calibration coupon; Rust core as WebAssembly in a Web Worker, three.js viewer; PWA in M4) and desktop (the desktop app alpha: the same playground in a Tauri 2 window with native open and save dialogs)
-standards/     Dimensional Standard v1 (CC0) and measurement data
+standards/     Dimensional Standard v1 (CC0), the joint table (CC BY 4.0: derived from LDraw geometry) and measurement data
 profiles/      process profiles (fdm-0.4, fdm-0.2, resin-msla), example fit profiles and the assembler's colour palette
 models/        sample assembler models (.obrick.json): a house and a staircase
 parts/         openBrick-native part documents (CC0; the Neuraldeep.net marks in parts/assets/brand/ are all rights reserved, see its NOTICE.md)
@@ -92,4 +92,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) (DCO sign-off, conventions, review cultu
 
 ## Licences
 
-Code is MIT ([LICENSE](LICENSE)). Part definitions, profiles and the Dimensional Standard are CC0 1.0 with a credit norm; documentation is CC BY 4.0; imported LDraw parts keep their own CC BY headers. The one exception is the Neuraldeep.net marks: the NEURALDEEP.NET wordmark in `parts/assets/brand/`, the demo tiles' artwork, which the WebAssembly core and the playground also bundle, and the Neuraldeep.net logo the playground shows. They are Neural Deep Network Ltd's trademarks, all rights reserved, and not under these licences ([NOTICE](parts/assets/brand/NOTICE.md)). See [LICENSE-POLICY.md](LICENSE-POLICY.md) and [TRADEMARK.md](TRADEMARK.md).
+Code is MIT ([LICENSE](LICENSE)). Part definitions, profiles and the Dimensional Standard are CC0 1.0 with a credit norm (the one data file under another licence is the joint table `standards/joints-v1.json`, CC BY 4.0, because it is derived from LDraw geometry); documentation is CC BY 4.0; imported LDraw parts keep their own CC BY headers. The one exception is the Neuraldeep.net marks: the NEURALDEEP.NET wordmark in `parts/assets/brand/`, the demo tiles' artwork, which the WebAssembly core and the playground also bundle, and the Neuraldeep.net logo the playground shows. They are Neural Deep Network Ltd's trademarks, all rights reserved, and not under these licences ([NOTICE](parts/assets/brand/NOTICE.md)). See [LICENSE-POLICY.md](LICENSE-POLICY.md) and [TRADEMARK.md](TRADEMARK.md).

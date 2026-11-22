@@ -2071,7 +2071,7 @@ async function buildTechnicRun(browser, origin) {
   check(JSON.stringify(remaining) === JSON.stringify(wantParts), `${label}: the parts that remain are ${JSON.stringify(remaining)}`);
   const stats = (await page.textContent("#build-stats")).replace(/\s+/g, " ");
   check(/Pins in holes ?1/.test(stats) && /Axles in holes ?1/.test(stats) && /Clips on bars ?1/.test(stats) && /Balls in sockets ?1/.test(stats) && /Hinges ?1/.test(stats), `${label}: the stats panel says "${stats}"`);
-  check(b.stats.floating.length === 0 || b.stats.floating.every((id) => id > 0), `${label}: floating ${JSON.stringify(b.stats.floating)}`);
+  check(b.stats.floating.length === 0, `${label}: floating ${JSON.stringify(b.stats.floating)}`);
   if (shots) {
     // A clean frame: the pointer off the view (so no stale hover line), the camera one notch closer, then the Model panel.
     await page.mouse.move(60, 30);

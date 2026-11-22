@@ -54,6 +54,7 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
     let axle = find("3705").expect("axle 4 (the pack has no part with axle connectors of its own)");
     let mut counts = std::collections::BTreeMap::<&str, (u32, u32)>::new();
     let mut failed: Vec<String> = Vec::new();
+    let mut refused_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for p in &cat.parts {
         if p.origin != Origin::Ldraw {
             continue;
@@ -131,8 +132,11 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
             }
             if fits {
                 entry.1 += 1;
-            } else if failed.len() < 40 {
-                failed.push(format!("{} {name} at {:?}", p.id, c.pos));
+            } else {
+                refused_ids.insert(p.id.clone());
+                if failed.len() < 40 {
+                    failed.push(format!("{} {name} at {:?}", p.id, c.pos));
+                }
             }
         }
     }
@@ -144,6 +148,38 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
     }
     for f in &failed {
         eprintln!("  refused: {f}");
+    }
+    // The test can fail: floors a few points under what was measured (the 2026-10 library: studs 94.2,
+    // pins 74.2, axles 80.4 percent), and the Technic bricks, beams and liftarms of the plan's list fit
+    // every one of their holes (the first 40 connectors of each part are tried).
+    let rate = |k: &str| {
+        let (n, ok) = counts[k];
+        100.0 * f64::from(ok) / f64::from(n.max(1))
+    };
+    assert!(
+        rate("stud in receptacle") >= 94.0,
+        "studs {:.1}",
+        rate("stud in receptacle")
+    );
+    assert!(
+        rate("pin in hole") >= 74.0,
+        "pins {:.1}",
+        rate("pin in hole")
+    );
+    assert!(
+        rate("axle in hole") >= 80.0,
+        "axles {:.1}",
+        rate("axle in hole")
+    );
+    for n in ["3700", "3701", "3702", "32316", "32523", "32524", "41678"] {
+        assert!(
+            cat.find(&format!("ld.{n}")).is_some(),
+            "ld.{n} is in the pack"
+        );
+        assert!(
+            !refused_ids.contains(&format!("ld.{n}")),
+            "ld.{n} refused a pin or axle in one of its holes: {failed:?}"
+        );
     }
 }
 
@@ -248,5 +284,84 @@ fn joints_fit_the_real_parts_they_mate_with() {
     }
     for (k, (tried, mated, fit)) in &total {
         eprintln!("{k}: {tried} connector pairs tried, {mated} mate by position and axis, {fit} of those with no shared volume ({:.1} percent)", 100.0 * f64::from(*fit) / f64::from((*mated).max(1)));
+    }
+    // Floors a few points under the 2026-10 measurement (clip 66.3, ball 68.0, hinge 53.6 percent), and every
+    // pair mates by position and axis (a table entry whose axis were wrong would mate fewer).
+    for (k, floor) in [
+        ("clip on bar", 60.0),
+        ("ball in socket", 60.0),
+        ("hinge halves", 50.0),
+    ] {
+        let (tried, mated, fit) = total[k];
+        assert!(
+            tried > 0 && mated == tried,
+            "{k}: {mated} of {tried} pairs mate"
+        );
+        assert!(
+            100.0 * f64::from(fit) / f64::from(mated) >= floor,
+            "{k}: {fit} of {mated}"
+        );
+    }
+}
+
+/// The connectors derived for the part types the plan names (friction pin, long pin, pin with axle end,
+/// bush, half bush), printed, and checked where the library's own description says what they must be.
+#[test]
+fn named_technic_parts_have_the_connectors_their_descriptions_promise() {
+    let Ok(dir) = std::env::var("OPENBRICK_LDRAW_DIR") else {
+        eprintln!("OPENBRICK_LDRAW_DIR is not set: skipping");
+        return;
+    };
+    let cats: Vec<String> = DEFAULT_CATEGORIES
+        .iter()
+        .chain(TECHNIC_CATEGORIES)
+        .map(|s| (*s).to_string())
+        .collect();
+    let opts = ImportOptions {
+        categories: Some(cats),
+        limit: None,
+        include_unconnected: true,
+        ..ImportOptions::default()
+    };
+    let (pack, _) = import(std::path::Path::new(&dir), &opts, &mut |_, _, _| {}).expect("imports");
+    let cat = Catalog::builtin().unwrap().with_pack(&pack);
+    let kinds = |n: &str| -> Option<std::collections::BTreeMap<&'static str, usize>> {
+        let p = &cat.parts[cat.find(&format!("ld.{n}"))? as usize];
+        let mut m = std::collections::BTreeMap::new();
+        for c in &p.shape.connectors {
+            *m.entry(c.kind.name()).or_default() += 1;
+        }
+        eprintln!("{n} {}: {m:?}", p.name);
+        Some(m)
+    };
+    // Friction pin (ribs are not modelled: a pin is a pin), long pin, pin with axle end, bush, half bush.
+    for n in ["2780", "6558", "3749", "3713", "4265c"] {
+        let m = kinds(n);
+        eprintln!(
+            "  {n}: {}",
+            if m.is_some() {
+                "in the pack"
+            } else {
+                "NOT in the pack"
+            }
+        );
+    }
+    assert_eq!(
+        kinds("3713").unwrap().get("axleF"),
+        Some(&1),
+        "Technic Bush: its axle hole"
+    );
+    // 3749 (Technic Axle Pin) gets its pin module but not the axle end: a known gap, printed above.
+    assert_eq!(kinds("3749").unwrap().get("pinM"), Some(&1));
+    let pin = kinds("3673").unwrap();
+    assert_eq!(pin.get("pinM"), Some(&2), "Technic Pin: two modules of pin");
+    let fric = kinds("2780").unwrap();
+    assert_eq!(
+        fric.get("pinM"),
+        Some(&2),
+        "Technic Pin with Friction: two modules of pin"
+    );
+    if let Some(long) = kinds("6558") {
+        assert_eq!(long.get("pinM"), Some(&3), "Technic Pin 3L: three modules");
     }
 }

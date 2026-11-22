@@ -167,12 +167,13 @@ What works end to end:
 - **Statistics.** The Model panel counts the connections by class: studs in
   receptacles, pins in holes, axles in holes, clips on bars, balls in sockets, hinges.
 
-What does not: gear wheels (a fifth derive no hole, and gears do not mesh), hinge
+What does not: the axle end of a pin with axle end (Technic Axle Pin 3749 gets its pin module only), half bushes that the library draws as assemblies (4265c is not imported at all), gear wheels (a fifth derive no hole, and gears do not mesh), hinge
 plates (`h1`, `h2`) and bar handles drawn without a bar are flagged and do not
 connect, towballs and old hinge bricks need an override table that is still to do,
 free poses and rotation about a joint's axis are not modelled (the part stays where
 it was placed), and a pin or axle that the library draws touching a part by more
-than 2 LDU (a friction pin's ribs) is refused where it would be pressed in. Measured
+than 2 LDU (a friction pin's ribs: a friction pin 2780 and the long pin 6558 are
+plain pins to the engine, with two and three modules) is refused where it would be pressed in. Measured
 on the real library, a plate's stud fits 94.2 percent of the receptacles, a pin 74.2
 percent of the pin holes and an axle 80.4 percent of the axle holes; the refusals
 are geometry (a skirt around a receptacle, a gear hub, a blind hole), and the Technic

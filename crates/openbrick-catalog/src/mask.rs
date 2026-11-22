@@ -52,7 +52,10 @@ pub const MIN_PENETRATION_LDU: i32 = 2;
 pub const MAX_MASK_BOXES: usize = 4096;
 /// The most boxes all the masks of one pack may hold together (memory: 24 bytes each).
 pub const MAX_PACK_MASK_BOXES: usize = 2_000_000;
-/// The most bytes the mask blob of one pack may inflate to.
+/// The most bytes the mask blob of one pack may inflate to: 64 MiB, 1.7 times what the 2026-10
+/// library with `--technic` needs (37.9 MiB for 1,899 masks, 318 million cells of body boxes).
+/// Decoding costs about 0.6 s natively and 0.9 s in WebAssembly for that, so a hostile pack at the
+/// cap costs the reader about 1.5 seconds, once; the reader does not keep the inflated blob.
 pub const MAX_MASK_BLOB_BYTES: usize = 64 * 1024 * 1024;
 /// A part gets a mask when this share of its body box (parts per ten thousand) is empty and not
 /// open to the bottom.
@@ -132,25 +135,53 @@ impl MaskGrid {
 
     /// Check the size and the padding bits.
     pub fn validate(&self) -> Result<u64, MaskError> {
-        let n = cell_count(self.dims).ok_or_else(|| {
+        MaskGrid::check_bits(self.dims, &self.bits)
+    }
+
+    fn check_bits(dims: [u32; 3], bits: &[u8]) -> Result<u64, MaskError> {
+        let n = cell_count(dims).ok_or_else(|| {
             MaskError::TooManyCells(
-                self.dims
-                    .iter()
+                dims.iter()
                     .fold(1u64, |n, &d| n.saturating_mul(u64::from(d))),
             )
         })?;
         let need = n.div_ceil(8) as usize;
-        if self.bits.len() != need {
+        if bits.len() != need {
             return Err(MaskError::WrongSize {
-                have: self.bits.len(),
+                have: bits.len(),
                 need,
             });
         }
         let used = (n % 8) as u32;
-        if used != 0 && self.bits[need - 1] >> used != 0 {
+        if used != 0 && bits[need - 1] >> used != 0 {
             return Err(MaskError::StrayBits);
         }
         Ok(n)
+    }
+}
+
+/// Working buffers for [`Mask::from_bits_in`].
+#[derive(Default)]
+pub struct MaskScratch {
+    done: Vec<bool>,
+    boxes: Vec<Aabb>,
+}
+
+/// A read-only view of a bit grid (the same layout as [`MaskGrid`]).
+struct MaskView<'a> {
+    origin: [i32; 3],
+    dims: [u32; 3],
+    bits: &'a [u8],
+}
+
+impl MaskView<'_> {
+    fn get(&self, x: u32, y: u32, z: u32) -> bool {
+        let i = (x + self.dims[0] * (z + self.dims[2] * y)) as usize;
+        self.bits[i / 8] >> (i % 8) & 1 == 1
+    }
+
+    fn validate(&self) -> Result<u64, MaskError> {
+        MaskGrid::check_bits(self.dims, self.bits)
     }
 }
 
@@ -167,9 +198,35 @@ impl Mask {
     /// layers of equal rows along Y). Checked: size, padding and the box bound come first.
     pub fn from_grid(g: &MaskGrid) -> Result<Mask, MaskError> {
         g.validate()?;
+        Mask::from_bits(g.origin, g.dims, &g.bits)
+    }
+
+    /// [`Mask::from_grid`] over bits that are already somewhere (the pack's mask blob), without a copy.
+    /// The bits must be the size `dims` needs (the caller checked; a short slice is an error, not a panic).
+    pub fn from_bits(origin: [i32; 3], dims: [u32; 3], bits: &[u8]) -> Result<Mask, MaskError> {
+        Mask::from_bits_in(origin, dims, bits, &mut MaskScratch::default())
+    }
+
+    /// [`Mask::from_bits`] with the working buffers of the caller, reused from one part to the next
+    /// (a pack of the real library decodes 1,899 masks; growing and freeing a vector for each
+    /// fragments a WebAssembly heap that never shrinks).
+    pub fn from_bits_in(
+        origin: [i32; 3],
+        dims: [u32; 3],
+        bits: &[u8],
+        scratch: &mut MaskScratch,
+    ) -> Result<Mask, MaskError> {
+        let g = MaskView { origin, dims, bits };
+        g.validate()?;
         let [nx, ny, nz] = g.dims;
-        let mut done = vec![false; (u64::from(nx) * u64::from(ny) * u64::from(nz)) as usize];
-        let mut boxes = Vec::new();
+        let done = &mut scratch.done;
+        done.clear();
+        done.resize(
+            (u64::from(nx) * u64::from(ny) * u64::from(nz)) as usize,
+            false,
+        );
+        let boxes = &mut scratch.boxes;
+        boxes.clear();
         let mut volume = 0u64;
         let at = |x: u32, y: u32, z: u32| (x + nx * (z + nz * y)) as usize;
         for y in 0..ny {
@@ -226,7 +283,12 @@ impl Mask {
                 }
             }
         }
-        Ok(Mask { boxes, volume })
+        // Exactly as many as there are, not the doubled capacity a growing Vec leaves: a pack holds
+        // hundreds of thousands of these.
+        Ok(Mask {
+            boxes: boxes.as_slice().to_vec(),
+            volume,
+        })
     }
 
     /// The boxes, in the part's frame.

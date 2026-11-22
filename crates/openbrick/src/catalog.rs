@@ -313,8 +313,9 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
     // Connectors by kind, and parts by the classes of connection they can make (Link names).
     let mut by_kind: BTreeMap<&str, u32> = BTreeMap::new();
     let mut parts_by_link: BTreeMap<&str, u32> = BTreeMap::new();
-    let (mut with_masks, mut mask_cells) = (0u32, 0u64);
-    for p in &h.parts {
+    let (mut with_masks, mut mask_cells, mut mask_boxes) = (0u32, 0u64, 0usize);
+    for (i, p) in h.parts.iter().enumerate() {
+        mask_boxes += pack.mask(i).map_or(0, |m| m.boxes().len());
         *by_cat.entry(p.category.as_str()).or_default() += 1;
         match p.connectivity {
             Connectivity::Derived => derived += 1,
@@ -364,7 +365,8 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
         links.join(", ")
     ));
     ui.say(format!(
-        "{with_masks} parts have an occupancy mask ({mask_cells} solid cells of 1 LDU); the others collide as their box"
+        "{with_masks} parts have an occupancy mask ({mask_cells} solid cells of 1 LDU, {mask_boxes} merged boxes, about {} MiB in memory); the others collide as their box",
+        mask_boxes * 24 / 1_048_576
     ));
     let cats: Vec<String> = by_cat.iter().map(|(k, v)| format!("{k} {v}")).collect();
     ui.say(format!("categories: {}", cats.join(", ")));
@@ -395,6 +397,7 @@ fn info_cmd(a: &InfoArgs, ui: Ui) -> Result<Outcome, Fail> {
             "partsByLink": parts_by_link,
             "withMasks": with_masks,
             "maskSolidCells": mask_cells,
+            "maskBoxes": mask_boxes,
             "connectors": conns,
             "triangles": tris,
             "categories": by_cat,
