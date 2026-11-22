@@ -425,7 +425,7 @@ impl Mask {
                     v[c] = u8::from(keep);
                 }
             }
-            v.iter().any(|&c| c == 1)
+            v.contains(&1)
         });
         work += 4 * n as u64;
         (found, work)
