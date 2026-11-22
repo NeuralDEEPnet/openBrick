@@ -224,7 +224,13 @@ export function ghostState(snap) {
 export function snapText(snap, partName, names = {}) {
   if (!snap) return [`Point at the baseplate or a part to place ${partName}`];
   if (snap.valid) {
-    const how = snap.grounded ? "on the ground" : `${snap.mates} stud${snap.mates === 1 ? "" : "s"} connected`;
+    // What holds it, in the core's words (`connects`: "pin in hole", "axle in hole", "clip on bar", ...).
+    const kinds = snap.connects ?? [];
+    const studsOnly = kinds.length === 0 || (kinds.length === 1 && kinds[0] === "stud in receptacle");
+    let how;
+    if (snap.grounded && snap.mates === 0) how = "on the ground";
+    else if (studsOnly) how = `${snap.mates} stud${snap.mates === 1 ? "" : "s"} connected`;
+    else how = `${snap.mates} connection${snap.mates === 1 ? "" : "s"}: ${kinds.join(", ")}`;
     return [`${partName}: click or tap to place (${how})`];
   }
   if (snap.collides != null) {
@@ -238,9 +244,21 @@ export function snapText(snap, partName, names = {}) {
 /** The summary of the model for the stats panel, as [label, value] rows. */
 export function statsRows(stats) {
   const floating = stats.floating?.length ?? 0;
+  // The connections by class, where there are any: studs in receptacles, pins in holes, axles, clips on bars, balls, hinges.
+  const kinds = [
+    ["stud", "Studs in receptacles"],
+    ["pin", "Pins in holes"],
+    ["axle", "Axles in holes"],
+    ["clip", "Clips on bars"],
+    ["ball", "Balls in sockets"],
+    ["hinge", "Hinges"],
+  ]
+    .filter(([k]) => (stats.links?.[k] ?? 0) > 0)
+    .map(([k, label]) => [label, String(stats.links[k])]);
   return [
     ["Parts", String(stats.parts)],
     ["Connections", String(stats.connections)],
+    ...kinds,
     ["Connected groups", String(stats.components)],
     ["On the ground", String(stats.grounded)],
     ["Floating", floating === 0 ? "none" : `${floating} (no chain of connections to the ground)`],

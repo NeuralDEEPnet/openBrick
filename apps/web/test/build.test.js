@@ -108,12 +108,26 @@ test("the ghost's state and the status line follow the engine's snap", () => {
   assert.deepEqual(hit, ["Brick 2 x 4 would overlap the Plate 1 x 2", "Move so the two only touch"]);
   assert.match(snapText({ ...ok, valid: false, mates: 0 }, "Tile")[1], /Press it onto studs/);
   assert.match(snapText(null, "Tile")[0], /Point at the baseplate/);
+  // What holds a Technic or joint part, in the core's words.
+  const pin = snapText({ ...ok, mates: 1, connects: ["pin in hole"] }, "Pin")[0];
+  assert.match(pin, /place \(1 connection: pin in hole\)/);
+  assert.match(snapText({ ...ok, mates: 2, connects: ["axle in hole"] }, "Axle")[0], /2 connections: axle in hole/);
+  assert.match(snapText({ ...ok, mates: 1, connects: ["clip on bar"] }, "Bar")[0], /clip on bar/);
+  assert.match(snapText({ ...ok, mates: 3, connects: ["stud in receptacle", "pin in hole"] }, "Beam")[0], /3 connections: stud in receptacle, pin in hole/);
+  assert.match(snapText({ ...ok, mates: 4, connects: ["stud in receptacle"] }, "Brick")[0], /4 studs connected/);
 });
 
 test("stats, the live sentence and the bill of materials", () => {
   const stats = { parts: 3, connections: 8, components: 2, grounded: 1, floating: [3] };
   assert.deepEqual(statsRows(stats).map((r) => r[0]), ["Parts", "Connections", "Connected groups", "On the ground", "Floating"]);
   assert.match(statsRows(stats)[4][1], /^1 /);
+  // The classes of connection appear where there are any.
+  const linkRows = statsRows({ ...stats, links: { stud: 8, pin: 2, axle: 0, clip: 1, ball: 0, hinge: 0 } });
+  assert.deepEqual(
+    linkRows.map((r) => r[0]).slice(0, 5),
+    ["Parts", "Connections", "Studs in receptacles", "Pins in holes", "Clips on bars"],
+  );
+  assert.equal(linkRows[3][1], "2");
   assert.equal(statsRows({ ...stats, floating: [] })[4][1], "none");
   assert.equal(stateSentence({ parts: 1, floating: [] }), "1 part, all connected to the ground");
   assert.equal(stateSentence(stats), "3 parts, 1 floating");

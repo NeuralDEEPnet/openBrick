@@ -424,6 +424,9 @@ Options:
       --category-filter <A,B>
           LDraw categories to import, comma separated (case-insensitive). Default: Brick, Plate, Tile, Slope, Baseplate, Wedge, Arch, Window, Door, Windscreen, Panel, Cylinder, Cone, Fence, Bracket
 
+      --technic
+          Add the Technic categories (Technic, Hinge, Bar, Wheel) to the chosen ones: pins, axles, beams, gears, hinges, clips and bars, with their occupancy masks. Off by default
+
       --limit <N>
           The most parts to write (default 600, taken from every category in turn; 0 for all that qualify)
 
@@ -447,6 +450,7 @@ Options:
 Examples:
   openbrick catalog fetch --dest ~/ldraw
   openbrick catalog import ~/ldraw/complete.zip --out ldraw.obpack
+  openbrick catalog import ~/ldraw/complete.zip --out technic.obpack --technic --limit 0
   openbrick catalog import ~/ldraw/ldraw --out bricks.obpack --category-filter Brick,Plate,Tile --limit 150
   openbrick catalog info ldraw.obpack
 

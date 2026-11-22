@@ -20,6 +20,7 @@ import {
   pageCount,
   pageHolding,
   pageOf,
+  PART_CHIPS,
   partBadge,
   partNote,
   rangeText,
@@ -92,10 +93,31 @@ test("the range text says what is shown", () => {
 test("parts that cannot connect or have joints say so", () => {
   assert.equal(partNote(parts[0]), null);
   assert.match(partNote(parts[5]), /Free placement only/);
-  assert.match(partNote(parts[4]), /clip joint is not modelled/);
+  assert.match(partNote(parts[4]), /clip joint is not calibrated/);
   assert.equal(partBadge(parts[0]), "");
   assert.equal(partBadge(parts[5]), "ground only");
-  assert.equal(partBadge(parts[4]), "joint not modelled");
+  assert.equal(partBadge(parts[4]), "joint not calibrated");
+});
+
+test("parts that connect by pins, axles, clips, balls or hinges carry a badge and a note, and the chips filter them", () => {
+  const pin = { id: "ld.3673", name: "Technic Pin", category: "Technic", connectivity: "derived", links: ["pin"], masked: true };
+  const clip = { id: "ld.4085", name: "Plate 1 x 1 with Clip", category: "Plate", connectivity: "derived", links: ["stud", "clip"], masked: true };
+  const brick = { id: "ld.3001", name: "Brick 2 x 4", category: "Brick", connectivity: "derived", links: ["stud"], masked: false };
+  assert.equal(partBadge(pin), "technic");
+  assert.equal(partBadge(clip), "joint");
+  assert.equal(partBadge(brick), "");
+  assert.match(partNote(pin), /Connects by pins in holes; collides as its real shape/);
+  assert.match(partNote(clip), /Connects by clips and bars/);
+  assert.equal(partNote(brick), null);
+  const all = [pin, clip, brick];
+  assert.deepEqual(filterParts(all, { links: "technic" }), [0]);
+  assert.deepEqual(filterParts(all, { links: "joints" }), [1]);
+  assert.deepEqual(filterParts(all, { links: "" }), [0, 1, 2]);
+  assert.deepEqual(filterParts(all, { links: "nonsense" }), []);
+  assert.deepEqual(
+    PART_CHIPS.map((c) => c.id),
+    ["", "technic", "joints"],
+  );
 });
 
 test("the attribution names the library and keeps the credit line", () => {

@@ -133,6 +133,18 @@ impl Link {
         }
     }
 
+    /// What a connection of this class is, in words for the hover line: "pin in hole".
+    pub fn phrase(self) -> &'static str {
+        match self {
+            Link::Stud => "stud in receptacle",
+            Link::Pin => "pin in hole",
+            Link::Axle => "axle in hole",
+            Link::Clip => "clip on bar",
+            Link::Ball => "ball in socket",
+            Link::Hinge => "hinge fingers interleaved",
+        }
+    }
+
     /// The classes in a set of bits, in order.
     pub fn in_set(bits: u32) -> impl Iterator<Item = Link> {
         Link::ALL.into_iter().filter(move |l| bits & l.bit() != 0)

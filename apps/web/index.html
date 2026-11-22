@@ -328,6 +328,10 @@
       span.thumb.pending { border-radius: 6px; background: color-mix(in srgb, var(--muted) 14%, transparent); }
       .part-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 11em); gap: 6px; margin-bottom: 8px; }
       .part-tools[hidden] { display: none; }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      .chips[hidden] { display: none; }
+      .chip { min-height: 32px; padding: 2px 12px; border-radius: 16px; }
+      .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: transparent; }
       .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--muted); }
       .choice-badge { font-size: 10px; color: var(--muted); border: 1px solid var(--muted); border-radius: 4px; padding: 0 3px; }
       .pack-row { margin-top: 8px; }
@@ -468,6 +472,7 @@
               <label class="visually-hidden" for="build-category">Category</label>
               <select id="build-category"></select>
             </div>
+            <div id="build-chips" class="chips" role="group" aria-label="Part filter" hidden></div>
             <div id="build-parts" class="palette" role="radiogroup" aria-label="Part to place"></div>
             <div class="pager">
               <button type="button" id="build-prev" disabled>Previous</button>

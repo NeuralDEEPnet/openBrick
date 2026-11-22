@@ -290,9 +290,14 @@ impl Model<'_> {
         let mut best: Option<(Key, Snap)> = None;
         // Evaluate one candidate pose; `face_dist` is the ranking distance, `anchor` the point of
         // the part its offset from the cursor is measured at.
+        // A part with pin, axle, clip, bar, ball or hinge connectors prefers a valid pose that puts one
+        // of them on a mate over a valid one that only stands on the ground or touches: pointing at a
+        // hole means the hole. Parts without them rank exactly as before.
+        let prefers_mates = shape.connectors.iter().any(|c| !c.kind.is_stud_kind());
         let consider = |pos: [i32; 3],
                         rot: Rot24,
                         dist: Option<f64>,
+                        by_mate: bool,
                         best: &mut Option<(Key, Snap)>|
          -> Result<(), EngineError> {
             let pose = LatticePose { pos, rot };
@@ -314,6 +319,7 @@ impl Model<'_> {
             let valid = collides.is_none() && b.max[1] <= 0 && (mates > 0 || grounded);
             let key = Key {
                 invalid: !valid,
+                unmated: prefers_mates && !by_mate,
                 dist,
                 mates,
                 d,
@@ -339,7 +345,7 @@ impl Model<'_> {
             for i in -WINDOW..=WINDOW {
                 for j in -WINDOW..=WINDOW {
                     let pos = [x0 + i * STUD_PITCH_LDU, y, z0 + j * STUD_PITCH_LDU];
-                    consider(pos, rot, None, &mut best)?;
+                    consider(pos, rot, None, false, &mut best)?;
                 }
             }
         }
@@ -350,7 +356,7 @@ impl Model<'_> {
         // targets without them, add no candidate (stud and receptacle mates are found by the window).
         if shape.connectors.iter().any(|c| !c.kind.is_stud_kind()) {
             for (pos, rot, _) in self.mate_poses(part, rot, hit.point)? {
-                consider(pos, rot, None, &mut best)?;
+                consider(pos, rot, None, true, &mut best)?;
             }
         }
         Ok(best.map(|(_, s)| s))
@@ -488,6 +494,8 @@ fn align(rot: Rot24, c: &openbrick_catalog::Conn, t: &openbrick_catalog::Conn) -
 /// The ranking of candidates (module documentation).
 struct Key {
     invalid: bool,
+    /// For a part that prefers mates: the pose does not put a non-stud connector on a mate.
+    unmated: bool,
     dist: f64,
     mates: u32,
     d: [f64; 3],
@@ -499,6 +507,7 @@ impl Key {
         let order = self
             .invalid
             .cmp(&other.invalid)
+            .then(self.unmated.cmp(&other.unmated))
             .then(self.dist.total_cmp(&other.dist))
             .then(other.mates.cmp(&self.mates))
             .then(self.d[0].total_cmp(&other.d[0]))

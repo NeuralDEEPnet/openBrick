@@ -1,0 +1,13 @@
+0 Synthetic Clip Horizontal with Parallel Sides
+0 Name: clip3.dat
+0 Author: OpenBrick3D tests
+0 !LDRAW_ORG Primitive UPDATE 2026-01
+0 !LICENSE Synthetic test file written for OpenBrick3D, CC0
+
+0 BFC CERTIFY CCW
+
+1 16 0 -5.5 0 4 0 0 0 3 0 0 0 7.5 cube.dat
+1 16 0 6.5 0 4 0 0 0 3 0 0 0 7.5 cube.dat
+1 16 0 -2.5 -6 4 0 0 0 9 0 0 0 1.5 cube.dat
+1 16 0 -2.5 6 4 0 0 0 9 0 0 0 1.5 cube.dat
+1 16 0 -2 8.75 3 0 0 0 8 0 0 0 1.25 cube.dat

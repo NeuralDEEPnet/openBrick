@@ -130,8 +130,8 @@ fn a_clip_the_table_does_not_calibrate_only_flags_the_part() {
         .filter(|k| k.kind == ConnKind::ClipF)
         .collect();
     assert_eq!(clip.len(), 1);
-    // The table's origin (0, 0, -10) in clip2's frame, placed by the part's instance at (0, 4, -10).
-    assert_eq!((clip[0].pos, clip[0].dir), ([0, 4, -20], [0, 1, 0]));
+    // The table's point (0, 2, 0) in clip3's frame, placed by the part's instance at (0, -4, -20).
+    assert_eq!((clip[0].pos, clip[0].dir), ([0, -2, -20], [1, 0, 0]));
 }
 
 #[test]

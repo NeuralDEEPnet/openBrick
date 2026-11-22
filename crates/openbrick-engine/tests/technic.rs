@@ -362,18 +362,17 @@ fn from_above(x: i32, z: i32) -> Ray {
 fn a_bar_is_gripped_by_a_clip_and_the_connection_is_a_clip_on_a_bar() {
     let c = cat();
     let mut m = Model::new(c);
-    // The plate with a clip, raised so a standing bar clears the ground; its clip's bore is at
-    // (0, -44, -20) with a vertical axis.
-    m.apply(&add("ld.4085", [0, -48, 0], 0)).unwrap();
+    // The plate with a clip on the ground; its clip's bore is at (0, -10, -20), axis along X.
+    m.apply(&add("ld.4085", [0, -8, 0], 0)).unwrap();
     let bar = id("ld.87994");
-    // The bar lies along X; the clip wants a vertical bar, so the snap stands it up.
+    // The bar lies along X already; the pointer is above the clip.
     let s = m
-        .snap(bar, Rot24::IDENTITY, &from_above(0, -20))
+        .snap(bar, Rot24::IDENTITY, &from_above(0, -16))
         .unwrap()
         .unwrap();
     assert!(s.valid, "{s:?}");
     assert_eq!(s.links, Link::Clip.bit(), "{s:?}");
-    assert_ne!(s.rot, 0, "the bar was turned onto the clip's axis");
+    assert_eq!((s.pos, s.rot), ([0, -10, -20], 0));
     m.apply(&add("ld.87994", s.pos, s.rot)).unwrap();
     let st = m.stats();
     assert_eq!(
@@ -389,6 +388,12 @@ fn a_bar_is_gripped_by_a_clip_and_the_connection_is_a_clip_on_a_bar() {
     assert_eq!(m.connections_with_links(), vec![(1, 2, Link::Clip)]);
     // Plate and bar are one component.
     assert_eq!(st.components, 1, "{st:?}");
+    // A bar turned to stand up is turned back along the clip's axis by the snap.
+    let up = Rot24::from_matrix([[0, -1, 0], [1, 0, 0], [0, 0, 1]]).unwrap();
+    let mut m2 = Model::new(c);
+    m2.apply(&add("ld.4085", [0, -8, 0], 0)).unwrap();
+    let t = m2.snap(bar, up, &from_above(0, -16)).unwrap().unwrap();
+    assert!(t.valid && t.links == Link::Clip.bit(), "{t:?}");
 }
 
 #[test]
@@ -414,15 +419,15 @@ fn a_ball_goes_in_its_socket_and_hinge_halves_interleave() {
     m.apply(&add("ld.22890", s.pos, s.rot)).unwrap();
     assert_eq!(m.connections_with_links(), vec![(1, 2, Link::Ball)]);
 
-    // Hinge: a 2-finger half on the ground, a 3-finger half turned half a turn about the vertical
-    // so its plate is on the other side: the fingers interleave.
+    // Hinge: a 2-finger half on the ground, a 1-finger half turned half a turn about the vertical so
+    // its plate is on the other side: its finger sits between the two.
     let mut h = Model::new(c);
-    h.apply(&add("ld.9101", [0, -20, 0], 0)).unwrap();
-    let three = id("ld.9102");
+    h.apply(&add("ld.9101", [0, -8, 0], 0)).unwrap();
+    let one = id("ld.9102");
     let half = Rot24::yaw_quarter_turns(2);
     let s = h
         .snap(
-            three,
+            one,
             half,
             &Ray {
                 origin: [0.0, -300.0, -20.0],
@@ -432,17 +437,18 @@ fn a_ball_goes_in_its_socket_and_hinge_halves_interleave() {
         .unwrap()
         .unwrap();
     assert!(s.valid && s.links == Link::Hinge.bit(), "{s:?}");
+    assert_eq!((s.pos, s.rot), ([0, -8, -40], half.0), "{s:?}");
     h.apply(&add("ld.9102", s.pos, s.rot)).unwrap();
     assert_eq!(h.stats().links.hinge, 1);
-    // Offset along the axis by 4 LDU the fingers collide.
+    // Offset along the axis by 4 LDU the single finger meets one of the two.
     let off = LatticePose {
-        pos: [s.pos[0], s.pos[1] + 4, s.pos[2]],
+        pos: [s.pos[0] + 4, s.pos[1], s.pos[2]],
         rot: Rot24(s.rot),
     };
     let mut h2 = Model::new(c);
-    h2.apply(&add("ld.9101", [0, -20, 0], 0)).unwrap();
+    h2.apply(&add("ld.9101", [0, -8, 0], 0)).unwrap();
     assert!(matches!(
-        h2.check_pose(three, &off, None),
+        h2.check_pose(one, &off, None),
         Err(EngineError::Collides { .. })
     ));
 }

@@ -11,8 +11,10 @@ import { ModelTable, ROW } from "./model-table.js";
 import { basePixelRatio, createAdaptiveResolution, hudLines, isPhone, triangleBudget } from "./lod.js";
 import { benchWarnings, frameStats } from "./bench.js";
 import {
+  LINK_GROUPS,
   MeshCache,
   PAGE_SIZE,
+  PART_CHIPS,
   attributionLine,
   categoriesOf,
   creditLine,
@@ -164,7 +166,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   /** The LDraw pack that is loaded: { info, bytes, name } or null. */
   let pack = null;
   /** The palette's search, category and page. */
-  const list = { query: "", category: "", page: 0, indexes: [] };
+  const list = { query: "", category: "", links: "", page: 0, indexes: [] };
   /** A model that needs a pack, kept until one is added: { text, name } or null. */
   let pendingModel = null;
   let partIndex = new Map();
@@ -197,6 +199,8 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
   let modelName = "My build";
 
   const info = (page.build = {
+    /** The name of a placed part by id, for tests that say which parts a connection joins. */
+    nameOf: (id) => names[id],
     ready: false,
     parts: 0,
     selected: null,
@@ -230,7 +234,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     /** The revision the statistics shown are for (the model's own, `revision`, when they are up to date). */
     statsFor: -1,
     /** The palette: parts listed, the page shown, the pack loaded, mesh bookkeeping. */
-    list: { total: 0, shown: 0, page: 0, pages: 1, query: "", category: "" },
+    list: { total: 0, shown: 0, page: 0, pages: 1, query: "", category: "", links: "" },
     pack: null,
     gpuParts: 0,
     cpuMeshes: 0,
@@ -1082,7 +1086,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
 
   /** The palette: the parts that match the search and category, one page of them, and its pager. */
   function renderPartList({ keepPage = false } = {}) {
-    list.indexes = filterParts(catalog.parts, { query: list.query, category: list.category });
+    list.indexes = filterParts(catalog.parts, { query: list.query, category: list.category, links: list.links });
     if (!keepPage) list.page = 0;
     const { page, pages, items } = pageOf(list.indexes, list.page, PAGE_SIZE);
     list.page = page;
@@ -1104,7 +1108,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     $("build-range").textContent = rangeText(list.indexes.length, page, PAGE_SIZE);
     $("build-prev").disabled = page === 0;
     $("build-next").disabled = page >= pages - 1;
-    Object.assign(info.list, { total: list.indexes.length, shown: items.length, page, pages, query: list.query, category: list.category });
+    Object.assign(info.list, { total: list.indexes.length, shown: items.length, page, pages, query: list.query, category: list.category, links: list.links });
     drawThumbs(items);
   }
 
@@ -1116,6 +1120,28 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     list.category = select.value;
     // The category filter is only worth showing when there is more than a handful of parts.
     $("build-part-tools").hidden = catalog.parts.length <= PAGE_SIZE;
+    fillChips();
+  }
+
+  /** The filter chips (All, Technic, Clips and joints): shown when the pack has parts that connect by pins, axles, clips, balls or hinges. */
+  function fillChips() {
+    const chips = $("build-chips");
+    const has = (group) => catalog.parts.some((p) => (p.links ?? []).some((l) => (LINK_GROUPS[group] ?? []).includes(l)));
+    const shown = PART_CHIPS.filter((c) => c.id === "" || has(c.id));
+    if (!shown.some((c) => c.id === list.links)) list.links = "";
+    chips.hidden = shown.length <= 1;
+    chips.replaceChildren(
+      ...shown.map((c) => {
+        const b = h("button", { type: "button", className: "chip", text: c.label, "aria-pressed": String(c.id === list.links) });
+        b.dataset.chip = c.id;
+        b.addEventListener("click", () => {
+          list.links = c.id;
+          for (const x of chips.children) x.setAttribute("aria-pressed", String(x.dataset.chip === list.links));
+          renderPartList();
+        });
+        return b;
+      }),
+    );
   }
 
   const displayName = (p) => paletteName(p.name.replace(/\s+/g, " ").trim());
@@ -1160,7 +1186,7 @@ export function createBuildMode({ client, viewer, files, showStatus, page }) {
     if (!pack) return;
     $("build-attribution").textContent = attributionLine(pack.info);
     $("build-licences").textContent = pack.info.licences.map((l) => `${l.name}\n\n${l.text}`).join("\n\n--------\n\n");
-    $("build-pack-counts").textContent = `Pack ${packFileLabel(pack.name)}: ${pack.info.counts.imported} parts from ${pack.info.counts.scanned.toLocaleString("en-US")} files of LDraw library ${pack.info.library}; ${pack.info.counts.freePlacement} free placement only; ${pack.info.counts.withJoints} with joints that are not modelled yet.`;
+    $("build-pack-counts").textContent = `Pack ${packFileLabel(pack.name)}: ${pack.info.counts.imported} parts from ${pack.info.counts.scanned.toLocaleString("en-US")} files of LDraw library ${pack.info.library}; ${pack.info.counts.freePlacement} free placement only; ${pack.info.counts.withJointConnectors ?? 0} with clip, bar, ball or hinge connectors, ${pack.info.counts.withJoints ?? 0} with joints that are not calibrated, ${pack.info.counts.withMasks ?? 0} with an occupancy mask.`;
   }
 
   /** Show the credit of the chosen part (its author and licence line) when it comes from a pack. */

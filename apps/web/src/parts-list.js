@@ -34,17 +34,29 @@ function haystack(part) {
   return ` ${norm(`${part.name} ${part.id} ${part.category ?? ""}`).replace(/(\d+)\s*[x×]\s*(\d+)/g, "$1 x $2")}`;
 }
 
+/** The filter chips of the palette: the classes of connection (the core's names) each one keeps. */
+export const LINK_GROUPS = { technic: ["pin", "axle"], joints: ["clip", "ball", "hinge"] };
+
+/** The chips: [{ id, label }]; "" keeps every part. */
+export const PART_CHIPS = [
+  { id: "", label: "All" },
+  { id: "technic", label: "Technic" },
+  { id: "joints", label: "Clips and joints" },
+];
+
 /**
  * The parts of `parts` (the core's list) that match `query` and `category`, as indexes in
  * the order of the list. `category` is a name or "" for all; `connectivity` is "" for all or
- * "derived" or "none".
+ * "derived" or "none"; `links` is "" for all, "technic" (parts with pin or axle connectors: the
+ * core says which classes of connection each part can make) or "joints" (clip, bar, ball or hinge).
  */
-export function filterParts(parts, { query = "", category = "", connectivity = "" } = {}) {
+export function filterParts(parts, { query = "", category = "", connectivity = "", links = "" } = {}) {
   const tokens = searchTokens(query);
   const out = [];
   parts.forEach((p, i) => {
     if (category && (p.category ?? "") !== category) return;
     if (connectivity && (p.connectivity ?? "derived") !== connectivity) return;
+    if (links && !(LINK_GROUPS[links] ?? []).some((l) => (p.links ?? []).includes(l))) return;
     if (tokens.length) {
       const h = haystack(p);
       if (!tokens.every((t) => h.includes(` ${t}`))) return;
@@ -91,19 +103,26 @@ export function rangeText(total, page, size = PAGE_SIZE) {
 
 /**
  * The note a part carries in the palette, or null: parts without a connector can only
- * stand on the ground (the engine will not attach them to anything), and clip, hinge, ball and
- * socket joints are not modelled yet.
+ * stand on the ground (the engine will not attach them to anything), and joints the joint
+ * table does not calibrate do not connect; parts that connect by pins, axles, clips, balls or hinges say so.
  */
 export function partNote(part) {
   if ((part.connectivity ?? "derived") === "none") return "Free placement only: no connector was found, so it can only stand on the ground";
-  if (part.joints?.length) return `Studs snap; the ${part.joints.join(", ")} joint is not modelled yet`;
+  if (part.joints?.length) return `Snaps by what the core derived; the ${part.joints.join(", ")} joint is not calibrated, so it does not connect`;
+  const links = (part.links ?? []).filter((l) => l !== "stud");
+  if (links.length) return `Connects by ${links.map(LINK_WORDS).join(", ")}${part.masked ? "; collides as its real shape (occupancy mask)" : ""}`;
   return null;
 }
+
+const LINK_WORDS = (l) => ({ pin: "pins in holes", axle: "axles in holes", clip: "clips and bars", ball: "balls and sockets", hinge: "hinge fingers" })[l] ?? l;
 
 /** A short badge for the list, or "". */
 export function partBadge(part) {
   if ((part.connectivity ?? "derived") === "none") return "ground only";
-  if (part.joints?.length) return "joint not modelled";
+  if (part.joints?.length) return "joint not calibrated";
+  const links = part.links ?? [];
+  if (links.some((l) => LINK_GROUPS.joints.includes(l)) || links.includes("bar")) return "joint";
+  if (links.some((l) => LINK_GROUPS.technic.includes(l))) return "technic";
   return "";
 }
 
