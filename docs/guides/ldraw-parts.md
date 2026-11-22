@@ -174,8 +174,8 @@ free poses and rotation about a joint's axis are not modelled (the part stays wh
 it was placed), and a pin or axle that the library draws touching a part by more
 than 2 LDU (a friction pin's ribs: a friction pin 2780 and the long pin 6558 are
 plain pins to the engine, with two and three modules) is refused where it would be pressed in. Measured
-on the real library, a plate's stud fits 94.2 percent of the receptacles, a pin 74.2
-percent of the pin holes and an axle 80.4 percent of the axle holes; the refusals
+on the real library, a plate's stud fits 94.1 percent of the receptacles, a pin 71.6
+percent of the pin holes and an axle 76.3 percent of the axle holes; the refusals
 are geometry (a skirt around a receptacle, a gear hub, a blind hole), and the Technic
 bricks, beams and liftarms fit all theirs. The numbers come from
 `crates/openbrick-engine/tests/technic_real.rs`, which runs when
