@@ -43,8 +43,8 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
     let (pack, report) =
         import(std::path::Path::new(&dir), &opts, &mut |_, _, _| {}).expect("imports");
     eprintln!(
-        "imported {} parts, {} with masks ({} too fragmented), {} masks boxes budget ok",
-        report.counts.imported, report.counts.with_masks, report.masks_too_fragmented, 0
+        "imported {} parts, {} with masks ({} too fragmented)",
+        report.counts.imported, report.counts.with_masks, report.masks_too_fragmented
     );
     let cat = Catalog::builtin().unwrap().with_pack(&pack);
     let find = |n: &str| cat.find(&format!("ld.{n}"));
@@ -52,14 +52,12 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
     let pin = find("3673").expect("pin");
     let fric = find("2780").expect("friction pin");
     let axle = find("3705").expect("axle 4 (the pack has no part with axle connectors of its own)");
-    let at = |part: u32, pos: [i32; 3], rot: Rot24| LatticePose { pos, rot };
     let mut counts = std::collections::BTreeMap::<&str, (u32, u32)>::new();
     let mut failed: Vec<String> = Vec::new();
-    for (i, p) in cat.parts.iter().enumerate() {
+    for p in &cat.parts {
         if p.origin != Origin::Ldraw {
             continue;
         }
-        let part = i as u32;
         // The part on its own, high above the ground.
         let mut m = Model::new(&cat);
         let base = LatticePose {
@@ -112,7 +110,7 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
                     for rot in rolls {
                         let o = rot.apply(own.pos);
                         let pos = [c.pos[0] - o[0], c.pos[1] - o[1], c.pos[2] - o[2]];
-                        let pose = at(*w, pos, rot);
+                        let pose = LatticePose { pos, rot };
                         // The stud's own opening faces down; it is the part's pin or axle that must lie on the axis.
                         if m.check_pose(*w, &pose, None).is_ok() {
                             fits = true;
@@ -137,7 +135,6 @@ fn pins_axles_and_studs_fit_the_real_parts_they_mate_with() {
                 failed.push(format!("{} {name} at {:?}", p.id, c.pos));
             }
         }
-        let _ = part;
     }
     for (k, (n, ok)) in &counts {
         eprintln!(

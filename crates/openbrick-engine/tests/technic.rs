@@ -452,3 +452,61 @@ fn a_ball_goes_in_its_socket_and_hinge_halves_interleave() {
         Err(EngineError::Collides { .. })
     ));
 }
+
+/// The cost of snapping Technic parts in a big model, measured natively (run with
+/// `cargo test --release -p openbrick-engine --test technic -- --ignored --nocapture`): 10,000 Technic
+/// bricks with a pin through each, then snaps of a pin onto a hole (connector pairs and masks) and of
+/// a plain brick. The numbers are in docs/plan/07 section 14.
+#[test]
+#[ignore = "a timing, not a check"]
+fn technic_snap_timing_at_scale() {
+    use std::time::Instant;
+    let c = cat();
+    let mut m = Model::new(c);
+    let (n_side, pitch) = (100i32, 120i32);
+    for i in 0..n_side {
+        for j in 0..n_side {
+            let x = i * pitch;
+            let z = j * pitch;
+            m.apply(&add("ld.3701", [x + 10, -24, z], 0)).unwrap();
+            m.apply(&add("ld.3673", [x + 10 + 10, -12, z], 0)).unwrap();
+        }
+    }
+    eprintln!(
+        "{} parts, spatial and connector entries {:?}",
+        m.len(),
+        m.index_entries()
+    );
+    let pin = id("ld.3673");
+    let brick = id("ld.3005");
+    let mut rng = Rng(7);
+    let mut time = |what: &str, part: u32, from_side: bool| {
+        let mut ms = Vec::new();
+        for _ in 0..2000 {
+            let i = rng.range(0, n_side - 1);
+            let j = rng.range(0, n_side - 1);
+            let (x, z) = (i * pitch + 10, j * pitch + rng.range(-30, 30));
+            let ray = if from_side {
+                Ray {
+                    origin: [f64::from(x) + 500.0, -12.0, f64::from(z)],
+                    dir: [-1.0, 0.0, 0.0],
+                }
+            } else {
+                down(x, z)
+            };
+            let t = Instant::now();
+            let s = m.snap(part, Rot24::IDENTITY, &ray).unwrap();
+            ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            std::hint::black_box(s);
+        }
+        ms.sort_by(|a, b| a.total_cmp(b));
+        eprintln!(
+            "{what}: snap p50 {:.3} ms, p95 {:.3} ms, max {:.3} ms",
+            ms[ms.len() / 2],
+            ms[ms.len() * 95 / 100],
+            ms[ms.len() - 1]
+        );
+    };
+    time("pin onto holes (connector pairs, masks)", pin, true);
+    time("plain brick on top of the Technic bricks", brick, false);
+}

@@ -62,8 +62,8 @@ command (a release build is several times faster):
 | left out: assemblies and variants with longer file names | 443 |
 | left out: other categories | 2,334 |
 | **eligible parts in the chosen categories** | **1,545** |
-| of those, with at least one derived connector | 1,469 (95.1 percent) |
-| written to the pack by default (`--limit 600`, every category in turn) | 600, 10.2 MB, 45 seconds |
+| of those, with at least one derived connector | 1,477 (95.6 percent; 1,469 before the joint table and the axle fix) |
+| written to the pack by default (`--limit 600`, every category in turn) | 600, 10.4 MB, 45 seconds |
 | written with `--limit 0 --include-unconnected` | 1,526, 21.5 MB, 58 seconds |
 
 Options:
@@ -71,9 +71,9 @@ Options:
 - `--category-filter Brick,Plate,Tile` limits the pack to those LDraw categories
   (case does not matter). The default is Brick, Plate, Tile, Slope, Baseplate,
   Wedge, Arch, Window, Door, Windscreen, Panel, Cylinder, Cone, Fence and Bracket.
-  Technic parts (pin holes, axles) are in the category `Technic`: ask for them by
-  name. Their pin and axle connectors are derived, but see [what is not done
-  yet](#what-is-not-done-yet).
+- `--technic` adds the categories Technic, Hinge, Bar and Wheel to the chosen ones
+  (off by default): beams, bricks with holes, pins, axles, gears, hinges, clips and
+  bars. See [Technic and joints](#technic-and-joints).
 - `--limit N` keeps the first N parts, taking the categories in turn so a small
   limit still has bricks, plates, tiles and slopes; `--limit 0` keeps all that
   qualify. Within a category the parts with plain numbers (`3001`) come before
@@ -116,9 +116,69 @@ shows its native file dialog). Reading it takes a moment; then:
 A part is marked in the palette when it is not the usual stud-and-receptacle part:
 
 - **ground only**: no connector was found, so it can only stand on the ground.
-- **joint not modelled**: the part has a clip, hinge, ball or socket joint. Its studs
-  snap; the joint does not. Joints need a calibration table that is still open
-  (the Q04 report).
+- **technic**: the part connects by pins or axles (holes, pins, axles).
+- **joint**: the part connects by a clip, a bar, a ball, a socket or hinge fingers.
+- **joint not calibrated**: the part has a joint primitive the joint table does not
+  calibrate (a hinge plate, an odd clip, a bar handle drawn without a bar). Its
+  studs, pins and axles snap; the joint does not.
+
+The palette has **filter chips** (All, Technic, Clips and joints) when the pack has
+such parts, next to the search and the category menu.
+
+## Technic and joints
+
+```sh
+openbrick catalog import ~/ldraw/complete.zip --out technic.obpack --technic --limit 0
+```
+
+On the 2026-10 library (the numbers below are from a release build; about 20 seconds):
+
+| | |
+|---|---|
+| parts of the chosen categories | 2,611 (default categories plus Technic, Hinge, Bar, Wheel) |
+| with at least one connector | 2,299 (88.1 percent) |
+| with pin or axle connectors | 730 or more (pin holes 1,530, pins 160, axle holes 583, axles 450) |
+| with clip, bar, ball, socket or hinge connectors | 232 parts: 153 clip or bar parts (73 clip and 413 bar connectors), 10 with a ball or socket (7 and 5), 71 with a hinge half (31 odd and 67 even connectors) |
+| with a joint the table does not calibrate (flagged) | 31 |
+| with an occupancy mask | 1,899 (68 million solid cells), 22 more needed too many boxes and keep their box |
+| pack file | 35 MB |
+
+What works end to end:
+
+- **Pins and axles.** A pin enters a pin hole in another part, an axle its cross-shaped
+  hole, through the part's own shape (occupancy masks, see below): a Technic brick's hole
+  row takes a pin even though the pin's box is inside the brick's. Point at a part near a
+  hole: the ghost lies the pin down onto the hole's axis (whichever way you had turned
+  it), is green when nothing overlaps, and the line above the 3D view says "pin in hole" or
+  "axle in hole". A pin spins freely about its axis and an axle fits in four quarter turns;
+  the part is kept at the one lattice pose it was placed in, and the statistics count
+  the connection as one that leaves a rotation free. R chooses another roll.
+- **Clips and bars, balls and sockets, hinges.** A clip grips a bar or bar handle, a ball
+  sits in a socket, an odd-fingered hinge half (one or three fingers) meets an
+  even-fingered one on a common axis. The table that says where each joint's axis is,
+  `standards/joints-v1.json`, is data derived from the library's own primitives; the
+  hover line says "clip on bar", "ball in socket" or "hinge fingers interleaved".
+  Nothing moves: the rotation a joint allows is recorded, not animated.
+- **Occupancy masks.** A part whose box is not its shape (a pin, a beam with holes, a
+  slope, an arch, a round brick) is stored with a mask of its solid cells (1 LDU), so two
+  parts collide only where their solids overlap by 2 LDU or more. Plain bricks, plates
+  and tiles have none and keep the box test. `catalog info` prints how many parts have one.
+  The pack format is 2; a version 1 pack still loads, its parts collide as boxes.
+- **Statistics.** The Model panel counts the connections by class: studs in
+  receptacles, pins in holes, axles in holes, clips on bars, balls in sockets, hinges.
+
+What does not: gear wheels (a fifth derive no hole, and gears do not mesh), hinge
+plates (`h1`, `h2`) and bar handles drawn without a bar are flagged and do not
+connect, towballs and old hinge bricks need an override table that is still to do,
+free poses and rotation about a joint's axis are not modelled (the part stays where
+it was placed), and a pin or axle that the library draws touching a part by more
+than 2 LDU (a friction pin's ribs) is refused where it would be pressed in. Measured
+on the real library, a plate's stud fits 94.2 percent of the receptacles, a pin 74.2
+percent of the pin holes and an axle 80.4 percent of the axle holes; the refusals
+are geometry (a skirt around a receptacle, a gear hub, a blind hole), and the Technic
+bricks, beams and liftarms fit all theirs. The numbers come from
+`crates/openbrick-engine/tests/technic_real.rs`, which runs when
+`OPENBRICK_LDRAW_DIR` names the library (a folder or `complete.zip`); CI does not run it.
 
 ## 4. Models that use the pack
 
@@ -177,18 +237,15 @@ openbrick bom house.obrick.json --pack ldraw.obpack
 
 ## What is not done yet
 
-- **Clip, hinge, ball and socket joints** (the calibration table of the Q04 report is
-  still open): such parts are flagged and only their studs snap.
-- **Pins and axles** are derived and listed (`catalog info` counts them) and the
-  engine mates a pin or an axle with a hole when their centres and axes coincide, but
-  collision uses each part's box, so a pin cannot yet be pushed into a hole inside
-  another part's box. That needs occupancy masks.
-- **Slopes, arches and other non-box parts** collide as their bounding boxes; the
-  hollow of an arch or the cut-away of a slope cannot take a neighbour yet
-  (occupancy masks).
+- **Gear holes, towballs, hinge plates and bar handles drawn without a bar**: the
+  override table of the Q04 report is still to do; such parts are flagged or have no
+  connector of that kind.
+- **Pins and axles, clips and hinges** connect and collide through the occupancy masks;
+  rotation about a joint's axis is recorded, not simulated.
+- **Slopes, arches and other non-box parts** collide as their shapes (masks); a part
+  larger than a 100 LDU cube, or too fragmented (a few gears and wheels), keeps its box.
 - **Receptacles of large tiles and old tubeless bricks** are partly found (the
   Q04 report's known limit: a 10 x 10 brick without tubes finds 36 of its 100, an
   8 x 16 tile 80 of 128).
-- One mesh level per pack, chosen when you import; no chunked culling yet, so very
-  large models are limited by the GPU, not by the pack.
+- One mesh level per pack, chosen when you import; the masks do not depend on it.
 - A zip `.obrick` that embeds custom parts.
